@@ -52,10 +52,13 @@ base atlanırsa Tailwind v4 o `bg-*` utility'sini HİÇ üretmez (sessiz kırıl
 **UI TAMAMLANDI (canlı):** Siparişler/Stok/Siteler shadcn-admin **DataTable** (TanStack: arama,
 faceted filtre, sıralama, sayfalama, kolon görünürlüğü); sipariş detayı Card/Table/StatTile/timeline;
 formlar shadcn Input/Label/Textarea/Button/Alert; loading/error/404 state'leri. Ekranlar 2. adversaryel
-audit'ten (a11y/kontrast) geçti. **Admin auth gate** (`middleware.ts` + `/login` + `/api/login|logout`
-route handler, env-gated `ADMIN_UI_PASSWORD`, varsayılan KAPALI) — bkz. memory `admin-auth`; auth
-login/logout MUTLAKA native form POST → Route Handler (Server Action + redirect cookie'yi bindiremiyor).
-Detay: MIMARI.md §17. Marka: "Lisans Paneli — Tedarik & Yönetim".
+audit'ten (a11y/kontrast) geçti. **ÇOKLU-ADMIN AUTH (§8, 4 faz, canlı, adversaryel-denetimli):**
+API `admin_users` (scrypt/role/token_version, migration 0007-0008) + `auth/login|validate` + CRUD;
+Next imzalı oturum (HMAC, role+ver, TTL 12s) + middleware her-istek `validate` (revocation) +
+`/admins` owner-only RBAC + open-redirect/rate-limit/atomik-lockout korumaları. **env-gated
+(SESSION_SECRET + ADMIN_SEED_*), varsayılan KAPALI** (auth kapalıyken UI sarı uyarı bandı) —
+aktivasyon + detay: memory `admin-auth`. **Kritik:** login/logout MUTLAKA native form POST → Route
+Handler (Server Action + redirect cookie'yi bindiremiyor). Detay: MIMARI.md §17. Marka: "Lisans Paneli".
 
 ## Durum
 
