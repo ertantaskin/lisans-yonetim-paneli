@@ -9,16 +9,24 @@ ayrık, çoklu site destekli merkezi stok/teslimat paneli.
 - **docs/mimari-gorsel.html** — aynı dokümanın görsel/tasarımlı hali (tarayıcıda aç)
 - **CLAUDE.md** — Claude Code'un projeyi tanıması için karar özeti
 
-## Nasıl devam edilir
+## Hızlı başlangıç (lokal)
 
-Claude Code'u proje kökünde açıp şunu de:
+```bash
+cp .env.example .env          # değerleri doldur (POSTGRES_PASSWORD, MASTER_KEY, ADMIN_TOKEN)
+docker compose up -d --build  # PG17 + Redis7 + API + admin + Caddy + Mailpit
+```
 
-> `docs/MIMARI.md'yi oku ve Faz 0'a başla`
+- Admin paneli: `https://localhost` (Caddy iç TLS — tarayıcı uyarısını geç)
+- API sağlık: `https://api.localhost/v1/health`
+- Mailpit (yakalanan teslimat mailleri): override ile `http://localhost:8025`
 
-Claude `CLAUDE.md`'yi otomatik okur, tam şartname `docs/MIMARI.md`'dedir.
+Geliştirme: `pnpm install` · `pnpm build|typecheck|lint|test` ·
+`pnpm --filter @jetlisans/api test:race` (yarış testi, gerçek PG ister).
 
 ## Durum
 
-Tasarım tamamlandı. Sıradaki: **Faz 0** (VPS + Docker Compose + monorepo iskeleti
-
-- CI + ilk migration'lar). Yol haritası: [docs/MIMARI.md §18](docs/MIMARI.md).
+**Faz 0 + Faz 1 (MVP) backend/panel tamam ve canlı e2e doğrulandı** (WP eklentisi hariç):
+şifreli stok, HMAC imzalı sipariş API'si, atomik atama (çifte satış imkânsız), kısmi
+teslimat + tamamlama motoru, BullMQ mail, geri kanal webhook, Next.js admin paneli.
+Kalan: **WP eklentisi** (ince istemci), VPS deploy, Faz 2 zenginleştirmeleri.
+Yol haritası: [docs/MIMARI.md §18](docs/MIMARI.md). Karar özeti: `CLAUDE.md`.
