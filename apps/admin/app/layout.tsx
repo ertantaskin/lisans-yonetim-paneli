@@ -5,6 +5,7 @@ import { Toaster } from 'sonner';
 import { ThemeProvider } from '../components/theme';
 import { TooltipProvider } from '../components/ui/tooltip';
 import { AppShell } from '../components/shell/app-shell';
+import { verifySession, SESSION_COOKIE } from '../lib/auth';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
@@ -20,13 +21,19 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   const cookieStore = await cookies();
   const defaultOpen = cookieStore.get('sidebar_state')?.value !== 'false';
 
+  // Oturumdaki admin (nav-user'da gösterilir). Auth kapalıysa null.
+  const session = await verifySession(cookieStore.get(SESSION_COOKIE)?.value);
+  const user = session ? { name: session.name, email: session.email } : undefined;
+
   // Arayüz Türkçe-öncelikli (§17).
   return (
     <html lang="tr" suppressHydrationWarning className={`${inter.variable} ${mono.variable}`}>
       <body>
         <ThemeProvider>
           <TooltipProvider delayDuration={200}>
-            <AppShell defaultOpen={defaultOpen}>{children}</AppShell>
+            <AppShell defaultOpen={defaultOpen} user={user}>
+              {children}
+            </AppShell>
             <Toaster
               position="bottom-right"
               toastOptions={{

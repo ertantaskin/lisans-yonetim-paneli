@@ -93,9 +93,9 @@ services:
       API_URL: http://api:3001
       # Admin token yalnız sunucuda (Next server) — tarayıcıya ASLA düşmez.
       ADMIN_TOKEN: ${ADMIN_TOKEN}
-      # Admin UI giriş parolası. BOŞSA auth KAPALI (panel açık). Doldurulunca
-      # /login zorunlu olur (middleware gate). Bkz. lib/auth.ts.
-      ADMIN_UI_PASSWORD: ${ADMIN_UI_PASSWORD:-}
+      # Oturum imza sırrı (§8). SET EDİLİRSE auth AKTİF olur → /login zorunlu, kimlik
+      # admin_users'a karşı doğrulanır. BOŞSA auth kapalı (panel açık). Üret: openssl rand -hex 32
+      SESSION_SECRET: ${SESSION_SECRET:-}
       # Tarayıcı-taraflı çağrılar (ileride) Caddy üzerinden dış URL'e gider.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.localhost}
     expose:

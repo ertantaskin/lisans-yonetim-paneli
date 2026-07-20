@@ -1,13 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { authPassword, sessionTokenFor, SESSION_COOKIE, safeEqual } from './lib/auth';
+import { authEnabled, verifySession, SESSION_COOKIE } from './lib/auth';
 
 /**
- * Auth gate. ADMIN_UI_PASSWORD set DEĞİLSE hiçbir şey yapmaz (gate kapalı).
- * Set ise: geçerli oturum cookie'si olmayan istekleri /login'e yönlendirir.
+ * Auth gate. SESSION_SECRET set DEĞİLSE hiçbir şey yapmaz (gate kapalı, lockout riski yok).
+ * Set ise: geçerli imzalı oturumu olmayan istekleri /login'e yönlendirir.
  */
 export async function middleware(req: NextRequest) {
-  const pw = authPassword();
-  if (!pw) return NextResponse.next(); // gate kapalı
+  if (!authEnabled()) return NextResponse.next(); // gate kapalı
 
   const { pathname, search } = req.nextUrl;
   // Login/logout uçları gate'ten muaf (aksi halde giriş POST'u bounce olur).
@@ -15,9 +14,8 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const cookie = req.cookies.get(SESSION_COOKIE)?.value ?? '';
-  const expected = await sessionTokenFor(pw);
-  if (cookie && safeEqual(cookie, expected)) return NextResponse.next();
+  const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
+  if (session) return NextResponse.next();
 
   const url = req.nextUrl.clone();
   url.pathname = '/login';

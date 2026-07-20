@@ -107,3 +107,29 @@ export interface RevealResult {
   payload: string;
   fields: Array<{ key: string; label: string; value: string; secret: boolean }> | null;
 }
+
+// ── Admin kullanıcıları (çoklu admin, §8) ────────────────────────────────────
+export interface AdminUser {
+  id: string;
+  email: string;
+  username: string | null;
+  name: string;
+  role: string;
+  disabled: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+/** Kimlik + parola doğrular (API admin_users). Başarısızsa null (401), diğer hatalarda throw. */
+export async function adminLogin(identifier: string, password: string): Promise<AdminUser | null> {
+  const res = await fetch(`${API_URL}/v1/admin/auth/login`, {
+    method: 'POST',
+    headers: headers(true),
+    body: JSON.stringify({ identifier, password }),
+    cache: 'no-store',
+  });
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`login → ${res.status}`);
+  const data = (await res.json()) as { user: AdminUser };
+  return data.user;
+}

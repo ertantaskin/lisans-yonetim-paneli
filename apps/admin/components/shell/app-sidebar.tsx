@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { KeyRound, LayoutDashboard } from 'lucide-react';
+import { KeyRound } from 'lucide-react';
 import { NAV } from './nav';
 import { NavUser } from './nav-user';
 import {
@@ -20,7 +20,7 @@ import {
 } from '../ui/sidebar';
 
 /** Uygulama kenar menüsü — marka + gruplu bilgi mimarisi + kullanıcı (§17). */
-export function AppSidebar() {
+export function AppSidebar({ user }: { user?: { name: string; email: string } }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     href !== '#' && (pathname === href || pathname.startsWith(href + '/'));
@@ -87,9 +87,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter>
-        <NavUser
-          user={{ name: 'Operatör', email: 'admin@lisanspaneli', icon: LayoutDashboard }}
-        />
+        <NavUser user={user ?? { name: 'Operatör', email: 'oturum yok' }} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

@@ -12,9 +12,11 @@ import { CommandPalette } from './command-palette';
  */
 export function AppShell({
   defaultOpen,
+  user,
   children,
 }: {
   defaultOpen: boolean;
+  user?: { name: string; email: string };
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -24,7 +26,7 @@ export function AppShell({
   return (
     <>
       <SidebarProvider defaultOpen={defaultOpen}>
-        <AppSidebar />
+        <AppSidebar user={user} />
         <SidebarInset>
           <SiteHeader />
           <main className="min-w-0 flex-1 px-4 py-5 md:px-6 md:py-6">{children}</main>
