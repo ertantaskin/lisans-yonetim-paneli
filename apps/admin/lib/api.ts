@@ -36,6 +36,20 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export async function apiSend<T>(method: 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method,
+    headers: headers(body !== undefined),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`${method} ${path} → ${res.status} ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 // ── Paylaşılan tipler (API yanıtları) ───────────────────────────────────────
 export interface OrderRow {
   id: string;

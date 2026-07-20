@@ -9,6 +9,7 @@ import {
   FileText,
   BarChart3,
   Settings,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -38,6 +39,10 @@ export const NAV: NavSection[] = [
       { label: 'Stok & Ürünler', href: '/stock', icon: Boxes },
       { label: 'Kanallar / Siteler', href: '/sites', icon: Globe },
     ],
+  },
+  {
+    title: 'Sistem',
+    items: [{ label: 'Yöneticiler', href: '/admins', icon: ShieldCheck }],
   },
   {
     title: 'Yakında',
