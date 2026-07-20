@@ -85,3 +85,9 @@ jobs:
 
       - name: Yarış testi — 100 sipariş × 50 stok → çifte atama = 0
         run: pnpm --filter @jetlisans/api test:race
+
+      - name: Test MASTER_KEY üret (entegrasyon testleri için)
+        run: echo "MASTER_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Entegrasyon testleri — createOrder/replacement/recall/KVKK/quota + audit regresyonları
+        run: pnpm --filter @jetlisans/api test:integration
