@@ -3,7 +3,9 @@ import type { HealthResponse } from '@jetlisans/shared';
 // Faz 0 iniş ekranı — API sağlık bağlantısını doğrular. Faz 1'de yerini
 // "Bekleyen Teslimatlar" ana ekranı alır (§13).
 async function getHealth(): Promise<HealthResponse | null> {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  // Sunucu-taraflı (Server Component) fetch: container ağı içinde api'ye gider.
+  // API_URL runtime'da okunur (NEXT_PUBLIC_ değil → build'e gömülmez).
+  const base = process.env.API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   try {
     const res = await fetch(`${base}/v1/health`, { cache: 'no-store' });
     if (!res.ok) return null;

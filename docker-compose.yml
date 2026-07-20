@@ -69,7 +69,11 @@ services:
       - api
     environment:
       NODE_ENV: ${NODE_ENV:-production}
-      NEXT_PUBLIC_API_URL: http://api:3001
+      # Sunucu-taraflı fetch (health) container ağı içinde api'ye gider —
+      # NEXT_PUBLIC_ DEĞİL, runtime'da okunur, build'e gömülmez.
+      API_URL: http://api:3001
+      # Tarayıcı-taraflı çağrılar (ileride) Caddy üzerinden dış URL'e gider.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.localhost}
     expose:
       - '3000'
 
@@ -83,8 +87,9 @@ services:
       - '80:80'
       - '443:443'
     environment:
-      API_DOMAIN: ${API_DOMAIN:-localhost}
+      # Varsayılanlar bile ayrık olmalı — aynı olursa Caddy crash-loop'a girer.
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-localhost}
+      API_DOMAIN: ${API_DOMAIN:-api.localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
