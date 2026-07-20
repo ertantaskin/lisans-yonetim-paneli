@@ -1,6 +1,23 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost } from '../../../lib/api';
+import { apiPost, type RevealResult } from '../../../lib/api';
+
+export interface RevealState {
+  assignmentId?: string;
+  result?: RevealResult;
+  error?: string;
+}
+
+/** Loglu reveal (§17): atamanın tam payload'ını/alanlarını getirir (audit'e düşer). */
+export async function revealAction(_prev: RevealState, formData: FormData): Promise<RevealState> {
+  const assignmentId = String(formData.get('assignmentId'));
+  try {
+    const result = await apiPost<RevealResult>(`/v1/admin/assignments/${assignmentId}/reveal`);
+    return { assignmentId, result };
+  } catch (e) {
+    return { assignmentId, error: e instanceof Error ? e.message : 'Reveal başarısız' };
+  }
+}
 
 /** "Kalanları Ata" — satırın kalan adedini atar (§13). */
 export async function completeLineAction(formData: FormData) {

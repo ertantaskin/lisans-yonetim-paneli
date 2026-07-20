@@ -78,9 +78,21 @@ export interface OrderDetail {
     lineId: string;
     status: string;
     units: number;
+    kind: string;
     maskedPayload: string;
+    /** account ürünlerde alan-alan maskeli görünüm; diğer tiplerde null. */
+    maskedFields: Array<{ key: string; label: string; value: string; secret: boolean }> | null;
     validUntil: string | null;
+    /** multi (MAK) kapasite görünürlüğü. */
+    maxUses: number;
+    useCount: number;
   }>;
   events: Array<{ id: string; type: string; message: string | null; createdAt: string }>;
   emails: Array<{ id: string; toEmail: string; subject: string; status: string }>;
+}
+
+/** POST /v1/admin/assignments/:id/reveal yanıtı (loglu). */
+export interface RevealResult {
+  payload: string;
+  fields: Array<{ key: string; label: string; value: string; secret: boolean }> | null;
 }

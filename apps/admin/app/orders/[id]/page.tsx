@@ -1,7 +1,18 @@
 import Link from 'next/link';
 import { apiGet, type OrderDetail } from '../../../lib/api';
 import { Card, PageHeader, StatusPill, Empty } from '../../../components/ui';
+import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
 import { completeLineAction, revokeAction } from './actions';
+
+/** ISO tarihi tr-TR biçimler; süresi geçmişse amber vurgu bilgisi döner. */
+function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
+  if (!iso) return { text: '—', expired: false };
+  const d = new Date(iso);
+  return {
+    text: d.toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }),
+    expired: d.getTime() < Date.now(),
+  };
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -99,35 +110,55 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   <tr className="border-b border-ink/10 text-left text-xs uppercase text-ink/50">
                     <th className="px-3 py-2 font-medium">Lisans (maskeli)</th>
                     <th className="px-3 py-2 font-medium">Adet</th>
+                    <th className="px-3 py-2 font-medium">Kullanım</th>
+                    <th className="px-3 py-2 font-medium">Geçerlilik</th>
                     <th className="px-3 py-2 font-medium">Durum</th>
                     <th className="px-3 py-2" />
                   </tr>
                 </thead>
                 <tbody>
-                  {assignments.map((a) => (
-                    <tr key={a.id} className="border-b border-ink/5">
-                      <td className="px-3 py-2.5 font-mono text-ink/80">{a.maskedPayload}</td>
-                      <td className="px-3 py-2.5 tabular-nums">{a.units}</td>
-                      <td className="px-3 py-2.5">
-                        <StatusPill status={a.status} />
-                      </td>
-                      <td className="px-3 py-2.5 text-right">
-                        {a.status === 'active' && (
-                          <form action={revokeAction}>
-                            <input type="hidden" name="assignmentId" value={a.id} />
-                            <input type="hidden" name="orderId" value={order.id} />
-                            <input type="hidden" name="reason" value="iade/iptal" />
-                            <button
-                              type="submit"
-                              className="rounded-md border border-danger/40 px-3 py-1 text-xs font-medium text-danger hover:bg-danger/10"
-                            >
-                              İptal
-                            </button>
-                          </form>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {assignments.map((a) => {
+                    const vu = fmtValidUntil(a.validUntil);
+                    const isMulti = a.maxUses > 1;
+                    return (
+                      <tr key={a.id} className="border-b border-ink/5 align-top">
+                        <td className="px-3 py-2.5">
+                          <AssignmentLicenseCell
+                            assignmentId={a.id}
+                            kind={a.kind}
+                            maskedPayload={a.maskedPayload}
+                            maskedFields={a.maskedFields}
+                          />
+                        </td>
+                        <td className="px-3 py-2.5 tabular-nums">{a.units}</td>
+                        <td className="px-3 py-2.5 tabular-nums text-ink/70">
+                          {isMulti ? `${a.useCount}/${a.maxUses} (kalan ${a.maxUses - a.useCount})` : '—'}
+                        </td>
+                        <td className={`px-3 py-2.5 text-xs ${vu.expired ? 'text-warning' : 'text-ink/70'}`}>
+                          {vu.text}
+                          {vu.expired && a.validUntil ? ' (doldu)' : ''}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <StatusPill status={a.status} />
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {a.status === 'active' && (
+                            <form action={revokeAction}>
+                              <input type="hidden" name="assignmentId" value={a.id} />
+                              <input type="hidden" name="orderId" value={order.id} />
+                              <input type="hidden" name="reason" value="iade/iptal" />
+                              <button
+                                type="submit"
+                                className="rounded-md border border-danger/40 px-3 py-1 text-xs font-medium text-danger hover:bg-danger/10"
+                              >
+                                İptal
+                              </button>
+                            </form>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
