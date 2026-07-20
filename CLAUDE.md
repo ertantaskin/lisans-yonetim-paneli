@@ -35,13 +35,26 @@ yalnızca etkileşim; durum renkleri sabit: yeşil=bitti, amber=aksiyon, kırmı
 
 ## Durum
 
-Tasarım (v2.6) tamamlandı. **Faz 0 CANLI ve uçtan uca doğrulandı**: `docker compose up`
-ile 5 servis (PG17+Redis7+API+admin+Caddy) ayakta; migration gerçek PG'ye uygulandı;
-`/v1/health` db+redis bağlı dönüyor; admin `https://localhost`, API `https://api.localhost`
-(Caddy iç TLS); **yarış testi canlı PG17'de geçti (100 sipariş×50 stok → çifte atama=0)**.
-Build/typecheck/lint/test yeşil. Kalan: VPS deploy (gerçek domain + Let's Encrypt + yedek).
-Sıradaki iş: **Faz 1 (MVP)** — atomik atama akışı, kısmi teslimat motoru, sipariş API'si,
-WP eklentisi. Yol haritası `docs/MIMARI.md` §18.
+Tasarım (v2.6) + **Faz 0 + Faz 1 backend/panel CANLI ve e2e doğrulandı** (WP eklentisi hariç).
+`docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta.
+
+**Çalışan Faz 1 (MVP):**
+- Kripto: AES-256-GCM envelope (per-payload DEK + master key), payload_hash dedupe
+- Auth: HMAC imza guard (nonce replay, ±300sn) + admin token; site oluşturma
+- Sipariş akışı: `POST /v1/orders` — idempotency, transaction içinde atomik atama
+  (SKIP LOCKED), kısmi teslimat (partial-auto/approval/all-or-nothing), 201/207/202
+- Tamamlama motoru: stok gelince partial-auto FIFO + manuel "Kalanları Ata"
+- Teslimat: `GET /v1/orders/:id/deliveries` (çözülmüş, aktif atamalar, site scope)
+- Mail: BullMQ + Mailpit, şablon, email_log; aksiyonlar: reveal(loglu)/suspend/revoke/resend
+- Geri kanal webhook: HMAC imzalı, outbox, WP eklentisine hazır (order.fulfilled/partial)
+- Admin UI (Next.js, sunucu-taraflı): Bekleyen Teslimatlar / Siparişler+detay / Stok / Siteler
+- audit_log: reveal/revoke/suspend/import/… ; migration 0000-0003
+
+**e2e doğrulandı** (gerçek stack): yarış (çifte atama=0), sipariş→atama→çözülmüş teslimat,
+idempotency, kısmi/all-or-nothing, tamamlama motoru, mail→Mailpit, webhook→imza doğrulama.
+
+Kalan: **WP eklentisi (Faz 3 — en son)**, VPS deploy (gerçek domain + Let's Encrypt + yedek),
+Faz 2 zenginleştirmeleri (hesap ürünleri, tedarik zinciri, self-servis). Yol haritası §18.
 
 ## Geliştirme
 

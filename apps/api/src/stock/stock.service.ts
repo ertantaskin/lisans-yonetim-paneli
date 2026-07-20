@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
-import { licenseItems, type NewLicenseItem } from '../db/schema';
+import { auditLog, licenseItems, type NewLicenseItem } from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 
@@ -51,6 +51,15 @@ export class StockService {
       .values(values)
       .onConflictDoNothing({ target: licenseItems.payloadHash })
       .returning({ id: licenseItems.id });
+
+    // Sebepli stok değişikliği audit'e düşer (§12).
+    await this.db.insert(auditLog).values({
+      action: 'import',
+      actor: 'panel:admin',
+      targetType: 'product',
+      targetId: productId,
+      meta: { imported: inserted.length, duplicates: items.length - inserted.length },
+    });
 
     // Stok girişinde tamamlama motorunu tetikle (§5 partial-auto FIFO).
     let autoCompleted = 0;

@@ -7,6 +7,7 @@ import { DbModule } from './db/db.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
 import { CryptoModule } from './crypto/crypto.module';
+import { QueueModule } from './queue/queue.module';
 import { SitesModule } from './sites/sites.module';
 import { ProductsModule } from './products/products.module';
 import { StockModule } from './stock/stock.module';
@@ -45,6 +46,7 @@ import { OrdersModule } from './orders/orders.module';
     DbModule,
     RedisModule,
     CryptoModule,
+    QueueModule,
     HealthModule,
     SitesModule,
     ProductsModule,

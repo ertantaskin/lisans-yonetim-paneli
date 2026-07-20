@@ -1,5 +1,6 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, inArray } from 'drizzle-orm';
+import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';
 import {
   assignments,
@@ -11,6 +12,8 @@ import {
   orders,
 } from '../db/schema';
 import { CryptoService } from '../crypto/crypto.service';
+import { REDIS } from '../redis/redis.module';
+import { MailService } from '../mail/mail.service';
 
 /** Payload'ı maskeler — son 5 hane görünür, gerisi • (reveal ayrı/loglu iş). */
 function mask(plain: string): string {
@@ -22,8 +25,70 @@ function mask(plain: string): string {
 export class AdminOrdersService {
   constructor(
     @Inject(DB) private readonly db: Database,
+    @Inject(REDIS) private readonly redis: Redis,
     private readonly crypto: CryptoService,
+    private readonly mail: MailService,
   ) {}
+
+  /** Loglu reveal (§17): maskeli lisansın tam payload'ını gösterir, audit'e düşer. */
+  async reveal(assignmentId: string, actor: string): Promise<{ payload: string }> {
+    const [row] = await this.db
+      .select({ payloadEnc: licenseItems.payloadEnc, licenseItemId: licenseItems.id })
+      .from(assignments)
+      .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+      .where(eq(assignments.id, assignmentId))
+      .limit(1);
+    if (!row) throw new NotFoundException('Atama bulunamadı');
+
+    await this.db.insert(auditLog).values({
+      action: 'reveal',
+      actor,
+      targetType: 'assignment',
+      targetId: assignmentId,
+      meta: { licenseItemId: row.licenseItemId },
+    });
+    return { payload: this.crypto.decrypt(row.payloadEnc) };
+  }
+
+  /** Geri alınabilir gizleme (§4). Müşteri görünümünde "inceleme altında". */
+  async suspend(assignmentId: string, suspend: boolean, actor: string) {
+    const [asg] = await this.db
+      .select()
+      .from(assignments)
+      .where(eq(assignments.id, assignmentId))
+      .limit(1);
+    if (!asg) throw new NotFoundException('Atama bulunamadı');
+
+    await this.db
+      .update(assignments)
+      .set({ status: suspend ? 'suspended' : 'active' })
+      .where(eq(assignments.id, assignmentId));
+    await this.db.insert(auditLog).values({
+      action: suspend ? 'suspend' : 'unsuspend',
+      actor,
+      targetType: 'assignment',
+      targetId: assignmentId,
+    });
+    return { assignmentId, status: suspend ? 'suspended' : 'active' };
+  }
+
+  /** Teslimat mailini tekrar gönder — 60sn debounce (§13). */
+  async resend(orderId: string): Promise<{ queued: boolean }> {
+    const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+
+    const key = `resend:${orderId}`;
+    const set = await this.redis.set(key, '1', 'EX', 60, 'NX');
+    if (set !== 'OK') {
+      throw new BadRequestException('Çok sık — 60 saniye içinde tekrar gönderilemez');
+    }
+    await this.mail.enqueueDelivery(
+      order.id,
+      order.customerEmail,
+      `Siparişiniz — ${order.remoteOrderId}`,
+    );
+    return { queued: true };
+  }
 
   async list(status?: string) {
     const base = this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(200);

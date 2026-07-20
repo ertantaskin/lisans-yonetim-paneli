@@ -32,6 +32,7 @@ export class SitesService {
     domain: string;
     type?: SiteType;
     senderEmail?: string;
+    webhookUrl?: string;
   }): Promise<CreatedSite> {
     const apiKey = `jl_${randomBytes(24).toString('hex')}`;
     const hmacSecret = randomBytes(32).toString('hex');
@@ -44,6 +45,7 @@ export class SitesService {
         apiKeyHash: hashApiKey(apiKey),
         hmacSecretEnc: this.crypto.encrypt(hmacSecret),
         senderEmail: input.senderEmail ?? null,
+        webhookUrl: input.webhookUrl ?? null,
         status: 'active',
       })
       .returning();

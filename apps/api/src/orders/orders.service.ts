@@ -21,8 +21,18 @@ import {
 import { CryptoService } from '../crypto/crypto.service';
 import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
+import { WebhookService } from '../webhook/webhook.service';
 import { releaseToAvailable } from '../assignment/assign';
 import { allocate } from '../assignment/allocate';
+
+/** Sipariş durumu → geri kanal olay tipi (§2). */
+function eventFor(status: string): string {
+  return status === 'fulfilled'
+    ? 'order.fulfilled'
+    : status === 'partial'
+      ? 'order.partially_fulfilled'
+      : 'order.pending_stock';
+}
 
 export interface CreateOrderOutcome {
   httpStatus: number;
@@ -36,6 +46,7 @@ export class OrdersService {
     private readonly products: ProductsService,
     private readonly crypto: CryptoService,
     private readonly mail: MailService,
+    private readonly webhook: WebhookService,
   ) {}
 
   /**
@@ -276,6 +287,13 @@ export class OrdersService {
         `Siparişiniz hazır — ${dto.remoteOrderId}`,
       );
     }
+
+    // Geri kanal webhook (§2) — WP eklentisi order meta'yı günceller.
+    await this.webhook.emit(site.id, result.orderId, eventFor(result.status), {
+      status: result.status,
+      remoteOrderId: dto.remoteOrderId,
+      lines: result.lines,
+    });
 
     return this.buildOutcome(result);
   }

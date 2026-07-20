@@ -14,6 +14,8 @@ export const sites = pgTable('sites', {
   hmacSecretEnc: text('hmac_secret_enc').notNull(),
   senderEmail: text('sender_email'),
   senderDomainVerified: boolean('sender_domain_verified').notNull().default(false),
+  /** Geri kanal webhook hedefi (WP eklentisi) — null ise webhook gönderilmez (§2). */
+  webhookUrl: text('webhook_url'),
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

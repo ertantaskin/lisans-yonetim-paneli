@@ -8,6 +8,7 @@ const CreateSiteBody = z.object({
   domain: z.string().min(1),
   type: z.enum(['woocommerce', 'marketplace', 'reseller']).optional(),
   senderEmail: z.string().email().optional(),
+  webhookUrl: z.string().url().optional(),
 });
 type CreateSiteBody = z.infer<typeof CreateSiteBody>;
 

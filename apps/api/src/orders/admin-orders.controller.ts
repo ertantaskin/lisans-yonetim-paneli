@@ -43,4 +43,26 @@ export class AdminOrdersController {
   revoke(@Param('id') id: string, @Body(new ZodBody(RevokeBody)) body: { reason: string }) {
     return this.adminOrders.revokeAssignment(id, body.reason, 'panel:admin');
   }
+
+  /** Loglu reveal (§17) — tam lisans payload'ı. */
+  @Post('assignments/:id/reveal')
+  reveal(@Param('id') id: string) {
+    return this.adminOrders.reveal(id, 'panel:admin');
+  }
+
+  @Post('assignments/:id/suspend')
+  suspend(@Param('id') id: string) {
+    return this.adminOrders.suspend(id, true, 'panel:admin');
+  }
+
+  @Post('assignments/:id/unsuspend')
+  unsuspend(@Param('id') id: string) {
+    return this.adminOrders.suspend(id, false, 'panel:admin');
+  }
+
+  /** Teslimat mailini tekrar gönder (60sn debounce). */
+  @Post('orders/:id/resend')
+  resend(@Param('id') id: string) {
+    return this.adminOrders.resend(id);
+  }
 }

@@ -4,6 +4,7 @@ import { DB, type Database } from '../db/db.module';
 import { assignments, fulfillmentEvents, orderLines, orders, products } from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
+import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
 
 export interface CompleteResult {
@@ -22,6 +23,7 @@ export class FulfillmentService {
     @Inject(DB) private readonly db: Database,
     private readonly products: ProductsService,
     private readonly mail: MailService,
+    private readonly webhook: WebhookService,
   ) {}
 
   /**
@@ -103,6 +105,12 @@ export class FulfillmentService {
           order.customerEmail,
           `Siparişiniz güncellendi — ${order.remoteOrderId}`,
         );
+        // Geri kanal webhook — tamamlanma sonrası güncel durum (§2).
+        const evt = order.status === 'fulfilled' ? 'order.fulfilled' : 'order.partially_fulfilled';
+        await this.webhook.emit(order.siteId, order.id, evt, {
+          status: order.status,
+          remoteOrderId: order.remoteOrderId,
+        });
       }
     }
 
