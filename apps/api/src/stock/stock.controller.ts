@@ -9,7 +9,8 @@ const ImportBody = z.object({
   items: z
     .array(
       z.object({
-        payload: z.string().min(1),
+        // key/code/custom: düz string. account: alan→değer nesnesi (veya JSON string).
+        payload: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
         expiresAt: z.string().datetime().optional(),
       }),
     )

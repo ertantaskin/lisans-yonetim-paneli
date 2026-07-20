@@ -11,25 +11,48 @@ import {
   licenseItems,
   orderLines,
   orders,
+  products,
 } from '../db/schema';
+import {
+  AccountPayloadSchema,
+  maskAccountFields,
+  maskSecret,
+  parseAccountPayload,
+  type PayloadField,
+} from '@jetlisans/shared';
 import { CryptoService } from '../crypto/crypto.service';
 import { REDIS } from '../redis/redis.module';
 import { MailService } from '../mail/mail.service';
 
-const MASK_TAIL = 4;
-const MASK_BODY = '••••••';
-
 /**
  * Payload'ı maskeler — SABİT genişlikli gövde + yalnız son 4 hane (reveal ayrı/loglu iş).
- *
- * Sertleştirme (§8): eski maske tireleri koruyarak segment uzunluklarını ve toplam
- * uzunluğu sızdırıyordu (key formatı parmak izi). Yeni maske sabit `••••••` gövde
- * kullanır → uzunluk/yapı sızmaz; yalnız kimlik için son 4 hane açık kalır. Kısa
- * payload'lar (≤4) tümüyle maskelenir.
+ * Uzunluk/segment yapısı sızmaz (§8). Tek kaynak: shared `maskSecret`.
  */
 export function mask(plain: string): string {
-  if (plain.length <= MASK_TAIL) return MASK_BODY;
-  return MASK_BODY + plain.slice(-MASK_TAIL);
+  return maskSecret(plain);
+}
+
+/**
+ * Bir atamanın maskeli gösterimini üretir. Hesap ürününde alan-alan maskeler (secret
+ * alanlar maskeli, kullanıcı adı gibi alanlar açık) → JSON yapısı/parola kuyruğu sızmaz.
+ * key/code/custom'da tek maskeli string döner.
+ */
+function maskPayload(
+  plain: string,
+  kind: string,
+  payloadSchema: unknown,
+): { maskedPayload: string; maskedFields: PayloadField[] | null } {
+  if (kind === 'account') {
+    const parsed = AccountPayloadSchema.safeParse(payloadSchema);
+    if (parsed.success) {
+      const masked = maskAccountFields(parseAccountPayload(parsed.data, plain));
+      return {
+        maskedPayload: masked.map((f) => `${f.label}: ${f.value}`).join(' · '),
+        maskedFields: masked,
+      };
+    }
+  }
+  return { maskedPayload: mask(plain), maskedFields: null };
 }
 
 @Injectable()
@@ -41,12 +64,25 @@ export class AdminOrdersService {
     private readonly mail: MailService,
   ) {}
 
-  /** Loglu reveal (§17): maskeli lisansın tam payload'ını gösterir, audit'e düşer. */
-  async reveal(assignmentId: string, actor: string): Promise<{ payload: string }> {
+  /**
+   * Loglu reveal (§17): maskeli lisansın tam payload'ını gösterir, audit'e düşer.
+   * Hesap ürününde alanları (fields) da çözülmüş değerlerle döner.
+   */
+  async reveal(
+    assignmentId: string,
+    actor: string,
+  ): Promise<{ payload: string; fields: PayloadField[] | null }> {
     const [row] = await this.db
-      .select({ payloadEnc: licenseItems.payloadEnc, licenseItemId: licenseItems.id })
+      .select({
+        payloadEnc: licenseItems.payloadEnc,
+        licenseItemId: licenseItems.id,
+        productKind: products.kind,
+        payloadSchema: products.payloadSchema,
+      })
       .from(assignments)
       .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
       .where(eq(assignments.id, assignmentId))
       .limit(1);
     if (!row) throw new NotFoundException('Atama bulunamadı');
@@ -56,11 +92,17 @@ export class AdminOrdersService {
       actor,
       targetType: 'assignment',
       targetId: assignmentId,
-      meta: { licenseItemId: row.licenseItemId },
+      meta: { licenseItemId: row.licenseItemId, kind: row.productKind },
     });
-    return {
-      payload: this.crypto.decrypt(row.payloadEnc, CryptoService.licenseItemAad(row.licenseItemId)),
-    };
+
+    const plain = this.crypto.decrypt(
+      row.payloadEnc,
+      CryptoService.licenseItemAad(row.licenseItemId),
+    );
+    const schema =
+      row.productKind === 'account' ? AccountPayloadSchema.safeParse(row.payloadSchema) : null;
+    const fields = schema?.success ? parseAccountPayload(schema.data, plain) : null;
+    return { payload: plain, fields };
   }
 
   /** Geri alınabilir gizleme (§4). Müşteri görünümünde "inceleme altında". */
@@ -143,9 +185,16 @@ export class AdminOrdersService {
         deliveredAt: assignments.deliveredAt,
         payloadEnc: licenseItems.payloadEnc,
         licenseItemId: licenseItems.id,
+        // multi kapasite görünürlüğü + hesap alan-maskesi için.
+        itemMaxUses: licenseItems.maxUses,
+        itemUseCount: licenseItems.useCount,
+        productKind: products.kind,
+        payloadSchema: products.payloadSchema,
       })
       .from(assignments)
       .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
       .where(eq(assignments.orderId, orderId));
 
     const events = await this.db
@@ -164,18 +213,28 @@ export class AdminOrdersService {
       order,
       lines,
       emails,
-      assignments: asgRows.map((a) => ({
-        id: a.id,
-        lineId: a.lineId,
-        status: a.status,
-        units: a.units,
-        validUntil: a.validUntil,
-        deliveredAt: a.deliveredAt,
-        licenseItemId: a.licenseItemId,
-        maskedPayload: mask(
-          this.crypto.decrypt(a.payloadEnc, CryptoService.licenseItemAad(a.licenseItemId)),
-        ),
-      })),
+      assignments: asgRows.map((a) => {
+        const plain = this.crypto.decrypt(
+          a.payloadEnc,
+          CryptoService.licenseItemAad(a.licenseItemId),
+        );
+        const masked = maskPayload(plain, a.productKind, a.payloadSchema);
+        return {
+          id: a.id,
+          lineId: a.lineId,
+          status: a.status,
+          units: a.units,
+          validUntil: a.validUntil,
+          deliveredAt: a.deliveredAt,
+          licenseItemId: a.licenseItemId,
+          kind: a.productKind,
+          maskedPayload: masked.maskedPayload,
+          maskedFields: masked.maskedFields,
+          // multi (MAK) kalan kapasite görünürlüğü.
+          maxUses: a.itemMaxUses,
+          useCount: a.itemUseCount,
+        };
+      }),
       events,
     };
   }

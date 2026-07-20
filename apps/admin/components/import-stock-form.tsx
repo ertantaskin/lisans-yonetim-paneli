@@ -46,13 +46,26 @@ export function ImportStockForm({ products }: { products: ProductRow[] }) {
 
       {state.error && <p className="text-sm text-danger">{state.error}</p>}
       {state.ok && state.result && (
-        <p className="text-sm text-success">
-          ✓ {state.result.imported} girdi, {state.result.duplicates} mükerrer atlandı
-          {state.result.autoCompleted > 0
-            ? `, ${state.result.autoCompleted} bekleyen sipariş tamamlandı`
-            : ''}
-          .
-        </p>
+        <div className="space-y-1 text-sm">
+          {/* imported=0 ise başarı DEĞİL — hiçbir şey girmedi (ör. hepsi reddedildi). */}
+          <p className={state.result.imported > 0 ? 'text-success' : 'text-warning'}>
+            {state.result.imported > 0 ? '✓ ' : '⚠ '}
+            {state.result.imported} girdi, {state.result.duplicates} mükerrer atlandı
+            {state.result.autoCompleted > 0
+              ? `, ${state.result.autoCompleted} bekleyen sipariş tamamlandı`
+              : ''}
+            .
+          </p>
+          {state.result.rejected > 0 && (
+            <p className="text-warning">
+              ⚠ {state.result.rejected} girdi doğrulamadan geçemedi (
+              {state.result.requested} istendi).
+              {state.result.rejections && state.result.rejections.length > 0
+                ? ` İlk hata: satır ${state.result.rejections[0].index + 1} — ${state.result.rejections[0].reason}`
+                : ''}
+            </p>
+          )}
+        </div>
       )}
     </form>
   );

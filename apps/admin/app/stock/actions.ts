@@ -5,7 +5,14 @@ import { apiPost } from '../../lib/api';
 export interface ImportState {
   ok: boolean;
   error?: string;
-  result?: { requested: number; imported: number; duplicates: number; autoCompleted: number };
+  result?: {
+    requested: number;
+    imported: number;
+    duplicates: number;
+    rejected: number;
+    rejections?: Array<{ index: number; reason: string }>;
+    autoCompleted: number;
+  };
 }
 
 export async function createProductAction(formData: FormData) {

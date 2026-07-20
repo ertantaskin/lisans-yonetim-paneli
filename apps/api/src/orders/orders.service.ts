@@ -5,8 +5,9 @@ import type {
   CreateOrderResponse,
   AssignmentResult,
   OrderLineResult,
+  DeliveryItem,
 } from '@jetlisans/shared';
-import { ORDER_HTTP_STATUS } from '@jetlisans/shared';
+import { ORDER_HTTP_STATUS, AccountPayloadSchema, parseAccountPayload } from '@jetlisans/shared';
 import { NotFoundException } from '@nestjs/common';
 import { DB, type Database } from '../db/db.module';
 import {
@@ -15,6 +16,7 @@ import {
   licenseItems,
   orderLines,
   orders,
+  products,
   type Order,
   type Site,
 } from '../db/schema';
@@ -70,23 +72,38 @@ export class OrdersService {
         validUntil: assignments.validUntil,
         payloadEnc: licenseItems.payloadEnc,
         licenseItemId: licenseItems.id,
+        productKind: products.kind,
+        payloadSchema: products.payloadSchema,
       })
       .from(assignments)
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
       .where(and(eq(assignments.orderId, order.id), eq(assignments.status, 'active')));
 
-    return {
-      orderId: order.id,
-      status: order.status,
-      deliveries: rows.map((r) => ({
+    const deliveries: DeliveryItem[] = rows.map((r) => {
+      const plain = this.crypto.decrypt(
+        r.payloadEnc,
+        CryptoService.licenseItemAad(r.licenseItemId),
+      );
+      const base = {
         assignmentId: r.assignmentId,
         remoteLineId: r.remoteLineId,
         units: r.units,
         validUntil: r.validUntil ? r.validUntil.toISOString() : null,
-        payload: this.crypto.decrypt(r.payloadEnc, CryptoService.licenseItemAad(r.licenseItemId)),
-      })),
-    };
+        kind: r.productKind,
+      };
+      // Hesap ürünü: şemaya göre alan-alan çöz (müşteri kendi lisansını tam görür).
+      const schema =
+        r.productKind === 'account' ? AccountPayloadSchema.safeParse(r.payloadSchema) : null;
+      if (schema?.success) {
+        return { ...base, payload: null, fields: parseAccountPayload(schema.data, plain) };
+      }
+      // key/code/custom (veya şeması bozuk account): düz string.
+      return { ...base, payload: plain, fields: null };
+    });
+
+    return { orderId: order.id, status: order.status, deliveries };
   }
 
   /**

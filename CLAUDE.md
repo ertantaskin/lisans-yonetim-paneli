@@ -81,8 +81,25 @@ regresyon + canlı smoke ile doğrulandı):
 
 Üretimde: SMTP_SECURE=true (TLS).
 
-Kalan: **VPS deploy** (gerçek domain + Let's Encrypt + yedek), Faz 2 zenginleştirmeleri
-(hesap ürünleri, tedarik zinciri, self-servis, WP eklentisi yönetim aksiyonları). Yol haritası §18.
+**Faz 2 — hesap ürünleri (yapılandırılmış payload) omurgası TAMAM** (Commit A; adversaryel
+review 3 bulgu düzeltildi; regresyon + canlı smoke 17/17 ile doğrulandı):
+
+- **Paylaşılan payload kontratı** (`packages/shared/src/domain/payload.ts`): `AccountPayloadSchema`
+  (alan tanımları: key/label/secret/required), `serializeAccountPayload` (kanonik JSON →
+  dedupe stabil; boş payload reddedilir), `parseAccountPayload`, `maskSecret` (key: son-4),
+  `maskAccountFields` (secret alan: KUYRUKSUZ maske — parola son-4 sızmaz).
+- **Ürün oluşturma**: `payloadSchema` + `onExpiry` + `warrantyDays` kabul; `multi⇒maxUses>1`
+  ve `account⇒payloadSchema` refine'ları.
+- **Stok import**: account yapılandırılmış payload doğrulama + kanonik serialize; `keyFormat`
+  regex; multi maxUses guard; reddedilenler `rejected`/`rejections` ile raporlanır (sessiz yutma yok).
+- **Teslimat/mail/mask/reveal**: `kind` + `fields` (account alan-alan); mail alan render;
+  admin mask/reveal alan-farkında (secret kuyruksuz).
+- **WP eklentisi**: My Account + meta box alan-alan render (`kind` üzerinden dallanır);
+  meta box `title`'daki TAM plaintext KALDIRILDI; `validUntil` yerelleştirilmiş.
+- **Admin stok formu**: `rejected` yüzeye çıkar (imported=0 → yeşil değil, uyarı).
+
+Kalan: süreli hesap **süre-bitişi motoru** (onExpiry/expired job — Commit B), multi görünürlük
++ account admin UI formu (Commit C); **VPS deploy**; tedarik zinciri, self-servis. Yol haritası §18.
 
 ## Geliştirme
 

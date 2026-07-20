@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderLineStatus, OrderStatus } from '../domain/enums';
+import { OrderLineStatus, OrderStatus, ProductKind } from '../domain/enums';
 
 /**
  * /v1/orders sözleşmesi (§4). Eklenti sipariş bildirir; panel atomik atama yapıp
@@ -65,3 +65,34 @@ export const ORDER_HTTP_STATUS = {
   mappingNotFound: 404,
   invalidSignature: 401,
 } as const;
+
+// ── Teslimat (GET /v1/orders/:id/deliveries) — müşteri görünümü (§4, §7) ─────
+/** Hesap ürünü teslimat alanı (değer dâhil; müşteri kendi lisansını görür). */
+export const DeliveryField = z.object({
+  key: z.string(),
+  label: z.string(),
+  value: z.string(),
+  secret: z.boolean(),
+});
+export type DeliveryField = z.infer<typeof DeliveryField>;
+
+export const DeliveryItem = z.object({
+  assignmentId: z.string().uuid(),
+  remoteLineId: z.string(),
+  units: z.number().int().positive(),
+  validUntil: z.string().datetime().nullable(),
+  /** Ürün tipi — WP eklentisi/admin buna göre render dallanır. */
+  kind: ProductKind,
+  /** key/code/custom için düz payload; account'ta null (fields kullanılır). */
+  payload: z.string().nullable(),
+  /** account için yapılandırılmış alanlar; diğer tiplerde null. */
+  fields: z.array(DeliveryField).nullable(),
+});
+export type DeliveryItem = z.infer<typeof DeliveryItem>;
+
+export const DeliveriesResponse = z.object({
+  orderId: z.string().uuid(),
+  status: OrderStatus,
+  deliveries: z.array(DeliveryItem),
+});
+export type DeliveriesResponse = z.infer<typeof DeliveriesResponse>;

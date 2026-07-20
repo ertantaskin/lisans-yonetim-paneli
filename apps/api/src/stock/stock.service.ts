@@ -1,18 +1,33 @@
 import { randomUUID } from 'node:crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
+import {
+  AccountPayloadSchema,
+  serializeAccountPayload,
+  type AccountPayloadSchema as AccountPayloadSchemaT,
+} from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
-import { auditLog, licenseItems, type NewLicenseItem } from '../db/schema';
+import { auditLog, licenseItems, type NewLicenseItem, type Product } from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
+
+export interface ImportRejection {
+  index: number;
+  reason: string;
+}
 
 export interface ImportResult {
   requested: number;
   imported: number;
   duplicates: number;
+  /** Doğrulamadan geçemeyen satırlar (account şema / keyFormat) — sessizce yutulmaz. */
+  rejected: number;
+  rejections: ImportRejection[];
   autoCompleted: number;
 }
+
+export type ImportItem = { payload: string | Record<string, unknown>; expiresAt?: string };
 
 @Injectable()
 export class StockService {
@@ -28,30 +43,58 @@ export class StockService {
    * engellenir (UNIQUE payload_hash → onConflictDoNothing). Çok kullanımlıkta (multi)
    * her key ürünün max_uses kapasitesiyle girer.
    */
-  async import(
-    productId: string,
-    items: Array<{ payload: string; expiresAt?: string }>,
-  ): Promise<ImportResult> {
+  async import(productId: string, items: ImportItem[]): Promise<ImportResult> {
     const product = await this.products.getById(productId);
-    const maxUses = product.usageMode === 'multi' ? (product.maxUses ?? 1) : 1;
 
-    // id'yi uygulamada üretiyoruz ki payload'ı bu satıra AAD ile bağlayabilelim
-    // (satır-taşıma engeli, §8). insert bu id ile yapılır.
-    const values: NewLicenseItem[] = items.map((it) => {
+    // Çok kullanımlık (MAK) ürün maxUses>1 ZORUNLU — aksi halde her key kapasite=1'e
+    // düşer ve MAK anahtarı tek satışta tükenir (sessiz misconfig'i erken yakala).
+    if (product.usageMode === 'multi' && (product.maxUses == null || product.maxUses <= 1)) {
+      throw new BadRequestException(
+        "usageMode='multi' ürün için max_uses > 1 tanımlı olmalı — import reddedildi.",
+      );
+    }
+    const maxUses = product.usageMode === 'multi' ? product.maxUses! : 1;
+
+    // Hesap ürünü için alan şemasını çöz (import doğrulaması + kanonik serialize).
+    const accountSchema = this.resolveAccountSchema(product);
+    const keyRegex = this.compileKeyFormat(product);
+
+    const rejections: ImportRejection[] = [];
+    const values: NewLicenseItem[] = [];
+
+    items.forEach((it, index) => {
+      let plaintext: string;
+      try {
+        plaintext = this.normalizePayload(it.payload, product, accountSchema, keyRegex);
+      } catch (err) {
+        rejections.push({ index, reason: err instanceof Error ? err.message : String(err) });
+        return;
+      }
+      // id'yi uygulamada üretiyoruz ki payload'ı bu satıra AAD ile bağlayabilelim
+      // (satır-taşıma engeli, §8). insert bu id ile yapılır.
       const id = randomUUID();
-      return {
+      values.push({
         id,
         productId,
-        payloadEnc: this.crypto.encrypt(it.payload, CryptoService.licenseItemAad(id)),
-        payloadHash: this.crypto.payloadHash(it.payload),
-        payloadSuffixHash: this.crypto.payloadSuffixHash(it.payload),
+        payloadEnc: this.crypto.encrypt(plaintext, CryptoService.licenseItemAad(id)),
+        payloadHash: this.crypto.payloadHash(plaintext),
+        payloadSuffixHash: this.crypto.payloadSuffixHash(plaintext),
         maxUses,
         expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
         status: 'available',
-      };
+      });
     });
 
-    if (values.length === 0) return { requested: 0, imported: 0, duplicates: 0, autoCompleted: 0 };
+    if (values.length === 0) {
+      return {
+        requested: items.length,
+        imported: 0,
+        duplicates: 0,
+        rejected: rejections.length,
+        rejections,
+        autoCompleted: 0,
+      };
+    }
 
     const inserted = await this.db
       .insert(licenseItems)
@@ -59,13 +102,16 @@ export class StockService {
       .onConflictDoNothing({ target: licenseItems.payloadHash })
       .returning({ id: licenseItems.id });
 
+    // duplicates = doğrulamayı geçip DB'de mükerrer (payload_hash) çıkanlar.
+    const duplicates = values.length - inserted.length;
+
     // Sebepli stok değişikliği audit'e düşer (§12).
     await this.db.insert(auditLog).values({
       action: 'import',
       actor: 'panel:admin',
       targetType: 'product',
       targetId: productId,
-      meta: { imported: inserted.length, duplicates: items.length - inserted.length },
+      meta: { imported: inserted.length, duplicates, rejected: rejections.length },
     });
 
     // Stok girişinde tamamlama motorunu tetikle (§5 partial-auto FIFO).
@@ -77,9 +123,68 @@ export class StockService {
     return {
       requested: items.length,
       imported: inserted.length,
-      duplicates: items.length - inserted.length,
+      duplicates,
+      rejected: rejections.length,
+      rejections,
       autoCompleted,
     };
+  }
+
+  /** Ürün account ise payloadSchema'yı doğrulayıp döner; değilse null. */
+  private resolveAccountSchema(product: Product): AccountPayloadSchemaT | null {
+    if (product.kind !== 'account') return null;
+    const parsed = AccountPayloadSchema.safeParse(product.payloadSchema);
+    if (!parsed.success) {
+      throw new BadRequestException(
+        "kind='account' ürünün payload_schema'sı geçersiz — import reddedildi.",
+      );
+    }
+    return parsed.data;
+  }
+
+  /** keyFormat regex'ini derler (bozuk regex → import reddedilir, sessiz kabul yok). */
+  private compileKeyFormat(product: Product): RegExp | null {
+    if (!product.keyFormat) return null;
+    try {
+      return new RegExp(product.keyFormat);
+    } catch {
+      throw new BadRequestException(`Ürün key_format regex'i geçersiz: ${product.keyFormat}`);
+    }
+  }
+
+  /**
+   * Import satırını depolanacak KANONİK düz metne çevirir + doğrular.
+   * - account: girdi (nesne veya JSON string) şemaya göre doğrulanıp kanonik JSON olur.
+   * - key/code/custom: düz string; keyFormat varsa regex'e uyması şart.
+   * @throws satır geçersizse (çağıran rejections'a düşürür)
+   */
+  private normalizePayload(
+    payload: string | Record<string, unknown>,
+    product: Product,
+    accountSchema: AccountPayloadSchemaT | null,
+    keyRegex: RegExp | null,
+  ): string {
+    if (accountSchema) {
+      // account: nesne bekle; string gelirse JSON parse et.
+      let input: unknown = payload;
+      if (typeof payload === 'string') {
+        try {
+          input = JSON.parse(payload);
+        } catch {
+          throw new Error('Hesap payload geçerli JSON değil');
+        }
+      }
+      return serializeAccountPayload(accountSchema, input);
+    }
+
+    // account olmayan: düz string bekle.
+    if (typeof payload !== 'string') {
+      throw new Error('Bu ürün tipi için payload düz string olmalı');
+    }
+    if (keyRegex && !keyRegex.test(payload)) {
+      throw new Error('Payload key_format desenine uymuyor');
+    }
+    return payload;
   }
 
   /** Ürün başına anlık 'available' stok (single: satır sayısı; multi: kalan kapasite). */

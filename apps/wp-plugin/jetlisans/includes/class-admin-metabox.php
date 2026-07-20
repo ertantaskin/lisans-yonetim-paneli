@@ -26,6 +26,12 @@ class Jetlisans_Admin_Metabox {
         add_meta_box('jetlisans_deliveries', 'Jetlisans — Lisans Teslimatı', [$this, 'render'], $screen, 'side', 'high');
     }
 
+    /** Panel mask formatıyla hizalı: sabit gövde + son 4 hane (uzunluk/yapı sızmaz). */
+    private static function mask($value) {
+        $value = (string) $value;
+        return strlen($value) <= 4 ? '••••••' : '••••••' . substr($value, -4);
+    }
+
     public function render($post_or_order) {
         $order = ($post_or_order instanceof WC_Order) ? $post_or_order : wc_get_order($post_or_order->ID);
         if (!$order) return;
@@ -48,10 +54,26 @@ class Jetlisans_Admin_Metabox {
         } else {
             echo '<ul style="margin:0;padding-left:16px">';
             foreach ($deliveries as $d) {
-                $p = isset($d['payload']) ? $d['payload'] : '';
-                // Maskeli göster (son 5 hane), tam değer başlık ipucunda.
-                $masked = strlen($p) > 5 ? str_repeat('•', max(0, strlen($p) - 5)) . substr($p, -5) : $p;
-                echo '<li><code title="' . esc_attr($p) . '">' . esc_html($masked) . '</code></li>';
+                $is_account = isset($d['kind']) ? ($d['kind'] === 'account') : (!empty($d['fields']));
+                // Hesap ürünü: alan-alan; secret alanlar KUYRUKSUZ maskeli, kullanıcı adı açık.
+                if ($is_account && !empty($d['fields']) && is_array($d['fields'])) {
+                    foreach ($d['fields'] as $f) {
+                        $label = isset($f['label']) ? $f['label'] : '';
+                        $val = isset($f['value']) ? $f['value'] : '';
+                        // secret alan: son-4 sızdırma → sabit gövde; açık alan: tam değer.
+                        $show = !empty($f['secret']) ? '••••••' : $val;
+                        echo '<li><strong>' . esc_html($label) . ':</strong> <code>' . esc_html($show) . '</code></li>';
+                    }
+                } elseif ($is_account) {
+                    echo '<li><em>Teslimat hazırlanıyor.</em></li>';
+                } else {
+                    $p = isset($d['payload']) ? $d['payload'] : '';
+                    // SABİT genişlikli maske (panel ile hizalı); TAM değer DOM'a YAZILMAZ (title yok).
+                    echo '<li><code>' . esc_html(self::mask($p)) . '</code></li>';
+                }
+                if (!empty($d['validUntil'])) {
+                    echo '<li style="list-style:none;margin-left:-16px"><small>' . esc_html__('Geçerlilik:', 'jetlisans') . ' ' . esc_html(Jetlisans_My_Account::format_date($d['validUntil'])) . '</small></li>';
+                }
             }
             echo '</ul>';
         }

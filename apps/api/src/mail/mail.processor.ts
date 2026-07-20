@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import { and, eq } from 'drizzle-orm';
 import nodemailer, { type Transporter } from 'nodemailer';
+import { AccountPayloadSchema, parseAccountPayload } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import {
@@ -68,6 +69,8 @@ export class MailProcessor extends WorkerHost {
           licenseItemId: licenseItems.id,
           productName: products.name,
           productId: orderLines.productId,
+          productKind: products.kind,
+          payloadSchema: products.payloadSchema,
         })
         .from(assignments)
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
@@ -83,13 +86,22 @@ export class MailProcessor extends WorkerHost {
 
       const itemsBlock = rows
         .map((r) => {
-          const payload = this.crypto.decrypt(
+          const plain = this.crypto.decrypt(
             r.payloadEnc,
             CryptoService.licenseItemAad(r.licenseItemId),
           );
           const label = r.productName ?? 'Ürün';
           const qty = r.units > 1 ? ` (${r.units} adet)` : '';
-          return `• ${label}${qty}: ${payload}`;
+          // Hesap ürünü: alan-alan render (Kullanıcı adı: x / Parola: y).
+          const schema =
+            r.productKind === 'account' ? AccountPayloadSchema.safeParse(r.payloadSchema) : null;
+          if (schema?.success) {
+            const fields = parseAccountPayload(schema.data, plain)
+              .map((f) => `    ${f.label}: ${f.value}`)
+              .join('\n');
+            return `• ${label}${qty}:\n${fields}`;
+          }
+          return `• ${label}${qty}: ${plain}`;
         })
         .join('\n');
 
