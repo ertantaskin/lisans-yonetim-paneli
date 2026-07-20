@@ -116,10 +116,16 @@ export class MailProcessor extends WorkerHost {
         items: itemsBlock,
       };
 
+      // Sandbox (test modu, §14): site.sandbox=true ise gerçek müşteriye mail GİTMEZ —
+      // alıcı yöneticiye (MAIL_FROM) yönlendirilir + konu başına '[TEST MODU] ' eklenir.
+      const mailFrom = this.config.getOrThrow<string>('MAIL_FROM');
+      const sandbox = site?.sandbox === true;
+      const subject = render(tpl.subject, vars);
+
       const info = await this.mailer().sendMail({
-        from: this.config.getOrThrow<string>('MAIL_FROM'),
-        to: order.customerEmail,
-        subject: render(tpl.subject, vars),
+        from: mailFrom,
+        to: sandbox ? mailFrom : order.customerEmail,
+        subject: sandbox ? `[TEST MODU] ${subject}` : subject,
         text: render(tpl.body, vars),
       });
 

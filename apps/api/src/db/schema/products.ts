@@ -44,7 +44,11 @@ export const products = pgTable(
     warrantyDays: integer('warranty_days'),
     /** Stok girişinde satır doğrulama regex'i (§13 "Onayla ve Dağıt"). */
     keyFormat: text('key_format'),
-    lowStockThreshold: integer('low_stock_threshold').notNull().default(0),
+    /**
+     * Düşük stok uyarı eşiği (§12). null = uyarı KAPALI; >=0 ise availableStock <= eşik
+     * olduğunda 'low_stock' bildirimi üretilir (dedupe'lu). Detection `IS NOT NULL` filtreler.
+     */
+    lowStockThreshold: integer('low_stock_threshold'),
 
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

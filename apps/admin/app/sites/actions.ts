@@ -17,9 +17,23 @@ export async function createSiteAction(
   if (!domain) return { ok: false, error: 'Domain zorunlu' };
   try {
     const senderEmail = String(formData.get('senderEmail') || '').trim();
+    // Günlük satış kotası (ops.) — boş bırakılırsa limitsiz (null). Negatif/0 reddedilir.
+    const quotaRaw = String(formData.get('salesDailyQuota') || '').trim();
+    let salesDailyQuota: number | null = null;
+    if (quotaRaw) {
+      const n = Number(quotaRaw);
+      if (!Number.isInteger(n) || n < 1) {
+        return { ok: false, error: 'Günlük satış kotası pozitif tam sayı olmalı' };
+      }
+      salesDailyQuota = n;
+    }
+    // Sandbox (test modu) — checkbox işaretliyse mailler gerçek müşteriye GİTMEZ.
+    const sandbox = formData.get('sandbox') != null;
     const site = await apiPost<CreateSiteState['site']>('/v1/admin/sites', {
       domain,
       ...(senderEmail ? { senderEmail } : {}),
+      ...(salesDailyQuota != null ? { salesDailyQuota } : {}),
+      ...(sandbox ? { sandbox: true } : {}),
     });
     revalidatePath('/sites');
     return { ok: true, site };

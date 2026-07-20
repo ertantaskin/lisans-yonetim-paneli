@@ -1,0 +1,76 @@
+import { createHash } from 'node:crypto';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { sql } from 'drizzle-orm';
+import { DB, type Database } from '../db/db.module';
+
+export interface AnonymizeResult {
+  anonymizedOrders: number;
+  anonymizedReplacements: number;
+  redactedEmail: string;
+}
+
+/**
+ * KVKK/GDPR anonimleştirme (§9). "Unutulma hakkı" için müşterinin PII'sini (e-posta)
+ * tüm siparişlerden ve değişim taleplerinden geri döndürülemez şekilde maskeler; customers
+ * profil satırını siler. Sipariş/atama BÜTÜNLÜĞÜ korunur — kayıt SİLİNMEZ, yalnız PII
+ * maskelenir (finansal/operasyonel iz ve mutabakat bozulmaz). Tek yönlü işlem (GET yok).
+ */
+@Injectable()
+export class ComplianceService {
+  private readonly logger = new Logger(ComplianceService.name);
+
+  constructor(@Inject(DB) private readonly db: Database) {}
+
+  /** E-postadan deterministik kısa maske üretir (aynı kişi = aynı maske → satır ilişkisi izlenebilir kalır). */
+  private redactedFor(email: string): string {
+    const hash = createHash('sha256').update(email.trim().toLowerCase(), 'utf8').digest('hex').slice(0, 12);
+    return `anon-${hash}@redacted.invalid`;
+  }
+
+  /**
+   * Verilen e-postaya ait tüm PII'yi maskeler ve customers satırını siler. Idempotent:
+   * zaten maskelenmiş e-posta tekrar çağrılırsa 0 satır etkiler. Transaction içinde atomik.
+   * @param email Anonimleştirilecek müşteri e-postası
+   * @param actor Audit için aktör (ör. 'panel:admin')
+   */
+  async anonymize(email: string, actor: string): Promise<AnonymizeResult> {
+    const normalized = email.trim().toLowerCase();
+    const redacted = this.redactedFor(normalized);
+
+    return this.db.transaction(async (tx) => {
+      // orders.customer_email maskele (lowercase eşleştir; zaten maskeliyse etkilenmez).
+      const orderRows = await tx.execute<{ id: string }>(sql`
+        UPDATE orders
+        SET customer_email = ${redacted}, updated_at = now()
+        WHERE lower(customer_email) = ${normalized}
+        RETURNING id;
+      `);
+      const anonymizedOrders = (orderRows as unknown as Array<{ id: string }>).length;
+
+      // replacement_requests.customer_email maskele.
+      const replRows = await tx.execute<{ id: string }>(sql`
+        UPDATE replacement_requests
+        SET customer_email = ${redacted}, updated_at = now()
+        WHERE lower(customer_email) = ${normalized}
+        RETURNING id;
+      `);
+      const anonymizedReplacements = (replRows as unknown as Array<{ id: string }>).length;
+
+      // customers profil satırını sil (kalıcı meta — etiket/not — PII taşır).
+      await tx.execute(sql`DELETE FROM customers WHERE lower(email) = ${normalized};`);
+
+      // KVKK silme isteği kritik aksiyon → audit'e düş (§9). Ham e-posta LOGLANMAZ; yalnız maske.
+      // NOT: audit_action enum'una 'anonymize' değeri EKLENMELİ (orkestratör: shared + enums.ts + migration).
+      const auditMeta = JSON.stringify({ anonymizedOrders, anonymizedReplacements });
+      await tx.execute(sql`
+        INSERT INTO audit_log (action, actor, target_type, target_id, meta)
+        VALUES ('anonymize', ${actor}, 'customer', ${redacted}, ${auditMeta}::jsonb);
+      `);
+
+      this.logger.warn(
+        `KVKK anonimleştirme: ${anonymizedOrders} sipariş + ${anonymizedReplacements} değişim maskelendi (aktör=${actor})`,
+      );
+      return { anonymizedOrders, anonymizedReplacements, redactedEmail: redacted };
+    });
+  }
+}

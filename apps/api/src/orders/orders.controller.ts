@@ -6,6 +6,7 @@ import { CurrentSite } from '../auth/current-site.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import type { Site } from '../db/schema';
 import { OrdersService } from './orders.service';
+import { SalesQuotaGuard } from './sales-quota.guard';
 
 /** Site-facing sipariş uçları (§4). HMAC imzalı. */
 @Controller('orders')
@@ -13,7 +14,9 @@ import { OrdersService } from './orders.service';
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
+  // SalesQuotaGuard: HmacGuard'dan SONRA (kota ön-kontrolü). createOrder gövdesi DEĞİŞMEZ.
   @Post()
+  @UseGuards(SalesQuotaGuard)
   async create(
     @CurrentSite() site: Site,
     @Body(new ZodBody(CreateOrderRequest)) body: CreateOrderRequest,

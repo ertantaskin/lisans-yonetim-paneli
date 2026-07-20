@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { siteTypeEnum } from './enums';
 
 /**
@@ -23,6 +23,16 @@ export const sites = pgTable('sites', {
   senderDomainVerified: boolean('sender_domain_verified').notNull().default(false),
   /** Geri kanal webhook hedefi (WP eklentisi) — null ise webhook gönderilmez (§2). */
   webhookUrl: text('webhook_url'),
+  /**
+   * Günlük satış kotası (§5) — bu site günde en fazla bu kadar sipariş push edebilir.
+   * null = limitsiz. SalesQuotaGuard bugünkü sipariş sayısını sayar; aşımda 429 döner.
+   */
+  salesDailyQuota: integer('sales_daily_quota'),
+  /**
+   * Sandbox (test modu, §14). true ise teslimat maili gerçek müşteriye GİTMEZ;
+   * yöneticiye (MAIL_FROM) yönlendirilir + konu başına '[TEST MODU] ' eklenir.
+   */
+  sandbox: boolean('sandbox').notNull().default(false),
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
@@ -9,8 +9,17 @@ const CreateSiteBody = z.object({
   type: z.enum(['woocommerce', 'marketplace', 'reseller']).optional(),
   senderEmail: z.string().email().optional(),
   webhookUrl: z.string().url().optional(),
+  // Operasyon ayarları (§5/§14) — opsiyonel. null = limitsiz kota.
+  salesDailyQuota: z.number().int().positive().nullable().optional(),
+  sandbox: z.boolean().optional(),
 });
 type CreateSiteBody = z.infer<typeof CreateSiteBody>;
+
+const UpdateSiteBody = z.object({
+  salesDailyQuota: z.number().int().positive().nullable().optional(),
+  sandbox: z.boolean().optional(),
+});
+type UpdateSiteBody = z.infer<typeof UpdateSiteBody>;
 
 /** Admin: site (tenant) yönetimi. ADMIN_TOKEN gerektirir. */
 @Controller('admin/sites')
@@ -27,6 +36,15 @@ export class SitesController {
   @Get()
   list() {
     return this.sites.list();
+  }
+
+  /** Operasyon ayarları güncelle (§5/§14): günlük satış kotası + sandbox. Audit'e düşer. */
+  @Patch(':id')
+  update(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodBody(UpdateSiteBody)) body: UpdateSiteBody,
+  ) {
+    return this.sites.update(id, body);
   }
 
   /**

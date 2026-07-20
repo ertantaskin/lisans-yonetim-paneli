@@ -28,6 +28,30 @@ export function CreateSiteForm() {
             className="w-56"
           />
         </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="cs-quota">Günlük satış kotası (ops.)</Label>
+          <Input
+            id="cs-quota"
+            name="salesDailyQuota"
+            type="number"
+            min={1}
+            step={1}
+            placeholder="limitsiz"
+            className="w-40"
+          />
+        </div>
+        <label
+          htmlFor="cs-sandbox"
+          className="flex h-9 items-center gap-2 text-sm text-foreground/80"
+        >
+          <input
+            id="cs-sandbox"
+            name="sandbox"
+            type="checkbox"
+            className="size-4 rounded border-border accent-primary"
+          />
+          Sandbox (test modu)
+        </label>
         <Button type="submit" disabled={pending}>
           {pending ? 'Oluşturuluyor…' : 'Site Oluştur'}
         </Button>

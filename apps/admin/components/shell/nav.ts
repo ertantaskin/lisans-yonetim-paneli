@@ -8,8 +8,13 @@ import {
   LifeBuoy,
   FileText,
   BarChart3,
+  Bell,
+  Truck,
+  ClipboardList,
+  PackageCheck,
   Settings,
   ShieldCheck,
+  ShieldAlert,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -43,6 +48,14 @@ export const NAV: NavSection[] = [
     ],
   },
   {
+    title: 'Tedarik Zinciri',
+    items: [
+      { label: 'Tedarikçiler', href: '/suppliers', icon: Truck },
+      { label: 'Satın Alma', href: '/purchase-orders', icon: ClipboardList },
+      { label: 'Partiler', href: '/batches', icon: PackageCheck },
+    ],
+  },
+  {
     title: 'Müşteri İlişkileri',
     items: [
       { label: 'Destek', href: '/support', icon: LifeBuoy },
@@ -50,14 +63,23 @@ export const NAV: NavSection[] = [
     ],
   },
   {
+    title: 'Raporlar & İzleme',
+    items: [
+      { label: 'Raporlar', href: '/reports', icon: BarChart3 },
+      { label: 'Bildirimler', href: '/notifications', icon: Bell },
+    ],
+  },
+  {
     title: 'Sistem',
-    items: [{ label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true }],
+    items: [
+      { label: 'Güvenlik', href: '/security', icon: ShieldAlert },
+      { label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true },
+    ],
   },
   {
     title: 'Yakında',
     items: [
       { label: 'Şablonlar', href: '#', icon: FileText, soon: true },
-      { label: 'Raporlar', href: '#', icon: BarChart3, soon: true },
       { label: 'Ayarlar', href: '#', icon: Settings, soon: true },
     ],
   },

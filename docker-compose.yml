@@ -73,6 +73,10 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: 1025
       MAIL_FROM: ${MAIL_FROM:-Jetlisans <teslimat@jetlisans.local>}
+      # Telegram bildirimi (§13/§18) — düşük stok + kritik uyarılar. İKİSİ de SET EDİLİRSE
+      # aktif; boşsa bildirim no-op (env-gated). Bot: @BotFather, chat id: @userinfobot.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       SENTRY_DSN: ${SENTRY_DSN}
     # Açılışta migration'ları uygula, sonra servisi başlat.
     command: ['sh', '-c', 'node dist/db/migrate.js && node dist/main.js']

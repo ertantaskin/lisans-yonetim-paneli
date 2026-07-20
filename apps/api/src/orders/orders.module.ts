@@ -8,11 +8,12 @@ import { OrdersService } from './orders.service';
 import { AdminOrdersController } from './admin-orders.controller';
 import { AdminOrdersService } from './admin-orders.service';
 import { FulfillmentService } from './fulfillment.service';
+import { SalesQuotaGuard } from './sales-quota.guard';
 
 @Module({
   imports: [AuthModule, ProductsModule, MailModule, WebhookModule],
   controllers: [OrdersController, AdminOrdersController],
-  providers: [OrdersService, AdminOrdersService, FulfillmentService],
+  providers: [OrdersService, AdminOrdersService, FulfillmentService, SalesQuotaGuard],
   exports: [OrdersService, AdminOrdersService, FulfillmentService],
 })
 export class OrdersModule {}

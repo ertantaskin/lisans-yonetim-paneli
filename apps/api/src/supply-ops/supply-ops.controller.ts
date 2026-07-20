@@ -1,0 +1,47 @@
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { z } from 'zod';
+import { AdminGuard } from '../auth/admin.guard';
+import { ZodBody } from '../common/zod-validation.pipe';
+import { SupplyOpsService } from './supply-ops.service';
+
+const RecallBody = z.object({ reason: z.string().min(1) });
+type RecallBody = z.infer<typeof RecallBody>;
+
+const CreateAdjustmentBody = z.object({
+  productId: z.string().uuid(),
+  licenseItemId: z.string().uuid().optional(),
+  action: z.enum(['void', 'damage', 'correct', 'recall']),
+  qty: z.number().int().nonnegative().default(0),
+  reason: z.string().min(1),
+});
+type CreateAdjustmentBody = z.infer<typeof CreateAdjustmentBody>;
+
+/**
+ * Admin: tedarik operasyonları (§12) — parti geri çekme + sebepli stok düzeltme.
+ * ADMIN_TOKEN gerektirir. Kritik aksiyonlar sebep + audit ile yazılır.
+ */
+@Controller('admin')
+@UseGuards(AdminGuard)
+export class SupplyOpsController {
+  constructor(private readonly supplyOps: SupplyOpsService) {}
+
+  @Get('batches')
+  listBatches() {
+    return this.supplyOps.listBatches();
+  }
+
+  @Post('batches/:id/recall')
+  recall(@Param('id') id: string, @Body(new ZodBody(RecallBody)) body: RecallBody) {
+    return this.supplyOps.recallBatch(id, body.reason, 'panel:admin');
+  }
+
+  @Post('stock-adjustments')
+  createAdjustment(@Body(new ZodBody(CreateAdjustmentBody)) body: CreateAdjustmentBody) {
+    return this.supplyOps.createAdjustment(body, 'panel:admin');
+  }
+
+  @Get('stock-adjustments')
+  listAdjustments(@Query('productId') productId?: string) {
+    return this.supplyOps.listAdjustments(productId);
+  }
+}

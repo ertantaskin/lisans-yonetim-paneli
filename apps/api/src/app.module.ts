@@ -15,6 +15,11 @@ import { StockModule } from './stock/stock.module';
 import { OrdersModule } from './orders/orders.module';
 import { ReplacementsModule } from './replacements/replacements.module';
 import { CustomersModule } from './customers/customers.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { ReportsModule } from './reports/reports.module';
+import { ProcurementModule } from './procurement/procurement.module';
+import { SupplyOpsModule } from './supply-ops/supply-ops.module';
+import { SecurityModule } from './security/security.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 
 @Module({
@@ -59,6 +64,11 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     OrdersModule,
     ReplacementsModule,
     CustomersModule,
+    NotificationsModule,
+    ReportsModule,
+    ProcurementModule,
+    SupplyOpsModule,
+    SecurityModule,
     MaintenanceModule,
   ],
 })

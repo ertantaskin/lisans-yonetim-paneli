@@ -60,4 +60,7 @@ export const auditActionEnum = pgEnum('audit_action', [
   'login',
   'assign',
   'resend',
+  // §8 site yönetimi + §9 KVKK anonimleştirme (Dalga 5).
+  'site_update',
+  'anonymize',
 ]);

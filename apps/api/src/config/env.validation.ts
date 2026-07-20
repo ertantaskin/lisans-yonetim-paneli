@@ -45,6 +45,14 @@ export const envSchema = z.object({
     .default('false'),
   MAIL_FROM: z.string().default('Jetlisans <teslimat@jetlisans.local>'),
 
+  /**
+   * Telegram bildirim (§12) — düşük stok / kritik olaylar için best-effort push.
+   * İKİSİ de verilmezse bildirim gönderimi no-op (özellik env-gated, SMTP deseni gibi).
+   * NOT: docker-compose `${VAR:-}` boş string geçer → boş'u undefined'a çeviriyoruz.
+   */
+  TELEGRAM_BOT_TOKEN: emptyToUndefined(z.string().optional()),
+  TELEGRAM_CHAT_ID: emptyToUndefined(z.string().optional()),
+
   SENTRY_DSN: z.string().optional(),
 });
 
