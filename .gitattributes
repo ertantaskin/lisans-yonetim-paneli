@@ -1,0 +1,38 @@
+# Satır sonlarını normalize et — depoda daima LF.
+# Windows'ta geliştirip Linux container'da çalıştırdığımız için kritik:
+# Dockerfile / shell / compose komutları CRLF ile Linux'ta bozulur.
+* text=auto eol=lf
+
+# Kesin LF (container/betik/konfig)
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sql   text eol=lf
+*.sh    text eol=lf
+*.css   text eol=lf
+*.md    text eol=lf
+*.env   text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+Caddyfile       text eol=lf
+.gitignore      text eol=lf
+.dockerignore   text eol=lf
+.editorconfig   text eol=lf
+
+# İkili dosyalar — dokunma
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary
+
+# pnpm lockfile — diff/merge gürültüsü olmasın
+pnpm-lock.yaml -diff linguist-generated
