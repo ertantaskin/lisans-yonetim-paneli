@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { desc, eq, inArray, sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
 import { DB, type Database } from '../db/db.module';
@@ -16,10 +16,20 @@ import { CryptoService } from '../crypto/crypto.service';
 import { REDIS } from '../redis/redis.module';
 import { MailService } from '../mail/mail.service';
 
-/** Payload'ı maskeler — son 5 hane görünür, gerisi • (reveal ayrı/loglu iş). */
-function mask(plain: string): string {
-  if (plain.length <= 5) return '•'.repeat(plain.length);
-  return plain.slice(0, -5).replace(/[^-]/g, '•') + plain.slice(-5);
+const MASK_TAIL = 4;
+const MASK_BODY = '••••••';
+
+/**
+ * Payload'ı maskeler — SABİT genişlikli gövde + yalnız son 4 hane (reveal ayrı/loglu iş).
+ *
+ * Sertleştirme (§8): eski maske tireleri koruyarak segment uzunluklarını ve toplam
+ * uzunluğu sızdırıyordu (key formatı parmak izi). Yeni maske sabit `••••••` gövde
+ * kullanır → uzunluk/yapı sızmaz; yalnız kimlik için son 4 hane açık kalır. Kısa
+ * payload'lar (≤4) tümüyle maskelenir.
+ */
+export function mask(plain: string): string {
+  if (plain.length <= MASK_TAIL) return MASK_BODY;
+  return MASK_BODY + plain.slice(-MASK_TAIL);
 }
 
 @Injectable()
@@ -48,7 +58,9 @@ export class AdminOrdersService {
       targetId: assignmentId,
       meta: { licenseItemId: row.licenseItemId },
     });
-    return { payload: this.crypto.decrypt(row.payloadEnc) };
+    return {
+      payload: this.crypto.decrypt(row.payloadEnc, CryptoService.licenseItemAad(row.licenseItemId)),
+    };
   }
 
   /** Geri alınabilir gizleme (§4). Müşteri görünümünde "inceleme altında". */
@@ -160,7 +172,9 @@ export class AdminOrdersService {
         validUntil: a.validUntil,
         deliveredAt: a.deliveredAt,
         licenseItemId: a.licenseItemId,
-        maskedPayload: mask(this.crypto.decrypt(a.payloadEnc)),
+        maskedPayload: mask(
+          this.crypto.decrypt(a.payloadEnc, CryptoService.licenseItemAad(a.licenseItemId)),
+        ),
       })),
       events,
     };

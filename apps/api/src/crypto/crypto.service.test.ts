@@ -51,4 +51,33 @@ describe('CryptoService (AES-256-GCM envelope)', () => {
     const bad = new CryptoService(config as unknown as ConfigService);
     expect(() => bad.onModuleInit()).toThrow(/32 byte/);
   });
+
+  describe('AAD kayıt-id bağlama (v2)', () => {
+    it('doğru aad ile çözer (round-trip)', () => {
+      const aad = CryptoService.licenseItemAad('id-123');
+      const enc = svc.encrypt('WIN10-KEY', aad);
+      expect(enc.startsWith('v2.')).toBe(true);
+      expect(svc.decrypt(enc, aad)).toBe('WIN10-KEY');
+    });
+
+    it('yanlış aad ile çözme patlar (satır-taşıma engeli)', () => {
+      const enc = svc.encrypt('WIN10-KEY', CryptoService.licenseItemAad('id-A'));
+      // Başka satırın id'siyle çözmeye çalışmak = ciphertext kopyalama saldırısı
+      expect(() => svc.decrypt(enc, CryptoService.licenseItemAad('id-B'))).toThrow();
+      // aad'siz de çözülemez
+      expect(() => svc.decrypt(enc)).toThrow();
+    });
+
+    it('aad verilmezse v1 (geriye dönük) format üretir ve aad yok sayılır', () => {
+      const enc = svc.encrypt('düz');
+      expect(enc.startsWith('v1.')).toBe(true);
+      // v1 kayıtta aad geçilse bile yok sayılır (eski veri kesintisiz çözülür)
+      expect(svc.decrypt(enc, 'alakasız-aad')).toBe('düz');
+      expect(svc.decrypt(enc)).toBe('düz');
+    });
+
+    it('licenseItemAad ve siteSecretAad ayrık namespace üretir', () => {
+      expect(CryptoService.licenseItemAad('x')).not.toBe(CryptoService.siteSecretAad('x'));
+    });
+  });
 });

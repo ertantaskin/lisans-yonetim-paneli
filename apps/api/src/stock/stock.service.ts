@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
@@ -34,15 +35,21 @@ export class StockService {
     const product = await this.products.getById(productId);
     const maxUses = product.usageMode === 'multi' ? (product.maxUses ?? 1) : 1;
 
-    const values: NewLicenseItem[] = items.map((it) => ({
-      productId,
-      payloadEnc: this.crypto.encrypt(it.payload),
-      payloadHash: this.crypto.payloadHash(it.payload),
-      payloadSuffixHash: this.crypto.payloadSuffixHash(it.payload),
-      maxUses,
-      expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
-      status: 'available',
-    }));
+    // id'yi uygulamada üretiyoruz ki payload'ı bu satıra AAD ile bağlayabilelim
+    // (satır-taşıma engeli, §8). insert bu id ile yapılır.
+    const values: NewLicenseItem[] = items.map((it) => {
+      const id = randomUUID();
+      return {
+        id,
+        productId,
+        payloadEnc: this.crypto.encrypt(it.payload, CryptoService.licenseItemAad(id)),
+        payloadHash: this.crypto.payloadHash(it.payload),
+        payloadSuffixHash: this.crypto.payloadSuffixHash(it.payload),
+        maxUses,
+        expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
+        status: 'available',
+      };
+    });
 
     if (values.length === 0) return { requested: 0, imported: 0, duplicates: 0, autoCompleted: 0 };
 

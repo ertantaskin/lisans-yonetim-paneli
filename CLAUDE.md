@@ -51,7 +51,7 @@ HMAC push → panel atomik atama → My Account'ta çözülmüş key → geri ka
 - Mail: BullMQ + Mailpit, şablon, email_log; aksiyonlar: reveal(loglu)/suspend/revoke/resend
 - Geri kanal webhook: HMAC imzalı, outbox, WP eklentisine hazır (order.fulfilled/partial)
 - Admin UI (Next.js, sunucu-taraflı): Bekleyen Teslimatlar / Siparişler+detay / Stok / Siteler
-- audit_log: reveal/revoke/suspend/import/… ; migration 0000-0004
+- audit_log: reveal/revoke/suspend/import/… ; migration 0000-0005
 - **WP eklentisi** (`apps/wp-plugin/jetlisans`, ince istemci): HMAC istemci, sipariş push
   (Woo→panel), webhook alıcı, My Account teslimat, admin meta box; lisans verisi WP'de durmaz
 
@@ -60,10 +60,26 @@ teslimat, idempotency, kısmi/all-or-nothing, tamamlama motoru, mail→Mailpit, 
 revoke recompute, FEFO, eşzamanlı-tamamlama over-fulfillment kilidi.
 
 **Adversaryel review yapıldı** (37 ajan): 30 doğrulanmış bulgudan tüm HIGH (7 tekil) +
-etkili MEDIUM'lar düzeltildi ve regresyon testiyle sabitlendi. Faz 2'ye ertelenen
-sertleştirme: HMAC anahtar rotasyonu (24s dual-secret), envelope AAD (kayıt-id bağlama),
-nonce TTL sınır kenarı, imza yolu kanonikleştirme, mask format, autoComplete SKIP LOCKED
-erken-çıkış. Üretimde: SMTP_SECURE=true (TLS).
+etkili MEDIUM'lar düzeltildi ve regresyon testiyle sabitlendi.
+
+**Faz 2 — güvenlik sertleştirme TAMAM** (ertelenen 6 madde kapandı, geriye dönük uyumlu,
+regresyon + canlı smoke ile doğrulandı):
+
+- **HMAC anahtar rotasyonu** (24s dual-secret): `sites.hmac_secret_prev_enc` +
+  `hmac_secret_rotated_at`; `findForAuth` grace penceresinde eski+yeni secret'ı kabul eder;
+  `POST /v1/admin/sites/:id/rotate-secret` (migration 0005).
+- **Envelope AAD** (kayıt-id bağlama): payload_enc v2 formatı, DEK cipher'a `license_item:<id>`
+  / `site_secret:<id>` AAD → ciphertext satır-taşıma imkânsız; v1 (eski kayıt) AAD'siz
+  geriye dönük çözülür. id'ler uygulamada üretilir (stock.import, sites.create).
+- **Nonce TTL sınır kenarı**: `HMAC_NONCE_TTL_SEC = 2×tolerans + 60` → replay penceresini
+  kesin kapsar (invaryant testli).
+- **İmza yolu kanonikleştirme**: `canonicalizePath` (fragment atar, query param sıralar),
+  `buildSignaturePayload`'a gömülü + PHP `canonical_path` ile birebir senkron.
+- **Mask format**: sabit `••••••` gövde + yalnız son 4 hane → uzunluk/segment yapısı sızmaz.
+- **autoComplete erken-çıkış**: partial-auto FIFO döngüsü yalnız GERÇEK stok tükenişinde
+  durur (SKIP LOCKED kilit-çekişmesinde erken çıkmaz).
+
+Üretimde: SMTP_SECURE=true (TLS).
 
 Kalan: **VPS deploy** (gerçek domain + Let's Encrypt + yedek), Faz 2 zenginleştirmeleri
 (hesap ürünleri, tedarik zinciri, self-servis, WP eklentisi yönetim aksiyonları). Yol haritası §18.

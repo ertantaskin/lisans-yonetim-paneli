@@ -72,8 +72,13 @@ export class HmacGuard implements CanActivate {
       nonce,
       bodySha256Hex: bodyHash,
     });
-    const expected = createHmac('sha256', auth.hmacSecret).update(payload).digest('hex');
-    if (!CryptoService.safeEqual(signature, expected)) {
+    // Rotasyon: kabul edilen secret'lardan (güncel + zarafet penceresindeki eski)
+    // herhangi biri imzayı doğruluyorsa geçerli. safeEqual sabit-zamanlı.
+    const valid = auth.hmacSecrets.some((secret) => {
+      const expected = createHmac('sha256', secret).update(payload).digest('hex');
+      return CryptoService.safeEqual(signature, expected);
+    });
+    if (!valid) {
       throw new UnauthorizedException('Geçersiz imza');
     }
 

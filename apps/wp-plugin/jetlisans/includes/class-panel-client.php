@@ -7,6 +7,26 @@ if (!defined('ABSPATH')) exit;
  */
 class Jetlisans_Panel_Client {
 
+    /**
+     * İmza yolu kanonikleştirme — panel `canonicalizePath` (shared/api/hmac.ts) ile
+     * BİREBİR aynı olmalı. Fragment atılır; query param'lar string sıralanır.
+     */
+    private static function canonical_path($path) {
+        $path = (string) $path;
+        $hash = strpos($path, '#');
+        if ($hash !== false) $path = substr($path, 0, $hash);
+        $q = strpos($path, '?');
+        if ($q === false) return $path;
+        $pathname = substr($path, 0, $q);
+        $query = substr($path, $q + 1);
+        $parts = array_values(array_filter(explode('&', $query), function ($p) {
+            return $p !== '';
+        }));
+        if (empty($parts)) return $pathname;
+        sort($parts, SORT_STRING);
+        return $pathname . '?' . implode('&', $parts);
+    }
+
     public static function post($path, array $body) {
         return self::request('POST', $path, $body);
     }
@@ -25,7 +45,7 @@ class Jetlisans_Panel_Client {
         $nonce = wp_generate_uuid4();
         $body_hash = hash('sha256', $body_str);
 
-        $payload = strtoupper($method) . "\n" . $path . "\n" . $ts . "\n" . $nonce . "\n" . $body_hash;
+        $payload = strtoupper($method) . "\n" . self::canonical_path($path) . "\n" . $ts . "\n" . $nonce . "\n" . $body_hash;
         $sig = hash_hmac('sha256', $payload, Jetlisans_Settings::hmac_secret());
 
         $headers = [
@@ -58,7 +78,7 @@ class Jetlisans_Panel_Client {
         $secret = defined('JETLISANS_WEBHOOK_SECRET') ? JETLISANS_WEBHOOK_SECRET : Jetlisans_Settings::hmac_secret();
         // Zaman penceresi ±300sn (replay).
         if (abs(time() - (int) $ts) > 300) return false;
-        $payload = strtoupper($method) . "\n" . $path . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $body_str);
+        $payload = strtoupper($method) . "\n" . self::canonical_path($path) . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $body_str);
         $expected = hash_hmac('sha256', $payload, $secret);
         return hash_equals($expected, (string) $signature);
     }

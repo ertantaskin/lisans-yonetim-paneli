@@ -69,6 +69,7 @@ export class OrdersService {
         units: assignments.units,
         validUntil: assignments.validUntil,
         payloadEnc: licenseItems.payloadEnc,
+        licenseItemId: licenseItems.id,
       })
       .from(assignments)
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
@@ -83,7 +84,7 @@ export class OrdersService {
         remoteLineId: r.remoteLineId,
         units: r.units,
         validUntil: r.validUntil ? r.validUntil.toISOString() : null,
-        payload: this.crypto.decrypt(r.payloadEnc),
+        payload: this.crypto.decrypt(r.payloadEnc, CryptoService.licenseItemAad(r.licenseItemId)),
       })),
     };
   }

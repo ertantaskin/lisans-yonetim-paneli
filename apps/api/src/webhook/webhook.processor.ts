@@ -38,7 +38,10 @@ export class WebhookProcessor extends WorkerHost {
     }
 
     try {
-      const secret = this.crypto.decrypt(site.hmacSecretEnc);
+      const secret = this.crypto.decrypt(
+        site.hmacSecretEnc,
+        CryptoService.siteSecretAad(site.id),
+      );
       const body = JSON.stringify({
         event: ob.eventType,
         orderId: ob.orderId,

@@ -65,6 +65,7 @@ export class MailProcessor extends WorkerHost {
         .select({
           units: assignments.units,
           payloadEnc: licenseItems.payloadEnc,
+          licenseItemId: licenseItems.id,
           productName: products.name,
           productId: orderLines.productId,
         })
@@ -82,7 +83,10 @@ export class MailProcessor extends WorkerHost {
 
       const itemsBlock = rows
         .map((r) => {
-          const payload = this.crypto.decrypt(r.payloadEnc);
+          const payload = this.crypto.decrypt(
+            r.payloadEnc,
+            CryptoService.licenseItemAad(r.licenseItemId),
+          );
           const label = r.productName ?? 'Ürün';
           const qty = r.units > 1 ? ` (${r.units} adet)` : '';
           return `• ${label}${qty}: ${payload}`;

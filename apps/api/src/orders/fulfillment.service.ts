@@ -1,7 +1,14 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
-import { assignments, fulfillmentEvents, orderLines, orders, products } from '../db/schema';
+import {
+  assignments,
+  fulfillmentEvents,
+  licenseItems,
+  orderLines,
+  orders,
+  products,
+} from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
@@ -155,9 +162,27 @@ export class FulfillmentService {
     for (const { id } of pending) {
       const res = await this.completeLine(id);
       if (res.added > 0) completedLines++;
-      if (res.status !== 'fulfilled') break; // stok bitti → sonraki satırlara gerek yok
+      if (res.status !== 'fulfilled') {
+        // Satır tamamlanmadı. Erken-çıkış açığı (§5): completeLine, allocate'in
+        // FOR UPDATE SKIP LOCKED'ı yüzünden eşzamanlı bir tamamlama satırları
+        // kilitlediyse added=0 dönebilir — stok bitmediği halde. Bu yüzden yalnız
+        // GERÇEK stok tükenişinde dur; stok hâlâ varsa (kilitli/serbest) kalan
+        // satırlara devam et, aksi halde bekleyen düşük-öncelikli satırlar açıkta kalır.
+        if ((await this.productAvailableCount(productId)) <= 0) break;
+      }
     }
     return completedLines;
+  }
+
+  /** Ürün başına anlık 'available' kapasite (single: satır; multi: kalan max_uses−use_count). */
+  private async productAvailableCount(productId: string): Promise<number> {
+    const [row] = await this.db
+      .select({
+        count: sql<number>`coalesce(sum(${licenseItems.maxUses} - ${licenseItems.useCount}), 0)`,
+      })
+      .from(licenseItems)
+      .where(and(eq(licenseItems.productId, productId), eq(licenseItems.status, 'available')));
+    return Number(row?.count ?? 0);
   }
 
   private noop(

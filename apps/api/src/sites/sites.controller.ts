@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
@@ -27,5 +27,14 @@ export class SitesController {
   @Get()
   list() {
     return this.sites.list();
+  }
+
+  /**
+   * HMAC secret rotasyonu (§4). Yeni secret döner (bir kez); eski secret 24s daha
+   * geçerli kalır → WP eklentisi kesintisiz yeni secret'a geçer.
+   */
+  @Post(':id/rotate-secret')
+  rotate(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.sites.rotateSecret(id);
   }
 }
