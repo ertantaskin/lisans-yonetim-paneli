@@ -32,12 +32,16 @@ class Jetlisans_Order_Sync {
         foreach ($order->get_items() as $item_id => $item) {
             $product = $item->get_product();
             if (!$product) continue;
-            $lines[] = [
-                'remoteLineId'      => (string) $item_id,
-                'remoteProductId'   => (string) ($product->get_parent_id() ?: $product->get_id()),
-                'remoteVariationId' => $product->is_type('variation') ? (string) $product->get_id() : null,
-                'qty'               => (int) $item->get_quantity(),
+            $line = [
+                'remoteLineId'    => (string) $item_id,
+                'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
+                'qty'             => (int) $item->get_quantity(),
             ];
+            // Yalnız varyasyonlu üründe gönder — null gönderme (panel string bekler).
+            if ($product->is_type('variation')) {
+                $line['remoteVariationId'] = (string) $product->get_id();
+            }
+            $lines[] = $line;
         }
         if (empty($lines)) return;
 

@@ -16,7 +16,8 @@ export const CreateOrderLine = z.object({
   /** Eklenti tarafındaki satır kimliği (idempotency parçası). */
   remoteLineId: z.string().min(1),
   remoteProductId: z.string().min(1),
-  remoteVariationId: z.string().min(1).optional(),
+  // İstemciler varyasyonsuz üründe null gönderebilir — undefined/null ikisi de kabul.
+  remoteVariationId: z.string().min(1).nullish(),
   qty: z.number().int().positive(),
   /** Ürün varsayılan politikasını sipariş bazında ezme (opsiyonel). */
   policyOverride: z.enum(['partial-auto', 'partial-approval', 'all-or-nothing']).optional(),
