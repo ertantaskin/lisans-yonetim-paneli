@@ -45,12 +45,23 @@ export interface OrderRow {
   createdAt: string;
 }
 
+export interface PayloadFieldDef {
+  key: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+}
+
 export interface ProductRow {
   id: string;
   sku: string;
   name: string;
   kind: string;
   usageMode: string;
+  maxUses: number | null;
+  validityDays: number | null;
+  onExpiry: string;
+  payloadSchema: PayloadFieldDef[] | null;
   fulfillmentPolicy: string;
   availableStock: number;
 }

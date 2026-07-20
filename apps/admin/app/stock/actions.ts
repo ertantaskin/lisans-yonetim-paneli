@@ -16,13 +16,38 @@ export interface ImportState {
 }
 
 export async function createProductAction(formData: FormData) {
-  await apiPost('/v1/admin/products', {
+  const kind = String(formData.get('kind') || 'key');
+  const usageMode = String(formData.get('usageMode') || 'single');
+  const num = (k: string): number | undefined => {
+    const v = String(formData.get(k) || '').trim();
+    return v ? Number(v) : undefined;
+  };
+
+  const body: Record<string, unknown> = {
     sku: String(formData.get('sku') || '').trim(),
     name: String(formData.get('name') || '').trim(),
-    kind: String(formData.get('kind') || 'key'),
-    usageMode: String(formData.get('usageMode') || 'single'),
+    kind,
+    usageMode,
     fulfillmentPolicy: String(formData.get('fulfillmentPolicy') || 'partial-auto'),
-  });
+    onExpiry: String(formData.get('onExpiry') || 'hide'),
+  };
+  if (usageMode === 'multi') body.maxUses = num('maxUses');
+  const validityDays = num('validityDays');
+  if (validityDays) body.validityDays = validityDays;
+  const keyFormat = String(formData.get('keyFormat') || '').trim();
+  if (keyFormat) body.keyFormat = keyFormat;
+  // account: payloadSchema client'ta JSON'a serialize edilmiş — parse edip iletiriz.
+  if (kind === 'account') {
+    const raw = String(formData.get('payloadSchema') || '');
+    if (raw) {
+      try {
+        body.payloadSchema = JSON.parse(raw);
+      } catch {
+        /* boş bırak — API refine reddeder, kullanıcı düzeltir */
+      }
+    }
+  }
+  await apiPost('/v1/admin/products', body);
   revalidatePath('/stock');
 }
 

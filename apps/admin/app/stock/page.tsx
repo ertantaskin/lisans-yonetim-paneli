@@ -1,7 +1,16 @@
 import { apiGet, type ProductRow, type SiteRow } from '../../lib/api';
-import { Card, PageHeader, StatusPill, Empty } from '../../components/ui';
+import { Card, PageHeader, Empty } from '../../components/ui';
 import { ImportStockForm } from '../../components/import-stock-form';
-import { createProductAction, createMappingAction } from './actions';
+import { ProductCreateForm } from '../../components/product-create-form';
+import { createMappingAction } from './actions';
+
+/** Ürün tipi rozeti: kind + (multi ise) kapasite bilgisi. */
+function typeLabel(p: ProductRow): string {
+  const parts = [p.kind];
+  if (p.usageMode === 'multi') parts.push(`MAK×${p.maxUses ?? '?'}`);
+  if (p.validityDays) parts.push(`${p.validityDays}g`);
+  return parts.join(' · ');
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -43,6 +52,7 @@ export default async function StockPage() {
                 <tr className="border-b border-ink/10 text-left text-xs uppercase text-ink/50">
                   <th className="px-3 py-2 font-medium">Ürün</th>
                   <th className="px-3 py-2 font-medium">SKU</th>
+                  <th className="px-3 py-2 font-medium">Tip</th>
                   <th className="px-3 py-2 font-medium">Politika</th>
                   <th className="px-3 py-2 font-medium">Stok</th>
                 </tr>
@@ -52,12 +62,14 @@ export default async function StockPage() {
                   <tr key={p.id} className="border-b border-ink/5">
                     <td className="px-3 py-2.5 font-medium text-ink">{p.name}</td>
                     <td className="px-3 py-2.5 font-mono text-xs text-ink/60">{p.sku}</td>
+                    <td className="px-3 py-2.5 text-xs text-ink/70">{typeLabel(p)}</td>
                     <td className="px-3 py-2.5 text-ink/70">{p.fulfillmentPolicy}</td>
                     <td className="px-3 py-2.5">
                       <span
                         className={`tabular-nums font-medium ${
                           p.availableStock > 0 ? 'text-success' : 'text-danger'
                         }`}
+                        title={p.usageMode === 'multi' ? 'kalan kapasite (Σ max-kullanım − kullanılan)' : 'available satır'}
                       >
                         {p.availableStock}
                       </span>
@@ -80,32 +92,7 @@ export default async function StockPage() {
         {/* Ürün oluştur */}
         <Card>
           <h2 className="mb-3 text-sm font-semibold text-ink">Ürün Oluştur</h2>
-          <form action={createProductAction} className="space-y-3 text-sm">
-            <input
-              name="sku"
-              placeholder="SKU (win11-pro)"
-              required
-              className={`w-full ${inputCls}`}
-            />
-            <input name="name" placeholder="Ürün adı" required className={`w-full ${inputCls}`} />
-            <div className="flex gap-2">
-              <select name="usageMode" className={inputCls}>
-                <option value="single">tek kullanımlık</option>
-                <option value="multi">çok kullanımlık</option>
-              </select>
-              <select name="fulfillmentPolicy" className={inputCls}>
-                <option value="partial-auto">partial-auto</option>
-                <option value="partial-approval">partial-approval</option>
-                <option value="all-or-nothing">all-or-nothing</option>
-              </select>
-            </div>
-            <button
-              type="submit"
-              className="rounded-md bg-accent px-4 py-1.5 font-medium text-white hover:opacity-90"
-            >
-              Oluştur
-            </button>
-          </form>
+          <ProductCreateForm />
         </Card>
 
         {/* Eşleme */}
