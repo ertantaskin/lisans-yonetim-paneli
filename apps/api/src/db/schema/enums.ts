@@ -63,4 +63,8 @@ export const auditActionEnum = pgEnum('audit_action', [
   // §8 site yönetimi + §9 KVKK anonimleştirme (Dalga 5).
   'site_update',
   'anonymize',
+  // §12 tedarik zinciri: PO teslim-alma, parti geri çekme, sebepli stok düzeltme.
+  'receive',
+  'recall',
+  'adjust',
 ]);

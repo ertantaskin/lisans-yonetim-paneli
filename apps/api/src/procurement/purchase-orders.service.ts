@@ -175,10 +175,9 @@ export class PurchaseOrdersService {
         })
         .returning({ id: batches.id });
 
-      // Sebepli/aktörlü denetim izi (§12). NOT: audit_action enum'unda özel bir 'receive'
-      // değeri yok → orkestratör ekleyene dek 'import' + meta.kind ile ayrıştırılır.
+      // Sebepli/aktörlü denetim izi (§12): PO teslim-alma.
       await tx.insert(auditLog).values({
-        action: 'import',
+        action: 'receive',
         actor: 'panel:admin',
         targetType: 'purchase_order',
         targetId: po.id,

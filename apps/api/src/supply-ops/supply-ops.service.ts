@@ -210,11 +210,11 @@ export class SupplyOpsService {
       // Toplu recall audit izi. (Not: özel 'recall' audit_action enum'u yok → 'revoke' +
       // meta.op; orkestratör enum ekleyince 'recall'a çevrilebilir.)
       await tx.insert(auditLog).values({
-        action: 'revoke',
+        action: 'recall',
         actor,
         targetType: 'batch',
         targetId: batchId,
-        meta: { op: 'recall', voided: voided.length, soldNeedingReplacement, reason },
+        meta: { voided: voided.length, soldNeedingReplacement, reason },
       });
 
       return { voided: voided.length, soldNeedingReplacement };
@@ -362,12 +362,11 @@ export class SupplyOpsService {
         .returning();
 
       await tx.insert(auditLog).values({
-        action: 'revoke',
+        action: 'adjust',
         actor,
         targetType: input.licenseItemId ? 'license_item' : 'product',
         targetId: input.licenseItemId ?? input.productId,
         meta: {
-          op: 'stock_adjustment',
           action: input.action,
           qty: input.qty,
           reason: input.reason,
