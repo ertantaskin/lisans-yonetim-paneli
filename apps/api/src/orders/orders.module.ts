@@ -13,6 +13,6 @@ import { FulfillmentService } from './fulfillment.service';
   imports: [AuthModule, ProductsModule, MailModule, WebhookModule],
   controllers: [OrdersController, AdminOrdersController],
   providers: [OrdersService, AdminOrdersService, FulfillmentService],
-  exports: [OrdersService, FulfillmentService],
+  exports: [OrdersService, AdminOrdersService, FulfillmentService],
 })
 export class OrdersModule {}

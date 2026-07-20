@@ -43,14 +43,19 @@ export const NAV: NavSection[] = [
     ],
   },
   {
+    title: 'Müşteri İlişkileri',
+    items: [
+      { label: 'Destek', href: '/support', icon: LifeBuoy },
+      { label: 'Müşteriler', href: '/customers', icon: Users },
+    ],
+  },
+  {
     title: 'Sistem',
     items: [{ label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true }],
   },
   {
     title: 'Yakında',
     items: [
-      { label: 'Müşteriler', href: '#', icon: Users, soon: true },
-      { label: 'Destek', href: '#', icon: LifeBuoy, soon: true },
       { label: 'Şablonlar', href: '#', icon: FileText, soon: true },
       { label: 'Raporlar', href: '#', icon: BarChart3, soon: true },
       { label: 'Ayarlar', href: '#', icon: Settings, soon: true },

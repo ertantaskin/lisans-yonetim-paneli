@@ -48,6 +48,11 @@ const STATUS: Record<string, StatusMeta> = {
   delivered: { variant: 'success', label: 'iletildi', icon: CheckCircle2 },
   partial: { variant: 'warning', label: 'kısmi', icon: Clock },
   pending: { variant: 'warning', label: 'bekliyor', icon: Clock },
+  // Değişim/garanti talepleri (§13).
+  open: { variant: 'warning', label: 'açık', icon: Clock },
+  info_requested: { variant: 'warning', label: 'bilgi istendi', icon: Mail },
+  approved: { variant: 'success', label: 'onaylandı', icon: CheckCircle2 },
+  rejected: { variant: 'danger', label: 'reddedildi', icon: Ban },
   queued: { variant: 'warning', label: 'kuyrukta', icon: Loader2 },
   suspended: { variant: 'warning', label: 'askıda', icon: PauseCircle },
   expired: { variant: 'warning', label: 'süresi doldu', icon: Clock },

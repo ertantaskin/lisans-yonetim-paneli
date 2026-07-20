@@ -24,6 +24,7 @@ require_once JETLISANS_DIR . 'includes/class-order-sync.php';
 require_once JETLISANS_DIR . 'includes/class-webhook.php';
 require_once JETLISANS_DIR . 'includes/class-my-account.php';
 require_once JETLISANS_DIR . 'includes/class-admin-metabox.php';
+require_once JETLISANS_DIR . 'includes/class-report-issue.php';
 
 /**
  * Eklentiyi başlat.
@@ -34,6 +35,7 @@ function jetlisans_init() {
     Jetlisans_Webhook::instance();
     Jetlisans_My_Account::instance();
     Jetlisans_Admin_Metabox::instance();
+    Jetlisans_Report_Issue::instance();
 }
 add_action('plugins_loaded', 'jetlisans_init');
 

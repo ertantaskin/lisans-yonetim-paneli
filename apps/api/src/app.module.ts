@@ -13,6 +13,8 @@ import { AdminUsersModule } from './admin-users/admin-users.module';
 import { ProductsModule } from './products/products.module';
 import { StockModule } from './stock/stock.module';
 import { OrdersModule } from './orders/orders.module';
+import { ReplacementsModule } from './replacements/replacements.module';
+import { CustomersModule } from './customers/customers.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 
 @Module({
@@ -55,6 +57,8 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     ProductsModule,
     StockModule,
     OrdersModule,
+    ReplacementsModule,
+    CustomersModule,
     MaintenanceModule,
   ],
 })

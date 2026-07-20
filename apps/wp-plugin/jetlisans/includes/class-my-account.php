@@ -27,6 +27,8 @@ class Jetlisans_My_Account {
 
         echo '<section class="jetlisans-deliveries" style="margin-top:24px">';
         echo '<h2>' . esc_html__('Lisans Teslimatınız', 'jetlisans') . '</h2>';
+        // Sorun Bildir işlem sonucu bildirimi (varsa).
+        Jetlisans_Report_Issue::render_notice();
 
         if (empty($deliveries)) {
             $status = isset($res['body']['status']) ? $res['body']['status'] : '';
@@ -65,6 +67,9 @@ class Jetlisans_My_Account {
                     echo esc_html($exp ? __('Süresi doldu:', 'jetlisans') : __('Geçerlilik:', 'jetlisans'));
                     echo ' ' . esc_html(self::format_date($d['validUntil'])) . '</small>';
                 }
+                // Bu kalem için "Sorun Bildir" — assignmentId panelin opak referansı (varsa).
+                $assignment_id = isset($d['assignmentId']) ? $d['assignmentId'] : (isset($d['id']) ? $d['id'] : '');
+                Jetlisans_Report_Issue::render_button($order, $assignment_id);
                 echo '</td></tr>';
             }
             echo '</tbody></table>';
