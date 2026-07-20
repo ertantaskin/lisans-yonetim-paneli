@@ -81,6 +81,11 @@ export const DeliveryItem = z.object({
   remoteLineId: z.string(),
   units: z.number().int().positive(),
   validUntil: z.string().datetime().nullable(),
+  /**
+   * Süre doldu mu (valid_until < now). onExpiry='hide' ürünlerde süresi geçen teslimat
+   * yanıttan tamamen çıkarılır (bu bayrak yalnız onExpiry='keep' için true görülebilir).
+   */
+  expired: z.boolean(),
   /** Ürün tipi — WP eklentisi/admin buna göre render dallanır. */
   kind: ProductKind,
   /** key/code/custom için düz payload; account'ta null (fields kullanılır). */

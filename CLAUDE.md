@@ -98,8 +98,20 @@ review 3 bulgu düzeltildi; regresyon + canlı smoke 17/17 ile doğrulandı):
   meta box `title`'daki TAM plaintext KALDIRILDI; `validUntil` yerelleştirilmiş.
 - **Admin stok formu**: `rejected` yüzeye çıkar (imported=0 → yeşil değil, uyarı).
 
-Kalan: süreli hesap **süre-bitişi motoru** (onExpiry/expired job — Commit B), multi görünürlük
-+ account admin UI formu (Commit C); **VPS deploy**; tedarik zinciri, self-servis. Yol haritası §18.
+**Faz 2 — süreli hesap süre-bitişi motoru TAMAM** (Commit B; adversaryel doğrulama 6 risk
+çürütüldü; canlı smoke 8/8):
+
+- **ExpiryService** (`apps/api/src/maintenance/`): BullMQ tekrarlı iş (5dk) `valid_until`
+  geçmiş AKTİF atamaları, ürün `onExpiry='hide'` ise `status='expired'` yapar (payload artık
+  teslim edilmez). `onExpiry='keep'` atamalar aktif kalır. Elle tetik: `POST /v1/admin/maintenance/expire`.
+- **getDeliveries savunma filtresi**: job gecikse bile `hide`+süresi-geçmiş payload SIZMAZ
+  (`or(validUntil IS NULL, validUntil > now, onExpiry='keep')`); yanıta `expired` bayrağı eklendi.
+- **Kısmi indeks** `assignments_expiry_idx` (status='active' AND valid_until IS NOT NULL) —
+  sweep seq-scan'i önler (migration 0006).
+- Expired atamanın license_item'ı serbest bırakılmaz ("hak geri gelmez", §2).
+
+migration 0000-0006. Kalan: multi görünürlük + account admin UI formu (Commit C); **VPS deploy**;
+tedarik zinciri, self-servis. Yol haritası §18.
 
 ## Geliştirme
 

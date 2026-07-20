@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type {
   CreateOrderRequest,
   CreateOrderResponse,
@@ -74,13 +74,27 @@ export class OrdersService {
         licenseItemId: licenseItems.id,
         productKind: products.kind,
         payloadSchema: products.payloadSchema,
+        onExpiry: products.onExpiry,
       })
       .from(assignments)
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
       .innerJoin(products, eq(orderLines.productId, products.id))
-      .where(and(eq(assignments.orderId, order.id), eq(assignments.status, 'active')));
+      .where(
+        and(
+          eq(assignments.orderId, order.id),
+          eq(assignments.status, 'active'),
+          // Savunma amaçlı süre filtresi: expiry job gecikse bile onExpiry='hide'
+          // ürünün süresi geçmiş payload'ı SIZMAZ. 'keep' ürün süre sonrası da görünür.
+          or(
+            isNull(assignments.validUntil),
+            gt(assignments.validUntil, sql`now()`),
+            eq(products.onExpiry, 'keep'),
+          ),
+        ),
+      );
 
+    const now = Date.now();
     const deliveries: DeliveryItem[] = rows.map((r) => {
       const plain = this.crypto.decrypt(
         r.payloadEnc,
@@ -91,6 +105,7 @@ export class OrdersService {
         remoteLineId: r.remoteLineId,
         units: r.units,
         validUntil: r.validUntil ? r.validUntil.toISOString() : null,
+        expired: r.validUntil ? r.validUntil.getTime() < now : false,
         kind: r.productKind,
       };
       // Hesap ürünü: şemaya göre alan-alan çöz (müşteri kendi lisansını tam görür).

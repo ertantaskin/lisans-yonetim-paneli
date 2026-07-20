@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { index, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { assignmentStatusEnum } from './enums';
 import { licenseItems } from './licenseItems';
 import { orderLines, orders } from './orders';
@@ -8,26 +8,36 @@ import { orderLines, orders } from './orders';
  * assignments — lisans ↔ sipariş bağı (§3). "Eski anahtarlar" değişim geçmişiyle
  * assignment_history'de tutulur.
  */
-export const assignments = pgTable('assignments', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  orderId: uuid('order_id')
-    .notNull()
-    .references(() => orders.id, { onDelete: 'cascade' }),
-  lineId: uuid('line_id')
-    .notNull()
-    .references(() => orderLines.id, { onDelete: 'cascade' }),
-  licenseItemId: uuid('license_item_id')
-    .notNull()
-    .references(() => licenseItems.id, { onDelete: 'restrict' }),
-  /** multi üründe bu atamanın tükettiği kullanım adedi. */
-  units: integer('units').notNull().default(1),
-  validUntil: timestamp('valid_until', { withTimezone: true }),
-  status: assignmentStatusEnum('status').notNull().default('active'),
-  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .default(sql`now()`),
-});
+export const assignments = pgTable(
+  'assignments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    lineId: uuid('line_id')
+      .notNull()
+      .references(() => orderLines.id, { onDelete: 'cascade' }),
+    licenseItemId: uuid('license_item_id')
+      .notNull()
+      .references(() => licenseItems.id, { onDelete: 'restrict' }),
+    /** multi üründe bu atamanın tükettiği kullanım adedi. */
+    units: integer('units').notNull().default(1),
+    validUntil: timestamp('valid_until', { withTimezone: true }),
+    status: assignmentStatusEnum('status').notNull().default('active'),
+    deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => [
+    // Süre-bitişi taraması (§11): yalnız süreli AKTİF atamalar üzerinde çalışsın —
+    // partial index seq-scan'i önler (5 dk'da bir çalışan sweep + getDeliveries filtresi).
+    index('assignments_expiry_idx')
+      .on(t.validUntil)
+      .where(sql`${t.status} = 'active' AND ${t.validUntil} IS NOT NULL`),
+  ],
+);
 
 /** assignment_history — sebepli değişim izi ("eski anahtarlar", §3). */
 export const assignmentHistory = pgTable('assignment_history', {

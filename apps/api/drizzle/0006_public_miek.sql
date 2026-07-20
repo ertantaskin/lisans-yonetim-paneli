@@ -1,0 +1,1 @@
+CREATE INDEX "assignments_expiry_idx" ON "assignments" USING btree ("valid_until") WHERE "assignments"."status" = 'active' AND "assignments"."valid_until" IS NOT NULL;

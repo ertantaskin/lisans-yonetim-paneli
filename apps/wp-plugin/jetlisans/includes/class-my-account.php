@@ -60,7 +60,10 @@ class Jetlisans_My_Account {
                     echo '<button type="button" onclick="navigator.clipboard.writeText(document.getElementById(\'' . esc_js($id) . '\').textContent)" class="button" style="margin-left:8px">' . esc_html__('Kopyala', 'jetlisans') . '</button>';
                 }
                 if (!empty($d['validUntil'])) {
-                    echo '<br><small>' . esc_html__('Geçerlilik:', 'jetlisans') . ' ' . esc_html(self::format_date($d['validUntil'])) . '</small>';
+                    $exp = !empty($d['expired']);
+                    echo '<br><small' . ($exp ? ' style="color:#b45309"' : '') . '>';
+                    echo esc_html($exp ? __('Süresi doldu:', 'jetlisans') : __('Geçerlilik:', 'jetlisans'));
+                    echo ' ' . esc_html(self::format_date($d['validUntil'])) . '</small>';
                 }
                 echo '</td></tr>';
             }
