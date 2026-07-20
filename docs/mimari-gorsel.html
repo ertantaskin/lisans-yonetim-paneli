@@ -1,0 +1,1270 @@
+<title>Jetlisans — Merkezi Lisans Dağıtım Paneli Mimarisi</title>
+<style>
+  :root {
+    --bg: #f6f9fc;
+    --surface: #ffffff;
+    --surface-2: #ebf0f7;
+    --ink: #0a2540;
+    --ink-2: #425466;
+    --ink-3: #697e94;
+    --line: #dfe6ef;
+    --accent: #635bff;
+    --accent-ink: #4b44c4;
+    --accent-soft: #f0efff;
+    --warn: #b45309;
+    --warn-soft: #fdf0dd;
+    --danger: #b3372f;
+    --danger-soft: #fbe9e7;
+    --code-bg: #eef2f8;
+    --radius: 8px;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, Menlo, monospace;
+    --sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c1526;
+      --surface: #131f33;
+      --surface-2: #1b2a44;
+      --ink: #e6ebf4;
+      --ink-2: #aab7cb;
+      --ink-3: #7a8aa3;
+      --line: #263752;
+      --accent: #8a84ff;
+      --accent-ink: #b3afff;
+      --accent-soft: #232057;
+      --warn: #e0a153;
+      --warn-soft: #33270f;
+      --danger: #e08078;
+      --danger-soft: #351b18;
+      --code-bg: #182338;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c1526; --surface: #131f33; --surface-2: #1b2a44;
+    --ink: #e6ebf4; --ink-2: #aab7cb; --ink-3: #7a8aa3; --line: #263752;
+    --accent: #8a84ff; --accent-ink: #b3afff; --accent-soft: #232057;
+    --warn: #e0a153; --warn-soft: #33270f;
+    --danger: #e08078; --danger-soft: #351b18; --code-bg: #182338;
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f9fc; --surface: #ffffff; --surface-2: #ebf0f7;
+    --ink: #0a2540; --ink-2: #425466; --ink-3: #697e94; --line: #dfe6ef;
+    --accent: #635bff; --accent-ink: #4b44c4; --accent-soft: #f0efff;
+    --warn: #b45309; --warn-soft: #fdf0dd;
+    --danger: #b3372f; --danger-soft: #fbe9e7; --code-bg: #eef2f8;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.65;
+    margin: 0;
+    font-size: 16px;
+  }
+  .wrap {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 48px;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+  nav.toc {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    padding-top: 56px;
+    font-size: 13.5px;
+  }
+  nav.toc .toc-title {
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-size: 11px;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  nav.toc a {
+    display: block;
+    color: var(--ink-2);
+    text-decoration: none;
+    padding: 4px 10px;
+    border-left: 2px solid var(--line);
+  }
+  nav.toc a:hover { color: var(--accent-ink); border-left-color: var(--accent); }
+  main { min-width: 0; }
+
+  header.hero { padding: 56px 0 8px; }
+  .eyebrow {
+    display: inline-block;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    background: var(--accent-soft);
+    padding: 4px 10px;
+    border-radius: 99px;
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: clamp(26px, 4vw, 36px);
+    line-height: 1.2;
+    margin: 0 0 10px;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  .lede { color: var(--ink-2); max-width: 68ch; margin: 0; font-size: 17px; }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 20px; padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .chip {
+    font-size: 12.5px; font-family: var(--mono);
+    background: var(--surface); border: 1px solid var(--line);
+    padding: 3px 10px; border-radius: 6px; color: var(--ink-2);
+  }
+
+  section { margin-top: 56px; }
+  h2 {
+    font-size: 23px; letter-spacing: -0.01em;
+    margin: 0 0 6px; scroll-margin-top: 24px;
+    text-wrap: balance;
+  }
+  h2 .sec-no { color: var(--accent); margin-right: 8px; font-variant-numeric: tabular-nums; }
+  .sec-sub { color: var(--ink-3); font-size: 14.5px; margin: 0 0 20px; }
+  h3 { font-size: 17px; margin: 30px 0 8px; }
+  h4 { font-size: 15px; margin: 22px 0 6px; }
+  p { max-width: 74ch; margin: 0 0 14px; }
+  ul, ol { max-width: 74ch; padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 5px; }
+  li::marker { color: var(--accent); }
+  strong { font-weight: 650; }
+  a { color: var(--accent-ink); }
+
+  code {
+    font-family: var(--mono); font-size: .88em;
+    background: var(--code-bg); border: 1px solid var(--line);
+    padding: 1px 5px; border-radius: 5px;
+  }
+  pre.code {
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 14px 16px;
+    overflow-x: auto; font-family: var(--mono);
+    font-size: 13px; line-height: 1.55; margin: 0 0 16px;
+  }
+  pre.code code { background: none; border: 0; padding: 0; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 18px 20px; margin: 0 0 16px;
+  }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 14px 18px; margin: 0 0 16px;
+    max-width: 78ch;
+  }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout.danger { border-left-color: var(--danger); background: var(--danger-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .c-title { font-weight: 650; font-size: 14px; margin-bottom: 4px; }
+
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); margin: 0 0 18px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left; font-size: 11.5px; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--ink-3); font-weight: 600;
+    padding: 10px 14px; border-bottom: 1px solid var(--line);
+    background: var(--surface-2); white-space: nowrap;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+  td.wrapcode code { white-space: normal; }
+
+  .pill {
+    display: inline-block; font-size: 11.5px; font-weight: 600;
+    padding: 2px 9px; border-radius: 99px; white-space: nowrap;
+  }
+  .pill.ok { background: var(--accent-soft); color: var(--accent-ink); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--danger-soft); color: var(--danger); }
+  .pill.mut { background: var(--surface-2); color: var(--ink-2); }
+
+  .diagram {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px;
+    overflow-x: auto; margin: 0 0 18px;
+  }
+  .diagram .cap { font-size: 12.5px; color: var(--ink-3); margin-top: 8px; }
+  pre.mermaid { margin: 0; display: flex; justify-content: center; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 0 0 16px; }
+  .grid2 .card { margin: 0; }
+
+  .check-list { list-style: none; padding: 0; max-width: 78ch; }
+  .check-list li {
+    padding: 10px 14px 10px 38px; position: relative;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); margin-bottom: 8px;
+  }
+  .check-list li::before {
+    content: "✓"; position: absolute; left: 14px; top: 9px;
+    color: var(--accent); font-weight: 700;
+  }
+
+  .phase {
+    display: grid; grid-template-columns: 92px 1fr; gap: 16px;
+    padding: 16px 0; border-bottom: 1px solid var(--line);
+  }
+  .phase:last-child { border-bottom: 0; }
+  .phase .ph-no {
+    font-family: var(--mono); font-size: 13px; color: var(--accent-ink);
+    font-weight: 600; padding-top: 2px; white-space: nowrap;
+  }
+  .phase h4 { margin: 0 0 4px; }
+  .phase p { margin-bottom: 6px; font-size: 14.5px; color: var(--ink-2); }
+
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; gap: 0; }
+    nav.toc { position: static; padding-top: 32px; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+    nav.toc a { display: inline-block; border-left: 0; padding: 3px 8px; }
+    .grid2 { grid-template-columns: 1fr; }
+    .phase { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <div class="toc-title">İçindekiler</div>
+  <a href="#ozet">Özet & Hedefler</a>
+  <a href="#mimari">Genel Mimari</a>
+  <a href="#akis">Sipariş & Teslimat Akışı</a>
+  <a href="#veri">Veri Modeli</a>
+  <a href="#api">API Sözleşmesi</a>
+  <a href="#wp">WordPress Eklentisi</a>
+  <a href="#mail">Teslimat & Mail Mimarisi</a>
+  <a href="#guvenlik">Güvenlik Katmanları</a>
+  <a href="#olcek">Ölçekleme Yolu</a>
+  <a href="#fraud">Risk & Fraud Kontrolü</a>
+  <a href="#kismi">Kısmi Teslimat & Tamamlama</a>
+  <a href="#gerikanal">Geri Kanal & Kenar Senaryolar</a>
+  <a href="#kvkk">KVKK & Veri Saklama</a>
+  <a href="#adminux">Admin Deneyimi & Kolaylıklar</a>
+  <a href="#selfservis">Müşteri Self-Servis & Destek</a>
+  <a href="#stokzeka">Stok Zekâsı & Tedarik</a>
+  <a href="#onboarding">Site Onboarding & Op. Güvenliği</a>
+  <a href="#kanal">Çok Kanallı Satış</a>
+  <a href="#ai">AI Destekli Operasyon</a>
+  <a href="#operasyon">Operasyon: Test & Dağıtım</a>
+  <a href="#tasarim">Arayüz Tasarımı & Tasarım Sistemi</a>
+  <a href="#yol">Yol Haritası</a>
+  <a href="#kapsam">Senaryo Kapsama Kontrolü</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Mimari Doküman · v2.6 · Temmuz 2026</span>
+  <h1>Jetlisans Merkezi Lisans Dağıtım Paneli</h1>
+  <p class="lede">WooCommerce sitelerini ince birer vitrine indirgeyip; stok, atama, teslimat ve iade yönetimini tek bir merkezi panelde toplayan, günde 1.000+ siparişe göre tasarlanmış mimari.</p>
+  <div class="meta-row">
+    <span class="chip">NestJS + Fastify</span>
+    <span class="chip">Next.js Admin</span>
+    <span class="chip">PostgreSQL 17</span>
+    <span class="chip">Redis + BullMQ</span>
+    <span class="chip">Çoklu site · Ortak havuz</span>
+  </div>
+</header>
+
+<!-- ══════════════════════ 1. ÖZET ══════════════════════ -->
+<section id="ozet">
+  <h2><span class="sec-no">01</span>Özet & Hedefler</h2>
+  <p class="sec-sub">Neden bu mimari, neyi çözüyor</p>
+
+  <p>Bugünkü sorun net: lisans anahtarları ve hesap bilgileri, WooCommerce ile <strong>aynı MySQL veritabanında</strong>, eklenti tablolarında duruyor. Sipariş hacmi ve stok geçmişi büyüdükçe WP veritabanı şişiyor; her sayfa yüklemesi, her sipariş sorgusu bu yükü taşıyor. Ayrıca birden fazla siteniz olduğu için stok her sitede ayrı ayrı, kopuk yönetiliyor.</p>
+  <p>Önerilen çözüm, sorumlulukları iki net parçaya ayırır:</p>
+  <ul>
+    <li><strong>WooCommerce siteleri</strong> — sadece vitrin, sepet, ödeme ve müşteri hesabı. Lisans verisi WP veritabanında <strong>hiç durmaz</strong>; sadece panele işaret eden bir referans ID tutulur.</li>
+    <li><strong>Merkezi Panel</strong> — ayrı sunucuda, ayrı veritabanında: stok girişi, ortak havuzdan atomik atama, mail teslimatı, değiştirme/iade, denetim kaydı ve tüm sitelerin tek ekrandan yönetimi.</li>
+  </ul>
+
+  <div class="card">
+    <h4 style="margin-top:0">Tasarım ilkeleri</h4>
+    <ul style="margin-bottom:0">
+      <li><strong>Tek doğruluk kaynağı:</strong> Lisansın durumu yalnızca panelde yaşar. WP her zaman panelden okur, asla kopyalamaz.</li>
+      <li><strong>İdempotency her yerde:</strong> Aynı sipariş iki kez gelirse ikinci istek aynı sonucu döner; asla ikinci bir key atanmaz.</li>
+      <li><strong>Kuyrukla ayrıştırma:</strong> Mail gönderimi, webhook'lar ve raporlama sipariş yolundan çıkarılır; sipariş isteği yalnızca "stok ata + kaydet" yapar ve milisaniyeler içinde döner.</li>
+      <li><strong>Her şey denetlenebilir:</strong> Kim hangi key'i gördü, değiştirdi, iptal etti — append-only audit log'da.</li>
+      <li><strong>Sıkıcı ve kanıtlanmış teknoloji:</strong> PostgreSQL + Redis + Node LTS. Egzotik veritabanı yok; ölçek sorunu mimariyle çözülür, teknoloji değiştirerek değil.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ══════════════════════ 2. GENEL MİMARİ ══════════════════════ -->
+<section id="mimari">
+  <h2><span class="sec-no">02</span>Genel Mimari</h2>
+  <p class="sec-sub">Bileşenler ve iki sunucu arasındaki iletişim</p>
+
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  subgraph SITES["WooCommerce Siteleri (N adet)"]
+    W1["Site 1<br/>WooCommerce + Panel Eklentisi"]
+    W2["Site 2<br/>WooCommerce + Panel Eklentisi"]
+    W3["Site N ..."]
+  end
+  subgraph PANEL["Panel Sunucusu (ayrı VPS)"]
+    GW["Caddy / Nginx<br/>TLS + rate limit"]
+    API["NestJS API<br/>(Fastify)"]
+    ADM["Next.js<br/>Admin Paneli"]
+    WK["BullMQ Worker<br/>(mail, webhook, mutabakat)"]
+    PG[("PostgreSQL 17")]
+    RD[("Redis<br/>kuyruk + cache + nonce")]
+  end
+  MAIL["E-posta Sağlayıcı<br/>(Resend / SES)"]
+  W1 -- "HMAC imzalı REST" --> GW
+  W2 -- "HMAC imzalı REST" --> GW
+  W3 -- "HMAC imzalı REST" --> GW
+  GW --> API
+  GW --> ADM
+  API --> PG
+  API --> RD
+  WK --> PG
+  WK --> RD
+  WK --> MAIL
+  ADM -- "iç API" --> API
+    </pre>
+    <div class="cap">Tüm siteler aynı eklentiyi kullanır; panel tarafında her site kendi API anahtarı ve HMAC gizli anahtarıyla ayrı bir "tenant" olarak tanımlıdır.</div>
+  </div>
+
+  <h3>Teknoloji seçimleri ve gerekçeleri</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Katman</th><th>Seçim</th><th>Gerekçe</th></tr>
+    <tr><td><strong>API</strong></td><td>NestJS (Node 22 LTS, Fastify adapter)</td><td>Modüler yapı, dependency injection, guard/interceptor'larla HMAC ve rate-limit'in temiz uygulanması. Fastify adapter ile Express'e göre belirgin throughput artışı.</td></tr>
+    <tr><td><strong>Admin UI</strong></td><td>Next.js + shadcn/ui + TanStack Table/Query</td><td>Stok tabloları, filtreler, toplu import ekranları hızlı çıkar. API'den ayrı deploy edilebilir.</td></tr>
+    <tr><td><strong>Veritabanı</strong></td><td>PostgreSQL 17 + Drizzle ORM</td><td><code>SKIP LOCKED</code> ile kilitlenmesiz atomik stok atama, partial index'ler, JSONB (hesap tipli ürünler için esnek payload), mantıksal replikasyon. Drizzle: tip güvenli, hafif, SQL'e yakın.</td></tr>
+    <tr><td><strong>Kuyruk / Cache</strong></td><td>Redis 7 + BullMQ</td><td>Mail teslimatı, webhook retry, mutabakat işleri; nonce/replay cache ve rate limit sayaçları aynı Redis'te.</td></tr>
+    <tr><td><strong>Mail</strong></td><td>Resend veya Amazon SES</td><td>Site başına domain doğrulaması (SPF/DKIM/DMARC) ile her sitenin maili kendi domaininden çıkar. Webhook ile bounce/complaint takibi.</td></tr>
+    <tr><td><strong>Dağıtım</strong></td><td>Docker Compose + Caddy</td><td>Tek VPS'te tüm stack; Caddy otomatik TLS. Büyüyünce API konteynerini çoğaltmak yeterli (stateless).</td></tr>
+    <tr><td><strong>Gözlemleme</strong></td><td>Sentry + pino (structured log) + Uptime Kuma</td><td>Hata takibi, JSON loglar, kuyruk/endpoint sağlık kontrolü ve düşük stok uyarıları.</td></tr>
+    <tr><td><strong>Yedekleme</strong></td><td>pgBackRest → S3 uyumlu offsite depo</td><td>Günlük tam + sürekli WAL arşivi; nokta-zamanına dönüş (PITR). Lisans stoğu paranızdır, yedeği pazarlık konusu değildir.</td></tr>
+  </table></div>
+
+  <div class="callout">
+    <div class="c-title">Neden mikroservis değil?</div>
+    <p>Günde 1.000–10.000 sipariş, tek bir iyi tasarlanmış "modüler monolit"in çok rahat kaldırdığı bir yük. NestJS içinde modüller (stok, atama, teslimat, site yönetimi) net sınırlarla ayrılır; ileride gerçekten gerekirse worker'lar ayrı sunuculara taşınır. Baştan mikroservis, baştan operasyon yükü demektir.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════ 3. AKIŞ ══════════════════════ -->
+<section id="akis">
+  <h2><span class="sec-no">03</span>Sipariş & Teslimat Akışı</h2>
+  <p class="sec-sub">Ödemeden müşterinin eline key geçene kadar</p>
+
+  <div class="diagram">
+    <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant M as Müşteri
+  participant W as WooCommerce
+  participant P as Panel API
+  participant Q as BullMQ Worker
+  participant E as Mail Sağlayıcı
+  M->>W: Sipariş + ödeme tamamlandı
+  W->>P: POST /v1/orders (HMAC + Idempotency-Key)
+  P->>P: Stok ata — FOR UPDATE SKIP LOCKED
+  P-->>W: 201 · assignment listesi
+  W->>W: Order meta: panel_assignment_ids
+  P->>Q: delivery.email işi kuyruğa
+  Q->>Q: Şablonu derle ({{key}}, kurulum rehberi)
+  Q->>E: Site kimliğiyle gönder (DKIM)
+  E-->>M: Lisans maili
+  E->>P: Webhook: delivered / bounced
+  M->>W: Siparişlerim → Ürünü Görüntüle
+  W->>P: GET /v1/orders/:id/deliveries (server-side)
+  P-->>W: Aktif atamalar (maskeli/tam)
+  W-->>M: Key + kurulum rehberi ekranda
+    </pre>
+    <div class="cap">Sipariş isteği (adım 2–4) senkron ve hızlıdır; mail teslimatı (5–9) tamamen asenkron kuyruktadır. Mail sağlayıcısı çökse bile atama tamamlanmıştır, kuyruk tekrar dener.</div>
+  </div>
+
+  <h3>Atomik stok atama — sistemin kalbi</h3>
+  <p>1.000+ sipariş/gün ölçeğinde en tehlikeli hata <strong>aynı key'in iki müşteriye satılmasıdır</strong>. Bunu iki mekanizma birlikte imkânsız kılar:</p>
+  <pre class="code"><code>-- Tek transaction içinde, satır kilidi bekleyen istekler birbirini beklemez:
+UPDATE license_items
+SET    status = 'assigned', assigned_at = now()
+WHERE  id IN (
+  SELECT id FROM license_items
+  WHERE  product_id = $1 AND status = 'available'
+  ORDER  BY created_at
+  LIMIT  $2              -- sipariş satırındaki adet
+  FOR UPDATE SKIP LOCKED -- kilitli satırı atla, sıradakini al
+)
+RETURNING id;</code></pre>
+  <ul>
+    <li><strong><code>FOR UPDATE SKIP LOCKED</code>:</strong> Aynı anda 50 sipariş gelse bile her transaction farklı satırları kilitler; kimse kimseyi beklemez, deadlock oluşmaz, aynı satır iki kez seçilemez.</li>
+    <li><strong>Çok kullanımlık üründe aynı garanti:</strong> <code>usage_mode: multi</code> üründe sorgu satır seçmek yerine kilitli tek satırda <code>use_count</code>'u artırır (<code>use_count + adet ≤ max_uses</code> koşuluyla) — kapasite aşımı da çifte satış gibi yapısal olarak imkânsızdır (Bölüm 12'de model detayı).</li>
+    <li><strong>Idempotency key:</strong> <code>site_id + woo_order_id + line_item_id</code> üzerinde unique constraint. WooCommerce isteği ağ hatası yüzünden iki kez gönderirse, ikinci istek yeni atama yapmaz — mevcut atamayı aynı cevapla döner.</li>
+    <li><strong>Stok yetersizse:</strong> Davranış ürünün teslimat politikasına bağlıdır (Bölüm 11): varsayılan olarak eldeki adet anında teslim edilir, kalan miktar sipariş satırında <code>partial</code> olarak izlenir ve stok girilince otomatik ya da admin onayıyla tamamlanır. Admin'e anında uyarı gider (panel + Telegram).</li>
+  </ul>
+
+  <h3>Lisans yaşam döngüsü</h3>
+  <div class="diagram">
+    <pre class="mermaid">
+stateDiagram-v2
+  [*] --> available: Stok girişi (tekil + şifreli)
+  available --> assigned: Ödeme onaylı sipariş
+  assigned --> replaced: Admin "Değiştir" — yenisi atanır,<br/>eskisi geçmişte kalır
+  assigned --> suspended: Askıya al — şüpheli durum,<br/>müşteriden geçici gizlenir
+  suspended --> assigned: İnceleme bitti — geri aç
+  suspended --> revoked: İnceleme sonucu iptal
+  assigned --> revoked: İade / iptal — müşteriden gizlenir
+  replaced --> [*]
+  revoked --> quarantined: Karantina — manuel inceleme
+  quarantined --> available: Admin onayıyla havuza dönüş
+  quarantined --> [*]: Kullanılamaz — imha
+    </pre>
+    <div class="cap">İade edilen key otomatik olarak satışa dönmez: müşteri key'i görmüş olabilir. Karantinaya düşer; siz inceleyip karar verirsiniz.</div>
+  </div>
+</section>
+
+<!-- ══════════════════════ 4. VERİ MODELİ ══════════════════════ -->
+<section id="veri">
+  <h2><span class="sec-no">04</span>Veri Modeli</h2>
+  <p class="sec-sub">PostgreSQL şeması — ana tablolar ve ilişkiler</p>
+
+  <div class="diagram">
+    <pre class="mermaid">
+erDiagram
+  SITES ||--o{ SITE_PRODUCT_MAPPINGS : "eşleşir"
+  PRODUCTS ||--o{ SITE_PRODUCT_MAPPINGS : "eşleşir"
+  PRODUCTS ||--o{ LICENSE_ITEMS : "stok"
+  STOCK_BATCHES ||--o{ LICENSE_ITEMS : "parti"
+  SITES ||--o{ ORDERS : "gönderir"
+  ORDERS ||--o{ ASSIGNMENTS : "içerir"
+  LICENSE_ITEMS ||--o| ASSIGNMENTS : "atanır"
+  ASSIGNMENTS ||--o{ ASSIGNMENT_HISTORY : "geçmiş"
+  PRODUCTS ||--o| DELIVERY_TEMPLATES : "şablon"
+  ORDERS ||--o{ EMAIL_LOG : "teslimat"
+    </pre>
+  </div>
+
+  <div class="tbl-wrap"><table>
+    <tr><th>Tablo</th><th>Görevi</th><th>Kritik alanlar</th></tr>
+    <tr><td><code>sites</code></td><td>Her satış kanalı bir tenant — WP sitesi, pazar yeri hesabı veya bayi (Bölüm 18)</td><td class="wrapcode"><code>type</code> (woocommerce | marketplace | reseller), <code>domain</code>, <code>api_key_hash</code>, <code>hmac_secret_enc</code>, <code>sender_email</code>, <code>sender_domain_verified</code>, <code>status</code></td></tr>
+    <tr><td><code>products</code></td><td>Panel tarafındaki ana ürün (ortak havuz bunun üstünde)</td><td class="wrapcode"><code>sku</code>, <code>name</code>, <code>kind</code> (key | account | custom), <code>payload_schema</code> (JSONB — hesap ürünlerinde alan tanımı), <code>usage_mode</code> (single | multi), <code>validity_days</code> + <code>on_expiry</code> (süreli abonelik/kiralık), <code>stockless</code> + <code>release_at</code> (tedarik üzerine / ön sipariş), <code>fulfillment_policy</code> (partial-auto | partial-approval | all-or-nothing), <code>warranty_days</code>, <code>low_stock_threshold</code></td></tr>
+    <tr><td><code>site_product_mappings</code></td><td>Panel ürünü ↔ sitedeki Woo ürünü eşleşmesi</td><td class="wrapcode"><code>site_id</code>, <code>product_id</code>, <code>remote_product_id</code>, <code>remote_variation_id</code> (varyasyon bazlı eşleme), <code>bundle_qty</code> (paket ürün: 1 Woo adedi = N key), <code>remote_sku</code>, <code>template_override_id</code>, <code>active</code></td></tr>
+    <tr><td><code>suppliers</code></td><td>Tedarikçi kaydı — karne verisi buradan raporlanır</td><td class="wrapcode"><code>name</code>, <code>contact</code>, <code>import_profile</code> (JSONB kolon eşleme), <code>note</code>, <code>active</code></td></tr>
+    <tr><td><code>purchase_orders</code></td><td>Yoldaki stok — tedarikçiye verilen siparişin takibi</td><td class="wrapcode"><code>supplier_id</code>, <code>product_id</code>, <code>qty_ordered</code>, <code>qty_received</code>, <code>unit_cost</code>, <code>expected_at</code>, <code>status</code> (ordered | partially_received | received | cancelled)</td></tr>
+    <tr><td><code>stock_batches</code></td><td>Toplu stok girişi partisi (tedarikçi, maliyet, fatura)</td><td class="wrapcode"><code>supplier_id</code>, <code>po_id</code> (bağlı satın alma siparişi), <code>unit_cost</code>, <code>currency</code>, <code>note</code>, <code>imported_by</code></td></tr>
+    <tr><td><code>license_items</code></td><td>Tek tek key/hesap kayıtları — <strong>şifreli</strong></td><td class="wrapcode"><code>product_id</code>, <code>batch_id</code>, <code>payload_enc</code> (AES-256-GCM), <code>payload_hash</code> (mükerrer girişi engeller), <code>payload_suffix_hash</code> (son 5 hane araması), <code>expires_at</code> (FEFO ataması), <code>max_uses</code> + <code>use_count</code> (çok kullanımlık; tükenince <code>depleted</code>), <code>status</code>, <code>assigned_at</code></td></tr>
+    <tr><td><code>orders</code></td><td>Panele yansıyan sipariş aynası</td><td class="wrapcode"><code>site_id</code>, <code>remote_order_id</code>, <code>customer_email</code>, <code>status</code>, <code>idempotency_key</code> (UNIQUE)</td></tr>
+    <tr><td><code>order_lines</code></td><td>Sipariş satırı — kısmi teslimat ilerlemesi burada izlenir</td><td class="wrapcode"><code>order_id</code>, <code>product_id</code>, <code>qty</code>, <code>fulfilled_qty</code>, <code>status</code> (fulfilled | partial | pending), <code>policy_override</code>, <code>priority</code></td></tr>
+    <tr><td><code>fulfillment_events</code></td><td>Sipariş bazlı süreç zaman çizelgesi (timeline)</td><td class="wrapcode"><code>order_id</code>, <code>event_type</code>, <code>detail</code> (JSONB), <code>actor</code>, <code>created_at</code></td></tr>
+    <tr><td><code>replacement_requests</code></td><td>Müşteri değişim/sorun talepleri (self-servis destek kuyruğu)</td><td class="wrapcode"><code>assignment_id</code>, <code>reason</code>, <code>message</code>, <code>status</code> (open | approved | rejected | info_requested), <code>in_warranty</code>, <code>resolved_by</code></td></tr>
+    <tr><td><code>customer_tags</code></td><td>Müşteri 360 etiketleri (e-posta bazlı, tüm siteler genelinde)</td><td class="wrapcode"><code>customer_email</code>, <code>tag</code> (vip | wholesale | risky | blocked), <code>note</code>, <code>created_by</code></td></tr>
+    <tr><td><code>assignments</code></td><td>Sipariş satırı ↔ lisans bağı; müşterinin gördüğü şey</td><td class="wrapcode"><code>order_id</code>, <code>line_item_id</code>, <code>license_item_id</code>, <code>units</code> (çok kullanımlıkta tüketilen hak, varsayılan 1), <code>valid_until</code> (süreli üründe teslimle başlar), <code>status</code> (active | suspended | replaced | revoked | expired), <code>delivered_at</code></td></tr>
+    <tr><td><code>assignment_history</code></td><td>Her değiştirme/iptal olayı — admin ekranındaki "eski anahtarlar" listesi</td><td class="wrapcode"><code>assignment_id</code>, <code>old_license_item_id</code>, <code>new_license_item_id</code>, <code>reason</code>, <code>actor_user_id</code>, <code>created_at</code></td></tr>
+    <tr><td><code>delivery_templates</code></td><td>Ürün bazlı mail/görüntüleme şablonu + kurulum rehberi</td><td class="wrapcode"><code>product_id</code>, <code>subject</code>, <code>body_html</code>, <code>guide_html</code>, <code>variables</code>, <code>lang</code></td></tr>
+    <tr><td><code>email_log</code></td><td>Her gönderim denemesi</td><td class="wrapcode"><code>order_id</code>, <code>assignment_ids</code>, <code>provider_msg_id</code>, <code>status</code> (queued | sent | delivered | bounced), <code>attempt</code></td></tr>
+    <tr><td><code>outbox_events</code></td><td>Transactional outbox — DB'ye yazılmadan hiçbir yan etki tetiklenmez</td><td class="wrapcode"><code>aggregate</code>, <code>event_type</code>, <code>payload</code>, <code>processed_at</code></td></tr>
+    <tr><td><code>audit_log</code></td><td>Append-only denetim: kim, neyi, ne zaman</td><td class="wrapcode"><code>actor</code>, <code>action</code> (örn. <code>license.reveal</code>, <code>assignment.replace</code>), <code>entity</code>, <code>diff</code>, <code>ip</code></td></tr>
+    <tr><td><code>panel_users</code></td><td>Panel admin/operatör hesapları</td><td class="wrapcode"><code>email</code>, <code>password_hash</code> (argon2id), <code>totp_secret_enc</code>, <code>role</code></td></tr>
+  </table></div>
+
+  <h3>Performans notları</h3>
+  <ul>
+    <li><strong>Partial index:</strong> <code>CREATE INDEX ... ON license_items (product_id, created_at) WHERE status = 'available'</code> — atama sorgusu stok tablosu 10 milyon satıra çıksa bile yalnızca satılabilir satırların küçük index'ini tarar. WP'deki şişme sorununun panelde yaşanmamasının ana sigortası budur.</li>
+    <li><strong>Log tablolarında aylık partition:</strong> <code>audit_log</code>, <code>email_log</code>, <code>outbox_events</code> zamanla en çok büyüyen tablolardır; <code>PARTITION BY RANGE (created_at)</code> ile eski aylar arşive taşınır, canlı tablolar küçük kalır.</li>
+    <li><strong>JSONB payload:</strong> Key ürünü için düz metin, Office 365 / Steam hesabı için <code>{username, password, note}</code>, ileride çıkacak yeni ürün tipleri için şema değişikliği gerektirmeyen esnek yapı. Ürün tanımındaki <code>payload_schema</code> stok girişinde alanları doğrular.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 5. API ══════════════════════ -->
+<section id="api">
+  <h2><span class="sec-no">05</span>API Sözleşmesi</h2>
+  <p class="sec-sub">Uç noktalar, HMAC imza şeması, idempotency ve hata modeli</p>
+
+  <h3>Uç noktalar (v1)</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Uç nokta</th><th>Yöntem</th><th>Görevi</th></tr>
+    <tr><td class="wrapcode"><code>/v1/orders</code></td><td>POST</td><td>Ödemesi tamamlanan siparişi bildir; stok atanır, atama listesi döner. <code>Idempotency-Key</code> zorunlu.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/orders/:remoteId/deliveries</code></td><td>GET</td><td>Siparişin <strong>aktif</strong> atamalarını + kurulum rehberini döner. Müşteri "ürünü görüntüle" ekranı bunu kullanır. Revoked/suspended atamalar dönmez.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/orders/bulk-status</code></td><td>POST</td><td>Sipariş ID listesi alır, hepsinin teslimat durumunu tek cevapta döner — "Siparişlerim" liste sayfası için (N+1 istek önlenir). Key içermez.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/orders/:remoteId/admin-view</code></td><td>GET</td><td>Admin meta box için: aktif atamalar + <code>assignment_history</code> (eski/değiştirilen anahtarlar) + mail teslim durumu.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/assignments/:id/replace</code></td><td>POST</td><td>Sorunlu key'i değiştir: yeni stok atanır, eskisi <code>replaced</code> olarak history'ye düşer, yeni key otomatik maillenir. <code>reason</code> alanı zorunlu.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/orders/:remoteId/resend</code></td><td>POST</td><td>Teslimat mailini yeniden gönder (admin "Tekrar Mail Gönder" butonu).</td></tr>
+    <tr><td class="wrapcode"><code>/v1/assignments/:id/suspend</code> · <code>/unsuspend</code></td><td>POST</td><td>Askıya al / geri aç: iptalden farklı, geri alınabilir gizleme — müşteri görünümü ve misafir linki anında kapanır/açılır (Bölüm 06).</td></tr>
+    <tr><td class="wrapcode"><code>/v1/orders/:remoteId/revoke</code></td><td>POST</td><td>İade/iptal: tüm atamalar <code>revoked</code>, müşteri görünümü kapanır, key'ler karantinaya düşer.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/fulfillments/:lineId/complete</code></td><td>POST</td><td>Bekleyen satırın kalanını ata (opsiyonel <code>qty</code> ile kademeli — "N adet ata"). Bekleyen Teslimatlar ekranındaki onay aksiyonlarının ucu.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/orders/:remoteId/timeline</code></td><td>GET</td><td>Siparişin <code>fulfillment_events</code> zaman çizelgesi — WP meta box'taki timeline bunu kullanır.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/replacement-requests</code></td><td>POST / GET</td><td>Müşterinin "Sorun Bildir" talebi (My Account'tan server-side) ve talep durumunun sorgulanması (Bölüm 15).</td></tr>
+    <tr><td class="wrapcode"><code>/v1/products/mapped</code></td><td>GET</td><td>Bu siteye eşlenmiş ürünler + <strong>anlık stok adedi</strong>. Eklenti bununla ürün sayfasında "stokta var/yok" senkronu yapabilir.</td></tr>
+    <tr><td class="wrapcode"><code>/v1/health</code></td><td>GET</td><td>Eklentinin bağlantı testi (ayarlar ekranındaki "Bağlantıyı Sına" butonu).</td></tr>
+  </table></div>
+
+  <h3>HMAC imza şeması</h3>
+  <p>Her sitenin panelde iki sırrı vardır: <code>api_key</code> (kimlik) ve <code>hmac_secret</code> (imza). İstekler şu başlıklarla gelir:</p>
+  <pre class="code"><code>X-Api-Key:   site_7f3a...            # hangi site
+X-Timestamp: 1784563200              # unix saniye
+X-Nonce:     9f1c6c1e-...            # istek başına benzersiz
+X-Signature: hex( HMAC-SHA256( hmac_secret,
+               METHOD + "\n" + PATH + "\n" + TIMESTAMP + "\n"
+               + NONCE + "\n" + SHA256(BODY) ) )</code></pre>
+  <ul>
+    <li><strong>Replay koruması:</strong> Timestamp ±300 saniye dışındaysa ret; nonce Redis'te 10 dk tutulur, tekrarı ret.</li>
+    <li><strong>Gövde bütünlüğü:</strong> İmza body hash'ini içerdiği için istek yolda değiştirilemez.</li>
+    <li><strong>Anahtar rotasyonu:</strong> Panelde her site için "yeni anahtar üret" akışı; eski anahtar 24 saat geçerli kalır (kesintisiz rotasyon).</li>
+    <li>Ek katman olarak panel, site sunucularının sabit IP'lerine allowlist uygular (opsiyonel ama önerilir).</li>
+  </ul>
+
+  <h3>Hata modeli</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>HTTP</th><th>Kod</th><th>Anlamı / eklentinin davranışı</th></tr>
+    <tr><td>401</td><td><code>invalid_signature</code></td><td>İmza/timestamp/nonce hatalı. Eklenti admin'e "panel bağlantı hatası" uyarısı gösterir, retry etmez.</td></tr>
+    <tr><td>404</td><td><code>mapping_not_found</code></td><td>Sipariş satırındaki ürün panele eşlenmemiş. Sipariş panelde <code>unmapped</code> olarak açılır, admin uyarılır — sipariş kaybolmaz.</td></tr>
+    <tr><td>409</td><td><code>already_processed</code></td><td>Aynı idempotency key daha önce işlendi; cevap gövdesinde <strong>mevcut atamalar</strong> döner. Eklenti bunu başarı sayar.</td></tr>
+    <tr><td>207</td><td><code>partial_fulfillment</code></td><td>Stok kısmen yetti: cevapta teslim edilen atamalar + bekleyen adet döner. Eklenti siparişi "kısmen teslim edildi" durumuna çeker (Bölüm 11).</td></tr>
+    <tr><td>202</td><td><code>pending_stock</code></td><td>Hiç stok yok ya da politika all-or-nothing: sipariş kabul edildi, teslimat stok bekliyor. Eklenti müşteriye "hazırlanıyor" gösterir.</td></tr>
+    <tr><td>429</td><td><code>rate_limited</code></td><td><code>Retry-After</code> başlığıyla döner; eklenti üstel bekleme (exponential backoff) uygular.</td></tr>
+    <tr><td>5xx</td><td>—</td><td>Eklenti Action Scheduler ile 1dk → 5dk → 30dk aralıklarla yeniden dener; panel tarafı idempotent olduğu için güvenlidir.</td></tr>
+  </table></div>
+</section>
+
+<!-- ══════════════════════ 6. WP EKLENTİSİ ══════════════════════ -->
+<section id="wp">
+  <h2><span class="sec-no">06</span>WordPress Eklentisi Tasarımı</h2>
+  <p class="sec-sub">Tüm sitelere kurulan tek "ince istemci" eklenti</p>
+
+  <p>Eklentinin tek görevi köprü olmaktır: WP veritabanına lisans yazmaz, kendi tablosu yalnızca giden istek kuyruğunun log'udur. Bu sayede bugünkü "DB şişmesi" sorunu yapısal olarak ortadan kalkar.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4 style="margin-top:0">Sipariş tarafı (hook'lar)</h4>
+      <ul style="margin-bottom:0">
+        <li><code>woocommerce_order_status_processing/completed</code> → panele <code>POST /v1/orders</code>. Senkron değil: <strong>Action Scheduler</strong> işi olarak kuyruklanır, ödeme sayfasını asla bekletmez.</li>
+        <li><code>woocommerce_order_status_refunded/cancelled</code> → <code>POST /v1/orders/:id/revoke</code>.</li>
+        <li>Dönen <code>assignment_id</code> listesi order meta'ya yazılır (HPOS uyumlu <code>$order-&gt;update_meta_data</code>).</li>
+        <li>Kısmi iade: yalnızca iade edilen satırın atamaları revoke edilir.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">Müşteri tarafı (My Account)</h4>
+      <ul style="margin-bottom:0">
+        <li>"Siparişlerim → Ürünü Görüntüle" sayfası, WP sunucusundan panele <strong>server-side</strong> istek atar; panel API'si ve sırlar tarayıcıya asla sızmaz.</li>
+        <li>Cevapta yalnızca <code>active</code> atamalar gelir — iade/iptal edilen lisans müşteri ekranından kendiliğinden kaybolur.</li>
+        <li>Key/hesap bilgisi <strong>cache'lenmez</strong> (transient yok); yalnızca "sipariş görünür mü" bayrağı 60 sn cache'lenir. Credential her zaman taze ve tek kaynaktan gelir.</li>
+        <li>Kurulum rehberi paneldeki şablondan render edilmiş hazır HTML olarak gelir; eklenti sadece basar.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Admin sipariş ekranı — meta box</h3>
+  <p>Sipariş düzenleme sayfasına eklenen kutu, <code>GET /v1/orders/:id/admin-view</code> ile beslenir ve sizin saydığınız akışların tamamını tek yerden verir:</p>
+  <ul class="check-list">
+    <li><strong>Atanmış lisanslar:</strong> maskeli görünüm (<code>XXXXX-XXXXX-...-A7K2M</code>); "Göster" tıklandığında tam değer gelir ve <code>license.reveal</code> olarak audit log'a düşer.</li>
+    <li><strong>Değiştir butonu:</strong> sebep seçilir (geçersiz key, müşteri talebi, tedarikçi iptali...), panel yeni key atar, yeni mail otomatik gider.</li>
+    <li><strong>Eski anahtarlar — anlık:</strong> aynı kutunun altında <code>assignment_history</code> listelenir: eski key (maskeli), sebep, tarih, işlemi yapan kişi.</li>
+    <li><strong>Tekrar Mail Gönder:</strong> tek tık; gönderim durumu (iletildi / bounce) aynı kutuda görünür. Çift tık koruması: aynı sipariş için 60 sn içindeki ikinci istek tek işe indirgenir — müşteri mükerrer mail almaz.</li>
+    <li><strong>Not ekle — iki yönlü senkron:</strong> meta box'tan yazılan not panel timeline'ına düşer; panelde yazılan operasyon notları da webhook'la Woo sipariş notu olarak geri gelir. İki ekran aynı hikâyeyi anlatır, "panelde not vardı ama WP'de görmedim" olmaz.</li>
+    <li><strong>İade/İptal durumu:</strong> revoke edilmiş atamalar kırmızı "iptal edildi" rozetiyle listede kalır — geçmiş kaybolmaz, sadece müşteriden gizlenir.</li>
+  </ul>
+
+  <h3>WP admin'den tam müdahale — panele girmeden her şey</h3>
+  <p>Günlük operasyonda çoğu zaman zaten WP sipariş ekranındasınızdır; panele geçmek bir bağlam değişimidir. Bu yüzden eklenti, sık gereken tüm müdahaleleri WP içinden yapılabilir kılar — hepsi arkada panel API'sini çağırır, yetki ve kayıt yine panelde kalır:</p>
+  <ul class="check-list">
+    <li><strong>Senkron durumu & yeniden gönderme:</strong> Sipariş panele ulaşmadıysa meta box durumu gösterir ("senkron hatası — 401 imza reddi" / "3 dk önce kuyruğa alındı") ve <strong>Yeniden Gönder</strong> butonu sunar. Ürün eşlenmemişse uyarı + "hızlı eşle" bağlantısı çıkar; sipariş asla sessizce kaybolmaz.</li>
+    <li><strong>Manuel key atama:</strong> İstisnai durumlar için iki yol: havuzdan elle seçerek atama, ya da <strong>elle girilen key'i</strong> atama (acil tedarik senaryosu — girilen key panele <code>manual</code> kaynaklı stok olarak kaydedilir ve normal yaşam döngüsüne girer; sistem dışı key dolaşmaz).</li>
+    <li><strong>Askıya al / geri aç:</strong> İptalden farklı, geri alınabilir gizleme: şüpheli bir durum incelenene kadar <span class="pill warn">askıda</span> — müşteri görünümü ve misafir linki anında kapanır, inceleme bitince tek tıkla geri açılır. Revoke gibi kalıcı değildir; her iki yön de timeline'a işlenir.</li>
+    <li><strong>Farklı ürünle değiştirme & ek atama:</strong> Müşteri yanlış ürün aldıysa değişimde <em>başka bir panel ürününden</em> key seçilebilir (fiyat farkı notu düşülür). Telafi/jest için "+1 ek key ata" aksiyonu — bonus atamalar raporda ayrı görünür, kâr hesabını sessizce bozmaz.</li>
+    <li><strong>Key bazında işlem:</strong> Çok adetli satırda işlemler tek key seviyesinde de yapılır: 5 adetlik satırın yalnızca 1 key'ini değiştir/askıya al/iptal et.</li>
+    <li><strong>Sipariş listesi entegrasyonu:</strong> WP sipariş listesine teslimat kolonu gelir (<span class="pill ok">✓ teslim</span> / <span class="pill warn">30/50</span> / <span class="pill warn">stok bekliyor</span> / <span class="pill bad">incelemede</span>) + "teslimatı eksik" hızlı filtresi + toplu aksiyon (seçili siparişlere tekrar mail). Sorunlu siparişi bulmak için siparişleri tek tek açmazsınız.</li>
+    <li><strong>Ürün düzenleme ekranında eşleme kutusu:</strong> Woo ürün sayfasında bu ürünün bağlı olduğu panel ürünü, anlık stok ve teslimat politikası görünür; eşlenmemiş yayındaki ürün admin'de kırmızı rozetle işaretlenir (satılıp teslim edilemeyen ürün en pahalı hatadır).</li>
+    <li><strong>Admin bar sağlık göstergesi:</strong> WP admin çubuğunda panel bağlantı durumu (yeşil/kırmızı) ve bekleyen senkron işi sayısı — "bir şeyler birikmiş" durumunu sayfa açmadan görürsünüz.</li>
+  </ul>
+
+  <div class="callout">
+    <div class="c-title">Yetki ve kimlik: WP tarafı da denetim altında</div>
+    <p>WP rolleri panel yetkilerine eşlenir: örn. <code>shop_manager</code> teslimat durumunu görür ama maskesiz key açamaz ve manuel atama yapamaz; bu eşleme panelde site bazında tanımlanır (WP tarafında değiştirilemez). Meta box'tan yapılan her aksiyon panel audit log'una <code>actor: wp:kullanıcı@site</code> kimliğiyle düşer — "kim yaptı" sorusunun cevabı hangi arayüzden yapıldığından bağımsız tektir. Panel erişilemezse meta box son senkronlu durumu salt-okunur gösterir ("son güncelleme 14:02") ve aksiyon butonları devre dışı kalır — kör kalmazsınız, yanlış da yazamazsınız.</p>
+  </div>
+
+  <h3>Entegrasyonun kenar durumları — sahada mutlaka yaşanacaklar</h3>
+  <p>İki sistem arasındaki dikiş, tasarımın en çok sınanacağı yerdir. Aşağıdakiler "olursa" değil "olunca" senaryolarıdır ve her birinin tanımlı bir cevabı vardır:</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Durum</th><th>Tanımlı davranış</th></tr>
+    <tr><td><strong>Sipariş düzenleme</strong> (ödeme sonrası adet/satır değişikliği)</td><td>Adet artırıldı → fark için ek atama yapılır; azaltıldı → fazla atamalar seçilerek revoke edilir (hangi key'lerin iptal edileceğini admin seçer); satır eklendi/silindi aynı mantıkla. WP'de <em>manuel oluşturulan</em> sipariş de (telefon siparişi) normal akıştan geçer — özel yol yoktur.</td></tr>
+    <tr><td><strong>Varyasyonlu & paket ürünler</strong></td><td>Eşleme <code>variation_id</code> bazındadır ("Office 2021 — Home" ve "— Pro" ayrı panel ürünlerine gider). Paket (bundle): tek Woo satırı <em>birden çok</em> panel ürününe eşlenebilir — "Windows + Office paketi" siparişinde 2 ayrı key atanır, tek mailde birlikte teslim edilir.</td></tr>
+    <tr><td><strong>Webhook sırası bozulursa</strong></td><td>Her webhook artan bir <code>sequence</code> taşır; eklenti kayıtlı son sıradan küçük numaralı (gecikip sonradan gelen) webhook'u yok sayar. <code>order.fulfilled</code>'den sonra gelen bayat <code>partially_fulfilled</code> siparişi geri "kısmi"ye çeviremez.</td></tr>
+    <tr><td><strong>"Siparişlerim" listesi yükü</strong></td><td>Liste sayfası sipariş başına ayrı panel isteği atmaz (N+1 yok): tek <code>POST /v1/orders/bulk-status</code> çağrısıyla sayfadaki tüm siparişlerin teslimat durumu gelir. Key içeren detay isteği yalnızca "ürünü görüntüle"ye tıklanınca yapılır.</td></tr>
+    <tr><td><strong>Cache eklentileriyle çakışma</strong></td><td>Teslimat içeriği gösteren sayfalar page-cache'ten otomatik hariç tutulur (WP Rocket / LiteSpeed / W3TC kural entegrasyonu) ve <code>Cache-Control: no-store</code> ile döner; key/şifre object cache'e ya da transient'e hiçbir koşulda yazılmaz. Bir müşterinin key'inin cache'ten başka müşteriye servis edilmesi yapısal olarak imkânsızdır.</td></tr>
+    <tr><td><strong>Staging/klon kazası</strong></td><td>Eklenti kurulumda site URL'sini imzalı saklar; site klonlanıp URL değişirse (staging, taşıma) kendini otomatik <span class="pill mut">pasif mod</span>a alır — staging'den canlı panele sipariş/istek sızmaz. Panel de aynı API anahtarını iki farklı origin'den görürse alarm üretir. Staging'de çalışmak isterseniz siteyi panelde sandbox kanalı olarak bağlarsınız (Bölüm 17).</td></tr>
+    <tr><td><strong>Saat kayması (clock skew)</strong></td><td>HMAC ±300 sn toleransı paylaşımlı hosting'lerdeki saat kaymasına takılabilir. El sıkışmada ve her sağlık kontrolünde panel-site saat farkı ölçülür; fark 60 sn'yi aşarsa tanılama ekranında sarı uyarı, 240 sn'de kritik uyarı — imza hataları başlamadan görürsünüz.</td></tr>
+    <tr><td><strong>Çoklu dil (WPML/Polylang)</strong></td><td>Eşleme çeviri grubuna yapılır: bir ürünün TR/EN çevirileri aynı panel ürününe gider, çift eşleme ve çift stok düşme riski olmaz. Teslimat şablonu dili sipariş diline göre seçilir.</td></tr>
+    <tr><td><strong>Müşteri e-postasını değiştirirse</strong></td><td>Eklenti <code>customer.email_changed</code> olayını panele iletir: sipariş bağları ve müşteri 360 zinciri yeni adrese taşınır, eski adrese bağlı misafir token'ları yenilenir. Değişiklik audit'e düşer (hesap ele geçirme izinde işe yarar).</td></tr>
+    <tr><td><strong>Müşteri WP hesabını silerse</strong></td><td>WP'nin hesap silme kancası, panelin KVKK anonimleştirme ucunu (Bölüm 13) otomatik çağırır — silme talebi için ayrıca manuel işlem gerekmez.</td></tr>
+    <tr><td><strong>Sipariş çöpe atılır / silinirse</strong></td><td>Eklenti <code>order.trashed</code> bildirir; paneldeki atamalar <span class="pill warn">sahipsiz</span> işaretlenip inceleme kuyruğuna düşer. Otomatik revoke <em>yapılmaz</em> — yanlışlıkla çöpe atılan sipariş müşterinin key'ini öldürmemeli; karar admin'indir.</td></tr>
+    <tr><td><strong>Para iadesi ≠ lisans iptali</strong></td><td>Woo iade ekranına "lisansları da iptal et" onay kutusu eklenir (varsayılan işaretli). Jest/özür iadesinde kutu kaldırılır: para iade edilir, key müşteride kalır ve rapora "iade edildi, lisans korundu" olarak işlenir. Kısmi <em>para</em> iadesi tek başına revoke tetiklemez.</td></tr>
+    <tr><td><strong>Panel planlı bakımdaysa</strong></td><td>Bakım penceresi panelden önceden ilan edilir: WP admin'de banner ("panel 03:00–03:30 bakımda"), eklenti kuyruklamaya devam eder, müşteri ekranı son senkron veriyi gösterir. Habersiz gece bakımı "entegrasyon bozuldu" alarmı üretmez.</td></tr>
+  </table></div>
+
+  <h3>Müşteri ekranı durum matrisi</h3>
+  <p>Sistemin her iç durumunun müşteri ekranında <em>tanımlı bir karşılığı</em> vardır — müşteri iç terminolojiyi asla görmez, her durumda ne olduğunu ve ne bekleyeceğini anlar:</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>İç durum</th><th>Müşterinin gördüğü</th></tr>
+    <tr><td><code>pending_stock</code></td><td>"Siparişiniz hazırlanıyor — ürününüz en kısa sürede teslim edilecek." (key alanı boş, sipariş iptal edilmiş gibi görünmez)</td></tr>
+    <tr><td><code>held_for_review</code></td><td>"Siparişiniz doğrulanıyor — kısa bir güvenlik kontrolünden sonra teslim edilecek."</td></tr>
+    <tr><td><code>partial</code> (30/50)</td><td>Teslim edilen 30 key tam görünür + ilerleme göstergesi + "kalan 20 adet hazırlanıyor" — müşteri eldekini hemen kullanabilir</td></tr>
+    <tr><td><code>active</code></td><td>Key/hesap bilgisi + kurulum rehberi + garanti bitiş tarihi (varsa)</td></tr>
+    <tr><td><code>suspended</code></td><td>"Bu ürün geçici olarak inceleme altında." (key gizli; "askıya alındı" gibi suçlayıcı dil yok)</td></tr>
+    <tr><td><code>replaced</code></td><td>Yalnızca yeni key görünür; eski key müşteri ekranında hiç listelenmez (kafa karışıklığı olmaz)</td></tr>
+    <tr><td><code>revoked</code></td><td>Sipariş geçmişte durur ama ürün detayında "bu ürün iade/iptal edildi" — key erişimi tamamen kapalı</td></tr>
+    <tr><td><code>expired</code> (süreli ürün)</td><td>"Ürün süreniz doldu" bilgisi; bilgilerin gizlenip gizlenmeyeceği ürün politikasına bağlı (<code>on_expiry</code>)</td></tr>
+    <tr><td>Mail <code>bounced</code></td><td>My Account'ta uyarı bandı: "Teslimat e-postanız ulaşamadı — ürünlerinizi buradan görüntüleyebilirsiniz." Müşteri "mailim gelmedi" demeden çözüm önünde</td></tr>
+  </table></div>
+
+  <h3>Görüntüleme ekranı UX ayrıntıları</h3>
+  <ul>
+    <li><strong>Tek tık kopyalama:</strong> her key'in yanında kopyala butonu + "kopyalandı ✓" geri bildirimi — elle seçip kopyalarken eksik karakter alma derdi biter (destek taleplerinin bilinen bir kaynağıdır).</li>
+    <li><strong>Hesap ürünlerinde göster/gizle:</strong> şifre alanı maskeli gelir, göz ikonuyla açılır; omuz üstünden bakan birine karşı varsayılan güvenli.</li>
+    <li><strong>Toplu indirme:</strong> çok adetli siparişte (50 key) tüm key'leri tek .txt/.csv olarak indirme — müşteri 50 kez kopyala-yapıştır yapmaz. İndirme de görüntüleme sayılır ve loglanır.</li>
+    <li><strong>Canlı tamamlama:</strong> müşteri sayfa açıkken kısmi teslimatı tamamlanırsa liste kısa aralıklı yoklama ile kendini günceller — "sayfayı yenileyin" demeye gerek kalmaz.</li>
+  </ul>
+
+  <h3>Tanılama sekmesi & eklentinin kendi ayak izi</h3>
+  <ul>
+    <li><strong>Tek tuşla tam tanılama:</strong> eklenti ayarlarındaki "Bağlantıyı Sına" şunları raporlar: imza doğrulaması, saat farkı, SSL/TLS, REST API ve permalink yapısı, PHP/WP/Woo sürümleri, <strong>panel→site webhook erişim testi</strong> (site Cloudflare/WAF arkasındaysa webhook'lar challenge'a takılabilir — test bunu yakalar ve panel IP'lerinin bypass listesine eklenmesi talimatını gösterir) ve Action Scheduler kuyruk sağlığı.</li>
+    <li><strong>Eklenti WP veritabanını şişirmez — tasarım hedefi:</strong> Bu projenin çıkış sebebi WP DB şişmesiydi; yeni eklentinin kendi eliyle aynı sorunu geri getirmemesi tasarım kuralıdır. Eklentinin yerel kayıtları (istek logu, kuyruk geçmişi) varsayılan 30 gün sonra otomatik budanır; tablo boyutları tanılama ekranında görünür. Lisans verisi zaten WP'de durmadığı için kalıcı büyüyen tek şey order meta'daki referans ID'lerdir.</li>
+    <li><strong>Geçiş (dual-run) modu:</strong> Faz 3 migrasyonu ürün bazlı cutover ile yapılır: pilot ürünler yeni sistemden, geri kalanlar eski eklentiden teslim etmeye devam eder. Meta box her siparişte hangi sistemin teslim ettiğini gösterir; ürün eşlemesi tekil otorite olduğu için aynı ürünün iki sistemden birden teslim edilmesi mümkün değildir.</li>
+  </ul>
+
+  <div class="callout warn">
+    <div class="c-title">Panel çökerse ne olur?</div>
+    <p>Sipariş alınmaya devam eder — ödeme WP tarafındadır. Eklentinin Action Scheduler kuyruğu panele ulaşamadığı istekleri artan aralıklarla yeniden dener; panel ayağa kalktığında idempotency sayesinde her sipariş tam bir kez işlenir. Müşteri ekranında bu aralıkta "Ürününüz hazırlanıyor" mesajı görünür. Ek güvence olarak paneldeki günlük mutabakat işi, Woo REST API üzerinden son 48 saatin siparişlerini tarayıp atlanmış olan varsa tamamlar.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════ 7. MAİL ══════════════════════ -->
+<section id="mail">
+  <h2><span class="sec-no">07</span>Teslimat & Mail Mimarisi</h2>
+  <p class="sec-sub">Sorunuzun cevabı: şablonlar eklentide mi, panelde mi?</p>
+
+  <div class="callout">
+    <div class="c-title">Karar: Şablonlar ve gönderim tamamen panelde</div>
+    <p>Kurulum rehberi metinleri, key/kullanıcı adı-şifre yerleştirme ve mail gönderimi <strong>panelde</strong> yönetilmeli; WordPress tarafında şablon <em>hiç</em> olmamalı. Gerekçe: N siteniz var — şablon eklentide olursa her metin değişikliğinde N sitede güncelleme yaparsınız ve "hangi sitede hangi sürüm var" sorunu doğar. Panelde ise Windows 11 Pro'nun kurulum rehberini bir kez düzenlersiniz, o andan itibaren tüm sitelerin mailleri ve "ürünü görüntüle" ekranları aynı içeriği kullanır.</p>
+  </div>
+
+  <h3>Şablon sistemi</h3>
+  <ul>
+    <li><strong>Ürün bazlı şablon:</strong> Her panel ürününün bir teslimat şablonu vardır: mail konusu, gövde, kurulum rehberi. Değişkenler: <code>{{key}}</code>, <code>{{username}}</code>, <code>{{password}}</code>, <code>{{units}}</code> (çok kullanımlıkta "12 kullanım hakkı"), <code>{{order_no}}</code>, <code>{{site_name}}</code>, <code>{{product_name}}</code>...</li>
+    <li><strong>Site bazlı override:</strong> <code>site_product_mappings.template_override_id</code> ile istisna tanımlanır — örn. aynı Office key'i A sitesinde Türkçe, B sitesinde İngilizce şablonla gider. Override yoksa ürünün varsayılanı kullanılır.</li>
+    <li><strong>Marka çerçevesi siteden:</strong> Her sitenin panelde logo/renk/altbilgi içeren bir "mail kabuğu" tanımı vardır; ürün şablonu bu kabuğun içine oturur. Müşteri, maili alışveriş yaptığı sitenin kimliğiyle alır.</li>
+    <li><strong>Tek kaynak, iki kanal:</strong> Aynı render edilmiş içerik hem maile hem My Account "ürünü görüntüle" ekranına gider — müşteri iki yerde farklı şey görmez.</li>
+  </ul>
+
+  <h3>Gönderim altyapısı</h3>
+  <ul>
+    <li>Maili <strong>panel gönderir</strong> (BullMQ kuyruğu üzerinden) — WP'nin <code>wp_mail</code>/SMTP eklentisi devreden çıkar. Kuyruk; retry, oran sınırı ve gönderim logunu tek yerde toplar.</li>
+    <li>Site başına gönderici kimliği: <code>siparis@siteadi.com</code>, o domain için Resend/SES üzerinde SPF + DKIM + DMARC doğrulamasıyla. Mailler müşterinin alışveriş yaptığı domainden çıkar; spam riski minimalize edilir.</li>
+    <li>Sağlayıcı webhook'ları (delivered / bounced / complained) <code>email_log</code>'a işlenir ve admin meta box'ta "mail iletildi ✓ / iletilemedi ✗" olarak görünür. Bounce olursa admin uyarılır — müşteri "mailim gelmedi" demeden önce siz görürsünüz.</li>
+    <li>"Tekrar Mail Gönder" ve "Değiştir" akışları aynı kuyruğu kullanır; her gönderim ayrı log satırıdır.</li>
+    <li><strong>Şablon önizleme & test gönderimi:</strong> Şablon düzenleyicide örnek veriyle canlı önizleme + kendi adresinize tek tık test maili — şablon değişikliği müşteri görmeden doğrulanır; bozuk değişken (<code>{{key}}</code> yazım hatası gibi) kaydetmeden yakalanır.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 8. GÜVENLİK ══════════════════════ -->
+<section id="guvenlik">
+  <h2><span class="sec-no">08</span>Güvenlik Katmanları</h2>
+  <p class="sec-sub">Stok = para. Saldırı yüzeyi buna göre daraltılır.</p>
+
+  <h3>Veri şifreleme</h3>
+  <ul>
+    <li><strong>Uygulama katmanında şifreleme:</strong> <code>license_items.payload_enc</code> AES-256-GCM ile şifrelenir (libsodium). Veritabanı dump'ı ya da disk çalınsa bile key'ler okunamaz. Disk şifrelemesi (LUKS) tek başına yeterli değildir — çalışan sunucuda dosyalar açıktır.</li>
+    <li><strong>Envelope encryption:</strong> Her kayıt kendi data-key'iyle şifrelenir; data-key'ler master key ile sarılır. Master key uygulama <code>.env</code>'inde değil, ayrı bir secret store'da (Docker secret / Vault / cloud KMS) durur. Master key rotasyonu yalnızca data-key'lerin yeniden sarılmasını gerektirir, milyonlarca satırın yeniden şifrelenmesini değil.</li>
+    <li><strong>Mükerrer tespiti hash ile:</strong> Aynı key'in iki kez stoğa girmesini <code>payload_hash</code> (HMAC-SHA256) üzerindeki unique constraint engeller — şifreli veri üzerinde arama yapılamayacağı için bu şart.</li>
+    <li><strong>Master key yedekleme prosedürü:</strong> Master key'in kaybı = tüm stoğun kaybı; DB yedeği anahtar olmadan işe yaramaz. Anahtar, şifreli iki kopya halinde çevrimdışı saklanır (parola kasası + fiziksel ayrı konum), DB yedeğiyle <em>asla aynı yerde durmaz</em> ve aylık yedekten dönüş tatbikatında anahtar geri yükleme de test edilir.</li>
+  </ul>
+
+  <h3>Patlama yarıçapı: bir site ele geçirilirse</h3>
+  <p>HMAC anahtarı siteyi değil, sitenin <em>sunucusunu</em> temsil eder — bir WP sitesi hacklenirse saldırgan o anahtarla panele sahte sipariş basıp key toplamayı deneyebilir. Panel bu yüzden hiçbir siteye sınırsız güvenmez:</p>
+  <ul>
+    <li><strong>Site başına satış kotası:</strong> Son 30 gün ortalamasından türeyen dinamik günlük adet/hacim tavanı (örn. 3×). Kota aşan siparişler reddedilmez ama teslimatları <code>held_for_review</code>'a düşer ve acil alarm gider — meşru kampanya ise tek tıkla açarsınız, saldırıysa hiçbir key çıkmamıştır.</li>
+    <li><strong>Geri doğrulama (çift yönlü teyit):</strong> Yüksek adetli/değerli siparişlerde panel, teslimattan önce sitenin Woo REST API'sine "bu sipariş gerçekten var mı, ödendi mi" diye sorar. Sahte push'un Woo tarafında karşılığı olmadığı için anında yakalanır.</li>
+    <li><strong>Anomali oto-askısı:</strong> İmza hatası fırtınası, olağan dışı saat/hacim deseni → o sitenin kanalı otomatik askıya alınır, Telegram'a acil bildirim; siz onaylayana kadar o siteden teslimat durmaz ama çıkmaz. Diğer siteler etkilenmez.</li>
+    <li><strong>Kapsam zaten dar:</strong> Her anahtar yalnızca kendi sitesinin siparişlerine erişir — tek site düşse bile havuzun tamamı görünmez, hasar o sitenin kotasıyla sınırlıdır.</li>
+  </ul>
+
+  <h3>Erişim katmanları</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Katman</th><th>Önlemler</th></tr>
+    <tr><td><strong>Ağ</strong></td><td>Panel admin arayüzü yalnızca sizin IP'lerinize/VPN'e (Tailscale önerilir) açık; API uçları herkese açık ama HMAC zorunlu. TLS 1.3, HSTS. DB ve Redis dışarıya kapalı (yalnızca Docker iç ağı).</td></tr>
+    <tr><td><strong>Site API'si</strong></td><td>HMAC + timestamp + nonce (Bölüm 05), site başına scope: bir sitenin anahtarı yalnızca kendi siparişlerini görebilir; başka sitenin siparişine erişim 404 döner.</td></tr>
+    <tr><td><strong>Panel kullanıcıları</strong></td><td>Argon2id parola hash'i, zorunlu TOTP 2FA, RBAC (admin / operatör / sadece-okuma). Operatör stok görür ama maskesiz key açamaz; "reveal" yetkisi ayrı roldedir.</td></tr>
+    <tr><td><strong>Uygulama</strong></td><td>Tüm girişlerde şema doğrulama (zod), rate limit (site başına ve uç başına), SQL injection'a kapalı parametrik sorgular (Drizzle), CSP'li admin paneli, bağımlılık taraması (Renovate + npm audit CI'da).</td></tr>
+    <tr><td><strong>Denetim</strong></td><td>Append-only <code>audit_log</code>: key görüntüleme, değiştirme, revoke, stok import, şablon değişikliği, giriş denemeleri. Log satırları güncellenemez/silinemez (DB rolü yetkisiz).</td></tr>
+    <tr><td><strong>Sunucu</strong></td><td>SSH yalnızca anahtarla + fail2ban, otomatik güvenlik yamaları, günlük şifreli offsite yedek + <strong>ayda bir yedekten dönüş tatbikatı</strong>.</td></tr>
+  </table></div>
+
+  <div class="callout danger">
+    <div class="c-title">En kritik iki kural</div>
+    <p>1) Panel API sırları yalnızca WP sunucusunda, <code>wp-config.php</code> düzeyinde saklanır — asla WP veritabanında düz metin option olarak durmaz (WP DB'si sızarsa panel sırları sızmamalı). 2) Müşteriye giden hiçbir yanıtta revoked/replaced payload bulunmaz; filtre SQL seviyesindedir, "frontend'de gizleme" değildir.</p>
+  </div>
+</section>
+
+<!-- ══════════════════════ 9. ÖLÇEK ══════════════════════ -->
+<section id="olcek">
+  <h2><span class="sec-no">09</span>Ölçekleme Yolu</h2>
+  <p class="sec-sub">1.000/gün bugün, 10.000+/gün yarın — ne zaman ne gerekir</p>
+
+  <p>Günde 1.000 sipariş ≈ dakikada ~1 sipariş, kampanya anlarında belki saniyede 5–10. Bu, tek düzgün VPS için küçük bir yüktür; mimari asıl olarak <strong>doğruluk</strong> (çifte satış yok) ve <strong>büyüme payı</strong> için kurgulanır.</p>
+
+  <div class="tbl-wrap"><table>
+    <tr><th>Aşama</th><th>Yük</th><th>Kurulum</th><th>Ne zaman geç</th></tr>
+    <tr><td><span class="pill ok">Başlangıç</span></td><td>≤ 5K sipariş/gün</td><td>Tek VPS (8 vCPU / 16 GB): Docker Compose'da API ×2, worker, PG, Redis, Caddy</td><td>Bugün</td></tr>
+    <tr><td><span class="pill warn">Ayrışma</span></td><td>5K – 20K/gün</td><td>PostgreSQL ayrı sunucuya; PgBouncer bağlantı havuzu; API konteyneri yatay çoğalır (stateless)</td><td>DB CPU'su sürekli %60+ veya p95 gecikme hissedilir olunca</td></tr>
+    <tr><td><span class="pill bad">Büyük ölçek</span></td><td>20K+/gün</td><td>Raporlar/admin listeleri için read replica; log tablolarında partition + arşiv; Redis'e ayrı instance; CDN önünde WAF</td><td>Rapor sorguları yazma yolunu etkilemeye başlayınca</td></tr>
+  </table></div>
+
+  <ul>
+    <li><strong>Yazma yolu zaten minimal:</strong> Sipariş başına birkaç satır insert/update. PostgreSQL bu deseni tek makinede günde yüz binlerce sipariş seviyesine kadar taşır — erken optimizasyona gerek yok, geçiş noktaları yukarıdaki tabloda net.</li>
+    <li><strong>Stateless API:</strong> Oturum yok, JWT yok (siteler HMAC kullanır; admin oturumu Redis'te) — API konteynerini çoğaltmak konfigürasyonsuz ölçekleme sağlar.</li>
+    <li><strong>Yeni site eklemek = veri girişi:</strong> Panelde site kaydı + anahtar üretimi + ürün eşleme; koda dokunulmaz. G2A benzeri bir bayi/reseller API'si ileride aynı HMAC altyapısının üstüne "site" yerine "bayi" tenant'ı olarak eklenebilir.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 10. RİSK & FRAUD ══════════════════════ -->
+<section id="fraud">
+  <h2><span class="sec-no">10</span>Risk & Fraud Kontrolü</h2>
+  <p class="sec-sub">Dijital ürün + anında teslimat = fraud mıknatısı. Bu sektörün en büyük gizli gideri chargeback'tir.</p>
+
+  <p>Çalıntı kartla verilen sipariş saniyeler içinde teslim edilir; 30–60 gün sonra chargeback gelir ve hem parayı hem key'i kaybedersiniz. Mimari bu yüzden teslimatı isteğe bağlı olarak <strong>bekletebilen</strong> bir risk katmanı içerir:</p>
+
+  <h3>Sipariş girişinde risk skoru</h3>
+  <ul>
+    <li><strong>Hız (velocity) sinyalleri:</strong> Aynı e-posta / IP / kart parmak izinden kısa sürede çoklu sipariş; aynı müşterinin gün içindeki toplam tutarı.</li>
+    <li><strong>Profil sinyalleri:</strong> İlk siparişini veren yeni müşteri + yüksek tutar; tek kullanımlık (disposable) e-posta domain'i; sepette aynı üründen anormal adet.</li>
+    <li><strong>Bağlam sinyalleri:</strong> Ödeme yöntemi ile ülke/IP uyumsuzluğu, gece saatlerinde toplu alım, geçmişte chargeback'li e-posta/IP eşleşmesi (<code>blocklist</code> tablosu: <code>email_hash</code>, <code>ip</code>, <code>reason</code>).</li>
+  </ul>
+
+  <h3>Teslimat bekletme (delivery gating)</h3>
+  <ul>
+    <li>Skor eşiğin altındaysa normal akış: anında atama + mail.</li>
+    <li>Eşiğin üstündeyse atama yapılır ama teslimat <code>held_for_review</code> durumuna düşer: müşteriye "siparişiniz doğrulanıyor" maili gider, sipariş paneldeki <strong>manuel inceleme kuyruğuna</strong> düşer. Tek tıkla "onayla ve teslim et" ya da "iptal + iade".</li>
+    <li>Belirli süre içinde incelenmezse kural seçilebilir: otomatik teslim ya da beklemede kal (ürün değerine göre ürün bazında ayarlanabilir).</li>
+  </ul>
+
+  <div class="callout">
+    <div class="c-title">Sınır: ödeme tamamen sitenin işidir</div>
+    <p>3D Secure, ödeme doğrulama ve banka tarafı fraud araçları WooCommerce + ödeme geçidinin alanıdır — panel ödemeye hiçbir noktada dokunmaz. Zaten dokunamaz da: panel siparişi ödeme <em>tamamlandıktan sonra</em> görür; checkout anında panele danışmak, "panel çökse de satış sürer" ilkesini bozacak senkron bir bağımlılık yaratır. Panelin fraud'daki rolü ödeme sonrasında başlar: teslimatı bekletmek, kanıt tutmak, tekrar eden dolandırıcıyı tanımak.</p>
+  </div>
+
+  <h3>Chargeback, kanıt ve hesap ele geçirme</h3>
+  <ul>
+    <li><strong>Kanıt paketi:</strong> İtiraz gelirse tek tık dışa aktarım: sipariş timeline'ı, teslimat/mail iletim logları, müşterinin key görüntüleme kayıtları (IP + zaman) tek PDF'te — bankaya sunulacak dosya saniyede hazır. Bu veri yalnızca panelde vardır; ödeme geçidi size bunu veremez.</li>
+    <li><strong>Chargeback kesinleşirse:</strong> Bildirim ödeme geçidinden Woo'ya düşer; sipariş durumu değişince mevcut revoke akışı çalışır — ekstra ödeme entegrasyonu gerekmez. Key karantinaya, müşteri <code>blocklist</code>'e; aylık chargeback oranı raporda izlenir.</li>
+    <li><strong>Reveal anomalisi:</strong> Bir müşteri hesabından kısa sürede çok sayıda "ürünü görüntüle" isteği (hesap ele geçirme/scraping işareti) → geçici soğuma süresi + admin uyarısı. Aynı koruma admin tarafında da geçerlidir: operatörün olağan dışı toplu reveal'i alarm üretir.</li>
+  </ul>
+  <p style="color: var(--ink-3); font-size: 13.5px;">Fazlama: velocity limitleri + blocklist + manuel inceleme kuyruğu Faz 2'de; skor otomasyonu ve kural motoru Faz 4'te.</p>
+</section>
+
+<!-- ══════════════════════ 11. KISMİ TESLİMAT ══════════════════════ -->
+<section id="kismi">
+  <h2><span class="sec-no">11</span>Kısmi Teslimat & Sipariş Tamamlama</h2>
+  <p class="sec-sub">Senaryo: 50 adet sipariş, stokta 30 var — 30 hemen gider, kalan 20 stok gelince tamamlanır</p>
+
+  <p>Toplu alımlarda stok her zaman yetmez ve müşteriyi tüm sipariş için bekletmek en kötü seçenektir. Bu yüzden kısmi teslimat mimaride <strong>birinci sınıf akıştır</strong>: eldeki stok anında teslim edilir, kalan miktar sipariş satırında "bekleyen" olarak izlenir ve yeni stok girildiğinde — politikaya göre otomatik ya da sizin onayınızla, toplu ya da kademeli — tamamlanır.</p>
+
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart TD
+  A["Sipariş: 50 × Windows 11 Pro"] --> B{"Stokta kaç adet var?"}
+  B -- "50+" --> C["Tamamı atanır → teslimat maili<br/>satır: fulfilled 50/50"]
+  B -- "30" --> D{"Ürünün teslimat politikası"}
+  D -- "all-or-nothing" --> E["Hiçbiri gitmez —<br/>tamamı stok bekler"]
+  D -- "partial-auto / partial-approval" --> F["30 atanır → kısmi teslimat maili<br/>satır: partial 30/50"]
+  G["Yeni stok girişi: 100 adet"] --> H{"Bekleyen satırlar<br/>FIFO taranır"}
+  E --> H
+  F --> H
+  H -- "partial-auto" --> I["Kalan 20 otomatik atanır<br/>→ tamamlama maili"]
+  H -- "partial-approval" --> J["Onay kuyruğuna düşer:<br/>admin 'Kalanları Ata' / 'N Adet Ata'"]
+  J --> I
+  I --> K["Satır: fulfilled 50/50<br/>→ webhook order.fulfilled → Woo 'tamamlandı'"]
+    </pre>
+    <div class="cap">Tamamlama motoru her stok girişinde tetiklenir; bekleyen satırlar sipariş tarihine göre sıralanır (FIFO), admin panelden istediği siparişi öne çekebilir.</div>
+  </div>
+
+  <h3>Teslimat politikası — ürün bazında, sipariş bazında ezilebilir</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Politika</th><th>Davranış</th><th>Ne zaman kullanılır</th></tr>
+    <tr><td><span class="pill ok">partial-auto</span></td><td>Eldeki stok anında gider; yeni stok girilince kalanlar FIFO ile <strong>otomatik</strong> tamamlanır ve tamamlama maili gider.</td><td>Varsayılan — standart key ürünleri</td></tr>
+    <tr><td><span class="pill warn">partial-approval</span></td><td>Eldeki stok anında gider; kalanların dağıtımı <strong>admin onayı</strong> bekler: "Kalanları Ata" (tek tık) ya da "N Adet Ata" (kademeli, örn. önce 10 ver, gerisini yarın).</td><td>Kontrollü dağıtmak istediğiniz ürünler, büyük toptan siparişler</td></tr>
+    <tr><td><span class="pill mut">all-or-nothing</span></td><td>Tamamı hazır olmadan hiçbiri teslim edilmez (v1.1 davranışı seçenek olarak kalır).</td><td>Yüksek değerli / set halinde anlam taşıyan ürünler</td></tr>
+  </table></div>
+  <p>Sipariş bazında override mümkündür: politika <code>partial-approval</code> olan bir üründe belirli bir siparişe "bu otomatik tamamlansın" diyebilirsiniz (veya tersi). Karar sipariş satırına yazılır ve timeline'a loglanır.</p>
+
+  <h3>Veri modeli ve motorun çalışması</h3>
+  <ul>
+    <li><strong><code>order_lines</code> tablosu:</strong> <code>qty</code>, <code>fulfilled_qty</code>, <code>status</code> (fulfilled | partial | pending), <code>policy_override</code>, <code>priority</code>. Müşterinin ve adminin gördüğü "30/50" ilerlemesi buradan gelir.</li>
+    <li><strong><code>fulfillment_events</code> tablosu:</strong> sipariş bazlı zaman çizelgesi — "sipariş alındı → 30/50 atandı → kısmi mail gitti → stok girildi (parti #124) → admin onayı (Ertan) → 20/20 atandı → tamamlandı". Hem panelde hem WP meta box'ta dikey timeline olarak gösterilir.</li>
+    <li><strong>Tamamlama turları idempotent:</strong> her tamamlama <code>line_id + round</code> anahtarıyla çalışır; motor iki kez tetiklense bile aynı satıra fazladan key atanamaz. Atama yine <code>FOR UPDATE SKIP LOCKED</code> ile yapılır — kısmi durumda sorgu "kaç bulabildiyse o kadarını" atar, kalanı <code>pending</code> yazar; hata değil, <em>partial</em> sonucu döner.</li>
+    <li><strong>Rekabet durumu:</strong> 100 adet girildi ama bekleyen toplam 150 ise FIFO uygulanır; Bekleyen Teslimatlar ekranından "önce bu siparişi tamamla" ile öncelik değiştirilebilir. Kısmi tamamlama da olabilir: bekleyen 20'lik satıra stok 15 kaldıysa 15 verilir, satır 45/50 olur.</li>
+  </ul>
+
+  <h3>Müşteri iletişimi</h3>
+  <ul>
+    <li><strong>Kısmi teslimat maili:</strong> "50 adetlik siparişinizin 30 adedi teslim edilmiştir — aşağıdaki key'leri hemen kullanabilirsiniz. Kalan 20 adet en kısa sürede tamamlanacaktır." Teslim edilen key'ler mailde, ilerleme My Account'ta.</li>
+    <li><strong>My Account görünümü:</strong> ilerleme göstergesi (30/50) + her key kendi durumuyla listelenir; tamamlama geldikçe liste kendiliğinden büyür (her görüntüleme panelden taze çekildiği için ek senkron gerekmez).</li>
+    <li><strong>Woo sipariş durumu:</strong> kısmi teslimatta sipariş <code>kısmen teslim edildi</code> özel durumuna çekilir (webhook <code>order.partially_fulfilled</code>); tamamlanınca <code>tamamlandı</code>. Admin WP listesinde hangi siparişin eksik olduğunu durumdan görür.</li>
+    <li><strong>Tamamlama maili:</strong> kalan key'ler gidince "siparişiniz tamamlandı" maili — aynı şablon sistemi, ayrı log satırı.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 12. GERİ KANAL ══════════════════════ -->
+<section id="gerikanal">
+  <h2><span class="sec-no">12</span>Geri Kanal & Kenar Senaryolar</h2>
+  <p class="sec-sub">v1.0'da eksik olan akışlar: panel→site bildirimi, havale rezervasyonu, misafir teslimatı</p>
+
+  <h3>Panel → Site webhook'ları (ters yön)</h3>
+  <p>v1.0'da iletişim tek yönlüydü (site → panel). Ancak bazı olaylar panelde <em>sonradan</em> gerçekleşir ve sitenin haberi olmalıdır. Eklenti her sitede <code>/wp-json/jetpanel/v1/webhook</code> ucunu açar; panel aynı HMAC şemasının ters yönlüsüyle (site'ın kendi secret'ı) imzalayarak bildirir:</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Olay</th><th>Tetikleyen</th><th>Sitedeki etki</th></tr>
+    <tr><td><code>order.partially_fulfilled</code></td><td>Kısmi teslimat yapıldı (örn. 30/50)</td><td>Woo siparişi "kısmen teslim edildi" özel durumuna çekilir; sipariş notuna ilerleme yazılır</td></tr>
+    <tr><td><code>order.fulfilled</code></td><td>Bekleyen sipariş stok girilince tamamlandı</td><td>Woo siparişi "tamamlandı"ya çekilir; müşteri "hazırlanıyor"dan çıkar (mail zaten panelden gitti)</td></tr>
+    <tr><td><code>delivery.held</code> / <code>released</code></td><td>Risk incelemesi başladı / onaylandı</td><td>Sipariş notu düşülür; müşteri ekranında "doğrulanıyor" durumu</td></tr>
+    <tr><td><code>stock.out</code> / <code>stock.available</code></td><td>Ürün stoğu bitti / yeniden girildi</td><td><strong>Opsiyonel stok senkronu:</strong> Woo ürünü otomatik "stokta yok"a çekilir, stok gelince açılır — satılamayacak ürünün satışını baştan engeller (site+ürün bazında aç/kapa)</td></tr>
+    <tr><td><code>assignment.replaced</code></td><td>Admin panelden key değiştirdi</td><td>Sipariş notuna işlenir (WP admin'i panele girmeden görür)</td></tr>
+  </table></div>
+  <p>Teslim edilemeyen webhook'lar BullMQ ile üstel aralıklarla yeniden denenir; site zaten her My Account görüntülemesinde taze veriyi panelden çektiği için webhook kaçsa bile müşteri yanlış veri görmez — webhook yalnızca Woo sipariş durumunu senkron tutar.</p>
+
+  <h3>Havale/EFT siparişleri — bilinçli olarak panelin dışında</h3>
+  <p>Havale/EFT akışı tamamen WooCommerce tarafında yaşar: sipariş, ödemeyi banka hesabınızda görüp Woo admin'den onayladığınız âna kadar <code>on-hold</code> durumundadır ve <strong>panele hiç gönderilmez</strong> — panel yalnızca ödemesi kesinleşmiş siparişi görür. Onay verdiğiniz an sipariş normal akışa girer. Bekleme sırasında stok tükenirse ayrı bir mekanizmaya gerek yoktur: Bölüm 11'deki kısmi teslimat/pending akışı durumu zaten karşılar (eldeki kadarı teslim edilir, kalanı stok girişinde tamamlanır). <em>Tasarım kararı notu:</em> erken taslaklardaki TTL'li stok rezervasyonu bu gerekçeyle mimariden çıkarıldı — ödenmemiş siparişe stok kilitlemek kampanya günlerinde satılabilir stoğu daraltır ve dikişe fazladan durum ekler; az parça, az hata.</p>
+
+  <h3>Misafir (üye olmayan) müşteri teslimatı</h3>
+  <p>"Siparişlerim" ekranı üyelik ister; misafir checkout'ta bu ekran yoktur. Teslimat mailine <strong>imzalı ve süreli görüntüleme linki</strong> eklenir: <code>siteadi.com/siparis-goruntule?token=...</code> — token panel imzalıdır (sipariş + son kullanma, örn. 90 gün), WP bu tokenla panele server-side sorar. Sipariş revoke edilirse token da anında geçersizdir. Böylece mail silinse bile müşteri linkten ulaşır; link sızsa bile revoke ile kapatılır. Özellik <strong>site bazında aç/kapa bayrağına</strong> bağlıdır: misafir checkout'u kapalı (üyelik zorunlu) sitelerde link hiç üretilmez, teslimat yalnızca My Account + mail üzerinden yapılır.</p>
+
+  <h3>Çok kullanımlık ürünler — 1 key, 500 satış (MAK tarzı)</h3>
+  <p>Gerçek senaryo: panele <strong>tek bir Windows 11 Pro key'i</strong> girilir ama <strong>500 kullanımlık</strong> tanımlanır — 500 kez satılabilir; aynı müşteriye de, farklı müşterilere de. Müşteri 12 adet sipariş verirse key'i "12 kullanım hakkı" ibaresiyle alır ve sistemdeki satış hakkından 12 düşer. Bu, tek kullanımlık akışın yanında ikinci bir ürün modu olarak tanımlıdır (<code>products.usage_mode: single | multi</code>; single'da davranış bugünkü gibidir).</p>
+  <ul>
+    <li><strong>Stok modeli:</strong> <code>license_items.max_uses</code> (örn. 500) + <code>use_count</code>. Satılabilir kapasite = tüm kayıtların <code>max_uses − use_count</code> toplamı. Stok ekranı "Windows 11 Pro MAK — <strong>488/500 kullanım kaldı</strong>" gösterir.</li>
+    <li><strong>Atomik atama, birim = kullanım:</strong> 12 adetlik sipariş tek satırlık kilitli <code>UPDATE ... SET use_count = use_count + 12 ... FOR UPDATE SKIP LOCKED</code> ile düşer — çifte satış garantisi tek kullanımlıktakiyle aynıdır. Tek key'de 12 boşluk kalmadıysa atama birden çok key'e bölünebilir (atama satırı başına <code>units</code>); müşteri her key'i kendi kullanım adediyle görür.</li>
+    <li><strong>Müşteri görünümü:</strong> key + "12 kullanım hakkı" (şablon değişkeni <code>{{units}}</code>); admin meta box'ta aynı bilgi + siparişin düştüğü kapasite.</li>
+    <li><strong>Kısmi teslimat aynı motorla:</strong> kapasite 8 kaldıysa 12'lik siparişte 8 kullanım teslim edilir, 4'ü <code>pending</code> düşer — Bölüm 11'deki tamamlama motoru birimi "kullanım" olarak işletir, ayrı mekanizma yoktur.</li>
+    <li><strong>İade/revoke nüansı:</strong> kullanım hakkı havuza <em>otomatik dönmez</em> — müşteri aktivasyonu Microsoft tarafında tüketmiş olabilir. Admin, aktivasyon durumunu kontrol ettikten sonra "hakları havuza iade et" aksiyonuyla bilinçli geri ekler; bu karar audit'e düşer.</li>
+    <li><strong>Tükenme:</strong> <code>use_count = max_uses</code> olunca kayıt <code>depleted</code> durumuna geçer; stok zekâsı (Bölüm 16) tükenme tahminini kalan kullanım üzerinden yapar, düşük kapasite uyarısı aynı mekanizmadan gelir.</li>
+  </ul>
+
+  <h3>Ürün tipi matrisi — hepsi aynı çekirdeğe oturur</h3>
+  <p>Sektörde satılan her ürün biçimi, yeni mekanizma icat edilmeden mevcut çekirdeğin (atomik atama + kısmi teslimat + yaşam döngüsü) üzerine birkaç alanla tanımlanır:</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Tip</th><th>Model karşılığı</th><th>Teslimat & yaşam döngüsü davranışı</th></tr>
+    <tr><td><strong>Tek kullanımlık key</strong><br><span style="color:var(--ink-3);font-size:12.5px">Windows/Office key</span></td><td class="wrapcode"><code>kind: key</code>, <code>usage_mode: single</code></td><td>Varsayılan akış — bir key bir müşteriye, yaşam döngüsü Bölüm 03'teki gibi.</td></tr>
+    <tr><td><strong>Çok kullanımlık key</strong><br><span style="color:var(--ink-3);font-size:12.5px">MAK: 1 key, 500 satış</span></td><td class="wrapcode"><code>usage_mode: multi</code>, <code>max_uses</code></td><td>Yukarıdaki model: adetli kullanım hakkı, atomik kapasite düşümü, iade hakkı bilinçli döner.</td></tr>
+    <tr><td><strong>Kalıcı hesap</strong><br><span style="color:var(--ink-3);font-size:12.5px">Steam hesabı</span></td><td class="wrapcode"><code>kind: account</code> + <code>payload_schema</code></td><td>Teslimden sonra hesap müşterinindir; süre yok, garanti süresi (<code>warranty_days</code>) geçerli.</td></tr>
+    <tr><td><strong>Süreli abonelik hesabı</strong><br><span style="color:var(--ink-3);font-size:12.5px">aylık Office 365 / VPN</span></td><td class="wrapcode"><code>kind: account</code> + <code>validity_days</code> (örn. 30)</td><td>Süre <em>teslim anında</em> başlar: <code>valid_until = delivered_at + 30g</code>. Müşteri kalan süreyi My Account'ta ve teslimat mailinde görür. Süre dolunca ürün bazlı politika: bilgiler gizlenir ya da "süresi doldu" kartıyla kalır (<code>on_expiry: hide | keep</code>). Not: stoktaki kaydın kendi ömrü (<code>expires_at</code>) ayrı kavramdır — o FEFO içindir. <em>Otomatik yenileme/hatırlatma entegrasyonu bilinçli kapsam dışıdır — hazır ürün satış modeli; süresi dolan müşteri dilerse siteden yeniden satın alır.</em></td></tr>
+    <tr><td><strong>Kiralık slot</strong><br><span style="color:var(--ink-3);font-size:12.5px">oyun hesabı kiralama: 1 hesap, aynı anda 5 kiracı, 30'ar gün</span></td><td class="wrapcode"><code>usage_mode: multi</code> + <code>validity_days</code></td><td>Çok kullanımlık + süreli birleşimi. Kritik fark: <strong>süre dolumu doğal döngüdür</strong> — <code>valid_until</code> geçen atamanın hakkı otomatik havuza döner (normal iadedeki "otomatik dönmez" kuralının tek istisnası) ve admin'e <strong>şifre rotasyonu</strong> hatırlatması düşer: eski kiracının erişimi kesilmeden slot yeniden satılmaz.</td></tr>
+    <tr><td><strong>Kod / hediye çeki</strong><br><span style="color:var(--ink-3);font-size:12.5px">Steam bakiye, Google Play kodu</span></td><td class="wrapcode"><code>kind: code</code>; üretilenler <code>source: generated</code></td><td>Model tek kullanımlık key ile birebir aynı; <code>kind</code> etiketi raporlamayı ayrıştırır. Panelin ürettiği kodlar (hediye çeki) <code>source: generated</code> ile girer, satın alınan stokla karışmaz.</td></tr>
+    <tr><td><strong>Stoksuz / ön sipariş</strong><br><span style="color:var(--ink-3);font-size:12.5px">tedarik üzerine satış, çıkmamış oyun</span></td><td class="wrapcode"><code>stockless: true</code>, tedarik SLA'sı; ön siparişte <code>release_at</code></td><td>Sipariş <code>pending</code> doğar ama bu <em>alarm değil normal akıştır</em>: düşük stok uyarısı üretmez, müşteri mesajı ürün tanımındaki SLA'dan gelir ("1-2 saat içinde teslim"). SLA aşılırsa uyarı. Ön siparişte tamamlama motoru <code>release_at</code> gününe kadar bekler, o gün otomatik teslim eder.</td></tr>
+  </table></div>
+</section>
+
+<!-- ══════════════════════ 12. KVKK ══════════════════════ -->
+<section id="kvkk">
+  <h2><span class="sec-no">13</span>KVKK / GDPR & Veri Saklama</h2>
+  <p class="sec-sub">Kişisel veri panelde minimumda tutulur, süreli saklanır, silinebilir olur</p>
+
+  <ul>
+    <li><strong>PII minimizasyonu:</strong> Panel yalnızca <code>e-posta + sipariş no + site</code> tutar. Ad, adres, telefon, fatura bilgisi WP'de kalır — panele hiç kopyalanmaz. Sızıntı yüzeyi baştan küçültülür.</li>
+    <li><strong>Saklama planı (retention):</strong> <code>email_log</code> gövdeleri key içerdiği için hassastır: teslimattan X ay sonra (örn. 12) gövde silinir, yalnızca üst veri (kime, ne zaman, iletildi mi) kalır. Audit log mali/hukuki ihtiyaç için daha uzun (örn. 5 yıl) saklanır. Aylık partition'lar bu purge işini ucuz bir "eski partition'ı düşür" işlemine çevirir.</li>
+    <li><strong>Loglarda payload maskeleme:</strong> Uygulama logları (pino) ve Sentry hata kayıtları key/şifre alanlarını otomatik redakte eder — bir stack trace asla lisans içermez.</li>
+    <li><strong>Silme/anonimleştirme talebi:</strong> KVKK md.7 / GDPR "right to erasure" için tek endpoint: e-posta verilen müşterinin kayıtları anonimleştirilir (<code>customer_email → anon_{hash}</code>); satış istatistikleri bozulmaz, kişisel veri kalmaz.</li>
+    <li><strong>Aydınlatma metinleri:</strong> Panel, sitelerin KVKK aydınlatma metinlerinde "veri işleyen" olarak yer almalı; mail sağlayıcısı yurtdışıysa (SES/Resend) yurtdışına aktarım maddesi eklenmelidir. Teknik değil ama canlıya çıkmadan tamamlanması gereken bir kalemdir.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 14. ADMİN UX ══════════════════════ -->
+<section id="adminux">
+  <h2><span class="sec-no">14</span>Admin Deneyimi & Operasyon Kolaylıkları</h2>
+  <p class="sec-sub">Günde 1.000+ siparişi tek kişinin yönetebilmesi bir arayüz tasarımı sorunudur</p>
+
+  <h3>Bekleyen Teslimatlar — panelin ana operasyon ekranı</h3>
+  <p>Panele girdiğinizde ilk gördüğünüz ekran budur: aksiyon bekleyen her şey tek listede.</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Kolon</th><th>İçerik</th></tr>
+    <tr><td>Sipariş</td><td>Site + sipariş no + müşteri (tıkla → detay/timeline)</td></tr>
+    <tr><td>Ürün & ilerleme</td><td>Windows 11 Pro — <strong>30/50</strong> ilerleme çubuğu</td></tr>
+    <tr><td>Bekleme</td><td>Ne kadardır eksik (renk: 15 dk sarı, 2 saat kırmızı)</td></tr>
+    <tr><td>Neden bekliyor</td><td><span class="pill warn">stok yok</span> · <span class="pill warn">onay bekliyor</span> · <span class="pill bad">risk incelemesi</span></td></tr>
+    <tr><td>Aksiyonlar</td><td><strong>Kalanları Ata</strong> · N Adet Ata · Önceliklendir · İptal</td></tr>
+  </table></div>
+  <p>Toplu seçim desteklenir: stok girişi sonrası 5 bekleyen siparişi işaretleyip tek tıkla hepsini tamamlayabilirsiniz. Her aksiyon <code>fulfillment_events</code>'e ve audit log'a düşer.</p>
+
+  <h3>Stok girişinde akıllı önizleme — "Onayla ve Dağıt"</h3>
+  <p>Sizin tarif ettiğiniz akışın birebir karşılığı. CSV yükleyince ya da key listesini yapıştırınca kaydetmeden önce iki şey görürsünüz:</p>
+  <ul>
+    <li><strong>Satır satır doğrulama:</strong> format hatalı / mükerrer (daha önce girilmiş veya listede iki kez olan) satırlar işaretlenir; temiz satır sayısı netleşmeden içeri hiçbir şey girmez. Ürün bazlı <strong>format deseni</strong> (<code>key_format</code> regex — örn. Windows key'in 5×5 yapısı) tanımlıysa desene uymayan satır anında yakalanır: yanlış ürüne yanlış tip key girme kazası baştan biter.</li>
+    <li><strong>Etki önizlemesi:</strong> "Bu giriş (100 adet) <strong>3 bekleyen siparişi (toplam 45 adet) tamamlayacak</strong> — liste: #1042 (20), #1038 (15), #1051 (10)". İki buton: <strong>Onayla ve Dağıt</strong> (stok girilir + bekleyenler politikaya uygun şekilde anında tamamlanır) veya <strong>Sadece Stoğa Ekle</strong> (dağıtımı sonra Bekleyen Teslimatlar ekranından yönetirsiniz).</li>
+  </ul>
+
+  <h3>Global arama (Ctrl/Cmd+K)</h3>
+  <ul>
+    <li>Tek kutudan: sipariş no, müşteri e-postası, <strong>key'in son 5 hanesi</strong>. Müşteri destek hattında "key'im XXXXX-A7K2M çalışmıyor" dediğinde saniyeler içinde hangi sipariş, hangi site, ne zaman satılmış bulursunuz.</li>
+    <li>Teknik çözüm: payload şifreli olduğu için doğrudan aranamaz; stok girişinde key'in son 5 hanesinin ayrı bir <code>payload_suffix_hash</code> indeksi yazılır — şifreleme güvenliğinden ödün vermeden arama sağlanır.</li>
+  </ul>
+
+  <h3>Toplu değiştirme sihirbazı</h3>
+  <p>Tedarikçi bir partiyi iptal ettiğinde (toplu key iptali bu sektörde yaşanır): parti seçilir → o partiden atanmış tüm <em>aktif</em> key'ler listelenir → tek onayla hepsi yeni stoktan değiştirilir, tüm etkilenen müşterilere yeni key maili otomatik gider, eskiler history'ye düşer. Yüzlerce siparişi tek tek açma derdi yoktur.</p>
+
+  <h3>Sipariş zaman çizelgesi — her iki tarafta</h3>
+  <p><code>fulfillment_events</code> verisi hem panel sipariş detayında hem WP meta box'ta dikey timeline olarak görünür: <em>"14:02 sipariş alındı · 14:02 30/50 atandı · 14:03 kısmi teslimat maili iletildi · 16:40 stok girişi (parti #124, 100 adet) · 16:41 admin onayı · 16:41 20/20 atandı · 16:42 tamamlandı"</em>. "Bu siparişte ne olmuştu?" sorusunun cevabı hiçbir zaman log dosyalarında aranmaz.</p>
+
+  <h3>Bildirim entegrasyonu — Telegram'dan aksiyon</h3>
+  <ul>
+    <li>Kısmi teslimatta anında Telegram: "⚠ #1042 kısmen teslim edildi — 20 adet Windows 11 Pro bekliyor (stok: 0)".</li>
+    <li><strong>Inline butonlar:</strong> bildirim mesajının altında <em>[Kalanları Ata] · [Panele Git]</em> butonları — bilgisayar başında olmasanız bile stok dağıtımını telefondan tek dokunuşla onaylarsınız. Değişim taleplerinde <em>[Onayla ve Değiştir] · [Reddet]</em>. Buton tıklaması imzalı callback ile panele düşer, aksiyon audit log'a <code>via:telegram</code> olarak işlenir; bot yalnızca sizin chat ID'lerinize cevap verir.</li>
+    <li>Onay bekleyen tamamlama sayısı günlük özete eklenir; 2 saatten eski bekleyen varsa ayrıca uyarılır.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 15. SELF-SERVİS ══════════════════════ -->
+<section id="selfservis">
+  <h2><span class="sec-no">15</span>Müşteri Self-Servis & Destek Yönetimi</h2>
+  <p class="sec-sub">"Key'im çalışmıyor" maillerini yapılandırılmış bir kuyruğa çevirmek</p>
+
+  <p>v1.2'ye kadar değiştirme yalnızca sizin başlattığınız bir işlemdi; müşterinin tek yolu size mail atmaktı. Bu bölüm o trafiği panele taşır:</p>
+
+  <h3>Değişim talebi akışı (müşteri tarafı)</h3>
+  <ul>
+    <li>My Account "ürünü görüntüle" ekranında her key'in yanında <strong>"Sorun Bildir"</strong> butonu: sebep seçimi (key geçersiz / daha önce kullanılmış / hesap şifresi hatalı / diğer) + serbest açıklama. WP server-side olarak <code>POST /v1/replacement-requests</code> çağırır.</li>
+    <li>Talep panelde <strong>destek kuyruğuna</strong> düşer; admin üç aksiyondan birini seçer: <strong>Onayla</strong> (mevcut toplu-değiştirme altyapısı devreye girer: yeni key atanır, eski history'ye düşer, müşteriye mail gider), <strong>Reddet</strong> (şablonlu gerekçe maili), <strong>Bilgi İste</strong>.</li>
+    <li>Kural korumaları: aynı satır için açık talep varken ikincisi açılamaz; talep durumu müşteriye My Account'ta gösterilir ("inceleniyor / değiştirildi / reddedildi"); her adım <code>fulfillment_events</code> timeline'ına işlenir. Telegram'a inline butonlu bildirim gider (Bölüm 14).</li>
+  </ul>
+
+  <h3>Garanti süresi</h3>
+  <p><code>products.warranty_days</code> alanı (örn. 30 gün değişim garantisi): süresi geçmiş satır için gelen talep otomatik <span class="pill warn">garanti dışı</span> işaretlenir — reddedilmez, sadece işaretlenir; kararı yine siz verirsiniz ama süre tartışması veriye bağlanmış olur. Garanti süresi ürün sayfası/mail şablonunda müşteriye de gösterilebilir.</p>
+
+  <h3>Müşteri 360 & etiketleme</h3>
+  <ul>
+    <li><strong>Tek ekranda müşteri:</strong> e-posta bazlı birleşik görünüm — <em>tüm sitelerdeki</em> siparişleri, toplam harcama, değişim talepleri ve oranı, chargeback geçmişi, risk notları. Destek görüşmesine girmeden önce 5 saniyede resmi görürsünüz.</li>
+    <li><strong>Etiketler:</strong> VIP, toptancı, riskli, kara liste... Etiketler davranış değiştirir: VIP'in talebi kuyrukta öne gelir, "riskli" etiketi fraud skoruna girdi olur.</li>
+    <li><strong>Suistimal koruması:</strong> müşteri başına değişim oranı izlenir; anormal oranda değişim isteyen (key'i kullanıp "bozuk" diyen) müşteri otomatik işaretlenir ve raporda görünür.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 16. STOK ZEKÂSI ══════════════════════ -->
+<section id="stokzeka">
+  <h2><span class="sec-no">16</span>Stok Zekâsı & Tedarik Yönetimi</h2>
+  <p class="sec-sub">Stok yalnızca sayı değil: hız, ömür ve tedarikçi kalitesiyle birlikte yönetilir</p>
+
+  <h3>Tükenme tahmini</h3>
+  <ul>
+    <li>Ürün başına son 7 ve 30 günlük satış hızından <strong>"kalan gün"</strong> hesaplanır: "Windows 11 Pro — 84 adet stok, günde ~30 satış → <span class="pill warn">2,8 günlük stok</span>". Sabit "düşük stok eşiği"nden çok daha isabetlidir; yavaş satan üründe 20 adet boldur, hızlı satanda 200 adet azdır.</li>
+    <li>Dashboard'da ürünler kalan güne göre sıralanır; eşik (örn. 5 gün) altına inenler Telegram uyarısı üretir: "tedarik zamanı".</li>
+    <li><strong>Min seviye + tedarik hatırlatması:</strong> ürün başına minimum adet; altına düşünce hatırlatma. Faz 4'teki tedarikçi API entegrasyonu geldiğinde bu hatırlatma otomatik satın alma emrine dönüşebilir.</li>
+  </ul>
+
+  <h3>Son kullanma takibi & FEFO ataması</h3>
+  <ul>
+    <li><code>license_items.expires_at</code> (opsiyonel — süreli key/abonelik ürünleri için): atama sırası FIFO yerine <strong>FEFO</strong> olur (first-expire-first-out — önce ölecek key önce satılır); elde key çürümez.</li>
+    <li>Uyarılar: "parti #124'te 50 key 15 gün içinde sona erecek — öncelikli satışa alın / tedarikçiyle görüşün". Süresi geçen stok otomatik <code>expired</code> durumuna düşer ve <strong>zayi raporunda</strong> maliyetiyle görünür — kayıp görünmez olmaz.</li>
+  </ul>
+
+  <h3>Satın alma siparişleri — yoldaki stok</h3>
+  <p>Tedarikçiye sipariş verdiğiniz an ile stoğun panele girdiği an arasındaki dönem kör nokta olmamalı. <code>purchase_orders</code> tablosu bu dönemi yönetir: tedarikçi, adet, birim maliyet, beklenen geliş tarihi (<code>expected_at</code>), durum (<code>ordered → partially_received → received | cancelled</code>). Stok girişi PO'ya bağlanır; <strong>kısmi teslim alma</strong> desteklenir (500 sipariş ettiniz, 300 geldi — PO açık kalır, kalan 200 beklenmeye devam eder).</p>
+  <ul>
+    <li><strong>Tükenme tahmini yoldaki stoğu bilir:</strong> "Windows 11 Pro — 2,8 günlük stok kaldı, <em>500 adet yolda (tahmini Çarşamba)</em>" — panik alarmı yerine bilinçli bekleme.</li>
+    <li><strong>Bekleyen Teslimatlar ekranında ETA:</strong> "stok yok" satırının yanında yoldaki miktar ve beklenen tarih görünür; isterseniz müşterinin "hazırlanıyor" mesajına da tahmini süre yansır.</li>
+    <li><strong>Tedarikçi karnesine otomatik veri:</strong> söz verilen tarih ↔ gerçekleşen tarih farkı PO'lardan hesaplanır — "teslim süresi" metriği elle tutulmaz.</li>
+  </ul>
+
+  <h3>Parti kabulü, geri çekme ve stok düzeltme</h3>
+  <ul>
+    <li><strong>Kabul kontrolü:</strong> Parti teslim alınınca örneklem denetimi (spot check) işaretlenebilir; "şartlı kabul" notu tedarikçi karnesine işlenir — sorunlu parti daha satışa çıkmadan iz bırakır.</li>
+    <li><strong>Parti geri çekme (recall):</strong> Tedarikçi "o partiyi iptal edin" derse tek aksiyon: partinin <em>satılmamış</em> item'ları <code>voided</code> durumuna çekilir (zayi raporunda maliyetiyle görünür), <em>satılmış</em> olanlar için Bölüm 14'teki toplu değiştirme sihirbazı otomatik açılır — iki adımda parti tamamen temizlenir, hiçbir key arada kaybolmaz.</li>
+    <li><strong>Sebepli stok düzeltme:</strong> İstisnai elle müdahaleler (yanlış giriş, tedarikçi düzeltmesi) sebep koduyla yapılır ve audit'e düşer — sebepsiz stok değişikliği sistemde mümkün değildir; tutarlılık denetçisi (Bölüm 20) ile birlikte stok rakamı her zaman hesap verebilirdir.</li>
+  </ul>
+
+  <h3>Tedarikçi karnesi & import profilleri</h3>
+  <ul>
+    <li><code>suppliers</code> tablosu (parti girişindeki serbest metin tedarikçi alanı kayıtlı varlığa dönüşür): her tedarikçi ve parti için <strong>değişim oranı</strong> (o partiden atanan key'lerin yüzde kaçı değişim yedi), ortalama birim maliyet, PO'lardan hesaplanan gerçek teslim süresi.</li>
+    <li>Karar veriye bağlanır: "Tedarikçi X'in son 3 partisi %8 değişim yedi, Y'ninki %1 — aradaki fiyat farkı değişim maliyetini karşılamıyor." Sorunlu parti tespit edilince toplu değiştirme sihirbazına tek tıkla geçilir.</li>
+    <li><strong>Import profilleri:</strong> Her tedarikçinin dosya formatı farklıdır; tedarikçi başına kaydedilmiş kolon eşleme profili ("X'in Excel'inde key 3. kolonda, tarih 5.'te") bir kez tanımlanır — sonraki her import tek tık. PO ile birleşince "gelen dosyayı bu PO'ya işle" akışı tamamen mekanikleşir: dosya → profil → doğrulama → PO kapanışı → bekleyenlere dağıtım.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 17. ONBOARDING ══════════════════════ -->
+<section id="onboarding">
+  <h2><span class="sec-no">17</span>Site Onboarding & Operasyon Güvenliği</h2>
+  <p class="sec-sub">Yeni site bağlamak dakikalar sürmeli, iki kişi aynı anda çalışabilmeli</p>
+
+  <h3>Site bağlama sihirbazı</h3>
+  <ol>
+    <li>Panelde "Yeni Site" → alan adı ve gönderici e-posta girilir; panel <strong>tek seferlik, 15 dakika geçerli bağlantı kodu</strong> üretir.</li>
+    <li>Eklentinin ayar ekranına kod yapıştırılır → eklenti panele kayıt olur; API key ve HMAC secret bu el sıkışmada otomatik teslim edilip <code>wp-config.php</code> düzeyinde saklanır — elle secret kopyalama, yanlış yere yapıştırma riski yok.</li>
+    <li>Bağlantı testi otomatik koşar (imza, saat senkronu, webhook ucu erişimi); ürün eşleme ekranı açılır, Woo ürünleri listeden eşlenir. Yeni site 10 dakikada canlıdır.</li>
+  </ol>
+
+  <h3>Sandbox / test modu</h3>
+  <p>Site panelde <span class="pill mut">test modu</span> olarak işaretlenebilir: siparişler gerçek stoktan düşmez, ayrı test havuzundan sahte key atanır, tüm mailler yalnızca sizin adresinize gider. Yeni site bağlantısı, eklenti güncellemesi veya şablon değişikliği canlı stoğa ve gerçek müşterilere dokunmadan uçtan uca prova edilir; mod kapatılınca site aynı yapılandırmayla canlıya döner.</p>
+
+  <h3>Çoklu operatör güvenliği</h3>
+  <ul>
+    <li><strong>Çakışma uyarısı:</strong> aynı sipariş/talep iki operatörde açıksa ekranda "Ali şu an bu kaydı inceliyor" rozeti görünür (Redis presence); aynı talebe iki kişinin aynı anda değişim onayı vermesi zaten idempotency ile engellidir, rozet çifte emeği önler.</li>
+    <li><strong>Kayıtlı görünümler:</strong> sık kullanılan filtre kombinasyonları isimle kaydedilir ("Bekleyen toptan siparişler", "Bu hafta değişim yiyenler", "Jetlisans — kritik stok") ve ekip içinde paylaşılabilir.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 18. ÇOK KANAL ══════════════════════ -->
+<section id="kanal">
+  <h2><span class="sec-no">18</span>Çok Kanallı Satış — Pazar Yeri & Bayi</h2>
+  <p class="sec-sub">Aynı stok havuzu: kendi siteleriniz + G2A/Kinguin + kendi bayileriniz</p>
+
+  <p>Mimarideki "site" kavramı küçük bir genellemeyle <strong>"kanal"a</strong> dönüşür: <code>sites.type</code> alanı <code>woocommerce | marketplace | reseller</code> değerlerini alır. WP kanalı eklentiyle konuşur; pazar yeri kanalı bir <strong>adaptör worker</strong> ile konuşur — atama motoru, idempotency, şablonlar ve raporlama hepsinde aynıdır. Bu genellemenin bugünkü maliyeti yalnızca bir alan ve bir arayüz tanımıdır; entegrasyonların kendisi ileriki fazlardadır.</p>
+  <ul>
+    <li><strong>G2A/Kinguin adaptörü:</strong> G2A'nın satıcılara sunduğu Import/Export API'si teklif oluşturma, fiyat güncelleme ve stok senkronunu otomatikleştirir. Adaptör; panel ürününü pazar yerindeki teklife eşler, stok adedini senkron tutar, satış gerçekleşince aynı atomik atama motorundan key düşer ve pazar yerinin teslimat kanalına yazılır. <strong>Stok bitince teklif otomatik pasife çekilir</strong> — pazar yerinde oversell cezası yersiniz, bu sigortadır.</li>
+    <li><strong>Bayi (reseller) API'si:</strong> Kendi bayileriniz için aynı HMAC altyapısı: bayi bazlı fiyat listesi, cari/kredi limiti (limiti dolan bayinin siparişi beklemeye düşer), bayi mini paneli (kendi sipariş geçmişi ve stok görünürlüğü). G2A'ya komisyon ödemek yerine kendi bayi ağınızı aynı havuzdan beslersiniz.</li>
+    <li><strong>Manuel satış kanalı (yerleşik):</strong> WhatsApp/DM/elden yapılan satışlar için panelde elle sipariş oluşturma — müşteri e-postası + ürün + adet girilir, aynı atomik atama motoru çalışır, teslimat maili seçtiğiniz site kimliğiyle gider. WP dışı satış da kayıt altındadır, stok tek havuzdan düşer, raporda "manuel" kanal olarak ayrışır.</li>
+    <li><strong>Kanal bazlı raporlama:</strong> hangi kanal ne satıyor, kanal başına efektif marj (pazar yeri komisyonu düşülmüş) — hangi ürünü hangi kanalda satmanın mantıklı olduğu veriyle görünür.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 19. AI ══════════════════════ -->
+<section id="ai">
+  <h2><span class="sec-no">19</span>AI Destekli Operasyon</h2>
+  <p class="sec-sub">AI önerir, insan onaylar — otomatik gönderilen hiçbir şey yok</p>
+
+  <ul>
+    <li><strong>Talep triyajı:</strong> Gelen değişim talebinin serbest metni sınıflandırılır (gerçek arıza / kullanım hatası / suistimal şüphesi / aciliyet) ve kuyrukta ona göre etiketlenip sıralanır; operatöre <strong>taslak cevap</strong> önerilir. Taslak, operatör onaylamadan asla gönderilmez.</li>
+    <li><strong>Günlük özetin anomali paragrafı:</strong> Sabah Telegram özetine insan diliyle yazılmış bir analiz eklenir: <em>"Site 2'de değişim oranı dün 3 katına çıktı; taleplerin tamamı parti #124'ten — tedarikçi X'le görüşülmeli."</em> Rakam yığını yerine "neye bakmalıyım"ın cevabı.</li>
+    <li><strong>Doğal dilde rapor:</strong> Panelde soru kutusu: "bu ay en çok değişim yiyen tedarikçi kim?", "Jetlisans'ta kâr marjı en düşük 10 ürün?" — model salt-okunur bir DB rolüyle SQL üretir, sonucu tabloyla döner. Rapor ekranı yetişmeyen her soru için hazır cevap.</li>
+    <li><strong>Gizlilik sınırı:</strong> Modele giden veriden key/şifre payload'ları her zaman maskelenir; yalnızca üst veri (sebep, tarih, adet, oran) işlenir. Entegrasyon Claude API ile küçük bir NestJS modülüdür; AI erişilemezse tüm akışlar AI'sız çalışmaya devam eder — süsleme katmanıdır, bağımlılık değildir.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 21. OPERASYON ══════════════════════ -->
+<section id="operasyon">
+  <h2><span class="sec-no">20</span>Operasyon: Test, Sürüm Dağıtımı, İzleme</h2>
+  <p class="sec-sub">Sistemi ayakta tutan gündelik disiplinler</p>
+
+  <h3>Test stratejisi</h3>
+  <ul>
+    <li><strong>Yarış (concurrency) testi — CI'da zorunlu:</strong> 100 eşzamanlı sipariş × 50 adetlik stok senaryosu her commit'te koşar; iddia net: <em>çifte atama sayısı = 0, atanan toplam = 50, kalan 50 sipariş <code>pending_stock</code></em>. Sistemin ana garantisi regresyona karşı böyle korunur.</li>
+    <li><strong>Yük testi (k6):</strong> Kampanya profili — 10 dk boyunca 50 istek/sn spike; hedef: p95 &lt; 300 ms, hata oranı 0.</li>
+    <li><strong>Uçtan uca (e2e):</strong> Staging'de wp-env'li gerçek WooCommerce: sipariş → mail → görüntüle → değiştir → iade akışı Playwright ile otomatik doğrulanır.</li>
+    <li><strong>Migrasyon provası:</strong> Faz 3 aktarımı önce kopya veride kuru çalıştırılır; script "kaç kayıt eşleşti / eşleşemedi / mükerrer" raporu üretmeden canlıya dokunmaz.</li>
+  </ul>
+
+  <h3>Eklenti sürüm dağıtımı — N site kaosunu önlemek</h3>
+  <ul>
+    <li>Panel, WordPress güncelleme API'sini taklit eden bir <strong>private update endpoint</strong>'i sunar: eklenti yeni sürümü tüm sitelere tek yerden dağıtılır, site site zip yüklenmez.</li>
+    <li>Her API isteği <code>X-Plugin-Version</code> başlığı taşır; panel sürüm uyum matrisini bilir. Eski sürüm kritik bir değişikliğe takılacaksa cevapla birlikte <code>deprecation</code> uyarısı döner ve admin panelde "Site 3 eski eklenti sürümünde" olarak görünür.</li>
+    <li>API sözleşmesi <code>/v1</code> altında donuktur; kırıcı değişiklik ancak <code>/v2</code> ile gelir ve iki sürüm bir süre paralel yaşar.</li>
+  </ul>
+
+  <h3>İzleme eşikleri ve günlük özet</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Metrik</th><th>Eşik</th><th>Aksiyon</th></tr>
+    <tr><td>Mail kuyruğu derinliği</td><td>&gt; 100 iş, 5 dk boyunca</td><td>Telegram uyarısı — sağlayıcı arızası olabilir</td></tr>
+    <tr><td><code>pending_stock</code> yaşı</td><td>&gt; 15 dk</td><td>Uyarı: müşteri bekliyor, stok girin</td></tr>
+    <tr><td>Bounce oranı</td><td>&gt; %2 (günlük)</td><td>Uyarı: gönderici itibarı riski</td></tr>
+    <tr><td>Atama hatası / imza reddi</td><td>&gt; 0</td><td>Anında uyarı — entegrasyon bozulmuş olabilir</td></tr>
+    <tr><td>Düşük stok</td><td>Ürün eşiğinin altı</td><td>Uyarı + panelde rozet</td></tr>
+  </table></div>
+  <p>Her sabah Telegram'a günlük özet: site bazında satış adedi/cirosu, biten ve azalan stoklar, bekleyen inceleme kuyruğu, bounce'lar, chargeback'ler.</p>
+
+  <h3>Tutarlılık denetçisi & izlenebilirlik</h3>
+  <ul>
+    <li><strong>Gece tutarlılık denetimi:</strong> Zamanlanmış iş, sistemin değişmezlerini (invariant) her gece denetler: <code>use_count ≤ max_uses</code>, satır <code>fulfilled_qty</code> = atama <code>units</code> toplamı, aynı item'ın iki aktif ataması yok, sitelere raporlanan stok ↔ gerçek kapasite eşit, sahipsiz atama yok. Herhangi bir ihlal <em>kritik</em> alarmdır — bu sınıf hatanın normalde hiç oluşmaması gerekir; oluştuysa bir bug'ı müşteri fark etmeden siz yakalarsınız.</li>
+    <li><strong>Uçtan uca trace ID:</strong> Eklenti her isteğe <code>X-Trace-Id</code> ekler; panel API logu, kuyruk işleri, mail gönderimi ve webhook'lar aynı ID'yi taşır. "Bu siparişe ne oldu" sorusu iki sistemin loglarında tek aramayla izlenir.</li>
+    <li><strong>Dead-letter ekranı:</strong> Tüm denemeleri tükenen işler (mail, webhook, tamamlama) panelde sebepleriyle listelenir; düzeltme sonrası tek tık "yeniden oynat". Ölü iş sessizce ölü kalmaz.</li>
+  </ul>
+
+  <h3>Felaket kurtarma (DR)</h3>
+  <ul>
+    <li><strong>Hedefler:</strong> RPO ≤ 5 dakika (sürekli WAL arşivi sayesinde), RTO ≤ 2 saat (yeni VPS + Compose + yedekten dönüş).</li>
+    <li><strong>Runbook:</strong> Üç senaryo yazılı prosedür olarak repo'da durur: panel sunucusu çökmesi, veritabanı bozulması (PITR ile dönüş), mail sağlayıcı arızası (ikincil sağlayıcıya config-swap ile geçiş).</li>
+    <li><strong>Tatbikat:</strong> Ayda bir yedekten test sunucusuna dönüş yapılır; dönmeyen yedek, yedek değildir.</li>
+  </ul>
+</section>
+
+<!-- ══════════════════════ 14. YOL HARİTASI ══════════════════════ -->
+<!-- ══════════════════════ 21. TASARIM ══════════════════════ -->
+<section id="tasarim">
+  <h2><span class="sec-no">21</span>Panel Arayüz Tasarımı & Tasarım Sistemi</h2>
+  <p class="sec-sub">Operasyon aracı estetiği: yoğun bilgi, düşük süs, yüksek hız</p>
+
+  <p>Panel bir vitrin değil, günde yüzlerce kez bakılan bir <strong>operasyon aracıdır</strong>. Tasarım hedefi güzellik yarışması değil: durumun bir bakışta okunması, sık aksiyonun en az tıkla yapılması ve iki ekran arasında (WP ↔ panel) zihinsel geçiş maliyetinin sıfıra inmesi. İlke: <em>"scan edilir, okunmaz"</em> — yoğun tablolar, net durum renkleri, her yerde aynı desen.</p>
+
+  <h3>Tasarım sistemi ve yığın</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Katman</th><th>Seçim</th><th>Gerekçe</th></tr>
+    <tr><td>CSS & token</td><td>Tailwind CSS v4 + CSS değişkenli tasarım token'ları</td><td>Renk/aralık/tipografi tek yerden; açık-koyu tema token seviyesinde çözülür, bileşenlere dokunulmaz.</td></tr>
+    <tr><td>Bileşenler</td><td>shadcn/ui (Radix tabanlı)</td><td>Erişilebilir, kopyala-sahiplen model (bağımlılık kilidi yok); tablo/diyalog/form/toast hazır ve özelleştirilebilir.</td></tr>
+    <tr><td>Tablolar</td><td>TanStack Table + TanStack Query</td><td>Panelin %70'i tablo: sunucu taraflı sayfalama/filtre, sticky başlık, kolon gizleme, kayıtlı görünümler, toplu seçim.</td></tr>
+    <tr><td>Grafikler</td><td>Recharts (az ve öz)</td><td>Dashboard sparkline'ları ve stok/satış trendi; süs grafiği yok.</td></tr>
+    <tr><td>Tipografi & ikon</td><td>Inter (metin) + tabular-nums (tüm sayılar) + lucide ikonları</td><td>Adetler, tutarlar, tarihler kolonlarda hizalanır; ikonlar metnin yerine değil yanına.</td></tr>
+    <tr><td>Tema</td><td>Açık + koyu, sistem tercihini izler</td><td>Gece operasyonu gerçek; koyu tema sonradan eklenen değil, ilk günden token'larda.</td></tr>
+  </table></div>
+
+  <h3>Renk paleti — Stripe tarzı indigo & lacivert kimlik</h3>
+  <p>Kimlik üçlüsü Stripe'ın kendi arayüz formülünden esinlenir: <strong>indigo</strong> (<code>#635BFF</code>) etkileşim, <strong>lacivert</strong> (<code>#0A2540</code>) metin ve koyu yüzeyler, <strong>buz mavisi</strong> (<code>#F6F9FC</code>) zemin. Vurgu indigosu yalnızca kimlik/etkileşim taşır: seçili menü, ana buton, ilerleme çubuğu, bağlantılar. <em>Asla durum anlamı taşımaz</em> — durumlar dört semantik renge aittir. Bu doküman sayfasının kendisi de aynı paletle boyalıdır; baktığınız renkler panelin renkleridir.</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Token</th><th>Açık tema</th><th>Koyu tema</th><th>Kullanım</th></tr>
+    <tr><td><code>accent</code></td><td><code>#635BFF</code> <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#635BFF;vertical-align:-1px;"></span></td><td><code>#8A84FF</code> <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#8A84FF;vertical-align:-1px;"></span></td><td>Ana buton, seçili menü, ilerleme çubuğu, bağlantı</td></tr>
+    <tr><td><code>accent-soft</code></td><td><code>#F0EFFF</code> <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#F0EFFF;border:1px solid #dfe6ef;vertical-align:-1px;"></span></td><td><code>#232057</code> <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#232057;vertical-align:-1px;"></span></td><td>Seçili satır/öğe zemini, bilgi kutuları</td></tr>
+    <tr><td><code>ink</code> (lacivert)</td><td><code>#0A2540</code> <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#0A2540;vertical-align:-1px;"></span></td><td><code>#E6EBF4</code> <span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#E6EBF4;border:1px solid #263752;vertical-align:-1px;"></span></td><td>Metin ve ikincil koyu butonlar — saf siyah yok, lacivert var</td></tr>
+    <tr><td><code>success</code></td><td colspan="2">yeşil — her iki temada semantik sabit</td><td>Teslim edildi, bağlantı sağlıklı</td></tr>
+    <tr><td><code>warning</code></td><td colspan="2">amber — semantik sabit</td><td>Kısmi teslimat, onay bekliyor, kota uyarısı</td></tr>
+    <tr><td><code>danger</code></td><td colspan="2">kırmızı — semantik sabit</td><td>Risk incelemesi, iptal, kritik stok</td></tr>
+    <tr><td>nötrler</td><td colspan="2">buz mavisi zemin skalası (<code>#F6F9FC → #0A2540</code>; koyu tema gece laciverti <code>#0C1526</code>)</td><td>Zemin, yüzeyler, çizgiler — saf gri yok, palete ait mavi-gri</td></tr>
+  </table></div>
+
+  <h3>Bilgi mimarisi — ekran ağacı</h3>
+  <div class="diagram">
+    <pre class="mermaid">
+flowchart LR
+  H["Ana Ekran<br/>Bekleyen Teslimatlar + özet şerit"]
+  H --> O["Siparişler<br/>tüm kanallar, filtre, timeline"]
+  H --> S["Stok<br/>ürünler · partiler · satın alma siparişleri"]
+  H --> T["Tedarikçiler<br/>karne · import profilleri"]
+  H --> D["Destek Talepleri<br/>değişim kuyruğu"]
+  H --> M["Müşteriler<br/>360 görünüm · etiketler"]
+  H --> K["Kanallar<br/>siteler · eşlemeler · sağlık"]
+  H --> SB["Şablonlar<br/>teslimat · mail kabukları"]
+  H --> R["Raporlar<br/>satış · zayi · değişim oranı"]
+  H --> A["Ayarlar<br/>kullanıcılar · güvenlik · audit · DLQ"]
+    </pre>
+    <div class="cap">Sol sabit menü bu ağacı taşır; bekleyen iş sayıları menüde rozet olarak görünür (Bekleyen Teslimatlar <span class="pill warn">3</span>, Destek <span class="pill warn">5</span>). Üst çubukta: Ctrl+K arama, bildirimler, ortam rozeti, kullanıcı menüsü.</div>
+  </div>
+
+  <h3>Yerleşim — ana ekran taslağı</h3>
+  <div style="border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:0 0 18px; font-size:11.5px; background:var(--surface);">
+    <div style="display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--line); background:var(--surface-2);">
+      <strong style="font-size:12px;">🗝️ Panel</strong>
+      <span style="border:1px solid var(--line); border-radius:6px; padding:2px 10px; color:var(--ink-3); flex:1; max-width:260px;">⌘K — sipariş, e-posta, key ara…</span>
+      <span style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+        <span class="pill ok">CANLI</span><span style="color:var(--ink-3);">🔔 3</span><span style="color:var(--ink-3);">Ertan ▾</span>
+      </span>
+    </div>
+    <div style="display:flex; min-height:150px;">
+      <div style="width:148px; border-right:1px solid var(--line); padding:8px 0; color:var(--ink-2); flex-shrink:0;">
+        <div style="padding:5px 12px; background:var(--accent-soft); color:var(--accent-ink); font-weight:600;">▸ Bekleyen Teslimatlar <span class="pill warn" style="font-size:10px;">3</span></div>
+        <div style="padding:5px 12px;">Siparişler</div>
+        <div style="padding:5px 12px;">Stok</div>
+        <div style="padding:5px 12px;">Tedarikçiler</div>
+        <div style="padding:5px 12px;">Destek <span class="pill warn" style="font-size:10px;">5</span></div>
+        <div style="padding:5px 12px;">Raporlar</div>
+      </div>
+      <div style="flex:1; padding:10px 12px; min-width:0;">
+        <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+          <div style="border:1px solid var(--line); border-radius:6px; padding:6px 12px;"><div style="color:var(--ink-3); font-size:10px;">BUGÜN SATIŞ</div><strong>1.284</strong></div>
+          <div style="border:1px solid var(--line); border-radius:6px; padding:6px 12px;"><div style="color:var(--ink-3); font-size:10px;">BEKLEYEN</div><strong style="color:var(--warn);">3</strong></div>
+          <div style="border:1px solid var(--line); border-radius:6px; padding:6px 12px;"><div style="color:var(--ink-3); font-size:10px;">KRİTİK STOK</div><strong style="color:var(--danger);">2 ürün</strong></div>
+          <div style="border:1px solid var(--line); border-radius:6px; padding:6px 12px;"><div style="color:var(--ink-3); font-size:10px;">YOLDA</div><strong>500 adet</strong></div>
+        </div>
+        <div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">
+          <div style="display:flex; gap:10px; padding:5px 10px; background:var(--surface-2); color:var(--ink-3); font-size:10px; text-transform:uppercase; letter-spacing:.05em;"><span style="flex:2;">Sipariş</span><span style="flex:2;">Ürün · İlerleme</span><span style="flex:1;">Neden</span><span style="flex:1.4;">Aksiyon</span></div>
+          <div style="display:flex; gap:10px; padding:6px 10px; border-top:1px solid var(--line); align-items:center;"><span style="flex:2;">jetlisans · #1042</span><span style="flex:2;">Win 11 Pro — <strong>30/50</strong></span><span style="flex:1;"><span class="pill warn" style="font-size:10px;">onay bekliyor</span></span><span style="flex:1.4; color:var(--accent-ink); font-weight:600;">Kalanları Ata ▸</span></div>
+          <div style="display:flex; gap:10px; padding:6px 10px; border-top:1px solid var(--line); align-items:center;"><span style="flex:2;">site2 · #883</span><span style="flex:2;">Office 365 — <strong>0/5</strong></span><span style="flex:1;"><span class="pill warn" style="font-size:10px;">stok yok · yolda</span></span><span style="flex:1.4; color:var(--ink-3);">ETA: Çarşamba</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Etkileşim desenleri</h3>
+  <ul>
+    <li><strong>Tek durum dili:</strong> Her durum, her ekranda aynı renk + ikon + etiketle görünür (pill deseni); renk tek başına anlam taşımaz (renk körlüğü + WCAG AA kontrast).</li>
+    <li><strong>Kritik aksiyon = onay + sebep:</strong> Revoke, toplu değiştirme, geri çekme gibi geri alınması zor işlemler sebep alanlı onay diyaloğundan geçer; sonuç toast ile bildirilir. Para/stok işlemlerinde optimistic UI <em>yok</em> — sunucu onayı gelmeden ekran güncellenmez.</li>
+    <li><strong>Maskeli veri deseni:</strong> Key'ler her yerde maskeli; göz ikonu da kopyala butonu da "reveal" sayılır ve loglanır — kopyalama, görmeden sızdırmanın arka kapısı olamaz.</li>
+    <li><strong>Klavye-öncelikli kuyruklar:</strong> Bekleyen Teslimatlar ve Destek kuyruğunda J/K ile gezinme, A = onayla/ata, R = reddet, N = not — fare şart değil.</li>
+    <li><strong>Ortam şeridi:</strong> Sandbox modundaki oturumda ekranın üstünde kalıcı sarı "TEST MODU" bandı — canlı sanıp test yapma / test sanıp canlıda oynama kazası görsel olarak imkânsızlaşır.</li>
+    <li><strong>Canlı rozetler:</strong> Menüdeki bekleyen sayıları kısa aralıklı yoklamayla güncellenir; kritik olay (kota alarmı, site askısı) toast + zil olarak anında düşer.</li>
+    <li><strong>Mobil davranış:</strong> Panel masaüstü odaklıdır; mobilde okuma + onay aksiyonları çalışır (kuyruk satırları karta dönüşür), veri girişi ekranları masaüstüne yönlendirir. Acil mobil aksiyonun asıl kanalı zaten Telegram inline butonlarıdır (Bölüm 14).</li>
+    <li><strong>Dil:</strong> Arayüz Türkçe-öncelikli, tüm metinler i18n katmanında — ekip büyüyüp yabancı operatör gelirse çeviri eklemek metin dosyası işidir.</li>
+  </ul>
+
+  <h3>WP tarafının görsel dili</h3>
+  <ul>
+    <li><strong>Eklenti WP gibi görünür:</strong> Meta box, kolonlar ve ayar ekranları WordPress admin bileşen dilini kullanır — WP admin'i panel markasıyla boyamayız; sipariş ekranındaki kutu WP'nin doğal parçası gibi hissettirir. Panel'in durum pill renkleri burada da birebir aynıdır (iki ekran, tek dil).</li>
+    <li><strong>Müşteri ekranı tema-nötrdür:</strong> My Account "ürünü görüntüle" bloğu sitenin temasını devralır — minimal, kendi başına ayakta duran markup + ufak scoped stiller; sitenin görünümüyle kavga etmez. Kurulum rehberi içeriği paneldeki şablondan gelir, çerçevesi siteden.</li>
+  </ul>
+  <p style="color: var(--ink-3); font-size: 13.5px;">Fazlama: yerleşim + tablolar + durum dili + maskeli veri deseni Faz 1'de (çekirdek); klavye kısayolları, canlı rozetler ve cila Faz 2'de.</p>
+</section>
+
+<section id="yol">
+  <h2><span class="sec-no">22</span>Yol Haritası</h2>
+  <p class="sec-sub">Riski küçük tutan aşamalı geçiş — büyük patlama yok</p>
+
+  <div class="card" style="padding: 6px 20px">
+    <div class="phase">
+      <div class="ph-no">Faz 0<br/>~1 hafta</div>
+      <div>
+        <h4>Altyapı iskeleti</h4>
+        <p>VPS + Docker Compose + Caddy + PG + Redis; CI/CD (GitHub Actions), yedekleme, Sentry. NestJS/Next.js monorepo (pnpm + Turborepo) iskeleti, migration altyapısı.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="ph-no">Faz 1<br/>~3–4 hafta</div>
+      <div>
+        <h4>MVP — tek site, key ürünleri</h4>
+        <p>Şifreli stok modeli + toplu import (CSV/yapıştır), atomik atama, sipariş API'si + idempotency, temel şablon + mail gönderimi, <strong>kısmi teslimat motoru + Bekleyen Teslimatlar ekranı</strong> (çekirdek davranış olduğu için MVP'de), panel→site geri kanal webhook ucu, WP eklentisi (sipariş push, My Account görüntüleme, admin meta box: görüntüle/değiştir/tekrar gönder/revoke). Eklenti çekirdeğine ilk günden: tanılama ekranı, otomatik log budama, staging klon koruması, HPOS/blok checkout uyumu. CI'da yarış testi ilk günden zorunlu. <strong>Jetlisans'ta 1-2 pilot ürünle canlıya alınır; mevcut eklenti diğer ürünlerde çalışmaya devam eder.</strong></p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="ph-no">Faz 2<br/>~2–3 hafta</div>
+      <div>
+        <h4>Hesap ürünleri + çoklu site</h4>
+        <p>JSONB payload'lı hesap tipi ürünler (Office 365, Steam), şablon override'ları, ikinci sitenin bağlanması, site başına gönderici domain doğrulaması, mutabakat cron'u, düşük stok uyarıları (Telegram), misafir teslimat linki, velocity limitleri + blocklist + manuel inceleme kuyruğu, akıllı stok önizleme ("Onayla ve Dağıt"), Ctrl+K global arama, toplu değiştirme sihirbazı, sipariş timeline ekranları, müşteri değişim talebi akışı + garanti süresi, Telegram inline onay butonları, site bağlama sihirbazı, son kullanma takibi + FEFO, askıya alma + WP sipariş listesi kolonu/filtreleri + ürün eşleme kutusu.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="ph-no">Faz 3<br/>~1–2 hafta</div>
+      <div>
+        <h4>Eski veriden migrasyon</h4>
+        <p>Mevcut WP eklentisindeki stok ve geçmiş atamaların panele aktarımı (eşleme script'i + kuru çalıştırma + doğrulama raporu). Tüm ürünler panele geçer, eski eklenti salt-okunur arşive düşer, WP tabloları temizlenir → asıl performans kazanımı burada realize olur.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="ph-no">Faz 4<br/>sürekli</div>
+      <div>
+        <h4>Gelişmiş özellikler</h4>
+        <p>Kâr/maliyet raporları (batch maliyeti × satış), tedarikçi API entegrasyonları ile otomatik stok çekme, bayi/reseller API'si, risk skoru otomasyonu + kural motoru, reveal anomali tespiti, private update endpoint ile eklenti sürüm dağıtımı, müşteri 360 + etiketleme, stok tükenme tahmini + tedarikçi karnesi, sandbox/test modu, operatör çakışma uyarısı + kayıtlı görünümler, G2A/Kinguin kanal adaptörleri + bayi API'si ve mini paneli, chargeback kanıt paketi, AI triyaj + anomali özeti + doğal dilde rapor.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════ 15. KAPSAM ══════════════════════ -->
+<section id="kapsam">
+  <h2><span class="sec-no">23</span>Senaryo Kapsama Kontrolü</h2>
+  <p class="sec-sub">Talep ettiğiniz her akışın mimarideki karşılığı</p>
+
+  <div class="tbl-wrap"><table>
+    <tr><th>İstediğiniz senaryo</th><th>Mimarideki karşılığı</th></tr>
+    <tr><td>Windows/Office key, Office 365 hesabı, Steam hesabı stok girişi</td><td><code>products.kind</code> + JSONB <code>payload_schema</code>; toplu CSV import, mükerrer engeli, parti/maliyet takibi (Bölüm 04)</td></tr>
+    <tr><td>Tek key'in 500 kullanımlık tanımlanması; aynı/farklı müşterilere adetle satış (12 adet → "12 kullanım hakkı"), satış hakkından düşme</td><td><code>usage_mode: multi</code> + <code>max_uses</code>/<code>use_count</code> modeli, atomik kapasite düşümü, <code>{{units}}</code> değişkeni, kalan hak göstergesi (Bölüm 03, 04, 12)</td></tr>
+    <tr><td>Sipariş verilince stoktan otomatik düşme</td><td><code>POST /v1/orders</code> + <code>FOR UPDATE SKIP LOCKED</code> atomik atama (Bölüm 03)</td></tr>
+    <tr><td>50 adet sipariş / 30 stok → 30 anında teslim; 100 stok girince kalanı onaylı veya otomatik, tek tek veya toplu tamamlama</td><td>Kısmi teslimat motoru: politika (partial-auto / partial-approval / all-or-nothing), "Kalanları Ata" / "N Adet Ata", stok girişinde "Onayla ve Dağıt" önizlemesi (Bölüm 11, 14)</td></tr>
+    <tr><td>Sipariş sürecinin uçtan uca takibi</td><td><code>fulfillment_events</code> zaman çizelgesi — panelde ve WP meta box'ta (Bölüm 11, 14)</td></tr>
+    <tr><td>Müşteri "Siparişlerim"den istediği zaman görüntüleyebilsin</td><td>My Account server-side çekim, yalnızca aktif atamalar (Bölüm 06)</td></tr>
+    <tr><td>Admin sipariş detayında lisansı görme</td><td>Meta box + <code>/admin-view</code> ucu, maskeli görünüm + loglu reveal (Bölüm 06)</td></tr>
+    <tr><td>WP admin'den tam müdahale: manuel atama, askıya alma/gizleme, farklı ürünle değişim, key bazında işlem, liste kolonları</td><td>"WP admin'den tam müdahale" seti — tüm aksiyonlar panel API'sine gider, audit <code>wp:kullanıcı@site</code> kimliğiyle tutulur (Bölüm 06)</td></tr>
+    <tr><td>"Değiştir" butonu + eski anahtarları anlık görme</td><td><code>/assignments/:id/replace</code> + <code>assignment_history</code> aynı kutuda listelenir (Bölüm 05–06)</td></tr>
+    <tr><td>Ödeme tamamlanınca key'li otomatik mail</td><td>BullMQ teslimat kuyruğu, site kimliğiyle DKIM'li gönderim (Bölüm 07)</td></tr>
+    <tr><td>Admin'den "Tekrar Mail Gönder"</td><td><code>/orders/:id/resend</code>, gönderim durumu meta box'ta (Bölüm 05, 07)</td></tr>
+    <tr><td>İade/iptalde lisans müşteriden gizlensin</td><td>Revoke akışı: SQL seviyesinde filtre, key karantinaya (Bölüm 03, 06)</td></tr>
+    <tr><td>Birden fazla site, tek panelden dağıtım, ortak havuz</td><td>Tenant modeli: site başına anahtar + ürün eşleme, ortak <code>license_items</code> havuzu (Bölüm 02, 04)</td></tr>
+    <tr><td>Kurulum rehberi / mail metinlerinin yönetimi</td><td>Panelde ürün bazlı şablon + site bazlı override — WP'de şablon yok (Bölüm 07)</td></tr>
+    <tr><td>İki sunucu arası güvenli ve hızlı haberleşme</td><td>HMAC + nonce + idempotency; Action Scheduler retry; mutabakat cron'u (Bölüm 05–06)</td></tr>
+    <tr><td>Eklenti↔panel kenar durumları: sipariş düzenleme, varyasyon/paket ürün, webhook sırası, cache çakışması, staging klonu, saat kayması, çoklu dil</td><td>"Entegrasyonun kenar durumları" tablosu + tanılama sekmesi + otomatik log budama + dual-run geçiş modu (Bölüm 06)</td></tr>
+    <tr><td>Büyüyünce sorun çıkmasın</td><td>Partial index, partition, stateless API, net ölçekleme eşikleri (Bölüm 04, 09)</td></tr>
+  </table></div>
+
+  <p style="color: var(--ink-3); font-size: 13.5px; margin-top: 28px;"><strong>v1.1 eklemeleri:</strong> risk & fraud katmanı, panel→site geri kanalı + misafir teslimatı, KVKK & veri saklama, test/sürüm dağıtımı/DR operasyonu. <strong>v1.2 eklemeleri:</strong> kısmi teslimat & tamamlama motoru (Bölüm 11), admin deneyimi & operasyon kolaylıkları (Bölüm 14). <strong>v1.3 eklemeleri:</strong> müşteri self-servis + garanti + müşteri 360, stok zekâsı (tükenme tahmini, FEFO, tedarikçi karnesi), onboarding + sandbox + operatör güvenliği, Telegram inline onay. <strong>v1.4 eklemeleri:</strong> WP admin'den tam müdahale seti — manuel atama, askıya alma, farklı ürünle değişim, liste kolonları (Bölüm 06), seçici 3DS + chargeback deflection + kanıt paketi (Bölüm 10), çok kanallı satış — pazar yeri & bayi (Bölüm 18), yenileme & abonelik akışı (Bölüm 19), AI destekli operasyon (Bölüm 20). <strong>v1.5 eklemeleri:</strong> eklenti↔panel entegrasyonunun kenar durumları — sipariş düzenleme, varyasyon/paket eşleme, webhook sıra güvenliği, bulk-status (N+1 önleme), cache uyumu, staging klon koruması, saat kayması tespiti, çoklu dil, tanılama sekmesi, otomatik log budama, dual-run geçiş modu (Bölüm 06). <strong>v1.6 sadeleştirmesi:</strong> TTL'li havale/EFT stok rezervasyonu mimariden çıkarıldı — ödeme onayı Woo admin'de verilen manuel bir karardır, panel yalnızca ödenmiş siparişi görür; stok yetmezse kısmi teslimat akışı durumu zaten karşılar (Bölüm 12'de karar notu). <strong>v1.7 sadeleştirmesi:</strong> ödeme katmanı özellikleri (seçici 3DS zorlaması, Ethoca/Verifi deflection) mimariden çıkarıldı — ödeme tamamen site/ödeme geçidinin alanıdır, panel siparişi ödeme sonrası görür ve ödemeye dokunmaz (Bölüm 10'da sınır notu); chargeback kanıt paketi panelde kaldı. Misafir teslimat linki site bazında aç/kapa bayrağına bağlandı (siteden siteye misafir checkout farkı). <strong>v1.8 eklemeleri:</strong> müşteri ekranı durum matrisi + görüntüleme UX'i (kopyala, göster/gizle, toplu indirme, canlı tamamlama, bounce uyarı bandı), e-posta değişikliği senkronu, hesap silmede otomatik KVKK anonimleştirme tetiği, sipariş çöpe atılınca sahipsiz atama tespiti, para iadesi ≠ lisans iptali ayrımı ("lisansları da iptal et" onay kutusu), WP↔panel iki yönlü not senkronu, resend çift tık koruması, planlı bakım bildirimi (Bölüm 06). <strong>v1.9:</strong> çok kullanımlık ürün modeli birinci sınıf oldu — <code>usage_mode: multi</code>, 1 key = 500 satış (MAK tarzı), adetli kullanım hakkı, atomik kapasite düşümü, iade hakkının bilinçli (otomatik olmayan) iadesi (Bölüm 12). <strong>v2.0:</strong> ürün tipi matrisi — süreli abonelik hesabı (<code>validity_days</code>, teslimle başlayan süre, <code>on_expiry</code> politikası), kiralık slot (süre dolunca hak otomatik havuza + şifre rotasyonu hatırlatması), kod/hediye çeki (<code>kind: code</code>, <code>source: generated</code>), stoksuz/ön sipariş (<code>stockless</code>, tedarik SLA'sı, <code>release_at</code>) — hepsi mevcut çekirdek üzerinde (Bölüm 12). <strong>v2.1 sadeleştirmesi:</strong> Yenileme & Abonelik bölümü tamamen çıkarıldı — hazır ürün satış modeli, yenileme entegrasyonu yok; süreli ürünlerde yalnızca bitiş tarihi gösterimi ve <code>on_expiry</code> politikası kaldı, hatırlatma zinciri / <code>renewed_from</code> takibi / Woo Subscriptions uyumu silindi. <strong>v2.2 eklemeleri:</strong> kompromize site savunması — dinamik satış kotası + Woo'ya geri doğrulama + anomali oto-askısı (Bölüm 08), master key yedekleme prosedürü (Bölüm 08), gece tutarlılık denetçisi + uçtan uca trace ID + dead-letter ekranı (Bölüm 20), manuel satış kanalı (WhatsApp/DM satışları, Bölüm 18), ürün bazlı <code>key_format</code> regex doğrulaması (Bölüm 14), şablon önizleme & test maili (Bölüm 07). <strong>v2.3 — tedarik zinciri turu:</strong> satın alma siparişleri & yoldaki stok (<code>purchase_orders</code>, kısmi teslim alma, ETA'nın tükenme tahminine/bekleyen ekranına yansıması), parti kabul kontrolü + geri çekme (satılmamışlar <code>voided</code>, satılmışlar toplu değiştirmeye), sebepli stok düzeltme, tedarikçi import profilleri (Bölüm 16). <strong>v2.4:</strong> panel arayüz tasarımı & tasarım sistemi — Tailwind v4 + shadcn/ui token mimarisi, bilgi mimarisi ağacı, ana ekran taslağı, etkileşim desenleri (tek durum dili, maskeli veri, klavye-öncelikli kuyruklar, sandbox şeridi), WP tarafının görsel dili (Bölüm 21). <strong>v2.5–v2.6:</strong> renk kimliği kullanıcıyla iki turda netleşti — soft mavi denendi, ardından kurumsal alternatifler (monokrom, lacivert menü, petrol, viyole) karşılaştırıldı ve <strong>Stripe tarzı indigo & lacivert</strong> seçildi: <code>#635BFF</code> vurgu + <code>#0A2540</code> lacivert metin + <code>#F6F9FC</code> buz zemin (koyu tema: <code>#8A84FF</code> / gece laciverti). Vurgu yalnızca kimlik/etkileşim taşır, durum anlamı dört semantik renkte — doküman sayfası da bu palete boyandı. Bu doküman uygulama öncesi mimari referanstır; Faz 1 başlarken her bölüm ilgili iş kalemlerine (issue) bölünecektir.</p>
+</section>
+</main>
+</div>
