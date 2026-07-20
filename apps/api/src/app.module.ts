@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { CryptoModule } from './crypto/crypto.module';
 import { QueueModule } from './queue/queue.module';
 import { SitesModule } from './sites/sites.module';
+import { AdminUsersModule } from './admin-users/admin-users.module';
 import { ProductsModule } from './products/products.module';
 import { StockModule } from './stock/stock.module';
 import { OrdersModule } from './orders/orders.module';
@@ -50,6 +51,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     QueueModule,
     HealthModule,
     SitesModule,
+    AdminUsersModule,
     ProductsModule,
     StockModule,
     OrdersModule,

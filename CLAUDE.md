@@ -49,6 +49,12 @@ düzeltildi), production build + iki temada WCAG AA tarayıcıda doğrulandı.
 **KRİTİK NOT:** `@theme inline`'da her renk token'ı base + `-foreground` çift olmalı
 (`--color-muted`+`--color-muted-foreground`, `--color-accent`+`--color-accent-foreground`);
 base atlanırsa Tailwind v4 o `bg-*` utility'sini HİÇ üretmez (sessiz kırılma).
+**UI TAMAMLANDI (canlı):** Siparişler/Stok/Siteler shadcn-admin **DataTable** (TanStack: arama,
+faceted filtre, sıralama, sayfalama, kolon görünürlüğü); sipariş detayı Card/Table/StatTile/timeline;
+formlar shadcn Input/Label/Textarea/Button/Alert; loading/error/404 state'leri. Ekranlar 2. adversaryel
+audit'ten (a11y/kontrast) geçti. **Admin auth gate** (`middleware.ts` + `/login` + `/api/login|logout`
+route handler, env-gated `ADMIN_UI_PASSWORD`, varsayılan KAPALI) — bkz. memory `admin-auth`; auth
+login/logout MUTLAKA native form POST → Route Handler (Server Action + redirect cookie'yi bindiremiyor).
 Detay: MIMARI.md §17. Marka: "Lisans Paneli — Tedarik & Yönetim".
 
 ## Durum

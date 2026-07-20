@@ -1,5 +1,6 @@
 // Drizzle şema barrel'ı — drizzle-kit ve DB istemcisi buradan okur.
 export * from './enums';
+export * from './adminUsers';
 export * from './sites';
 export * from './products';
 export * from './licenseItems';

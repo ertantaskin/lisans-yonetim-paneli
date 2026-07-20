@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+/** Boş string'i undefined'a çevirir (docker-compose `${VAR:-}` boş geçtiğinde opsiyonel alanlar için). */
+function emptyToUndefined<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((v) => (v === '' ? undefined : v), schema);
+}
+
 /**
  * Ortam değişkeni şeması. Uygulama açılışında doğrulanır (§8 "zod şema doğrulama").
  * Eksik/hatalı değişkenle uygulama BAŞLAMAZ — sessiz yanlış konfig olmaz.
@@ -19,6 +24,17 @@ export const envSchema = z.object({
 
   /** Admin uçları (site/ürün/stok yönetimi) için basit yönetici token'ı. */
   ADMIN_TOKEN: z.string().min(1),
+
+  /**
+   * İlk admin bootstrap (§8). admin_users tablosu BOŞSA ve ikisi de verilmişse açılışta
+   * bir "owner" admin oluşturulur. Sonraki adminler panelden eklenir. Opsiyonel.
+   * NOT: docker-compose `${VAR:-}` boş string geçer → boş'u undefined'a çeviriyoruz
+   * (aksi halde .email()/.min(8) boş string'de doğrulamayı patlatır).
+   */
+  ADMIN_SEED_EMAIL: emptyToUndefined(z.string().email().optional()),
+  ADMIN_SEED_PASSWORD: emptyToUndefined(z.string().min(8).optional()),
+  ADMIN_SEED_NAME: emptyToUndefined(z.string().optional()),
+  ADMIN_SEED_USERNAME: emptyToUndefined(z.string().optional()),
 
   /** Teslimat maili SMTP (dev: Mailpit, TLS'siz; üretim: SMTP_SECURE=true). */
   SMTP_HOST: z.string().default('mailpit'),
