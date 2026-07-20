@@ -1,0 +1,5 @@
+{
+  "permissions": {
+    "allow": ["Bash(git -C \"C:/Users/USER/Desktop/lisans-yonetim-paneli\" status)"]
+  }
+}

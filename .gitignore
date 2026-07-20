@@ -1,0 +1,46 @@
+# Bağımlılıklar
+node_modules/
+.pnpm-store/
+
+# Derleme çıktıları
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Turborepo
+.turbo/
+
+# Ortam / sırlar (ASLA commit edilmez)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+master.key
+
+# Loglar
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Docker / veri hacimleri
+docker/data/
+pgdata/
+caddy_data/
+caddy_config/
+
+# Editör / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

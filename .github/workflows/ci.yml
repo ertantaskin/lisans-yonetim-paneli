@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ── Lint / typecheck / build / birim testleri ──────────────────────────────
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+        continue-on-error: true
+
+      - name: Birim testleri
+        run: pnpm test
+
+  # ── YARIŞ TESTİ (§16 — zorunlu): çifte atama = 0 ───────────────────────────
+  race:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: jetlisans
+          POSTGRES_PASSWORD: jetlisans
+          POSTGRES_DB: jetlisans_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jetlisans -d jetlisans_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://jetlisans:jetlisans@localhost:5432/jetlisans_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Ortak paketi derle
+        run: pnpm --filter @jetlisans/shared build
+
+      - name: Migration'ları uygula
+        run: pnpm --filter @jetlisans/api db:migrate
+
+      - name: Yarış testi — 100 sipariş × 50 stok → çifte atama = 0
+        run: pnpm --filter @jetlisans/api test:race

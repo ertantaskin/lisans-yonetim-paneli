@@ -1,0 +1,22 @@
+# Jetlisans — Caddy reverse proxy + otomatik TLS (MIMARI.md §1).
+#
+# Üretim: API_DOMAIN / ADMIN_DOMAIN gerçek alan adları → Caddy Let's Encrypt
+# sertifikasını otomatik alır ve yeniler.
+# Lokal: domainler "localhost" → Caddy iç TLS sertifikası üretir.
+
+{$ADMIN_DOMAIN} {
+	encode gzip zstd
+	reverse_proxy admin:3000
+}
+
+{$API_DOMAIN} {
+	encode gzip zstd
+
+	# key/sır yanıtları asla cache'lenmez (§7).
+	header {
+		Cache-Control "no-store"
+		-Server
+	}
+
+	reverse_proxy api:3001
+}

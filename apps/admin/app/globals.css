@@ -1,0 +1,65 @@
+@import 'tailwindcss';
+
+/*
+ * Jetlisans tasarım sistemi (MIMARI.md §17 — Stripe tarzı, kesinleşti).
+ * İndigo YALNIZCA kimlik/etkileşim; durum anlamı dört semantik renkte.
+ * Açık + koyu tema token seviyesinde, ilk günden.
+ */
+@theme {
+  /* Marka / etkileşim */
+  --color-accent: #635bff;
+  --color-accent-soft: #f0efff;
+
+  /* Metin — saf siyah YOK, lacivert */
+  --color-ink: #0a2540;
+
+  /* Zemin — mavi-gri, saf gri değil */
+  --color-surface: #f6f9fc;
+  --color-surface-raised: #ffffff;
+
+  /* Durum renkleri (sabit anlam) */
+  --color-success: #1a7f5a; /* bitti */
+  --color-warning: #b45309; /* aksiyon bekliyor */
+  --color-danger: #c0392b; /* sorun */
+
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --radius-card: 0.625rem;
+}
+
+/* Koyu tema — token seviyesinde override (§17). */
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-accent: #8a84ff;
+    --color-accent-soft: #232057;
+    --color-ink: #e6ebf4;
+    --color-surface: #0c1526;
+    --color-surface-raised: #111d33;
+  }
+}
+
+:root[data-theme='dark'] {
+  --color-accent: #8a84ff;
+  --color-accent-soft: #232057;
+  --color-ink: #e6ebf4;
+  --color-surface: #0c1526;
+  --color-surface-raised: #111d33;
+}
+
+:root[data-theme='light'] {
+  --color-accent: #635bff;
+  --color-accent-soft: #f0efff;
+  --color-ink: #0a2540;
+  --color-surface: #f6f9fc;
+  --color-surface-raised: #ffffff;
+}
+
+html,
+body {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* Yoğun tabloda hizalı rakam (§17 tabular-nums). */
+  font-variant-numeric: tabular-nums;
+}

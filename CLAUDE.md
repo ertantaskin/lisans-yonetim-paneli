@@ -30,5 +30,14 @@ laciverti `#0A2540` (saf siyah yok), zemin `#F6F9FC` (koyu: `#0C1526`). İndigo
 yalnızca etkileşim; durum renkleri sabit: yeşil=bitti, amber=aksiyon, kırmızı=sorun.
 
 ## Durum
-Tasarım aşaması tamamlandı (v2.6). Sıradaki iş: **Faz 0** — VPS + Docker Compose +
-monorepo iskeleti + CI + ilk migration'lar. Yol haritası `docs/MIMARI.md` §22'de.
+Tasarım (v2.6) tamamlandı. **Faz 0 iskeleti kuruldu** (pnpm+Turborepo monorepo,
+NestJS/Fastify API, Next.js admin, Drizzle şema + ilk migration, Docker Compose
+PG17+Redis7+Caddy, CI + yarış testi). Build/typecheck/lint/test yeşil. Kalan:
+Docker'la lokal doğrulama + VPS deploy. Sıradaki iş: **Faz 1 (MVP)** — atomik atama
+akışı, kısmi teslimat motoru, sipariş API'si, WP eklentisi. Yol haritası `docs/MIMARI.md` §18.
+
+## Geliştirme
+`pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
+(PG+Redis+API+admin+Caddy). Migration: `pnpm db:generate` (şema→SQL) / `pnpm db:migrate`.
+Yarış testi (gerçek PG ister): `pnpm --filter @jetlisans/api test:race`. Lokal Node 22
+önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
