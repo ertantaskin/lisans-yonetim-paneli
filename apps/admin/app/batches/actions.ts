@@ -36,3 +36,34 @@ export async function recallBatchAction(id: string, reason: string): Promise<Rec
     return { ok: false, error: e instanceof Error ? e.message : 'Geri çekilemedi' };
   }
 }
+
+/** Toplu değiştirme sonucu — değiştirilen + stok yok atlanan kalem sayısı. */
+export interface BulkReplaceResult extends ActionState {
+  total?: number;
+  replaced?: number;
+  skippedNoStock?: number;
+}
+
+/**
+ * Partiye ait satılmış kalemleri toplu değiştir (§13). API: her satılmış + aktif atamalı
+ * kalem için MEVCUT değişim makinesi (revoke + yeni atama); stok bitince o kalem atlanır.
+ * Dön: { total, replaced, skippedNoStock }.
+ */
+export async function bulkReplaceBatchAction(id: string): Promise<BulkReplaceResult> {
+  if (!id) return { ok: false, error: 'Parti id zorunlu' };
+  try {
+    const res = await apiPost<{ total: number; replaced: number; skippedNoStock: number }>(
+      `/v1/admin/batches/${id}/bulk-replace`,
+      {},
+    );
+    revalidatePath('/batches');
+    return {
+      ok: true,
+      total: res.total,
+      replaced: res.replaced,
+      skippedNoStock: res.skippedNoStock,
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Toplu değiştirme başarısız' };
+  }
+}

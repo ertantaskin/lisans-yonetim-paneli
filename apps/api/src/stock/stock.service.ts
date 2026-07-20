@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   AccountPayloadSchema,
   serializeAccountPayload,
@@ -8,7 +8,7 @@ import {
 } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
-import { auditLog, licenseItems, type NewLicenseItem, type Product } from '../db/schema';
+import { auditLog, licenseItems, orderLines, type NewLicenseItem, type Product } from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 
@@ -28,6 +28,20 @@ export interface ImportResult {
 }
 
 export type ImportItem = { payload: string | Record<string, unknown>; expiresAt?: string };
+
+/** "Onayla ve Dağıt" önizleme (§13): girilecek stok bekleyen talebi ne kadar karşılar. */
+export interface StockPreview {
+  /** İstenen giriş adedi (birim). */
+  count: number;
+  /** Bu ürün için bekleyen (pending/partial) satır sayısı. */
+  pendingLines: number;
+  /** Bekleyen toplam birim = Σ(qty - fulfilled_qty). */
+  pendingUnits: number;
+  /** Bu giriş kaç bekleyen birimi tamamlar = min(count, pendingUnits). */
+  wouldFill: number;
+  /** Bekleyen karşılandıktan sonra artan stok = max(count - pendingUnits, 0). */
+  remainingAfter: number;
+}
 
 @Injectable()
 export class StockService {
@@ -185,6 +199,39 @@ export class StockService {
       throw new Error('Payload key_format desenine uymuyor');
     }
     return payload;
+  }
+
+  /**
+   * "Onayla ve Dağıt" önizleme (§13): bu ürüne N birim stok girilirse bekleyen
+   * (pending/partial) talebin ne kadarının kapanacağını gösterir. Salt-okunur;
+   * import/atama mantığını TETİKLEMEZ — yalnız mevcut açık satırları toplar.
+   */
+  async preview(productId: string, count: number): Promise<StockPreview> {
+    // Ürün gerçekten var mı? (yoksa 404 — sessiz sıfır göstermeyiz)
+    await this.products.getById(productId);
+
+    const [row] = await this.db
+      .select({
+        // Açık satır sayısı.
+        lines: sql<number>`count(*)`,
+        // Bekleyen birim: qty - fulfilled_qty (negatif olamaz, coalesce güvenliği).
+        units: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.fulfilledQty}, 0)), 0)`,
+      })
+      .from(orderLines)
+      .where(
+        and(
+          eq(orderLines.productId, productId),
+          inArray(orderLines.status, ['pending', 'partial']),
+        ),
+      );
+
+    const pendingLines = Number(row?.lines ?? 0);
+    const pendingUnits = Number(row?.units ?? 0);
+    const safeCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    const wouldFill = Math.min(safeCount, pendingUnits);
+    const remainingAfter = Math.max(safeCount - pendingUnits, 0);
+
+    return { count: safeCount, pendingLines, pendingUnits, wouldFill, remainingAfter };
   }
 
   /** Ürün başına anlık 'available' stok (single: satır sayısı; multi: kalan kapasite). */

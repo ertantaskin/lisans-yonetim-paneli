@@ -7,6 +7,9 @@ import { SupplyOpsService } from './supply-ops.service';
 const RecallBody = z.object({ reason: z.string().min(1) });
 type RecallBody = z.infer<typeof RecallBody>;
 
+const BulkReplaceBody = z.object({ actor: z.string().min(1).optional() });
+type BulkReplaceBody = z.infer<typeof BulkReplaceBody>;
+
 const CreateAdjustmentBody = z.object({
   productId: z.string().uuid(),
   licenseItemId: z.string().uuid().optional(),
@@ -33,6 +36,18 @@ export class SupplyOpsController {
   @Post('batches/:id/recall')
   recall(@Param('id') id: string, @Body(new ZodBody(RecallBody)) body: RecallBody) {
     return this.supplyOps.recallBatch(id, body.reason, 'panel:admin');
+  }
+
+  /**
+   * Toplu değiştirme (§13): partiye ait satılmış + aktif atamalı kalemleri MEVCUT değişim
+   * makinesiyle yenisiyle değiştirir (stok olmayanı atlar). Dön: { total, replaced, skippedNoStock }.
+   */
+  @Post('batches/:id/bulk-replace')
+  bulkReplace(
+    @Param('id') id: string,
+    @Body(new ZodBody(BulkReplaceBody)) body: BulkReplaceBody,
+  ) {
+    return this.supplyOps.bulkReplaceBatch(id, body.actor?.trim() || 'panel:admin');
   }
 
   @Post('stock-adjustments')

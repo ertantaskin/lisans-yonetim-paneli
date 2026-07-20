@@ -6,12 +6,13 @@ import {
   CheckCircle2,
   MoreHorizontal,
   PackageX,
+  Replace,
   ShieldX,
   TriangleAlert,
   X,
 } from 'lucide-react';
 import type { BatchRow } from '../app/batches/queries';
-import { recallBatchAction } from '../app/batches/actions';
+import { bulkReplaceBatchAction, recallBatchAction } from '../app/batches/actions';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
@@ -130,9 +131,27 @@ function isRecallable(status: string) {
   return status === 'active';
 }
 
-/** Parti satır aksiyonları — Geri Çek (sebep-girişli modal). */
-function BatchRowActions({ batch, onRecall }: { batch: BatchRow; onRecall: (batch: BatchRow) => void }) {
-  if (!isRecallable(batch.status)) {
+/** Geri çekilmiş partide satılmış kalem varsa toplu değiştirme sunulabilir (§13). */
+function canBulkReplace(batch: BatchRow) {
+  return batch.status === 'recalled' && batch.soldCount > 0;
+}
+
+/**
+ * Parti satır aksiyonları — Geri Çek (aktif) VEYA Toplu Değiştir (geri çekilmiş + satılmış).
+ * Recall aksiyonu değişmedi; toplu değiştirme ayrı bir menü kalemi.
+ */
+function BatchRowActions({
+  batch,
+  onRecall,
+  onBulkReplace,
+}: {
+  batch: BatchRow;
+  onRecall: (batch: BatchRow) => void;
+  onBulkReplace: (batch: BatchRow) => void;
+}) {
+  const recallable = isRecallable(batch.status);
+  const bulkReplaceable = canBulkReplace(batch);
+  if (!recallable && !bulkReplaceable) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
   return (
@@ -148,13 +167,21 @@ function BatchRowActions({ batch, onRecall }: { batch: BatchRow; onRecall: (batc
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          onSelect={() => onRecall(batch)}
-          className="text-destructive focus:text-destructive"
-        >
-          <PackageX />
-          Geri Çek (Recall)
-        </DropdownMenuItem>
+        {recallable && (
+          <DropdownMenuItem
+            onSelect={() => onRecall(batch)}
+            className="text-destructive focus:text-destructive"
+          >
+            <PackageX />
+            Geri Çek (Recall)
+          </DropdownMenuItem>
+        )}
+        {bulkReplaceable && (
+          <DropdownMenuItem onSelect={() => onBulkReplace(batch)}>
+            <Replace />
+            Toplu Değiştir (satılanları)
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -272,6 +299,95 @@ function RecallDialog({
   );
 }
 
+/** Toplu değiştirme sonucu bildirimi. */
+type BulkReplaceNotice = { label: string; total: number; replaced: number; skippedNoStock: number };
+
+/**
+ * Toplu değiştirme onay modalı (§13). Sebep girişi yok — onay + sonuç. Satılmış kalemler
+ * MEVCUT değişim makinesiyle yenisiyle değiştirilir; stok bitince atlanır.
+ */
+function BulkReplaceDialog({
+  batch,
+  onClose,
+  onDone,
+  onError,
+}: {
+  batch: BatchRow;
+  onClose: () => void;
+  onDone: (notice: BulkReplaceNotice) => void;
+  onError: (message: string) => void;
+}) {
+  const [pending, startTransition] = React.useTransition();
+
+  const submit = () => {
+    startTransition(async () => {
+      const res = await bulkReplaceBatchAction(batch.id);
+      if (res.ok) {
+        onDone({
+          label: batch.label,
+          total: res.total ?? 0,
+          replaced: res.replaced ?? 0,
+          skippedNoStock: res.skippedNoStock ?? 0,
+        });
+      } else {
+        onError(res.error ?? 'Toplu değiştirme başarısız');
+        onClose();
+      }
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Satılan kalemleri toplu değiştir"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Satılanları toplu değiştir</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {batch.label} · {batch.productName}
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            aria-label="Kapat"
+            className="-mr-1 -mt-1 shrink-0"
+          >
+            <X />
+          </Button>
+        </div>
+
+        <Alert variant="warning" className="mb-4">
+          <TriangleAlert />
+          <div className="min-w-0 flex-1">
+            <AlertDescription>
+              Bu partiye ait satılmış {batch.soldCount} birimin aktif atamaları iptal edilip
+              stoktan yenisiyle değiştirilecek. Stok yetmeyen kalemler atlanır (mevcut atama korunur).
+            </AlertDescription>
+          </div>
+        </Alert>
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>
+            Vazgeç
+          </Button>
+          <Button variant="default" size="sm" onClick={submit} disabled={pending}>
+            {pending ? 'İşleniyor…' : 'Toplu Değiştir'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const facets: FacetConfig[] = [
   {
     columnId: 'status',
@@ -286,16 +402,26 @@ const facets: FacetConfig[] = [
 
 export function BatchesTable({ batches }: { batches: BatchRow[] }) {
   const [recallTarget, setRecallTarget] = React.useState<BatchRow | null>(null);
+  const [bulkTarget, setBulkTarget] = React.useState<BatchRow | null>(null);
   const [notice, setNotice] = React.useState<RecallNotice | null>(null);
+  const [bulkNotice, setBulkNotice] = React.useState<BulkReplaceNotice | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   const handleDone = React.useCallback((n: RecallNotice) => {
     setError(null);
+    setBulkNotice(null);
     setNotice(n);
     setRecallTarget(null);
   }, []);
+  const handleBulkDone = React.useCallback((n: BulkReplaceNotice) => {
+    setError(null);
+    setNotice(null);
+    setBulkNotice(n);
+    setBulkTarget(null);
+  }, []);
   const handleError = React.useCallback((message: string) => {
     setNotice(null);
+    setBulkNotice(null);
     setError(message);
   }, []);
 
@@ -307,7 +433,11 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
         header: () => <span className="sr-only">Aksiyonlar</span>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <BatchRowActions batch={row.original} onRecall={setRecallTarget} />
+            <BatchRowActions
+              batch={row.original}
+              onRecall={setRecallTarget}
+              onBulkReplace={setBulkTarget}
+            />
           </div>
         ),
         enableSorting: false,
@@ -335,6 +465,29 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
             variant="ghost"
             size="icon-sm"
             onClick={() => setNotice(null)}
+            aria-label="Kapat"
+            className="-mr-1 -mt-1 shrink-0"
+          >
+            <X />
+          </Button>
+        </Alert>
+      )}
+      {bulkNotice && (
+        <Alert variant={bulkNotice.skippedNoStock > 0 ? 'warning' : 'success'}>
+          {bulkNotice.skippedNoStock > 0 ? <TriangleAlert /> : <CheckCircle2 />}
+          <div className="min-w-0 flex-1">
+            <AlertTitle>Toplu değiştirme tamamlandı — {bulkNotice.label}</AlertTitle>
+            <AlertDescription>
+              {bulkNotice.replaced}/{bulkNotice.total} satılmış birim yenisiyle değiştirildi.
+              {bulkNotice.skippedNoStock > 0 && (
+                <> Stok yetmediği için {bulkNotice.skippedNoStock} birim atlandı.</>
+              )}
+            </AlertDescription>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setBulkNotice(null)}
             aria-label="Kapat"
             className="-mr-1 -mt-1 shrink-0"
           >
@@ -376,6 +529,15 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
           batch={recallTarget}
           onClose={() => setRecallTarget(null)}
           onDone={handleDone}
+          onError={handleError}
+        />
+      )}
+
+      {bulkTarget && (
+        <BulkReplaceDialog
+          batch={bulkTarget}
+          onClose={() => setBulkTarget(null)}
+          onDone={handleBulkDone}
           onError={handleError}
         />
       )}

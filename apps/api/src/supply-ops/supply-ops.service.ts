@@ -3,6 +3,18 @@ import { desc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { auditLog } from '../db/schema/audit';
 import { stockAdjustments, type StockAdjustment } from '../db/schema/stockAdjustments';
+import { AdminOrdersService } from '../orders/admin-orders.service';
+import { FulfillmentService } from '../orders/fulfillment.service';
+
+/** Toplu değiştirme (§13) özet sonucu. */
+export interface BulkReplaceResult {
+  /** Bu partiye ait satılmış + aktif atamalı kalem sayısı (değiştirilmeye aday). */
+  total: number;
+  /** Başarıyla yenisiyle değiştirilen (revoke + yeni atama) kalem sayısı. */
+  replaced: number;
+  /** Stok bulunmadığı için atlanan (eski atama korunur) kalem sayısı. */
+  skippedNoStock: number;
+}
 
 /** Geri çekilmiş partinin özet sonucu. */
 export interface RecallResult {
@@ -49,7 +61,11 @@ export interface BatchRow {
  */
 @Injectable()
 export class SupplyOpsService {
-  constructor(@Inject(DB) private readonly db: Database) {}
+  constructor(
+    @Inject(DB) private readonly db: Database,
+    private readonly adminOrders: AdminOrdersService,
+    private readonly fulfillment: FulfillmentService,
+  ) {}
 
   /**
    * Parti listesi — tedarikçi adı + ürün sku/ad JOIN; batch_id sayımı ile satılmamış
@@ -195,6 +211,83 @@ export class SupplyOpsService {
 
       return { voided: voided.length, soldNeedingReplacement };
     });
+  }
+
+  /**
+   * Toplu değiştirme (§13). Bir partiye ait SATILMIŞ (available olmayan) kalemlerin
+   * AKTİF atamalarını, MEVCUT değişim makinesiyle (replacements.approve DESENİ) sırayla
+   * yenisiyle değiştirir: her aday için stok ön-kontrol → revokeAssignment('replace')
+   * → completeLine(lineId, 1). Stok biten kalem ATLANIR (eski atama korunur — müşteri
+   * boşta bırakılmaz). Atama çekirdeği (SKIP LOCKED/idempotency) yeniden yazılmaz, KULLANILIR.
+   * Tek büyük transaction DEĞİL: her kalem replacements.approve gibi kendi transaction'ında
+   * işlenir (kısmi ilerleme, batch operasyonu için kabul edilir).
+   */
+  async bulkReplaceBatch(batchId: string, actor: string): Promise<BulkReplaceResult> {
+    // Parti var mı? (RAW SQL — batches W1'in dosyası, import etme.)
+    const batchRows = await this.db.execute<{ id: string }>(sql`
+      SELECT id FROM batches WHERE id = ${batchId} LIMIT 1;
+    `);
+    if ((batchRows as unknown as Array<{ id: string }>).length === 0) {
+      throw new NotFoundException('Parti bulunamadı');
+    }
+
+    // Bu partiye ait SATILMIŞ (status <> 'available') kalemlerin AKTİF atamaları.
+    // license_items.batch_id üzerinden; assignments.status = 'active'. RAW SQL.
+    const candRows = await this.db.execute<{ assignment_id: string; line_id: string }>(sql`
+      SELECT a.id AS assignment_id, a.line_id AS line_id
+      FROM license_items li
+      JOIN assignments a ON a.license_item_id = li.id
+      WHERE li.batch_id = ${batchId}
+        AND li.status <> 'available'
+        AND a.status = 'active'
+      ORDER BY a.created_at ASC;
+    `);
+    const candidates = candRows as unknown as Array<{ assignment_id: string; line_id: string }>;
+
+    let replaced = 0;
+    let skippedNoStock = 0;
+
+    for (const c of candidates) {
+      // 0) Stok ön-kontrolü: satırın ürününde uygun (available + kapasiteli) stok YOKSA
+      // eskiyi REVOKE ETMEDEN atla — müşteriyi boşta bırakma (replacements.approve deseni).
+      const availRows = await this.db.execute<{ n: number }>(sql`
+        SELECT count(*)::int AS n
+        FROM license_items li
+        JOIN order_lines ol ON ol.id = ${c.line_id}
+        WHERE li.product_id = ol.product_id
+          AND li.status = 'available'
+          AND li.use_count < li.max_uses;
+      `);
+      const n = Number((availRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
+      if (n <= 0) {
+        skippedNoStock++;
+        continue;
+      }
+
+      // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
+      await this.adminOrders.revokeAssignment(c.assignment_id, 'replace', actor);
+
+      // 2) Yenisini ata — açılan yere 1 birim (atomik atama makinesi). Stok araya girip
+      // tükendiyse added=0 dönebilir → o kalemi atlanmış say (eski zaten revoke edildi;
+      // completeLine sonraki stok girişinde partial-auto ile tamamlanabilir).
+      const res = await this.fulfillment.completeLine(c.line_id, 1);
+      if (res.added > 0) {
+        replaced++;
+      } else {
+        skippedNoStock++;
+      }
+    }
+
+    // Toplu değiştirme özeti — audit izi ('replace' audit_action mevcut).
+    await this.db.insert(auditLog).values({
+      action: 'replace',
+      actor,
+      targetType: 'batch',
+      targetId: batchId,
+      meta: { op: 'bulk_replace', total: candidates.length, replaced, skippedNoStock },
+    });
+
+    return { total: candidates.length, replaced, skippedNoStock };
   }
 
   /**

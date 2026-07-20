@@ -19,6 +19,13 @@ const ImportBody = z.object({
 });
 type ImportBody = z.infer<typeof ImportBody>;
 
+const PreviewBody = z.object({
+  productId: z.string().uuid(),
+  // Girilecek/tahmini stok adedi — önizleme salt-okunur, üst sınırı import ile aynı tutulur.
+  count: z.number().int().min(0).max(1_000_000),
+});
+type PreviewBody = z.infer<typeof PreviewBody>;
+
 /** Admin: şifreli stok import. */
 @Controller('admin/stock')
 @UseGuards(AdminGuard)
@@ -28,6 +35,12 @@ export class StockController {
   @Post('import')
   import(@Body(new ZodBody(ImportBody)) body: ImportBody) {
     return this.stock.import(body.productId, body.items);
+  }
+
+  /** "Onayla ve Dağıt" önizleme (§13): bu giriş bekleyen talebi ne kadar karşılar. */
+  @Post('preview')
+  preview(@Body(new ZodBody(PreviewBody)) body: PreviewBody) {
+    return this.stock.preview(body.productId, body.count);
   }
 
   @Get(':productId/available')

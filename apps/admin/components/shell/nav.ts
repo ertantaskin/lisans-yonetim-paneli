@@ -12,6 +12,7 @@ import {
   Truck,
   ClipboardList,
   PackageCheck,
+  MailWarning,
   Settings,
   ShieldCheck,
   ShieldAlert,
@@ -67,6 +68,7 @@ export const NAV: NavSection[] = [
     items: [
       { label: 'Raporlar', href: '/reports', icon: BarChart3 },
       { label: 'Bildirimler', href: '/notifications', icon: Bell },
+      { label: 'Dead-letter', href: '/ops', icon: MailWarning },
     ],
   },
   {
@@ -77,10 +79,10 @@ export const NAV: NavSection[] = [
     ],
   },
   {
-    title: 'Yakında',
+    title: 'Yapılandırma',
     items: [
-      { label: 'Şablonlar', href: '#', icon: FileText, soon: true },
-      { label: 'Ayarlar', href: '#', icon: Settings, soon: true },
+      { label: 'Şablonlar', href: '/templates', icon: FileText },
+      { label: 'Ayarlar', href: '/settings', icon: Settings },
     ],
   },
 ];

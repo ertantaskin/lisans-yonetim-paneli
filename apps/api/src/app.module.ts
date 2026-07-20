@@ -20,6 +20,9 @@ import { ReportsModule } from './reports/reports.module';
 import { ProcurementModule } from './procurement/procurement.module';
 import { SupplyOpsModule } from './supply-ops/supply-ops.module';
 import { SecurityModule } from './security/security.module';
+import { SearchModule } from './search/search.module';
+import { TemplatesModule } from './templates/templates.module';
+import { OpsModule } from './ops/ops.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 
 @Module({
@@ -69,6 +72,9 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     ProcurementModule,
     SupplyOpsModule,
     SecurityModule,
+    SearchModule,
+    TemplatesModule,
+    OpsModule,
     MaintenanceModule,
   ],
 })

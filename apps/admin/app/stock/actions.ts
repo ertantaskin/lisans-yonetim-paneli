@@ -77,6 +77,40 @@ export async function importStockAction(
   }
 }
 
+export interface PreviewState {
+  ok: boolean;
+  error?: string;
+  result?: {
+    count: number;
+    pendingLines: number;
+    pendingUnits: number;
+    wouldFill: number;
+    remainingAfter: number;
+  };
+}
+
+/**
+ * "Onayla ve Dağıt" önizleme (§13) — salt-okunur. Girilecek stok adedi (count)
+ * bekleyen talebi ne kadar karşılar; import mantığını TETİKLEMEZ.
+ */
+export async function previewStockAction(
+  _prev: PreviewState,
+  formData: FormData,
+): Promise<PreviewState> {
+  const productId = String(formData.get('productId') || '');
+  const count = Number(String(formData.get('count') || '0')) || 0;
+  if (!productId) return { ok: false, error: 'Ürün seçin' };
+  try {
+    const result = await apiPost<PreviewState['result']>('/v1/admin/stock/preview', {
+      productId,
+      count: Math.max(0, Math.floor(count)),
+    });
+    return { ok: true, result };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
 export async function createMappingAction(formData: FormData) {
   await apiPost('/v1/admin/mappings', {
     siteId: String(formData.get('siteId') || ''),
