@@ -1,5 +1,6 @@
 import { apiGet, type OrderRow } from '../../lib/api';
-import { Card, PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui';
+import { Card } from '../../components/ui/card';
 import { OrdersTable } from '../../components/orders-table';
 
 export const dynamic = 'force-dynamic';
@@ -15,14 +16,14 @@ export default async function OrdersPage() {
 
   return (
     <div>
-      <PageHeader title="Siparişler" desc="Tüm siparişler (en yeni önce)." />
-      <Card>
-        {error ? (
+      <PageHeader title="Siparişler" desc="Tüm siparişler — ara, filtrele, sırala." />
+      {error ? (
+        <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
-        ) : (
-          <OrdersTable orders={orders} />
-        )}
-      </Card>
+        </Card>
+      ) : (
+        <OrdersTable orders={orders} />
+      )}
     </div>
   );
 }

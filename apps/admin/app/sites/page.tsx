@@ -1,6 +1,8 @@
 import { apiGet, type SiteRow } from '../../lib/api';
-import { Card, PageHeader, StatusPill, Empty } from '../../components/ui';
+import { PageHeader } from '../../components/ui';
+import { Card } from '../../components/ui/card';
 import { CreateSiteForm } from '../../components/create-site-form';
+import { SitesTable } from '../../components/sites-table';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,46 +16,21 @@ export default async function SitesPage() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <PageHeader title="Siteler" desc="Her WooCommerce/pazar yeri kanalı bir tenant." />
 
-      <Card className="mb-5">
+      <Card className="mb-5 max-w-2xl p-5">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Site Bağla</h2>
         <CreateSiteForm />
       </Card>
 
-      <Card>
-        {error ? (
+      {error ? (
+        <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
-        ) : sites.length === 0 ? (
-          <Empty>Henüz site yok.</Empty>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">Domain</th>
-                  <th className="px-3 py-2 font-medium">Tip</th>
-                  <th className="px-3 py-2 font-medium">Gönderen</th>
-                  <th className="px-3 py-2 font-medium">Durum</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sites.map((s) => (
-                  <tr key={s.id} className="border-b border-border">
-                    <td className="px-3 py-2.5 font-medium text-foreground">{s.domain}</td>
-                    <td className="px-3 py-2.5 text-foreground/70">{s.type}</td>
-                    <td className="px-3 py-2.5 text-foreground/70">{s.senderEmail ?? '—'}</td>
-                    <td className="px-3 py-2.5">
-                      <StatusPill status={s.status === 'active' ? 'active' : s.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+        </Card>
+      ) : (
+        <SitesTable sites={sites} />
+      )}
     </div>
   );
 }

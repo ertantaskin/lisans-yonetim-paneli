@@ -1,41 +1,91 @@
+'use client';
+import * as React from 'react';
 import Link from 'next/link';
+import { ArrowRight, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import type { OrderRow } from '../lib/api';
-import { StatusPill, Empty } from './ui';
+import { StatusBadge } from './ui/badge';
+import { Button } from './ui/button';
+import { DataTable } from './data-table/data-table';
+import { DataTableColumnHeader } from './data-table/data-table-column-header';
+import type { FacetConfig } from './data-table/data-table-toolbar';
+
+const columns: ColumnDef<OrderRow>[] = [
+  {
+    accessorKey: 'remoteOrderId',
+    meta: { title: 'Sipariş No' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Sipariş No" />,
+    cell: ({ row }) => <span className="font-medium tabular-nums">{row.original.remoteOrderId}</span>,
+    // Arama: sipariş no VEYA müşteri e-postası
+    filterFn: (row, _id, value) => {
+      const q = String(value).toLowerCase();
+      return (
+        row.original.remoteOrderId.toLowerCase().includes(q) ||
+        row.original.customerEmail.toLowerCase().includes(q)
+      );
+    },
+  },
+  {
+    accessorKey: 'customerEmail',
+    meta: { title: 'Müşteri' },
+    header: 'Müşteri',
+    cell: ({ row }) => <span className="text-muted-foreground">{row.original.customerEmail}</span>,
+  },
+  {
+    accessorKey: 'status',
+    meta: { title: 'Durum' },
+    header: 'Durum',
+    cell: ({ row }) => <StatusBadge status={row.original.status} />,
+    filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
+  },
+  {
+    accessorKey: 'createdAt',
+    meta: { title: 'Tarih' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Tarih" />,
+    cell: ({ row }) => (
+      <span className="tabular-nums text-muted-foreground">
+        {new Date(row.original.createdAt).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}
+      </span>
+    ),
+    sortingFn: 'datetime',
+  },
+  {
+    id: 'actions',
+    cell: ({ row }) => (
+      <div className="text-right">
+        <Button asChild variant="ghost" size="sm">
+          <Link href={`/orders/${row.original.id}`}>
+            Detay <ArrowRight />
+          </Link>
+        </Button>
+      </div>
+    ),
+  },
+];
+
+const facets: FacetConfig[] = [
+  {
+    columnId: 'status',
+    title: 'Durum',
+    options: [
+      { label: 'Bekliyor', value: 'pending', icon: Clock },
+      { label: 'Kısmi', value: 'partial', icon: Clock },
+      { label: 'Teslim edildi', value: 'fulfilled', icon: CheckCircle2 },
+      { label: 'Eşlenmemiş', value: 'unmapped', icon: ShieldAlert },
+    ],
+  },
+];
 
 export function OrdersTable({ orders }: { orders: OrderRow[] }) {
-  if (orders.length === 0) return <Empty>Kayıt yok.</Empty>;
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Sipariş No</th>
-            <th className="px-3 py-2 font-medium">Müşteri</th>
-            <th className="px-3 py-2 font-medium">Durum</th>
-            <th className="px-3 py-2 font-medium">Tarih</th>
-            <th className="px-3 py-2" />
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => (
-            <tr key={o.id} className="border-b border-border hover:bg-accent/30">
-              <td className="px-3 py-2.5 font-medium text-foreground">{o.remoteOrderId}</td>
-              <td className="px-3 py-2.5 text-foreground/70">{o.customerEmail}</td>
-              <td className="px-3 py-2.5">
-                <StatusPill status={o.status} />
-              </td>
-              <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
-                {new Date(o.createdAt).toLocaleString('tr-TR')}
-              </td>
-              <td className="px-3 py-2.5 text-right">
-                <Link href={`/orders/${o.id}`} className="text-primary hover:underline">
-                  detay →
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={orders}
+      searchColumnId="remoteOrderId"
+      searchPlaceholder="Sipariş no veya e-posta…"
+      facets={facets}
+      initialSorting={[{ id: 'createdAt', desc: true }]}
+      emptyLabel="Kayıt yok."
+    />
   );
 }
