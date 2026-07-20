@@ -27,3 +27,28 @@ export async function createSiteAction(
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
   }
 }
+
+export interface RotateSecretState {
+  ok: boolean;
+  error?: string;
+  siteId?: string;
+  /** Yeni HMAC secret — YALNIZ bir kez döner, kullanıcıya gösterilir. */
+  hmacSecret?: string;
+}
+
+/**
+ * HMAC secret rotasyonu (§4). Yeni secret YALNIZ bir kez döner; eski secret 24 saat
+ * daha geçerli kalır → WP eklentisi kesintisiz yeni secret'a geçer.
+ */
+export async function rotateSecretAction(siteId: string): Promise<RotateSecretState> {
+  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  try {
+    const { hmacSecret } = await apiPost<{ hmacSecret: string }>(
+      `/v1/admin/sites/${siteId}/rotate-secret`,
+    );
+    revalidatePath('/sites');
+    return { ok: true, siteId, hmacSecret };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}

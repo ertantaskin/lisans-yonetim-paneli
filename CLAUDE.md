@@ -62,10 +62,11 @@ Handler (Server Action + redirect cookie'yi bindiremiyor). Detay: MIMARI.md §17
 
 ## Durum
 
-Tasarım (v2.6) + **Faz 0 + Faz 1 (panel) + WP eklentisi CANLI ve uçtan uca e2e doğrulandı.**
-`docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta. WP test ortamı:
-`docker-compose.wp.yml` (WordPress+WooCommerce+MySQL). **Tam zincir kanıtlandı:** Woo sipariş →
-HMAC push → panel atomik atama → My Account'ta çözülmüş key → geri kanal webhook (HMAC doğrulandı).
+Tasarım (v2.6) + **Faz 0 + Faz 1 (panel) + WP eklentisi CANLI, uçtan uca e2e doğrulandı ve VPS'e
+deploy edildi.** `docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta. WP
+test ortamı: `docker-compose.wp.yml` (WordPress+WooCommerce+MySQL). **Tam zincir kanıtlandı:** Woo
+sipariş → HMAC push → panel atomik atama → My Account'ta çözülmüş key → geri kanal webhook (HMAC
+doğrulandı). **Prod: Ubuntu VPS + Docker Compose + Caddy TLS (canlı).**
 
 **Çalışan Faz 1 (MVP):**
 
@@ -137,8 +138,14 @@ review 3 bulgu düzeltildi; regresyon + canlı smoke 17/17 ile doğrulandı):
   sweep seq-scan'i önler (migration 0006).
 - Expired atamanın license_item'ı serbest bırakılmaz ("hak geri gelmez", §2).
 
-migration 0000-0006. Kalan: multi görünürlük + account admin UI formu (Commit C); **VPS deploy**;
-tedarik zinciri, self-servis. Yol haritası §18.
+**Admin UI + çoklu-admin auth TAMAM** (detay yukarıda "Görsel kimlik" + memory `admin-auth`):
+UI satnaing/shadcn-admin nötr diline taşındı (Siparişler/Stok/Siteler TanStack DataTable, sipariş
+detayı kart/timeline, shadcn form primitifleri, iki temada WCAG AA); çoklu-admin auth (§8) 4 fazda
+eklendi (`admin_users` scrypt/role/token_version, imzalı oturum + her-istek revocation, owner-only
+RBAC) — **env-gated (`SESSION_SECRET`+`ADMIN_SEED_*`), varsayılan KAPALI**. VPS'e deploy edildi (canlı).
+
+migration 0000-0008. Kalan: multi görünürlük + account admin UI formu (Commit C); tedarik
+zinciri, self-servis. Yol haritası §18.
 
 ## Geliştirme
 

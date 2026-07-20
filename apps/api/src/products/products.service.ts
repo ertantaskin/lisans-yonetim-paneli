@@ -19,15 +19,22 @@ export class ProductsService {
   }
 
   async list(): Promise<Array<Product & { availableStock: number }>> {
-    // Ürün başına anlık 'available' stok sayısı (partial index üzerinden).
+    // Ürün başına anlık 'available' stok sayısı — tek GROUP BY agregasyonu.
+    // status='available' filtresi JOIN ON'a alındı: yalnız uygun satırlar okunur,
+    // partial index (license_items_available_idx: product_id,created_at WHERE
+    // status='available') kullanılır; assigned/revoked/expired satırlar taranmaz.
+    // LEFT JOIN korunur → stoksuz ürün de NULL→coalesce 0 ile listede kalır.
     const rows = await this.db
       .select({
         product: products,
         // Kalan kapasite: single'da satır sayısı, multi'de (max_uses - use_count) toplamı.
-        availableStock: sql<number>`coalesce(sum(case when ${licenseItems.status} = 'available' then ${licenseItems.maxUses} - ${licenseItems.useCount} else 0 end), 0)`,
+        availableStock: sql<number>`coalesce(sum(${licenseItems.maxUses} - ${licenseItems.useCount}), 0)`,
       })
       .from(products)
-      .leftJoin(licenseItems, eq(licenseItems.productId, products.id))
+      .leftJoin(
+        licenseItems,
+        and(eq(licenseItems.productId, products.id), eq(licenseItems.status, 'available')),
+      )
       .groupBy(products.id);
 
     return rows.map((r) => ({ ...r.product, availableStock: Number(r.availableStock) }));

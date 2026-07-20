@@ -25,8 +25,21 @@ Geliştirme: `pnpm install` · `pnpm build|typecheck|lint|test` ·
 
 ## Durum
 
-**Faz 0 + Faz 1 (MVP) backend/panel tamam ve canlı e2e doğrulandı** (WP eklentisi hariç):
-şifreli stok, HMAC imzalı sipariş API'si, atomik atama (çifte satış imkânsız), kısmi
-teslimat + tamamlama motoru, BullMQ mail, geri kanal webhook, Next.js admin paneli.
-Kalan: **WP eklentisi** (ince istemci), VPS deploy, Faz 2 zenginleştirmeleri.
+**Faz 0 + Faz 1 (MVP) + WP eklentisi CANLI, uçtan uca e2e doğrulandı ve VPS'e deploy edildi.**
+Şifreli stok, HMAC imzalı sipariş API'si, atomik atama (çifte satış imkânsız), kısmi teslimat +
+tamamlama motoru, BullMQ mail, geri kanal webhook. **WP eklentisi** (ince istemci) canlı — tam
+zincir: Woo sipariş → HMAC push → panel atomik atama → My Account'ta çözülmüş teslimat → geri
+kanal webhook. Ayrıca Faz 2 güvenlik sertleştirme + hesap ürünleri + süreli hesap motoru tamam.
+
+- **Admin UI shadcn-admin'e taşındı** (Next.js 15, sunucu-taraflı): Siparişler/Stok/Siteler TanStack
+  **DataTable** (arama, faceted filtre, sıralama, sayfalama, kolon görünürlüğü); sipariş detayı
+  Card/timeline; formlar shadcn primitifleri (Input/Label/Textarea/Button/Alert); loading/error/404
+  state'leri; iki temada WCAG AA doğrulandı.
+- **Çoklu-admin auth (§8)** 4 fazda eklendi — API `admin_users` (scrypt/role/token_version) +
+  `auth/login|validate` + CRUD; Next imzalı oturum (HMAC, TTL 12s) + her-istek revocation kontrolü +
+  owner-only RBAC. **env-gated (`SESSION_SECRET` + `ADMIN_SEED_*`), varsayılan KAPALI** (kapalıyken
+  panel açık kalır ve sarı uyarı bandı gösterir).
+- **VPS deploy** canlı (Ubuntu + Docker Compose + Caddy TLS).
+
+Kalan: Faz 2 zenginleştirmeleri (multi görünürlük + account admin UI formu), tedarik zinciri, self-servis.
 Yol haritası: [docs/MIMARI.md §18](docs/MIMARI.md). Karar özeti: `CLAUDE.md`.
