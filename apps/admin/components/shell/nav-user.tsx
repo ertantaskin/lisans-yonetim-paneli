@@ -23,8 +23,11 @@ export function NavUser({ user }: { user: User }) {
   const isDark = resolvedTheme === 'dark';
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+    <>
+      {/* Native logout POST (menü öğesi requestSubmit ile tetikler) */}
+      <form id="admin-logout-form" method="post" action="/api/logout" className="hidden" />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
         <SidebarMenuButton
           size="lg"
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
@@ -68,11 +71,17 @@ export function NavUser({ user }: { user: User }) {
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-destructive focus:text-destructive">
+        <DropdownMenuItem
+          onSelect={() => {
+            (document.getElementById('admin-logout-form') as HTMLFormElement | null)?.requestSubmit();
+          }}
+          className="text-destructive focus:text-destructive"
+        >
           <LogOut />
           Çıkış
         </DropdownMenuItem>
       </DropdownMenuContent>
-    </DropdownMenu>
+      </DropdownMenu>
+    </>
   );
 }

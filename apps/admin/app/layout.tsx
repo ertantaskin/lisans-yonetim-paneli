@@ -4,10 +4,7 @@ import { Inter, JetBrains_Mono } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { ThemeProvider } from '../components/theme';
 import { TooltipProvider } from '../components/ui/tooltip';
-import { SidebarProvider, SidebarInset } from '../components/ui/sidebar';
-import { AppSidebar } from '../components/shell/app-sidebar';
-import { SiteHeader } from '../components/shell/site-header';
-import { CommandPalette } from '../components/shell/command-palette';
+import { AppShell } from '../components/shell/app-shell';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
@@ -29,14 +26,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <body>
         <ThemeProvider>
           <TooltipProvider delayDuration={200}>
-            <SidebarProvider defaultOpen={defaultOpen}>
-              <AppSidebar />
-              <SidebarInset>
-                <SiteHeader />
-                <main className="min-w-0 flex-1 px-4 py-5 md:px-6 md:py-6">{children}</main>
-              </SidebarInset>
-            </SidebarProvider>
-            <CommandPalette />
+            <AppShell defaultOpen={defaultOpen}>{children}</AppShell>
             <Toaster
               position="bottom-right"
               toastOptions={{
