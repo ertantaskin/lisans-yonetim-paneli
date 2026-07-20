@@ -2,6 +2,12 @@ import { sql } from 'drizzle-orm';
 import type { Database } from '../db/db.module';
 
 /**
+ * db veya transaction (tx) — ikisi de execute() taşır. Atama fonksiyonları hem
+ * autocommit (yarış testi) hem transaction (sipariş akışı) içinde çalışır.
+ */
+export type Executor = Pick<Database, 'execute'>;
+
+/**
  * Atomik stok atama — sistemin kalbi (MIMARI.md §2).
  *
  *   UPDATE license_items SET status='assigned', assigned_at=now()
@@ -20,7 +26,7 @@ import type { Database } from '../db/db.module';
  * @returns atanan license_item id listesi (0..qty adet)
  */
 export async function assignAvailableSingleUse(
-  db: Database,
+  db: Executor,
   productId: string,
   qty: number,
 ): Promise<string[]> {
@@ -41,6 +47,21 @@ export async function assignAvailableSingleUse(
 }
 
 /**
+ * Atanmış satırları tekrar 'available' yapar (all-or-nothing politikasında stok
+ * yetersizse geri alma). Aynı transaction içinde çağrılır.
+ */
+export async function releaseToAvailable(db: Executor, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await db.execute(sql`
+    UPDATE license_items SET status = 'available', assigned_at = NULL
+    WHERE id IN (${sql.join(
+      ids.map((id) => sql`${id}`),
+      sql`, `,
+    )});
+  `);
+}
+
+/**
  * Çok kullanımlık (multi / MAK) kapasite düşümü (§2). Satır seçmek yerine kilitli
  * tek satırda use_count += units (koşul: use_count + units <= max_uses).
  * Kapasite aşımı imkânsız.
@@ -48,7 +69,7 @@ export async function assignAvailableSingleUse(
  * @returns kapasitesi düşülen license_item id'si, yeterli kapasite yoksa null
  */
 export async function consumeMultiUseCapacity(
-  db: Database,
+  db: Executor,
   productId: string,
   units: number,
 ): Promise<string | null> {

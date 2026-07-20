@@ -9,7 +9,8 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ trustProxy: true, bodyLimit: 1_048_576 }),
-    { bufferLogs: true },
+    // rawBody: HMAC imza gövde hash'i için ham istek gövdesi (req.rawBody) gerekli (§4).
+    { bufferLogs: true, rawBody: true },
   );
 
   // pino JSON log (§1 gözlem)

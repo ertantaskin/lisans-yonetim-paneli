@@ -5,4 +5,6 @@ export * from './products';
 export * from './licenseItems';
 export * from './orders';
 export * from './assignments';
+export * from './mappings';
+export * from './events';
 export * from './audit';

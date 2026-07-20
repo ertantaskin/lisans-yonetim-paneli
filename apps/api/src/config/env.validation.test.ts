@@ -5,6 +5,8 @@ describe('validateEnv', () => {
   const base = {
     DATABASE_URL: 'postgres://u:p@localhost:5432/db',
     REDIS_URL: 'redis://localhost:6379',
+    MASTER_KEY: 'x'.repeat(44),
+    ADMIN_TOKEN: 'test-admin-token',
   };
 
   it('geçerli konfigi ayrıştırır ve varsayılanları uygular', () => {

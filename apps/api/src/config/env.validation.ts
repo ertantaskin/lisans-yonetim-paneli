@@ -12,10 +12,13 @@ export const envSchema = z.object({
   REDIS_URL: z.string().url(),
 
   /**
-   * AES-256-GCM envelope master anahtarı (base64, 32 byte).
-   * Faz 0'da opsiyonel bırakıldı; Faz 1'de şifreleme devreye girince zorunlu olur.
+   * AES-256-GCM envelope master anahtarı (base64, 32 byte). Üret: openssl rand -base64 32
+   * Faz 1'de payload şifreleme zorunlu — bu değişken zorunludur.
    */
-  MASTER_KEY: z.string().optional(),
+  MASTER_KEY: z.string().min(1),
+
+  /** Admin uçları (site/ürün/stok yönetimi) için basit yönetici token'ı. */
+  ADMIN_TOKEN: z.string().min(1),
 
   SENTRY_DSN: z.string().optional(),
 });

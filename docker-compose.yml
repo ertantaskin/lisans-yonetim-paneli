@@ -54,6 +54,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       MASTER_KEY: ${MASTER_KEY}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
       SENTRY_DSN: ${SENTRY_DSN}
     # Açılışta migration'ları uygula, sonra servisi başlat.
     command: ['sh', '-c', 'node dist/db/migrate.js && node dist/main.js']

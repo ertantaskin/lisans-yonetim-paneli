@@ -37,9 +37,8 @@ export const orderLines = pgTable('order_lines', {
   orderId: uuid('order_id')
     .notNull()
     .references(() => orders.id, { onDelete: 'cascade' }),
-  productId: uuid('product_id')
-    .notNull()
-    .references(() => products.id, { onDelete: 'restrict' }),
+  // Eşlemesiz (unmapped) satırda null olabilir — sipariş kaybolmaz (§4).
+  productId: uuid('product_id').references(() => products.id, { onDelete: 'restrict' }),
   remoteLineId: text('remote_line_id').notNull(),
   qty: integer('qty').notNull(),
   fulfilledQty: integer('fulfilled_qty').notNull().default(0),

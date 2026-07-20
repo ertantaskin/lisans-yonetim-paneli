@@ -6,6 +6,11 @@ import { validateEnv } from './config/env.validation';
 import { DbModule } from './db/db.module';
 import { RedisModule } from './redis/redis.module';
 import { HealthModule } from './health/health.module';
+import { CryptoModule } from './crypto/crypto.module';
+import { SitesModule } from './sites/sites.module';
+import { ProductsModule } from './products/products.module';
+import { StockModule } from './stock/stock.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -39,7 +44,12 @@ import { HealthModule } from './health/health.module';
     }),
     DbModule,
     RedisModule,
+    CryptoModule,
     HealthModule,
+    SitesModule,
+    ProductsModule,
+    StockModule,
+    OrdersModule,
   ],
 })
 export class AppModule {}

@@ -1,0 +1,52 @@
+import { randomBytes } from 'node:crypto';
+import { describe, expect, it, beforeEach } from 'vitest';
+import { ConfigService } from '@nestjs/config';
+import { CryptoService } from './crypto.service';
+
+function makeService(): CryptoService {
+  const masterKey = randomBytes(32).toString('base64');
+  const config = { get: (k: string) => (k === 'MASTER_KEY' ? masterKey : undefined) };
+  const svc = new CryptoService(config as unknown as ConfigService);
+  svc.onModuleInit();
+  return svc;
+}
+
+describe('CryptoService (AES-256-GCM envelope)', () => {
+  let svc: CryptoService;
+  beforeEach(() => {
+    svc = makeService();
+  });
+
+  it('şifreler ve geri çözer (round-trip)', () => {
+    const secret = 'WIN10-PRO-XYZ12-ABCDE-98765';
+    const enc = svc.encrypt(secret);
+    expect(enc).not.toContain(secret);
+    expect(svc.decrypt(enc)).toBe(secret);
+  });
+
+  it('her şifreleme farklı ciphertext üretir (rastgele DEK/IV)', () => {
+    const a = svc.encrypt('aynı-metin');
+    const b = svc.encrypt('aynı-metin');
+    expect(a).not.toBe(b);
+    expect(svc.decrypt(a)).toBe(svc.decrypt(b));
+  });
+
+  it('oynanmış veri GCM tag doğrulamasında hata verir', () => {
+    const enc = svc.encrypt('gizli');
+    const parts = enc.split('.');
+    // ciphertext'i boz
+    parts[3] = Buffer.from('bozuk-veri').toString('base64url');
+    expect(() => svc.decrypt(parts.join('.'))).toThrow();
+  });
+
+  it('payloadHash içerik için deterministik (mükerrer engeli)', () => {
+    expect(CryptoService.payloadHash('abc')).toBe(CryptoService.payloadHash('abc'));
+    expect(CryptoService.payloadHash('abc')).not.toBe(CryptoService.payloadHash('abd'));
+  });
+
+  it('MASTER_KEY 32 byte değilse başlatmada hata verir', () => {
+    const config = { get: () => Buffer.from('kısa').toString('base64') };
+    const bad = new CryptoService(config as unknown as ConfigService);
+    expect(() => bad.onModuleInit()).toThrow(/32 byte/);
+  });
+});
