@@ -35,8 +35,10 @@ yalnızca etkileşim; durum renkleri sabit: yeşil=bitti, amber=aksiyon, kırmı
 
 ## Durum
 
-Tasarım (v2.6) + **Faz 0 + Faz 1 backend/panel CANLI ve e2e doğrulandı** (WP eklentisi hariç).
-`docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta.
+Tasarım (v2.6) + **Faz 0 + Faz 1 (panel) + WP eklentisi CANLI ve uçtan uca e2e doğrulandı.**
+`docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta. WP test ortamı:
+`docker-compose.wp.yml` (WordPress+WooCommerce+MySQL). **Tam zincir kanıtlandı:** Woo sipariş →
+HMAC push → panel atomik atama → My Account'ta çözülmüş key → geri kanal webhook (HMAC doğrulandı).
 
 **Çalışan Faz 1 (MVP):**
 
@@ -50,6 +52,8 @@ Tasarım (v2.6) + **Faz 0 + Faz 1 backend/panel CANLI ve e2e doğrulandı** (WP 
 - Geri kanal webhook: HMAC imzalı, outbox, WP eklentisine hazır (order.fulfilled/partial)
 - Admin UI (Next.js, sunucu-taraflı): Bekleyen Teslimatlar / Siparişler+detay / Stok / Siteler
 - audit_log: reveal/revoke/suspend/import/… ; migration 0000-0004
+- **WP eklentisi** (`apps/wp-plugin/jetlisans`, ince istemci): HMAC istemci, sipariş push
+  (Woo→panel), webhook alıcı, My Account teslimat, admin meta box; lisans verisi WP'de durmaz
 
 **e2e doğrulandı** (gerçek stack, 50+ assert): yarış (çifte atama=0), sipariş→atama→çözülmüş
 teslimat, idempotency, kısmi/all-or-nothing, tamamlama motoru, mail→Mailpit, webhook→imza,
@@ -61,8 +65,8 @@ sertleştirme: HMAC anahtar rotasyonu (24s dual-secret), envelope AAD (kayıt-id
 nonce TTL sınır kenarı, imza yolu kanonikleştirme, mask format, autoComplete SKIP LOCKED
 erken-çıkış. Üretimde: SMTP_SECURE=true (TLS).
 
-Kalan: **WP eklentisi (Faz 3 — en son)**, VPS deploy (gerçek domain + Let's Encrypt + yedek),
-Faz 2 zenginleştirmeleri (hesap ürünleri, tedarik zinciri, self-servis). Yol haritası §18.
+Kalan: **VPS deploy** (gerçek domain + Let's Encrypt + yedek), Faz 2 zenginleştirmeleri
+(hesap ürünleri, tedarik zinciri, self-servis, WP eklentisi yönetim aksiyonları). Yol haritası §18.
 
 ## Geliştirme
 
