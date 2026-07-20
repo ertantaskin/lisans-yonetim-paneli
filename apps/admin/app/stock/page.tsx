@@ -3,25 +3,30 @@ import { Card, PageHeader } from '../../components/ui';
 import { ImportStockForm } from '../../components/import-stock-form';
 import { ProductCreateForm } from '../../components/product-create-form';
 import { ProductsTable } from '../../components/products-table';
-import { createMappingAction } from './actions';
+import { MappingsManager, type MappingRow } from '../../components/mappings-manager';
 
 export const dynamic = 'force-dynamic';
 
-export default async function StockPage() {
+export default async function StockPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ batchId?: string }>;
+}) {
+  const { batchId } = await searchParams;
+
   let products: ProductRow[] = [];
   let sites: SiteRow[] = [];
+  let mappings: MappingRow[] = [];
   let error: string | null = null;
   try {
-    [products, sites] = await Promise.all([
+    [products, sites, mappings] = await Promise.all([
       apiGet<ProductRow[]>('/v1/admin/products'),
       apiGet<SiteRow[]>('/v1/admin/sites'),
+      apiGet<MappingRow[]>('/v1/admin/mappings'),
     ]);
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
-
-  const inputCls =
-    'rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring';
 
   return (
     <div>
@@ -43,51 +48,20 @@ export default async function StockPage() {
         {/* Stok import */}
         <Card>
           <h2 className="mb-3 text-sm font-semibold text-foreground">Stok Import (Onayla ve Dağıt)</h2>
-          <ImportStockForm products={products} />
+          <ImportStockForm products={products} defaultBatchId={batchId} />
         </Card>
 
-        <div className="grid gap-5 md:grid-cols-2">
-          {/* Ürün oluştur */}
-          <Card>
-            <h2 className="mb-3 text-sm font-semibold text-foreground">Ürün Oluştur</h2>
-            <ProductCreateForm />
-          </Card>
+        {/* Ürün oluştur */}
+        <Card>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Ürün Oluştur</h2>
+          <ProductCreateForm />
+        </Card>
 
-          {/* Eşleme */}
-          <Card>
-            <h2 className="mb-3 text-sm font-semibold text-foreground">Site-Ürün Eşleme</h2>
-            <form action={createMappingAction} className="space-y-3 text-sm">
-              <select name="siteId" required className={`w-full ${inputCls}`}>
-                <option value="">— site —</option>
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.domain}
-                  </option>
-                ))}
-              </select>
-              <select name="productId" required className={`w-full ${inputCls}`}>
-                <option value="">— ürün —</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                name="remoteProductId"
-                placeholder="Woo ürün ID (ör. 555)"
-                required
-                className={`w-full ${inputCls}`}
-              />
-              <button
-                type="submit"
-                className="rounded-md bg-primary px-4 py-1.5 font-medium text-primary-foreground hover:opacity-90"
-              >
-                Eşle
-              </button>
-            </form>
-          </Card>
-        </div>
+        {/* Site-Ürün Eşleme */}
+        <Card>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Site-Ürün Eşleme</h2>
+          <MappingsManager sites={sites} products={products} mappings={mappings} />
+        </Card>
       </div>
     </div>
   );

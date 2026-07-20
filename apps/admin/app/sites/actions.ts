@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost } from '../../lib/api';
+import { apiPost, apiSend } from '../../lib/api';
 
 export interface CreateSiteState {
   ok: boolean;
@@ -37,6 +37,79 @@ export async function createSiteAction(
     });
     revalidatePath('/sites');
     return { ok: true, site };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
+export interface UpdateSiteState {
+  ok: boolean;
+  error?: string;
+  /** Başarı feedback'i için yalnız başarıda true. */
+  saved?: boolean;
+}
+
+/**
+ * Site operasyon ayarlarını günceller (§5/§14): günlük satış kotası + sandbox + gönderen
+ * e-posta. PATCH /v1/admin/sites/:id — audit'e düşer. Yalnız verilen alanlar değişir.
+ */
+export async function updateSiteAction(
+  _prev: UpdateSiteState,
+  formData: FormData,
+): Promise<UpdateSiteState> {
+  const siteId = String(formData.get('siteId') || '').trim();
+  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  try {
+    // Günlük satış kotası — boş = limitsiz (null). Negatif/0 reddedilir.
+    const quotaRaw = String(formData.get('salesDailyQuota') || '').trim();
+    let salesDailyQuota: number | null = null;
+    if (quotaRaw) {
+      const n = Number(quotaRaw);
+      if (!Number.isInteger(n) || n < 1) {
+        return { ok: false, error: 'Günlük satış kotası pozitif tam sayı olmalı' };
+      }
+      salesDailyQuota = n;
+    }
+    // Gönderen e-posta — boş = varsayılan gönderene dön (null).
+    const senderRaw = String(formData.get('senderEmail') || '').trim();
+    const senderEmail: string | null = senderRaw ? senderRaw : null;
+    // Sandbox (test modu) — checkbox işaretliyse true.
+    const sandbox = formData.get('sandbox') != null;
+
+    await apiSend('PATCH', `/v1/admin/sites/${encodeURIComponent(siteId)}`, {
+      salesDailyQuota,
+      sandbox,
+      senderEmail,
+    });
+    revalidatePath(`/sites/${siteId}`);
+    revalidatePath('/sites');
+    return { ok: true, saved: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
+export interface SetSiteStatusState {
+  ok: boolean;
+  error?: string;
+  siteId?: string;
+  status?: 'active' | 'suspended';
+}
+
+/**
+ * Site yaşam döngüsü (§8): askıya al / aktifleştir. 'suspended' → HMAC auth reddedilir
+ * (yeni sipariş push'u durur). PATCH /v1/admin/sites/:id — audit'e düşer.
+ */
+export async function setSiteStatusAction(
+  siteId: string,
+  status: 'active' | 'suspended',
+): Promise<SetSiteStatusState> {
+  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  try {
+    await apiSend('PATCH', `/v1/admin/sites/${encodeURIComponent(siteId)}`, { status });
+    revalidatePath(`/sites/${siteId}`);
+    revalidatePath('/sites');
+    return { ok: true, siteId, status };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
   }

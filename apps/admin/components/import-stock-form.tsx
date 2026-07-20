@@ -14,7 +14,14 @@ import { Button } from './ui/button';
 const initial: ImportState = { ok: false };
 const previewInitial: PreviewState = { ok: false };
 
-export function ImportStockForm({ products }: { products: ProductRow[] }) {
+export function ImportStockForm({
+  products,
+  defaultBatchId,
+}: {
+  products: ProductRow[];
+  /** URL ?batchId= ile gelen parti (recall/toplu-değiştir akışı ön-doldurur). */
+  defaultBatchId?: string;
+}) {
   const [state, action, pending] = useActionState(importStockAction, initial);
   const [previewState, previewAction, previewPending] = useActionState(
     previewStockAction,
@@ -90,6 +97,22 @@ export function ImportStockForm({ products }: { products: ProductRow[] }) {
                 : 'XXXXX-XXXXX-XXXXX-XXXXX-11111\nXXXXX-XXXXX-XXXXX-XXXXX-22222'
             }
           />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="is-batch">Parti (batch) ID — opsiyonel</Label>
+          <Input
+            id="is-batch"
+            name="batchId"
+            defaultValue={defaultBatchId}
+            className="max-w-md font-mono text-xs"
+            placeholder="recall/toplu-değiştir için parti UUID (boş bırakılabilir)"
+          />
+          {defaultBatchId && (
+            <span className="text-xs text-muted-foreground">
+              Bu giriş <code className="text-foreground">{defaultBatchId}</code> partisine bağlanacak.
+            </span>
+          )}
         </div>
 
         <Button type="submit" disabled={pending}>

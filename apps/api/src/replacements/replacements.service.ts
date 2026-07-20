@@ -13,6 +13,7 @@ import {
   replacementRequests,
   type ReplacementRequest,
 } from '../db/schema/replacementRequests';
+import { MailService } from '../mail/mail.service';
 import { AdminOrdersService } from '../orders/admin-orders.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 
@@ -51,6 +52,7 @@ export class ReplacementsService {
     @Inject(DB) private readonly db: Database,
     private readonly adminOrders: AdminOrdersService,
     private readonly fulfillment: FulfillmentService,
+    private readonly mail: MailService,
   ) {}
 
   /**
@@ -217,7 +219,7 @@ export class ReplacementsService {
     return updated!;
   }
 
-  /** Reddet — çözüm notuyla kapat. */
+  /** Reddet — çözüm notuyla kapat + müşteriye durum bildirimi (yalnız durum+not, sırsız). */
   async reject(id: string, note: string, actor: string): Promise<ReplacementRequest> {
     await this.getOrThrow(id);
     const [updated] = await this.db
@@ -231,10 +233,18 @@ export class ReplacementsService {
       })
       .where(eq(replacementRequests.id, id))
       .returning();
+
+    // Bildirim best-effort (SMTP hatası talebi bozmaz).
+    await this.mail.enqueueReplacementNotice(
+      updated!.orderId,
+      updated!.customerEmail,
+      'rejected',
+      note,
+    );
     return updated!;
   }
 
-  /** Ek bilgi iste — müşteriye dönülür, talep açık kalır. */
+  /** Ek bilgi iste — müşteriye dönülür, talep açık kalır + durum bildirimi (sırsız). */
   async requestInfo(id: string, note: string): Promise<ReplacementRequest> {
     await this.getOrThrow(id);
     const [updated] = await this.db
@@ -242,6 +252,13 @@ export class ReplacementsService {
       .set({ status: 'info_requested', resolutionNote: note, updatedAt: new Date() })
       .where(eq(replacementRequests.id, id))
       .returning();
+
+    await this.mail.enqueueReplacementNotice(
+      updated!.orderId,
+      updated!.customerEmail,
+      'info_requested',
+      note,
+    );
     return updated!;
   }
 

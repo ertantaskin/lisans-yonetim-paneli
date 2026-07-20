@@ -115,13 +115,15 @@ describe('ReplacementsService.approve (entegrasyon)', () => {
     // (cascade ile temizlenir); webhook site'de webhookUrl olmadığından erken döner.
     const fakeQueue = { add: async () => undefined } as unknown as Queue;
     const fakeRedis = {} as unknown as Redis;
+    // Mail transport testte çağrılmaz (approve mail atmaz); ConfigService yalnız construction için stub.
+    const fakeConfig = { get: () => undefined, getOrThrow: () => '' } as never;
 
     const products = new ProductsService(db as never);
-    const mail = new MailService(db as never, fakeQueue);
+    const mail = new MailService(db as never, fakeQueue, fakeConfig);
     const webhook = new WebhookService(db as never, fakeQueue);
     const adminOrders = new AdminOrdersService(db as never, fakeRedis, crypto, mail);
     const fulfillment = new FulfillmentService(db as never, products, mail, webhook);
-    service = new ReplacementsService(db as never, adminOrders, fulfillment);
+    service = new ReplacementsService(db as never, adminOrders, fulfillment, mail);
 
     site = await createSite(db, crypto, { tag });
   });

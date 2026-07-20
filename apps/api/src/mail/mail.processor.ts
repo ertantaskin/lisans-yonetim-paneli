@@ -35,11 +35,15 @@ export class MailProcessor extends WorkerHost {
 
   private mailer(): Transporter {
     if (!this.transporter) {
+      const user = this.config.get<string>('SMTP_USER');
+      const pass = this.config.get<string>('SMTP_PASS');
       this.transporter = nodemailer.createTransport({
         host: this.config.getOrThrow<string>('SMTP_HOST'),
         port: this.config.getOrThrow<number>('SMTP_PORT'),
         // Üretimde SMTP_SECURE=true (TLS); dev Mailpit TLS'siz.
         secure: this.config.get<boolean>('SMTP_SECURE') ?? false,
+        // Kimlik verildiyse auth ekle (gerçek relay); yoksa kimliksiz (dev Mailpit).
+        ...(user ? { auth: { user, pass: pass ?? '' } } : {}),
       });
     }
     return this.transporter;

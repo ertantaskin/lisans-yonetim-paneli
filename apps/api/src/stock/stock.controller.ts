@@ -6,6 +6,8 @@ import { StockService } from './stock.service';
 
 const ImportBody = z.object({
   productId: z.string().uuid(),
+  /** Opsiyonel parti bağlama (§12): verilirse tüm satırlar bu batch'e yazılır (recall/toplu-değiştir). */
+  batchId: z.string().uuid().optional(),
   items: z
     .array(
       z.object({
@@ -34,7 +36,7 @@ export class StockController {
 
   @Post('import')
   import(@Body(new ZodBody(ImportBody)) body: ImportBody) {
-    return this.stock.import(body.productId, body.items);
+    return this.stock.import(body.productId, body.items, body.batchId);
   }
 
   /** "Onayla ve Dağıt" önizleme (§13): bu giriş bekleyen talebi ne kadar karşılar. */

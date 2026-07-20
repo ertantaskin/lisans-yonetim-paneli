@@ -1,9 +1,10 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import {
   products,
   siteProductMappings,
+  sites,
   licenseItems,
   type NewProduct,
   type Product,
@@ -52,6 +53,24 @@ export class ProductsService {
   async create(input: NewProduct): Promise<Product> {
     const [row] = await this.db.insert(products).values(input).returning();
     return row!;
+  }
+
+  /**
+   * Kısmi ürün güncellemesi (§11). Yalnız verilen alanlar değişir; updatedAt her
+   * güncellemede now() olur. Boş patch (hiç alan yok) reddedilir — yanlışlıkla
+   * yalnız updatedAt dokunmasını engeller. Ürün yoksa 404.
+   */
+  async update(id: string, patch: Partial<NewProduct>): Promise<Product> {
+    if (Object.keys(patch).length === 0) {
+      throw new NotFoundException('Güncellenecek alan yok');
+    }
+    const [row] = await this.db
+      .update(products)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(eq(products.id, id))
+      .returning();
+    if (!row) throw new NotFoundException('Ürün bulunamadı');
+    return row;
   }
 
   async list(): Promise<Array<Product & { availableStock: number }>> {
@@ -314,5 +333,60 @@ export class ProductsService {
       })
       .returning();
     return row!;
+  }
+
+  /**
+   * Eşleme listesi (§3) — remote ürün → panel ürünü, site domain + ürün adıyla
+   * zenginleştirilmiş. siteId verilirse yalnız o site; yoksa tümü. En yeni önce.
+   */
+  async listMappings(siteId?: string): Promise<
+    Array<{
+      id: string;
+      siteId: string;
+      siteDomain: string;
+      productId: string;
+      productName: string;
+      remoteProductId: string;
+      remoteVariationId: string | null;
+      bundleQty: number;
+      active: boolean;
+      createdAt: string;
+    }>
+  > {
+    const rows = await this.db
+      .select({
+        id: siteProductMappings.id,
+        siteId: siteProductMappings.siteId,
+        siteDomain: sites.domain,
+        productId: siteProductMappings.productId,
+        productName: products.name,
+        remoteProductId: siteProductMappings.remoteProductId,
+        remoteVariationId: siteProductMappings.remoteVariationId,
+        bundleQty: siteProductMappings.bundleQty,
+        active: siteProductMappings.active,
+        createdAt: siteProductMappings.createdAt,
+      })
+      .from(siteProductMappings)
+      .innerJoin(sites, eq(sites.id, siteProductMappings.siteId))
+      .innerJoin(products, eq(products.id, siteProductMappings.productId))
+      .where(siteId ? eq(siteProductMappings.siteId, siteId) : undefined)
+      .orderBy(desc(siteProductMappings.createdAt));
+
+    return rows.map((r) => ({
+      ...r,
+      bundleQty: Number(r.bundleQty),
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+    }));
+  }
+
+  /** Eşlemeyi pasifleştir/etkinleştir (§3). Yoksa 404. */
+  async updateMapping(id: string, active: boolean) {
+    const [row] = await this.db
+      .update(siteProductMappings)
+      .set({ active })
+      .where(eq(siteProductMappings.id, id))
+      .returning();
+    if (!row) throw new NotFoundException('Eşleme bulunamadı');
+    return row;
   }
 }

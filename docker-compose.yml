@@ -70,8 +70,13 @@ services:
       ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
       ADMIN_SEED_NAME: ${ADMIN_SEED_NAME:-}
       ADMIN_SEED_USERNAME: ${ADMIN_SEED_USERNAME:-}
-      SMTP_HOST: mailpit
-      SMTP_PORT: 1025
+      # Dev varsayılanı Mailpit; ÜRETİMDE .env'e gerçek relay yaz (SMTP_HOST/PORT/SECURE +
+      # kimlik isteyen relay için SMTP_USER/SMTP_PASS). Boşsa kimliksiz (Mailpit).
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
       MAIL_FROM: ${MAIL_FROM:-Jetlisans <teslimat@jetlisans.local>}
       # Telegram bildirimi (§13/§18) — düşük stok + kritik uyarılar. İKİSİ de SET EDİLİRSE
       # aktif; boşsa bildirim no-op (env-gated). Bot: @BotFather, chat id: @userinfobot.

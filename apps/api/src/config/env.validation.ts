@@ -44,6 +44,13 @@ export const envSchema = z.object({
     .transform((v) => v === 'true' || v === '1')
     .default('false'),
   MAIL_FROM: z.string().default('Jetlisans <teslimat@jetlisans.local>'),
+  /**
+   * SMTP kimlik doğrulama (SendGrid/SES/Mailgun/Gmail vb. kimlik isteyen relay'ler).
+   * İKİSİ de verilmezse kimliksiz relay (dev Mailpit) — transport'a auth EKLENMEZ.
+   * NOT: docker-compose `${VAR:-}` boş string geçer → boş'u undefined'a çeviriyoruz.
+   */
+  SMTP_USER: emptyToUndefined(z.string().optional()),
+  SMTP_PASS: emptyToUndefined(z.string().optional()),
 
   /**
    * Telegram bildirim (§12) — düşük stok / kritik olaylar için best-effort push.

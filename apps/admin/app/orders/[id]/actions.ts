@@ -35,3 +35,33 @@ export async function revokeAction(formData: FormData) {
   await apiPost(`/v1/admin/assignments/${assignmentId}/revoke`, { reason });
   revalidatePath(`/orders/${orderId}`);
 }
+
+/**
+ * Teslimat mailini yeniden gönder (§13). API'de 60sn debounce var; çok sık
+ * denemede 400 döner — hata sessiz yutulur, sayfa yine tazelenir (mail listesi güncel).
+ */
+export async function resendAction(formData: FormData) {
+  const orderId = String(formData.get('orderId'));
+  try {
+    await apiPost(`/v1/admin/orders/${orderId}/resend`);
+  } catch {
+    // 60sn debounce (400) veya geçici hata — aksiyon ekranını bozma.
+  }
+  revalidatePath(`/orders/${orderId}`);
+}
+
+/** Atamayı askıya al — müşteri görünümünde "inceleme altında" (§4, geri alınabilir). */
+export async function suspendAction(formData: FormData) {
+  const assignmentId = String(formData.get('assignmentId'));
+  const orderId = String(formData.get('orderId'));
+  await apiPost(`/v1/admin/assignments/${assignmentId}/suspend`);
+  revalidatePath(`/orders/${orderId}`);
+}
+
+/** Askıdan çıkar — atama tekrar aktif ve müşteriye görünür olur. */
+export async function unsuspendAction(formData: FormData) {
+  const assignmentId = String(formData.get('assignmentId'));
+  const orderId = String(formData.get('orderId'));
+  await apiPost(`/v1/admin/assignments/${assignmentId}/unsuspend`);
+  revalidatePath(`/orders/${orderId}`);
+}

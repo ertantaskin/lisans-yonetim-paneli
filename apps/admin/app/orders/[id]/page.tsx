@@ -15,7 +15,13 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
-import { completeLineAction, revokeAction } from './actions';
+import {
+  completeLineAction,
+  revokeAction,
+  resendAction,
+  suspendAction,
+  unsuspendAction,
+} from './actions';
 
 /** ISO tarihi tr-TR biçimler; süresi geçmişse amber vurgu bilgisi döner. */
 function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
@@ -193,16 +199,36 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                         <StatusBadge status={a.status} />
                       </TableCell>
                       <TableCell className="text-right">
-                        {a.status === 'active' && (
-                          <form action={revokeAction}>
-                            <input type="hidden" name="assignmentId" value={a.id} />
-                            <input type="hidden" name="orderId" value={order.id} />
-                            <input type="hidden" name="reason" value="iade/iptal" />
-                            <Button type="submit" variant="danger-outline" size="sm">
-                              İptal
-                            </Button>
-                          </form>
-                        )}
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                          {a.status === 'active' && (
+                            <>
+                              <form action={suspendAction}>
+                                <input type="hidden" name="assignmentId" value={a.id} />
+                                <input type="hidden" name="orderId" value={order.id} />
+                                <Button type="submit" variant="outline" size="sm">
+                                  Askıya Al
+                                </Button>
+                              </form>
+                              <form action={revokeAction}>
+                                <input type="hidden" name="assignmentId" value={a.id} />
+                                <input type="hidden" name="orderId" value={order.id} />
+                                <input type="hidden" name="reason" value="iade/iptal" />
+                                <Button type="submit" variant="danger-outline" size="sm">
+                                  İptal
+                                </Button>
+                              </form>
+                            </>
+                          )}
+                          {a.status === 'suspended' && (
+                            <form action={unsuspendAction}>
+                              <input type="hidden" name="assignmentId" value={a.id} />
+                              <input type="hidden" name="orderId" value={order.id} />
+                              <Button type="submit" variant="outline" size="sm">
+                                Askıdan Çıkar
+                              </Button>
+                            </form>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -243,10 +269,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
         {/* Mailler */}
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle className="flex items-center gap-2">
               <Mail className="size-4 text-muted-foreground" /> Teslimat Mailleri
             </CardTitle>
+            <form action={resendAction}>
+              <input type="hidden" name="orderId" value={order.id} />
+              <Button type="submit" variant="outline" size="sm">
+                Maili Yeniden Gönder
+              </Button>
+            </form>
           </CardHeader>
           <CardContent>
             {emails.length === 0 ? (

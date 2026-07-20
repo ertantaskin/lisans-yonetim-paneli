@@ -2,25 +2,34 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { createProductAction } from '../app/stock/actions';
-import { Input, selectClass } from './ui/input';
+import type { ProductRow } from '../lib/api';
+import { Input, Label, selectClass } from './ui/input';
 import { Button } from './ui/button';
 
 type SchemaField = { key: string; label: string; secret: boolean };
 
+const DEFAULT_ACCOUNT_FIELDS: SchemaField[] = [
+  { key: 'username', label: 'Kullanıcı adı', secret: false },
+  { key: 'password', label: 'Parola', secret: true },
+];
+
 /**
- * Ürün oluşturma — kind'e göre koşullu alanlar (§11):
+ * Ürün form alanları — create + edit ortak (§11). kind'e göre koşullu alanlar:
  * - account → payloadSchema editörü (alanlar: key/label/secret)
  * - multi → maxUses (zorunlu, >1)
  * - süreli → validityDays + onExpiry
+ * - stoksuz/ön-sipariş → stockless + releaseAt
  * payloadSchema gizli input'a JSON olarak serialize edilir; server action iletir.
+ * `defaults` verilirse (düzenleme) alanlar ön-dolu gelir.
  */
-export function ProductCreateForm() {
-  const [kind, setKind] = useState('key');
-  const [usageMode, setUsageMode] = useState('single');
-  const [fields, setFields] = useState<SchemaField[]>([
-    { key: 'username', label: 'Kullanıcı adı', secret: false },
-    { key: 'password', label: 'Parola', secret: true },
-  ]);
+export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow> }) {
+  const [kind, setKind] = useState(defaults?.kind ?? 'key');
+  const [usageMode, setUsageMode] = useState(defaults?.usageMode ?? 'single');
+  const [fields, setFields] = useState<SchemaField[]>(
+    defaults?.payloadSchema && defaults.payloadSchema.length > 0
+      ? defaults.payloadSchema.map((f) => ({ key: f.key, label: f.label, secret: f.secret }))
+      : DEFAULT_ACCOUNT_FIELDS,
+  );
 
   const setField = (i: number, patch: Partial<SchemaField>) =>
     setFields((fs) => fs.map((f, j) => (j === i ? { ...f, ...patch } : f)));
@@ -31,9 +40,9 @@ export function ProductCreateForm() {
     kind === 'account' ? JSON.stringify(fields.filter((f) => f.key.trim() && f.label.trim())) : '';
 
   return (
-    <form action={createProductAction} className="space-y-3 text-sm">
-      <Input name="sku" aria-label="SKU" placeholder="SKU (win11-pro)" required />
-      <Input name="name" aria-label="Ürün adı" placeholder="Ürün adı" required />
+    <div className="space-y-3 text-sm">
+      <Input name="sku" aria-label="SKU" placeholder="SKU (win11-pro)" defaultValue={defaults?.sku} required />
+      <Input name="name" aria-label="Ürün adı" placeholder="Ürün adı" defaultValue={defaults?.name} required />
 
       <div className="flex flex-wrap gap-2">
         <select
@@ -58,7 +67,12 @@ export function ProductCreateForm() {
           <option value="single">tek kullanımlık</option>
           <option value="multi">çok kullanımlık (MAK)</option>
         </select>
-        <select name="fulfillmentPolicy" aria-label="Teslimat politikası" className={selectClass}>
+        <select
+          name="fulfillmentPolicy"
+          aria-label="Teslimat politikası"
+          defaultValue={defaults?.fulfillmentPolicy ?? 'partial-auto'}
+          className={selectClass}
+        >
           <option value="partial-auto">partial-auto</option>
           <option value="partial-approval">partial-approval</option>
           <option value="all-or-nothing">all-or-nothing</option>
@@ -73,6 +87,7 @@ export function ProductCreateForm() {
           min={2}
           aria-label="Maksimum kullanım"
           placeholder="max kullanım (>1, ör. 500)"
+          defaultValue={defaults?.maxUses ?? undefined}
           required
         />
       )}
@@ -135,12 +150,58 @@ export function ProductCreateForm() {
           min={1}
           aria-label="Geçerlilik (gün)"
           placeholder="geçerlilik (gün, süreli hesap)"
+          defaultValue={defaults?.validityDays ?? undefined}
           className="w-52"
         />
-        <select name="onExpiry" aria-label="Süre bitince davranış" className={selectClass} title="süre bitince">
+        <select
+          name="onExpiry"
+          aria-label="Süre bitince davranış"
+          defaultValue={defaults?.onExpiry ?? 'hide'}
+          className={selectClass}
+          title="süre bitince"
+        >
           <option value="hide">süre bitince gizle</option>
           <option value="keep">süre bitince göster</option>
         </select>
+      </div>
+
+      {/* garanti + düşük stok eşiği */}
+      <div className="flex flex-wrap gap-2">
+        <Input
+          name="warrantyDays"
+          type="number"
+          min={0}
+          aria-label="Garanti (gün)"
+          placeholder="garanti (gün, ör. 30)"
+          className="w-44"
+        />
+        <Input
+          name="lowStockThreshold"
+          type="number"
+          min={0}
+          aria-label="Düşük stok eşiği"
+          placeholder="düşük stok eşiği (boş=kapalı)"
+          className="w-56"
+          title="boş bırakılırsa düşük stok uyarısı kapalı"
+        />
+      </div>
+
+      {/* stoksuz / ön-sipariş */}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <input type="checkbox" name="stockless" value="on" className="accent-primary" />
+          stoksuz / ön-sipariş
+        </label>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="releaseAt">Yayın tarihi (release_at)</Label>
+          <Input
+            id="releaseAt"
+            name="releaseAt"
+            type="datetime-local"
+            aria-label="Yayın tarihi"
+            className="w-56"
+          />
+        </div>
       </div>
 
       <Input
@@ -149,7 +210,14 @@ export function ProductCreateForm() {
         placeholder="key_format regex (opsiyonel, ör. ^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$)"
         className="font-mono text-xs"
       />
+    </div>
+  );
+}
 
+export function ProductCreateForm() {
+  return (
+    <form action={createProductAction} className="space-y-3">
+      <ProductFormFields />
       <Button type="submit">Oluştur</Button>
     </form>
   );

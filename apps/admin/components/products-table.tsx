@@ -1,14 +1,64 @@
 'use client';
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Pencil } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '../lib/utils';
 import type { ProductRow } from '../lib/api';
+import { updateProductAction, type FormState } from '../app/stock/actions';
 import { Button } from './ui/button';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from './ui/sheet';
+import { ProductFormFields } from './product-create-form';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
+
+const editInitial: FormState = { ok: false };
+
+/** Satır içi ürün düzenleme paneli (§11) — Sheet + ön-dolu form; başarıda kapanır. */
+function ProductEditSheet({ product }: { product: ProductRow }) {
+  const [open, setOpen] = React.useState(false);
+  const [state, action, pending] = React.useActionState(updateProductAction, editInitial);
+
+  // Başarılı güncellemede paneli kapat (revalidatePath tabloyu tazeler).
+  React.useEffect(() => {
+    if (state.ok) setOpen(false);
+  }, [state.ok]);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <Button variant="ghost" size="sm" aria-label={`${product.name} düzenle`}>
+          <Pencil /> Düzenle
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetHeader>
+          <SheetTitle>Ürün düzenle</SheetTitle>
+          <SheetDescription>
+            {product.name} · {product.sku}
+          </SheetDescription>
+        </SheetHeader>
+        {/* key={open}: her açılışta formu ürün varsayılanlarıyla sıfırla. */}
+        <form key={String(open)} action={action} className="space-y-3 p-4 pt-0">
+          <input type="hidden" name="id" value={product.id} />
+          <ProductFormFields defaults={product} />
+          {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+          <Button type="submit" disabled={pending}>
+            {pending ? 'Kaydediliyor…' : 'Kaydet'}
+          </Button>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
 
 /** Ürün tip etiketi: kind + (multi ise) kapasite + geçerlilik. */
 function typeLabel(p: ProductRow): string {
@@ -83,7 +133,8 @@ const columns: ColumnDef<ProductRow>[] = [
     enableSorting: false,
     enableHiding: false,
     cell: ({ row }) => (
-      <div className="text-right">
+      <div className="flex items-center justify-end gap-1">
+        <ProductEditSheet product={row.original} />
         <Button asChild variant="ghost" size="sm">
           <Link href={`/products/${row.original.id}`}>
             Detay <ArrowRight />

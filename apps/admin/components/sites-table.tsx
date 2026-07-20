@@ -2,9 +2,9 @@
 import * as React from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
-import { KeyRound, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
+import { Ban, CircleCheck, KeyRound, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
 import type { SiteRow } from '../lib/api';
-import { rotateSecretAction } from '../app/sites/actions';
+import { rotateSecretAction, setSiteStatusAction } from '../app/sites/actions';
 import { StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
@@ -69,6 +69,7 @@ function SiteRowActions({
   onError: (message: string) => void;
 }) {
   const [pending, startTransition] = React.useTransition();
+  const suspended = site.status === 'suspended';
 
   const rotate = () => {
     if (
@@ -81,6 +82,18 @@ function SiteRowActions({
       const res = await rotateSecretAction(site.id);
       if (res.ok && res.hmacSecret) onRotated({ domain: site.domain, hmacSecret: res.hmacSecret });
       else onError(res.error ?? 'Secret yenilenemedi');
+    });
+  };
+
+  const toggleStatus = () => {
+    const next = suspended ? 'active' : 'suspended';
+    const msg = suspended
+      ? `${site.domain} yeniden aktifleştirilsin mi? Yeni sipariş push kabulü tekrar açılır.`
+      : `${site.domain} askıya alınsın mı?\n\nAskıdayken HMAC auth reddedilir — yeni sipariş push edilemez.`;
+    if (!window.confirm(msg)) return;
+    startTransition(async () => {
+      const res = await setSiteStatusAction(site.id, next);
+      if (!res.ok) onError(res.error ?? 'Durum değiştirilemedi');
     });
   };
 
@@ -101,6 +114,10 @@ function SiteRowActions({
         <DropdownMenuItem onSelect={rotate} disabled={pending}>
           <KeyRound />
           {pending ? 'Yenileniyor…' : 'Secret Yenile'}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={toggleStatus} disabled={pending}>
+          {suspended ? <CircleCheck /> : <Ban />}
+          {suspended ? 'Aktifleştir' : 'Askıya Al'}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

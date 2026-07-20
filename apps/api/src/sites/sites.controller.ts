@@ -18,6 +18,10 @@ type CreateSiteBody = z.infer<typeof CreateSiteBody>;
 const UpdateSiteBody = z.object({
   salesDailyQuota: z.number().int().positive().nullable().optional(),
   sandbox: z.boolean().optional(),
+  // Gönderen e-posta (§14) — null = varsayılan gönderene dön.
+  senderEmail: z.string().email().nullable().optional(),
+  // Yaşam döngüsü (§8): 'suspended' → HMAC auth reddedilir (findForAuth active şartı).
+  status: z.enum(['active', 'suspended']).optional(),
 });
 type UpdateSiteBody = z.infer<typeof UpdateSiteBody>;
 

@@ -57,7 +57,11 @@ export class StockService {
    * engellenir (UNIQUE payload_hash → onConflictDoNothing). Çok kullanımlıkta (multi)
    * her key ürünün max_uses kapasitesiyle girer.
    */
-  async import(productId: string, items: ImportItem[]): Promise<ImportResult> {
+  async import(
+    productId: string,
+    items: ImportItem[],
+    batchId?: string,
+  ): Promise<ImportResult> {
     const product = await this.products.getById(productId);
 
     // Çok kullanımlık (MAK) ürün maxUses>1 ZORUNLU — aksi halde her key kapasite=1'e
@@ -90,6 +94,7 @@ export class StockService {
       values.push({
         id,
         productId,
+        batchId: batchId ?? null,
         payloadEnc: this.crypto.encrypt(plaintext, CryptoService.licenseItemAad(id)),
         payloadHash: this.crypto.payloadHash(plaintext),
         payloadSuffixHash: this.crypto.payloadSuffixHash(plaintext),

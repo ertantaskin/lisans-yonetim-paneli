@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost } from '../../lib/api';
+import { apiPost, apiSend } from '../../lib/api';
 
 export interface ImportState {
   ok: boolean;
@@ -15,7 +15,11 @@ export interface ImportState {
   };
 }
 
-export async function createProductAction(formData: FormData) {
+/**
+ * Ürün formundaki alanları API body'sine dönüştürür (create + update ortak).
+ * Boş kalan opsiyonel alanlar body'ye HİÇ eklenmez → update'te "değişmedi" anlamına gelir.
+ */
+function buildProductBody(formData: FormData): Record<string, unknown> {
   const kind = String(formData.get('kind') || 'key');
   const usageMode = String(formData.get('usageMode') || 'single');
   const num = (k: string): number | undefined => {
@@ -30,10 +34,23 @@ export async function createProductAction(formData: FormData) {
     usageMode,
     fulfillmentPolicy: String(formData.get('fulfillmentPolicy') || 'partial-auto'),
     onExpiry: String(formData.get('onExpiry') || 'hide'),
+    // checkbox: işaretliyse 'on', değilse yok → boolean'a normalize et.
+    stockless: formData.get('stockless') != null,
   };
   if (usageMode === 'multi') body.maxUses = num('maxUses');
   const validityDays = num('validityDays');
   if (validityDays) body.validityDays = validityDays;
+  const warrantyDays = num('warrantyDays');
+  if (warrantyDays !== undefined) body.warrantyDays = warrantyDays;
+  // lowStockThreshold: boş = uyarı KAPALI (body'ye ekleme); 0 dahil geçerli değerdir.
+  const lowStockThreshold = num('lowStockThreshold');
+  if (lowStockThreshold !== undefined) body.lowStockThreshold = lowStockThreshold;
+  // releaseAt: <input type="datetime-local"> → ISO'ya çevir (API .datetime() ister).
+  const releaseAt = String(formData.get('releaseAt') || '').trim();
+  if (releaseAt) {
+    const d = new Date(releaseAt);
+    if (!Number.isNaN(d.getTime())) body.releaseAt = d.toISOString();
+  }
   const keyFormat = String(formData.get('keyFormat') || '').trim();
   if (keyFormat) body.keyFormat = keyFormat;
   // account: payloadSchema client'ta JSON'a serialize edilmiş — parse edip iletiriz.
@@ -47,8 +64,33 @@ export async function createProductAction(formData: FormData) {
       }
     }
   }
-  await apiPost('/v1/admin/products', body);
+  return body;
+}
+
+export async function createProductAction(formData: FormData) {
+  await apiPost('/v1/admin/products', buildProductBody(formData));
   revalidatePath('/stock');
+}
+
+export interface FormState {
+  ok: boolean;
+  error?: string;
+}
+
+/** Ürün düzenleme — useActionState uyumlu; hata (ör. duplicate SKU) yüzeye çıkar. */
+export async function updateProductAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const id = String(formData.get('id') || '');
+  if (!id) return { ok: false, error: 'Ürün ID eksik' };
+  try {
+    await apiSend('PATCH', `/v1/admin/products/${id}`, buildProductBody(formData));
+    revalidatePath('/stock');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
 }
 
 /** Stok import — textarea'daki her satır bir key. */
@@ -57,6 +99,7 @@ export async function importStockAction(
   formData: FormData,
 ): Promise<ImportState> {
   const productId = String(formData.get('productId') || '');
+  const batchId = String(formData.get('batchId') || '').trim();
   const raw = String(formData.get('keys') || '');
   const items = raw
     .split('\n')
@@ -69,6 +112,8 @@ export async function importStockAction(
     const result = await apiPost<ImportState['result']>('/v1/admin/stock/import', {
       productId,
       items,
+      // Boşsa gönderme — API opsiyonel uuid bekler (boş string uuid doğrulamasını bozar).
+      ...(batchId ? { batchId } : {}),
     });
     revalidatePath('/stock');
     return { ok: true, result };
@@ -111,11 +156,43 @@ export async function previewStockAction(
   }
 }
 
-export async function createMappingAction(formData: FormData) {
-  await apiPost('/v1/admin/mappings', {
-    siteId: String(formData.get('siteId') || ''),
-    productId: String(formData.get('productId') || ''),
-    remoteProductId: String(formData.get('remoteProductId') || '').trim(),
-  });
+/**
+ * Site-ürün eşleme oluştur — useActionState uyumlu. duplicate (aynı
+ * site+remote ürün+varyasyon UNIQUE) hatası yüzeye çıkar; sessiz atlanmaz.
+ */
+export async function createMappingAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const siteId = String(formData.get('siteId') || '');
+  const productId = String(formData.get('productId') || '');
+  const remoteProductId = String(formData.get('remoteProductId') || '').trim();
+  if (!siteId || !productId || !remoteProductId) {
+    return { ok: false, error: 'Site, ürün ve Woo ürün ID zorunlu' };
+  }
+  const remoteVariationId = String(formData.get('remoteVariationId') || '').trim();
+  const bundleQtyRaw = String(formData.get('bundleQty') || '').trim();
+  const bundleQty = bundleQtyRaw ? Number(bundleQtyRaw) : undefined;
+  try {
+    await apiPost('/v1/admin/mappings', {
+      siteId,
+      productId,
+      remoteProductId,
+      ...(remoteVariationId ? { remoteVariationId } : {}),
+      ...(bundleQty && bundleQty > 0 ? { bundleQty } : {}),
+    });
+    revalidatePath('/stock');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
+/** Eşlemeyi pasifleştir/etkinleştir (§3). */
+export async function updateMappingAction(formData: FormData) {
+  const id = String(formData.get('id') || '');
+  const active = String(formData.get('active') || '') === 'true';
+  if (!id) return;
+  await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active });
   revalidatePath('/stock');
 }

@@ -94,19 +94,28 @@ export class SitesService {
    */
   async update(
     id: string,
-    input: { salesDailyQuota?: number | null; sandbox?: boolean },
+    input: {
+      salesDailyQuota?: number | null;
+      sandbox?: boolean;
+      senderEmail?: string | null;
+      status?: 'active' | 'suspended';
+    },
   ): Promise<Omit<Site, 'hmacSecretEnc' | 'apiKeyHash'>> {
     await this.getById(id); // yoksa 404
 
     const patch: Partial<typeof sites.$inferInsert> = { updatedAt: new Date() };
     if (input.salesDailyQuota !== undefined) patch.salesDailyQuota = input.salesDailyQuota;
     if (input.sandbox !== undefined) patch.sandbox = input.sandbox;
+    if (input.senderEmail !== undefined) patch.senderEmail = input.senderEmail;
+    if (input.status !== undefined) patch.status = input.status;
 
     const [row] = await this.db.update(sites).set(patch).where(eq(sites.id, id)).returning();
 
     await this.writeAudit('update', id, {
       salesDailyQuota: row!.salesDailyQuota,
       sandbox: row!.sandbox,
+      senderEmail: row!.senderEmail,
+      status: row!.status,
     });
 
     const { hmacSecretEnc: _s, apiKeyHash: _a, ...rest } = row!;

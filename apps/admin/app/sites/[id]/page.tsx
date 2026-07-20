@@ -23,6 +23,8 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { getSite, type SiteDetail } from './queries';
+import { SiteConfigForm } from './site-config-form';
+import { SiteStatusToggle } from './site-status-toggle';
 
 export const dynamic = 'force-dynamic';
 
@@ -85,6 +87,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               )}
             </div>
           </div>
+          <SiteStatusToggle siteId={site.id} status={site.status} />
         </div>
       </div>
 
@@ -149,6 +152,16 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               </dd>
             </div>
           </dl>
+
+          <div className="mt-6 border-t border-border pt-5">
+            <h3 className="mb-3 text-sm font-medium text-foreground">Düzenle</h3>
+            <SiteConfigForm
+              siteId={site.id}
+              salesDailyQuota={site.salesDailyQuota}
+              sandbox={site.sandbox}
+              senderEmail={site.senderEmail}
+            />
+          </div>
         </CardContent>
       </Card>
 
