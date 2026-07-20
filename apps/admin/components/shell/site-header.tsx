@@ -26,8 +26,13 @@ const LABELS: Record<string, string> = {
   sites: 'Kanallar / Siteler',
 };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function labelFor(segment: string): string {
-  return LABELS[segment] ?? decodeURIComponent(segment);
+  if (LABELS[segment]) return LABELS[segment];
+  // Kayıt id'si (UUID) breadcrumb'da ham gösterilmez.
+  if (UUID_RE.test(segment)) return 'Detay';
+  return decodeURIComponent(segment);
 }
 
 /** Üst bar: sidebar tetiği + breadcrumb + Ctrl+K arama + ortam rozeti + tema (§17). */
