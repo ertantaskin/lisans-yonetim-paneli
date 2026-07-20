@@ -1,9 +1,9 @@
 'use client';
 import { useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { createProductAction } from '../app/stock/actions';
-
-const inputCls =
-  'rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring';
+import { Input, selectClass } from './ui/input';
+import { Button } from './ui/button';
 
 type SchemaField = { key: string; label: string; secret: boolean };
 
@@ -28,21 +28,20 @@ export function ProductCreateForm() {
   const removeField = (i: number) => setFields((fs) => fs.filter((_, j) => j !== i));
 
   const schemaJson =
-    kind === 'account'
-      ? JSON.stringify(fields.filter((f) => f.key.trim() && f.label.trim()))
-      : '';
+    kind === 'account' ? JSON.stringify(fields.filter((f) => f.key.trim() && f.label.trim())) : '';
 
   return (
     <form action={createProductAction} className="space-y-3 text-sm">
-      <input name="sku" placeholder="SKU (win11-pro)" required className={`w-full ${inputCls}`} />
-      <input name="name" placeholder="Ürün adı" required className={`w-full ${inputCls}`} />
+      <Input name="sku" aria-label="SKU" placeholder="SKU (win11-pro)" required />
+      <Input name="name" aria-label="Ürün adı" placeholder="Ürün adı" required />
 
       <div className="flex flex-wrap gap-2">
         <select
           name="kind"
+          aria-label="Ürün tipi"
           value={kind}
           onChange={(e) => setKind(e.target.value)}
-          className={inputCls}
+          className={selectClass}
         >
           <option value="key">key (lisans anahtarı)</option>
           <option value="account">account (hesap)</option>
@@ -51,14 +50,15 @@ export function ProductCreateForm() {
         </select>
         <select
           name="usageMode"
+          aria-label="Kullanım modu"
           value={usageMode}
           onChange={(e) => setUsageMode(e.target.value)}
-          className={inputCls}
+          className={selectClass}
         >
           <option value="single">tek kullanımlık</option>
           <option value="multi">çok kullanımlık (MAK)</option>
         </select>
-        <select name="fulfillmentPolicy" className={inputCls}>
+        <select name="fulfillmentPolicy" aria-label="Teslimat politikası" className={selectClass}>
           <option value="partial-auto">partial-auto</option>
           <option value="partial-approval">partial-approval</option>
           <option value="all-or-nothing">all-or-nothing</option>
@@ -67,91 +67,90 @@ export function ProductCreateForm() {
 
       {/* multi → maxUses zorunlu */}
       {usageMode === 'multi' && (
-        <input
+        <Input
           name="maxUses"
           type="number"
           min={2}
+          aria-label="Maksimum kullanım"
           placeholder="max kullanım (>1, ör. 500)"
           required
-          className={`w-full ${inputCls}`}
         />
       )}
 
       {/* account → payloadSchema editörü */}
       {kind === 'account' && (
-        <div className="rounded-md border border-border bg-background/50 p-3">
-          <div className="mb-2 text-xs font-medium text-foreground/60">Hesap alanları (payloadSchema)</div>
+        <div className="rounded-md border border-border bg-muted/40 p-3">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">Hesap alanları (payloadSchema)</div>
           <input type="hidden" name="payloadSchema" value={schemaJson} />
           <div className="space-y-2">
             {fields.map((f, i) => (
               <div key={i} className="flex flex-wrap items-center gap-2">
-                <input
+                <Input
                   value={f.key}
                   onChange={(e) => setField(i, { key: e.target.value })}
+                  aria-label={`Alan ${i + 1} anahtarı`}
                   placeholder="anahtar (username)"
-                  className={`${inputCls} w-36`}
+                  className="h-8 w-36"
                 />
-                <input
+                <Input
                   value={f.label}
                   onChange={(e) => setField(i, { label: e.target.value })}
+                  aria-label={`Alan ${i + 1} etiketi`}
                   placeholder="etiket (Kullanıcı adı)"
-                  className={`${inputCls} w-44`}
+                  className="h-8 w-44"
                 />
-                <label className="flex items-center gap-1 text-xs text-foreground/60">
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={f.secret}
                     onChange={(e) => setField(i, { secret: e.target.checked })}
+                    className="accent-primary"
                   />
                   gizli
                 </label>
-                <button
+                <Button
                   type="button"
                   onClick={() => removeField(i)}
-                  className="text-xs text-destructive hover:underline"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Alanı sil"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                 >
-                  sil
-                </button>
+                  <Trash2 className="size-3.5" />
+                </Button>
               </div>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={addField}
-            className="mt-2 text-xs text-primary hover:underline"
-          >
-            + alan ekle
-          </button>
+          <Button type="button" onClick={addField} variant="ghost" size="sm" className="mt-2 h-7 px-2 text-xs">
+            <Plus className="size-3.5" /> alan ekle
+          </Button>
         </div>
       )}
 
       {/* süreli (validityDays) + onExpiry */}
       <div className="flex flex-wrap gap-2">
-        <input
+        <Input
           name="validityDays"
           type="number"
           min={1}
+          aria-label="Geçerlilik (gün)"
           placeholder="geçerlilik (gün, süreli hesap)"
-          className={`${inputCls} w-52`}
+          className="w-52"
         />
-        <select name="onExpiry" className={inputCls} title="süre bitince">
+        <select name="onExpiry" aria-label="Süre bitince davranış" className={selectClass} title="süre bitince">
           <option value="hide">süre bitince gizle</option>
           <option value="keep">süre bitince göster</option>
         </select>
       </div>
 
-      <input
+      <Input
         name="keyFormat"
+        aria-label="Key format regex"
         placeholder="key_format regex (opsiyonel, ör. ^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$)"
-        className={`w-full font-mono text-xs ${inputCls}`}
+        className="font-mono text-xs"
       />
 
-      <button
-        type="submit"
-        className="rounded-md bg-primary px-4 py-1.5 font-medium text-primary-foreground hover:opacity-90"
-      >
-        Oluştur
-      </button>
+      <Button type="submit">Oluştur</Button>
     </form>
   );
 }

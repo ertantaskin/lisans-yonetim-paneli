@@ -6,9 +6,9 @@ type Tone = 'accent' | 'success' | 'warning' | 'danger' | 'neutral';
 
 const toneChip: Record<Tone, string> = {
   accent: 'bg-accent text-accent-foreground',
-  success: 'bg-[color-mix(in_srgb,var(--success)_14%,transparent)] text-success',
-  warning: 'bg-[color-mix(in_srgb,var(--warning)_16%,transparent)] text-warning',
-  danger: 'bg-[color-mix(in_srgb,var(--destructive)_14%,transparent)] text-destructive',
+  success: 'bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-success',
+  warning: 'bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] text-warning',
+  danger: 'bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)] text-destructive',
   neutral: 'bg-muted text-foreground/70',
 };
 

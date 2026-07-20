@@ -1,6 +1,8 @@
 'use client';
 import { useActionState } from 'react';
+import { Eye } from 'lucide-react';
 import { revealAction, type RevealState } from '../app/orders/[id]/actions';
+import { Button } from './ui/button';
 
 type MaskedField = { key: string; label: string; value: string; secret: boolean };
 
@@ -39,13 +41,10 @@ export function AssignmentLicenseCell({ assignmentId, kind, maskedPayload, maske
       {!revealed && (
         <form action={action}>
           <input type="hidden" name="assignmentId" value={assignmentId} />
-          <button
-            type="submit"
-            disabled={pending}
-            className="text-xs text-primary hover:underline disabled:opacity-50"
-          >
+          <Button type="submit" variant="ghost" size="sm" disabled={pending} className="h-7 gap-1.5 px-2 text-xs">
+            <Eye className="size-3.5" />
             {pending ? 'Gösteriliyor…' : 'Göster'}
-          </button>
+          </Button>
         </form>
       )}
       {revealed && <span className="text-[11px] text-warning">Gösterildi (audit'e düştü)</span>}

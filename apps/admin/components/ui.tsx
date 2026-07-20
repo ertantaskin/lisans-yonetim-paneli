@@ -33,9 +33,9 @@ const STATUS_LABEL: Record<string, string> = {
 export function StatusPill({ status }: { status: string }) {
   const color = STATUS_COLOR[status] ?? 'neutral';
   const styles: Record<string, string> = {
-    success: 'bg-[color-mix(in_srgb,var(--success)_14%,transparent)] text-success',
-    warning: 'bg-[color-mix(in_srgb,var(--warning)_16%,transparent)] text-warning',
-    danger: 'bg-[color-mix(in_srgb,var(--destructive)_14%,transparent)] text-destructive',
+    success: 'bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-success',
+    warning: 'bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] text-warning',
+    danger: 'bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)] text-destructive',
     neutral: 'bg-accent text-accent-foreground',
   };
   return (

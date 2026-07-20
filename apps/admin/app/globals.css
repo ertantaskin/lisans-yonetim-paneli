@@ -60,7 +60,7 @@
   /* Semantik durum (nötr temada da renkli tutulur — durum dili).
      Açık temada metin olarak da kullanıldığı için AA (>=4.5:1) sağlayacak
      koyulukta; koyu tema değerleri .dark'ta daha açık (zaten AA geçiyor). */
-  --success: oklch(0.515 0.14 152);
+  --success: oklch(0.47 0.13 152);
   --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.505 0.115 68);
   --warning-foreground: oklch(0.205 0 0);

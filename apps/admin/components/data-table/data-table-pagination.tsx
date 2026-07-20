@@ -22,7 +22,7 @@ export function DataTablePagination<TData>({ table }: { table: Table<TData> }) {
             value={`${pageSize}`}
             onValueChange={(v) => table.setPageSize(Number(v))}
           >
-            <SelectTrigger className="w-16">
+            <SelectTrigger className="w-16" aria-label="Sayfa boyu">
               <SelectValue placeholder={pageSize} />
             </SelectTrigger>
             <SelectContent>

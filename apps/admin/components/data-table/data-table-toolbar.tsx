@@ -32,6 +32,7 @@ export function DataTableToolbar<TData>({
       <div className="flex flex-1 flex-wrap items-center gap-2">
         {searchCol && (
           <Input
+            aria-label={searchPlaceholder}
             placeholder={searchPlaceholder}
             value={(searchCol.getFilterValue() as string) ?? ''}
             onChange={(e) => searchCol.setFilterValue(e.target.value)}

@@ -8,7 +8,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
       type={type}
       className={cn(
         'h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground shadow-sm outline-none transition-colors',
-        'placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
+        'placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
         'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
@@ -26,7 +26,7 @@ export const Textarea = React.forwardRef<
     ref={ref}
     className={cn(
       'w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground shadow-sm outline-none transition-colors',
-      'placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
+      'placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
       'disabled:cursor-not-allowed disabled:opacity-50',
       className,
     )}
@@ -43,3 +43,7 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
     />
   );
 }
+
+/** Native <select> için Input ile hizalı tek-kaynak stil (formlarda paylaşılır). */
+export const selectClass =
+  'h-9 rounded-md border border-border bg-background px-3 text-sm shadow-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50';
