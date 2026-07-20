@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiSend } from '../../lib/api';
+import { isOwner } from '../../lib/session';
 
 export interface CreateAdminState {
   ok?: boolean;
@@ -19,6 +20,7 @@ export async function createAdminAction(
   _prev: CreateAdminState,
   formData: FormData,
 ): Promise<CreateAdminState> {
+  if (!(await isOwner())) return { error: 'Bu işlem için owner yetkisi gerekir.' };
   const email = String(formData.get('email') ?? '').trim();
   const name = String(formData.get('name') ?? '').trim();
   const username = String(formData.get('username') ?? '').trim();
@@ -42,6 +44,7 @@ export async function createAdminAction(
 
 /** Admini pasifleştir/aktifleştir. Son aktif admin korumasında (400) sessizce no-op. */
 export async function toggleAdminAction(formData: FormData): Promise<void> {
+  if (!(await isOwner())) return;
   const id = String(formData.get('id'));
   const disabled = String(formData.get('disabled')) === 'true';
   try {
@@ -54,6 +57,7 @@ export async function toggleAdminAction(formData: FormData): Promise<void> {
 
 /** Admin parolasını sıfırla. */
 export async function resetAdminPasswordAction(formData: FormData): Promise<void> {
+  if (!(await isOwner())) return;
   const id = String(formData.get('id'));
   const password = String(formData.get('password') ?? '');
   if (password.length >= 8) {
@@ -68,6 +72,7 @@ export async function resetAdminPasswordAction(formData: FormData): Promise<void
 
 /** Admini sil. Son aktif admin korumasında (400) sessizce no-op. */
 export async function deleteAdminAction(formData: FormData): Promise<void> {
+  if (!(await isOwner())) return;
   const id = String(formData.get('id'));
   try {
     await apiSend('DELETE', `/v1/admin/users/${id}`);

@@ -13,10 +13,12 @@ import { CommandPalette } from './command-palette';
 export function AppShell({
   defaultOpen,
   user,
+  authOff,
   children,
 }: {
   defaultOpen: boolean;
-  user?: { name: string; email: string };
+  user?: { name: string; email: string; role?: string };
+  authOff?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -28,6 +30,12 @@ export function AppShell({
       <SidebarProvider defaultOpen={defaultOpen}>
         <AppSidebar user={user} />
         <SidebarInset>
+          {authOff && (
+            <div className="flex items-center justify-center gap-2 bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] px-4 py-1.5 text-center text-xs font-medium text-warning">
+              ⚠ Kimlik doğrulama KAPALI — panel herkese açık. Etkinleştirmek için SESSION_SECRET +
+              ADMIN_SEED_* ayarlayın.
+            </div>
+          )}
           <SiteHeader />
           <main className="min-w-0 flex-1 px-4 py-5 md:px-6 md:py-6">{children}</main>
         </SidebarInset>

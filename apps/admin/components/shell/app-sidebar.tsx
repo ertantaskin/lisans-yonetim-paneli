@@ -20,10 +20,12 @@ import {
 } from '../ui/sidebar';
 
 /** Uygulama kenar menüsü — marka + gruplu bilgi mimarisi + kullanıcı (§17). */
-export function AppSidebar({ user }: { user?: { name: string; email: string } }) {
+export function AppSidebar({ user }: { user?: { name: string; email: string; role?: string } }) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     href !== '#' && (pathname === href || pathname.startsWith(href + '/'));
+  // ownerOnly öğeler: auth kapalıysa (user yok) VEYA owner ise görünür.
+  const canSee = (item: { ownerOnly?: boolean }) => !item.ownerOnly || !user || user.role === 'owner';
 
   return (
     <Sidebar collapsible="icon">
@@ -48,12 +50,15 @@ export function AppSidebar({ user }: { user?: { name: string; email: string } })
       </SidebarHeader>
 
       <SidebarContent>
-        {NAV.map((section) => (
+        {NAV.map((section) => {
+          const items = section.items.filter(canSee);
+          if (items.length === 0) return null;
+          return (
           <SidebarGroup key={section.title}>
             <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {section.items.map((item) => {
+                {items.map((item) => {
                   const Icon = item.icon;
                   return (
                     <SidebarMenuItem key={item.label}>
@@ -83,7 +88,8 @@ export function AppSidebar({ user }: { user?: { name: string; email: string } })
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ))}
+          );
+        })}
       </SidebarContent>
 
       <SidebarFooter>

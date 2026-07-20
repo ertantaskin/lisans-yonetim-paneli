@@ -130,6 +130,7 @@ export interface AdminUser {
   name: string;
   role: string;
   disabled: boolean;
+  tokenVersion: number;
   lastLoginAt: string | null;
   createdAt: string;
 }

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { authEnabled, verifySession, SESSION_COOKIE } from './lib/auth';
+import { authEnabled, verifySession, validateSessionRemote, SESSION_COOKIE } from './lib/auth';
 
 /**
  * Auth gate. SESSION_SECRET set DEĞİLSE hiçbir şey yapmaz (gate kapalı, lockout riski yok).
@@ -15,7 +15,12 @@ export async function middleware(req: NextRequest) {
   }
 
   const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
-  if (session) return NextResponse.next();
+  if (session) {
+    // Uzak iptal kontrolü: admin pasif/silinmiş/tokenVersion değişmişse erişimi kes.
+    // API erişilemezse ('error') fail-open — imzalı token yeterli, kilitlenme yok.
+    const state = await validateSessionRemote(session.sub, session.ver);
+    if (state !== 'invalid') return NextResponse.next();
+  }
 
   const url = req.nextUrl.clone();
   url.pathname = '/login';

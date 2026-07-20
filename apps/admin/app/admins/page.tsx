@@ -1,11 +1,30 @@
+import { ShieldAlert } from 'lucide-react';
 import { apiGet, type AdminUser } from '../../lib/api';
+import { isOwner } from '../../lib/session';
 import { Card, PageHeader } from '../../components/ui';
+import { EmptyState } from '../../components/ui/page-header';
 import { CreateAdminForm } from '../../components/create-admin-form';
 import { AdminsTable } from '../../components/admins-table';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminsPage() {
+  // Yalnız owner yönetebilir (auth açıkken). Defense-in-depth: nav gizli + burada da engel.
+  if (!(await isOwner())) {
+    return (
+      <div>
+        <PageHeader title="Yöneticiler" />
+        <Card className="py-10">
+          <EmptyState
+            icon={ShieldAlert}
+            title="Yetkiniz yok"
+            description="Admin yönetimi yalnız 'owner' rolündeki yöneticiler içindir."
+          />
+        </Card>
+      </div>
+    );
+  }
+
   let admins: AdminUser[] = [];
   let error: string | null = null;
   try {

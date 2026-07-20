@@ -20,11 +20,18 @@ export function CreateAdminForm() {
     <form ref={formRef} action={action} className="grid gap-3 sm:grid-cols-2">
       <div className="space-y-1.5">
         <Label htmlFor="a-name">Ad</Label>
-        <Input id="a-name" name="name" required placeholder="Ad Soyad" />
+        <Input id="a-name" name="name" required placeholder="Ad Soyad" autoComplete="off" />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="a-email">E-posta</Label>
-        <Input id="a-email" name="email" type="email" required placeholder="admin@ornek.com" />
+        <Input
+          id="a-email"
+          name="email"
+          type="email"
+          required
+          placeholder="admin@ornek.com"
+          autoComplete="off"
+        />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="a-username">Kullanıcı adı (opsiyonel)</Label>
@@ -53,8 +60,10 @@ export function CreateAdminForm() {
         <Button type="submit" disabled={pending}>
           <UserPlus /> {pending ? 'Ekleniyor…' : 'Admin Ekle'}
         </Button>
-        {state.error && <p className="text-sm text-destructive">{state.error}</p>}
-        {state.ok && <p className="text-sm text-success">Admin eklendi.</p>}
+        <p role="alert" aria-live="polite" className="text-sm">
+          {state.error && <span className="text-destructive">{state.error}</span>}
+          {state.ok && <span className="text-success">Admin eklendi.</span>}
+        </p>
       </div>
     </form>
   );

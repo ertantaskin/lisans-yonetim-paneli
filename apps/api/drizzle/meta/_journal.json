@@ -57,6 +57,13 @@
       "when": 1784576542449,
       "tag": "0007_jittery_prima",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784578293843,
+      "tag": "0008_useful_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

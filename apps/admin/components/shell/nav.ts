@@ -18,6 +18,8 @@ export interface NavItem {
   href: string;
   icon: LucideIcon;
   soon?: boolean;
+  /** Yalnız owner rolüne görünür (auth açıkken). */
+  ownerOnly?: boolean;
 }
 export interface NavSection {
   title: string;
@@ -42,7 +44,7 @@ export const NAV: NavSection[] = [
   },
   {
     title: 'Sistem',
-    items: [{ label: 'Yöneticiler', href: '/admins', icon: ShieldCheck }],
+    items: [{ label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true }],
   },
   {
     title: 'Yakında',

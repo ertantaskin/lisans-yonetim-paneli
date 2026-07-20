@@ -12,6 +12,8 @@ export interface SessionPayload {
   sub: string; // admin id
   email: string;
   name: string;
+  role: string; // owner | admin
+  ver: number; // tokenVersion — iptal kontrolü
   exp: number; // unix saniye
 }
 
@@ -48,10 +50,10 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-/** İmzalı oturum token'ı üretir (route handler, login sonrası). */
+/** İmzalı oturum token'ı üretir (route handler, login sonrası). TTL kısa (iptal + uzak doğrulama var). */
 export async function createSession(
   user: Omit<SessionPayload, 'exp'>,
-  ttlSec = 60 * 60 * 24 * 7,
+  ttlSec = 60 * 60 * 12, // 12 saat
 ): Promise<string> {
   const secret = sessionSecret();
   if (!secret) throw new Error('SESSION_SECRET tanımlı değil');
@@ -87,4 +89,31 @@ export async function verifySession(token: string | undefined): Promise<SessionP
   }
   if (typeof payload.exp !== 'number' || payload.exp * 1000 < Date.now()) return null;
   return payload;
+}
+
+/**
+ * Uzak oturum doğrulama (middleware): admin API'de var + aktif + tokenVersion eşleşiyor mu.
+ * Böylece pasifleştirilen/silinen/parolası sıfırlanan admin ANINDA erişimini kaybeder (§8).
+ * API erişilemezse 'error' → FAIL-OPEN (imzalı token yine geçerli; iptal gecikir, kilitlenme olmaz).
+ */
+export async function validateSessionRemote(
+  sub: string,
+  ver: number,
+): Promise<'valid' | 'invalid' | 'error'> {
+  const url = process.env.API_URL;
+  const token = process.env.ADMIN_TOKEN;
+  if (!url || !token) return 'error';
+  try {
+    const res = await fetch(`${url}/v1/admin/auth/validate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-admin-token': token },
+      body: JSON.stringify({ sub, ver }),
+      cache: 'no-store',
+    });
+    if (!res.ok) return 'error';
+    const data = (await res.json()) as { valid: boolean };
+    return data.valid ? 'valid' : 'invalid';
+  } catch {
+    return 'error';
+  }
 }

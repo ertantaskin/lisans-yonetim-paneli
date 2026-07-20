@@ -18,6 +18,9 @@ import { AdminUsersService } from './admin-users.service';
 const LoginBody = z.object({ identifier: z.string().min(1), password: z.string().min(1) });
 type LoginBody = z.infer<typeof LoginBody>;
 
+const ValidateBody = z.object({ sub: z.string().uuid(), ver: z.number().int().nonnegative() });
+type ValidateBody = z.infer<typeof ValidateBody>;
+
 const CreateBody = z.object({
   email: z.string().email(),
   username: z.string().min(3).optional(),
@@ -44,6 +47,13 @@ export class AdminAuthController {
     const user = await this.users.verifyCredentials(body.identifier, body.password);
     if (!user) throw new UnauthorizedException('Geçersiz kimlik veya parola');
     return { user };
+  }
+
+  /** Oturum iptali kontrolü (middleware): admin var + aktif + tokenVersion eşleşiyor mu. */
+  @Post('validate')
+  async validate(@Body(new ZodBody(ValidateBody)) body: ValidateBody) {
+    const user = await this.users.validateSession(body.sub, body.ver);
+    return { valid: user !== null, user: user ?? undefined };
   }
 }
 

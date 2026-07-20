@@ -5,7 +5,7 @@ import { Toaster } from 'sonner';
 import { ThemeProvider } from '../components/theme';
 import { TooltipProvider } from '../components/ui/tooltip';
 import { AppShell } from '../components/shell/app-shell';
-import { verifySession, SESSION_COOKIE } from '../lib/auth';
+import { authEnabled, verifySession, SESSION_COOKIE } from '../lib/auth';
 import './globals.css';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
@@ -23,7 +23,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   // Oturumdaki admin (nav-user'da gösterilir). Auth kapalıysa null.
   const session = await verifySession(cookieStore.get(SESSION_COOKIE)?.value);
-  const user = session ? { name: session.name, email: session.email } : undefined;
+  const user = session
+    ? { name: session.name, email: session.email, role: session.role }
+    : undefined;
 
   // Arayüz Türkçe-öncelikli (§17).
   return (
@@ -31,7 +33,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <body>
         <ThemeProvider>
           <TooltipProvider delayDuration={200}>
-            <AppShell defaultOpen={defaultOpen} user={user}>
+            <AppShell defaultOpen={defaultOpen} user={user} authOff={!authEnabled()}>
               {children}
             </AppShell>
             <Toaster

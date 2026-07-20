@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 /**
  * admin_users — panel yöneticileri (§8). Çoklu admin; e-posta VEYA kullanıcı adı + parola.
@@ -14,6 +14,8 @@ export const adminUsers = pgTable('admin_users', {
   passwordHash: text('password_hash').notNull(),
   role: text('role').notNull().default('admin'),
   disabled: boolean('disabled').notNull().default(false),
+  /** Oturum iptali için: disable/delete/parola-sıfırlama'da +1 → eski token'lar geçersizleşir (§8). */
+  tokenVersion: integer('token_version').notNull().default(0),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

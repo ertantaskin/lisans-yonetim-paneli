@@ -30,9 +30,10 @@ export function LoginForm({ from, error }: { from: string; error?: 'bad' | 'api'
           placeholder="••••••••"
         />
       </div>
-      {error === 'bad' && <p className="text-sm text-destructive">Kullanıcı adı/parola hatalı.</p>}
-      {error === 'api' && (
-        <p className="text-sm text-destructive">Sunucuya ulaşılamadı, tekrar deneyin.</p>
+      {(error === 'bad' || error === 'api') && (
+        <p role="alert" className="text-sm text-destructive">
+          {error === 'bad' ? 'Kullanıcı adı/parola hatalı.' : 'Sunucuya ulaşılamadı, tekrar deneyin.'}
+        </p>
       )}
       <Button type="submit" className="w-full">
         <LogIn /> Giriş Yap

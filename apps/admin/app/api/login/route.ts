@@ -9,7 +9,16 @@ import { authEnabled, createSession, SESSION_COOKIE } from '@/lib/auth';
 export async function POST(req: NextRequest) {
   const form = await req.formData();
   const from = String(form.get('from') ?? '/');
-  const to = from.startsWith('/') && !from.startsWith('//') ? from : '/';
+  // Açık yönlendirme koruması: `from`'u origin'e göre çöz; yalnız AYNI origin'e izin ver.
+  // (/\evil.com gibi ters-eğik-çizgi authority kaçışlarını da kapatır.)
+  let to = '/';
+  try {
+    const origin = new URL(req.url).origin;
+    const u = new URL(from, origin);
+    if (u.origin === origin) to = u.pathname + u.search;
+  } catch {
+    to = '/';
+  }
 
   if (!authEnabled()) return NextResponse.redirect(new URL('/', req.url), 303); // gate kapalı
 
@@ -26,7 +35,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.redirect(new URL(`/login?error=1&from=${encodeURIComponent(to)}`, req.url), 303);
   }
 
-  const token = await createSession({ sub: user.id, email: user.email, name: user.name });
+  const token = await createSession({
+    sub: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    ver: user.tokenVersion,
+  });
   const res = NextResponse.redirect(new URL(to, req.url), 303);
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
