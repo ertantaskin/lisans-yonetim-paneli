@@ -25,7 +25,7 @@ export default async function LoginPage({
           <p className="text-sm text-muted-foreground">Devam etmek için parolanızı girin</p>
         </div>
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
-          <LoginForm from={from ?? '/'} error={error === '1' ? 'bad' : error === 'api' ? 'api' : undefined} />
+          <LoginForm from={from ?? '/pending'} error={error === '1' ? 'bad' : error === 'api' ? 'api' : undefined} />
         </div>
         <p className="mt-4 text-center text-xs text-muted-foreground">Tedarik &amp; Yönetim</p>
       </div>

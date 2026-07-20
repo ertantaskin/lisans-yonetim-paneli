@@ -8,10 +8,10 @@ import { authEnabled, createSession, SESSION_COOKIE } from '@/lib/auth';
  */
 export async function POST(req: NextRequest) {
   const form = await req.formData();
-  const from = String(form.get('from') ?? '/');
+  const from = String(form.get('from') ?? '/pending');
   // Açık yönlendirme koruması: `from`'u origin'e göre çöz; yalnız AYNI origin'e izin ver.
   // (/\evil.com gibi ters-eğik-çizgi authority kaçışlarını da kapatır.)
-  let to = '/';
+  let to = '/pending';
   try {
     const origin = new URL(req.url).origin;
     const u = new URL(from, origin);
@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     to = '/';
   }
 
-  if (!authEnabled()) return NextResponse.redirect(new URL('/', req.url), 303); // gate kapalı
+  if (!authEnabled()) return NextResponse.redirect(new URL('/pending', req.url), 303); // gate kapalı
 
   const identifier = String(form.get('identifier') ?? '').trim();
   const password = String(form.get('password') ?? '');

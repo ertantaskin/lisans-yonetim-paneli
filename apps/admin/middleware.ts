@@ -6,9 +6,20 @@ import { authEnabled, verifySession, validateSessionRemote, SESSION_COOKIE } fro
  * Set ise: geçerli imzalı oturumu olmayan istekleri /login'e yönlendirir.
  */
 export async function middleware(req: NextRequest) {
+  const { pathname, search } = req.nextUrl;
+
+  // Kök yolu → /pending: TEMİZ server 307. (app/page.tsx redirect'i async root layout
+  // stream'e başladığından meta-refresh'e düşüyordu → login sonrası boş kabuk. Middleware
+  // render'dan ÖNCE çalışır, gerçek yönlendirme verir.) Auth açık/kapalı fark etmez.
+  if (pathname === '/') {
+    const url = req.nextUrl.clone();
+    url.pathname = '/pending';
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
+
   if (!authEnabled()) return NextResponse.next(); // gate kapalı
 
-  const { pathname, search } = req.nextUrl;
   // Login/logout uçları gate'ten muaf (aksi halde giriş POST'u bounce olur).
   if (pathname === '/login' || pathname === '/api/login' || pathname === '/api/logout') {
     return NextResponse.next();
