@@ -1,0 +1,56 @@
+<?php
+if (!defined('ABSPATH')) exit;
+
+/**
+ * Panel geri kanal webhook alıcısı (§2). HMAC doğrular, order meta'yı günceller.
+ * Bayat webhook (bozuk imza / zaman penceresi dışı) reddedilir.
+ */
+class Jetlisans_Webhook {
+    private static $instance = null;
+    public static function instance() {
+        if (self::$instance === null) self::$instance = new self();
+        return self::$instance;
+    }
+
+    private function __construct() {
+        add_action('rest_api_init', [$this, 'register']);
+    }
+
+    public function register() {
+        register_rest_route('jetlisans/v1', '/webhook', [
+            'methods'             => 'POST',
+            'callback'            => [$this, 'handle'],
+            'permission_callback' => '__return_true', // imza ile korunur
+        ]);
+    }
+
+    public function handle(WP_REST_Request $request) {
+        $raw = $request->get_body();
+        $ts = $request->get_header('x-timestamp');
+        $nonce = $request->get_header('x-nonce');
+        $sig = $request->get_header('x-signature');
+        $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+
+        if (!Jetlisans_Panel_Client::verify_webhook('POST', $path, $ts, $nonce, $raw, $sig)) {
+            return new WP_REST_Response(['error' => 'invalid_signature'], 401);
+        }
+
+        $body = json_decode($raw, true);
+        if (!is_array($body) || empty($body['remoteOrderId'])) {
+            return new WP_REST_Response(['error' => 'bad_request'], 400);
+        }
+
+        $order = wc_get_order((int) $body['remoteOrderId']);
+        if ($order) {
+            $status = isset($body['status']) ? sanitize_text_field($body['status']) : '';
+            if ($status) {
+                $order->update_meta_data('_jetlisans_status', $status);
+                $order->save();
+            }
+            $event = isset($body['event']) ? sanitize_text_field($body['event']) : 'update';
+            $order->add_order_note(sprintf('Jetlisans: %s (durum: %s)', $event, $status));
+        }
+
+        return new WP_REST_Response(['ok' => true], 200);
+    }
+}

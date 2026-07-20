@@ -1,0 +1,56 @@
+# WordPress + WooCommerce test ortamı — WP eklentisini panele karşı doğrulamak için.
+# Panel stack'i ayaktayken: docker compose -f docker-compose.wp.yml up -d
+# Panel ağına (external) bağlanır; WP → http://api:3001, panel → http://wordpress.
+
+services:
+  wp-mysql:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp
+      MYSQL_PASSWORD: wp
+    volumes:
+      - wp_mysql:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-proot']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  wordpress:
+    image: wordpress:6-php8.2-apache
+    restart: unless-stopped
+    depends_on:
+      wp-mysql:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: wp-mysql
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - wp_data:/var/www/html
+      - ./apps/wp-plugin/jetlisans:/var/www/html/wp-content/plugins/jetlisans:ro
+    ports:
+      - '127.0.0.1:8090:80'
+
+  wpcli:
+    image: wordpress:cli-php8.2
+    depends_on:
+      - wordpress
+    user: '33:33'
+    volumes:
+      - wp_data:/var/www/html
+      - ./apps/wp-plugin/jetlisans:/var/www/html/wp-content/plugins/jetlisans:ro
+    entrypoint: ['tail', '-f', '/dev/null']
+
+volumes:
+  wp_mysql:
+  wp_data:
+
+networks:
+  default:
+    external: true
+    name: lisans-yonetim-paneli_default
