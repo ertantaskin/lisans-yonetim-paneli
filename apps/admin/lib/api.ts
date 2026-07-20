@@ -1,0 +1,86 @@
+import 'server-only';
+
+/**
+ * Sunucu-taraflı API istemcisi. ADMIN_TOKEN yalnız Next sunucusunda kalır,
+ * tarayıcıya ASLA gönderilmez. Tüm admin çağrıları buradan geçer.
+ */
+const API_URL = process.env.API_URL ?? 'http://localhost:3001';
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
+
+function headers(withBody: boolean): Record<string, string> {
+  const h: Record<string, string> = { 'x-admin-token': ADMIN_TOKEN };
+  if (withBody) h['content-type'] = 'application/json';
+  return h;
+}
+
+export async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: headers(false),
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: headers(body !== undefined),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST ${path} → ${res.status} ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ── Paylaşılan tipler (API yanıtları) ───────────────────────────────────────
+export interface OrderRow {
+  id: string;
+  remoteOrderId: string;
+  customerEmail: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface ProductRow {
+  id: string;
+  sku: string;
+  name: string;
+  kind: string;
+  usageMode: string;
+  fulfillmentPolicy: string;
+  availableStock: number;
+}
+
+export interface SiteRow {
+  id: string;
+  domain: string;
+  type: string;
+  status: string;
+  senderEmail: string | null;
+}
+
+export interface OrderDetail {
+  order: OrderRow & { siteId: string };
+  lines: Array<{
+    id: string;
+    remoteLineId: string;
+    qty: number;
+    fulfilledQty: number;
+    status: string;
+    productId: string | null;
+  }>;
+  assignments: Array<{
+    id: string;
+    lineId: string;
+    status: string;
+    units: number;
+    maskedPayload: string;
+    validUntil: string | null;
+  }>;
+  events: Array<{ id: string; type: string; message: string | null; createdAt: string }>;
+  emails: Array<{ id: string; toEmail: string; subject: string; status: string }>;
+}

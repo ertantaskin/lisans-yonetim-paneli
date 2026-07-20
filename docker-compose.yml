@@ -38,6 +38,14 @@ services:
       retries: 10
     # ports: ['6379:6379']  # yalnız gerekirse
 
+  # Dev SMTP yakalama sunucusu — gerçek mail göndermez, web UI :8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 5000
+    # Web arayüzü lokalde: override ile 127.0.0.1:8025 yayınlanır.
+
   api:
     build:
       context: .
@@ -48,6 +56,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       API_PORT: 3001
@@ -55,6 +65,9 @@ services:
       REDIS_URL: ${REDIS_URL}
       MASTER_KEY: ${MASTER_KEY}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MAIL_FROM: ${MAIL_FROM:-Jetlisans <teslimat@jetlisans.local>}
       SENTRY_DSN: ${SENTRY_DSN}
     # Açılışta migration'ları uygula, sonra servisi başlat.
     command: ['sh', '-c', 'node dist/db/migrate.js && node dist/main.js']
@@ -70,9 +83,11 @@ services:
       - api
     environment:
       NODE_ENV: ${NODE_ENV:-production}
-      # Sunucu-taraflı fetch (health) container ağı içinde api'ye gider —
+      # Sunucu-taraflı fetch container ağı içinde api'ye gider —
       # NEXT_PUBLIC_ DEĞİL, runtime'da okunur, build'e gömülmez.
       API_URL: http://api:3001
+      # Admin token yalnız sunucuda (Next server) — tarayıcıya ASLA düşmez.
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
       # Tarayıcı-taraflı çağrılar (ileride) Caddy üzerinden dış URL'e gider.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.localhost}
     expose:

@@ -4,11 +4,13 @@ import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import { licenseItems, type NewLicenseItem } from '../db/schema';
 import { ProductsService } from '../products/products.service';
+import { FulfillmentService } from '../orders/fulfillment.service';
 
 export interface ImportResult {
   requested: number;
   imported: number;
   duplicates: number;
+  autoCompleted: number;
 }
 
 @Injectable()
@@ -17,6 +19,7 @@ export class StockService {
     @Inject(DB) private readonly db: Database,
     private readonly crypto: CryptoService,
     private readonly products: ProductsService,
+    private readonly fulfillment: FulfillmentService,
   ) {}
 
   /**
@@ -41,7 +44,7 @@ export class StockService {
       status: 'available',
     }));
 
-    if (values.length === 0) return { requested: 0, imported: 0, duplicates: 0 };
+    if (values.length === 0) return { requested: 0, imported: 0, duplicates: 0, autoCompleted: 0 };
 
     const inserted = await this.db
       .insert(licenseItems)
@@ -49,10 +52,17 @@ export class StockService {
       .onConflictDoNothing({ target: licenseItems.payloadHash })
       .returning({ id: licenseItems.id });
 
+    // Stok girişinde tamamlama motorunu tetikle (§5 partial-auto FIFO).
+    let autoCompleted = 0;
+    if (inserted.length > 0) {
+      autoCompleted = await this.fulfillment.autoCompleteProduct(productId);
+    }
+
     return {
       requested: items.length,
       imported: inserted.length,
       duplicates: items.length - inserted.length,
+      autoCompleted,
     };
   }
 

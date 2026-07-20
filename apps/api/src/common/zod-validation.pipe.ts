@@ -9,7 +9,9 @@ export class ZodBody<T> implements PipeTransform {
   constructor(private readonly schema: ZodSchema<T>) {}
 
   transform(value: unknown): T {
-    const result = this.schema.safeParse(value);
+    // Boş gövde (POST body yok) → {} : yalnız opsiyonel alanlı şemalar geçebilsin.
+    const input = value === undefined || value === null ? {} : value;
+    const result = this.schema.safeParse(input);
     if (!result.success) {
       throw new BadRequestException({
         error: 'validation_error',

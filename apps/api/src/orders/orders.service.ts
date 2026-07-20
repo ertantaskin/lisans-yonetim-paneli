@@ -20,11 +20,9 @@ import {
 } from '../db/schema';
 import { CryptoService } from '../crypto/crypto.service';
 import { ProductsService } from '../products/products.service';
-import {
-  assignAvailableSingleUse,
-  consumeMultiUseCapacity,
-  releaseToAvailable,
-} from '../assignment/assign';
+import { MailService } from '../mail/mail.service';
+import { releaseToAvailable } from '../assignment/assign';
+import { allocate } from '../assignment/allocate';
 
 export interface CreateOrderOutcome {
   httpStatus: number;
@@ -37,6 +35,7 @@ export class OrdersService {
     @Inject(DB) private readonly db: Database,
     private readonly products: ProductsService,
     private readonly crypto: CryptoService,
+    private readonly mail: MailService,
   ) {}
 
   /**
@@ -175,11 +174,8 @@ export class OrdersService {
           .returning();
         const orderLine = ol!;
 
-        // Atama — tek/çok kullanımlık.
-        const allocations =
-          product.usageMode === 'multi'
-            ? await this.allocateMulti(tx, mapping.productId, requiredUnits)
-            : await this.allocateSingle(tx, mapping.productId, requiredUnits);
+        // Atama — tek/çok kullanımlık (ortak allocate).
+        const allocations = await allocate(tx, product, requiredUnits);
 
         let fulfilledUnits = allocations.reduce((s, a) => s + a.units, 0);
 
@@ -272,32 +268,16 @@ export class OrdersService {
       } satisfies CreateOrderResponse;
     });
 
-    return this.buildOutcome(result);
-  }
-
-  /** Tek kullanımlık atama: her satır 1 unit. */
-  private async allocateSingle(
-    tx: Database,
-    productId: string,
-    units: number,
-  ): Promise<Array<{ licenseItemId: string; units: number }>> {
-    const ids = await assignAvailableSingleUse(tx, productId, units);
-    return ids.map((id) => ({ licenseItemId: id, units: 1 }));
-  }
-
-  /** Çok kullanımlık atama: kapasite key'ler arasında dağıtılır, key başına gruplanır. */
-  private async allocateMulti(
-    tx: Database,
-    productId: string,
-    units: number,
-  ): Promise<Array<{ licenseItemId: string; units: number }>> {
-    const byKey = new Map<string, number>();
-    for (let i = 0; i < units; i++) {
-      const id = await consumeMultiUseCapacity(tx, productId, 1);
-      if (!id) break;
-      byKey.set(id, (byKey.get(id) ?? 0) + 1);
+    // Atama yapıldıysa teslimat mailini kuyruğa al (asenkron, §2/§6).
+    if (result.assignments.length > 0) {
+      await this.mail.enqueueDelivery(
+        result.orderId,
+        dto.customerEmail,
+        `Siparişiniz hazır — ${dto.remoteOrderId}`,
+      );
     }
-    return [...byKey.entries()].map(([licenseItemId, u]) => ({ licenseItemId, units: u }));
+
+    return this.buildOutcome(result);
   }
 
   /** Mevcut siparişin sonucunu (idempotent tekrar için) yeniden kurar. */
