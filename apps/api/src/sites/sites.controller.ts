@@ -38,6 +38,12 @@ export class SitesController {
     return this.sites.list();
   }
 
+  /** Site 360 detayı (§8/§14): config + kota kullanımı + son siparişler. SIR dönmez. */
+  @Get(':id/detail')
+  detail(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.sites.detail(id);
+  }
+
   /** Operasyon ayarları güncelle (§5/§14): günlük satış kotası + sandbox. Audit'e düşer. */
   @Patch(':id')
   update(

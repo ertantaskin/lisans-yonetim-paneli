@@ -1,10 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq, gte, sql } from 'drizzle-orm';
 import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
-import { auditLog, sites, type Site } from '../db/schema';
+import { auditLog, orders, siteProductMappings, sites, type Site } from '../db/schema';
 
 export interface CreatedSite {
   id: string;
@@ -13,6 +13,27 @@ export interface CreatedSite {
   apiKey: string;
   /** Yalnız oluşturmada bir kez döner (şifreli saklanır). */
   hmacSecret: string;
+}
+
+/** Site 360 detayı (§8/§14) — SIR (hmac_secret/api_key) İÇERMEZ. */
+export interface SiteDetail {
+  site: {
+    id: string;
+    domain: string;
+    type: string;
+    status: string;
+    senderEmail: string | null;
+    salesDailyQuota: number | null;
+    sandbox: boolean;
+    createdAt: string;
+  };
+  /** Aktif ürün eşleme sayısı (site_product_mappings). */
+  mappingCount: number;
+  /** Bu siteden bugüne dek push edilmiş toplam sipariş sayısı. */
+  orderCount: number;
+  /** Bugünkü sipariş sayısı — SalesQuotaGuard ile AYNI pencere (kota kullanımı). */
+  todayOrderCount: number;
+  recentOrders: Array<{ id: string; remoteOrderId: string; status: string; createdAt: string }>;
 }
 
 /** API anahtarı hash'i — sabit sha256 (DB'de düz anahtar durmaz). */
@@ -183,5 +204,63 @@ export class SitesService {
     const [site] = await this.db.select().from(sites).where(eq(sites.id, id)).limit(1);
     if (!site) throw new NotFoundException('Site bulunamadı');
     return site;
+  }
+
+  /**
+   * Site 360 detayı (§8/§14): yapılandırma + kota kullanımı + son siparişler.
+   * SIR (hmac_secret/api_key) yanıta HİÇ konmaz — yalnız güvenli alanlar döner.
+   * Sayımlar salt-okunur agregasyon; todayOrderCount SalesQuotaGuard ile aynı
+   * pencere (date_trunc('day', now())) → kota kullanımı birebir tutarlı.
+   */
+  async detail(id: string): Promise<SiteDetail> {
+    const site = await this.getById(id); // yoksa 404
+
+    const [mappingRow, orderRow, todayRow, recentOrders] = await Promise.all([
+      this.db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(siteProductMappings)
+        .where(and(eq(siteProductMappings.siteId, id), eq(siteProductMappings.active, true))),
+      this.db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(eq(orders.siteId, id)),
+      this.db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(and(eq(orders.siteId, id), gte(orders.createdAt, sql`date_trunc('day', now())`))),
+      this.db
+        .select({
+          id: orders.id,
+          remoteOrderId: orders.remoteOrderId,
+          status: orders.status,
+          createdAt: orders.createdAt,
+        })
+        .from(orders)
+        .where(eq(orders.siteId, id))
+        .orderBy(sql`${orders.createdAt} DESC`)
+        .limit(10),
+    ]);
+
+    return {
+      site: {
+        id: site.id,
+        domain: site.domain,
+        type: site.type,
+        status: site.status,
+        senderEmail: site.senderEmail,
+        salesDailyQuota: site.salesDailyQuota,
+        sandbox: site.sandbox,
+        createdAt: site.createdAt.toISOString(),
+      },
+      mappingCount: mappingRow[0]?.count ?? 0,
+      orderCount: orderRow[0]?.count ?? 0,
+      todayOrderCount: todayRow[0]?.count ?? 0,
+      recentOrders: recentOrders.map((o) => ({
+        id: o.id,
+        remoteOrderId: o.remoteOrderId,
+        status: o.status,
+        createdAt: o.createdAt.toISOString(),
+      })),
+    };
   }
 }

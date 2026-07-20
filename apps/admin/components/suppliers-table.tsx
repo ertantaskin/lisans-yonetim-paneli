@@ -1,7 +1,8 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
-import { MoreHorizontal, Pencil, Power, PowerOff, TriangleAlert } from 'lucide-react';
+import { BarChart3, MoreHorizontal, Pencil, Power, PowerOff, TriangleAlert } from 'lucide-react';
 import type { SupplierRow } from '@/app/suppliers/queries';
 import { setSupplierActiveAction } from '@/app/suppliers/actions';
 import { Badge } from './ui/badge';
@@ -52,6 +53,12 @@ function SupplierRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        <DropdownMenuItem asChild>
+          <Link href={`/suppliers/${supplier.id}`}>
+            <BarChart3 />
+            Karne
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => onEdit(supplier)}>
           <Pencil />
           Düzenle
@@ -80,7 +87,14 @@ export function SuppliersTable({ suppliers }: { suppliers: SupplierRow[] }) {
         accessorKey: 'name',
         meta: { title: 'Ad' },
         header: ({ column }) => <DataTableColumnHeader column={column} title="Ad" />,
-        cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+        cell: ({ row }) => (
+          <Link
+            href={`/suppliers/${row.original.id}`}
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {row.original.name}
+          </Link>
+        ),
         filterFn: 'includesString',
       },
       {

@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { KeyRound, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
 import type { SiteRow } from '../lib/api';
@@ -22,7 +23,14 @@ const baseColumns: ColumnDef<SiteRow>[] = [
     accessorKey: 'domain',
     meta: { title: 'Domain' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Domain" />,
-    cell: ({ row }) => <span className="font-medium">{row.original.domain}</span>,
+    cell: ({ row }) => (
+      <Link
+        href={`/sites/${row.original.id}`}
+        className="font-medium text-foreground hover:underline"
+      >
+        {row.original.domain}
+      </Link>
+    ),
     filterFn: 'includesString',
   },
   {

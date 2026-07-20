@@ -9,6 +9,42 @@ import {
   type Product,
 } from '../db/schema';
 
+/** Ürün detay sayfası (§13) — salt-okunur agregasyon, mevcut tablolardan türetilir. */
+export interface ProductDetail {
+  product: Product;
+  /** license_items status kırılımı. available = kalan kapasite (Σ max_uses−use_count), diğerleri satır sayısı. */
+  stock: {
+    available: number;
+    assigned: number;
+    revoked: number;
+    expired: number;
+    voided: number;
+  };
+  batches: Array<{ id: string; label: string; status: string; qtyReceived: number }>;
+  purchaseOrders: Array<{
+    id: string;
+    status: string;
+    qtyOrdered: number;
+    qtyReceived: number;
+    eta: string | null;
+  }>;
+  velocity: {
+    sold7d: number;
+    sold30d: number;
+    /** sold30d / 30. */
+    dailyRate: number;
+    /** available / dailyRate (yuvarlanmış); dailyRate=0 ise null. */
+    daysRemaining: number | null;
+  };
+  adjustments: Array<{
+    id: string;
+    action: string;
+    qty: number;
+    reason: string;
+    createdAt: string;
+  }>;
+}
+
 @Injectable()
 export class ProductsService {
   constructor(@Inject(DB) private readonly db: Database) {}
@@ -44,6 +80,175 @@ export class ProductsService {
     const [row] = await this.db.select().from(products).where(eq(products.id, id)).limit(1);
     if (!row) throw new NotFoundException('Ürün bulunamadı');
     return row;
+  }
+
+  /**
+   * Ürün detay panosu (§13) — salt-okunur agregasyon. Ürünü getById ile çözer
+   * (yoksa 404), ardından stok kırılımı / parti / satın-alma emri / satış hızı /
+   * stok düzeltmelerini mevcut tablolardan (license_items, batches, purchase_orders,
+   * assignments, stock_adjustments) toplar. Hiçbir yazma/yan etki yok.
+   */
+  async getDetail(id: string): Promise<ProductDetail> {
+    const product = await this.getById(id);
+
+    const [stock, batches, purchaseOrders, velocity, adjustments] = await Promise.all([
+      this.detailStock(id),
+      this.detailBatches(id),
+      this.detailPurchaseOrders(id),
+      this.detailVelocity(id),
+      this.detailAdjustments(id),
+    ]);
+
+    // Tükenme tahmini: kalan available kapasitesini günlük satış hızına böl.
+    const dailyRate = velocity.sold30d / 30;
+    const daysRemaining =
+      dailyRate > 0 ? Math.round(stock.available / dailyRate) : null;
+
+    return {
+      product,
+      stock,
+      batches,
+      purchaseOrders,
+      velocity: {
+        sold7d: velocity.sold7d,
+        sold30d: velocity.sold30d,
+        // dailyRate sunum için 2 ondalığa; daysRemaining ham orandan hesaplandı.
+        dailyRate: Math.round(dailyRate * 100) / 100,
+        daysRemaining,
+      },
+      adjustments,
+    };
+  }
+
+  /**
+   * license_items status kırılımı. available = kalan kapasite (Σ max_uses−use_count,
+   * products.list/reports ile AYNI semantik); assigned/revoked/expired/voided = satır sayısı.
+   */
+  private async detailStock(id: string): Promise<ProductDetail['stock']> {
+    const rows = await this.db.execute<{ status: string; cnt: number; remaining: number }>(sql`
+      SELECT
+        status,
+        count(*)::int AS cnt,
+        coalesce(sum(max_uses - use_count), 0)::int AS remaining
+      FROM license_items
+      WHERE product_id = ${id}
+      GROUP BY status;
+    `);
+    const list = rows as unknown as Array<{ status: string; cnt: number; remaining: number }>;
+    const by: Record<string, { cnt: number; remaining: number }> = {};
+    for (const r of list) by[r.status] = { cnt: Number(r.cnt), remaining: Number(r.remaining) };
+    return {
+      available: by['available']?.remaining ?? 0,
+      assigned: by['assigned']?.cnt ?? 0,
+      revoked: by['revoked']?.cnt ?? 0,
+      expired: by['expired']?.cnt ?? 0,
+      voided: by['voided']?.cnt ?? 0,
+    };
+  }
+
+  /** Bu ürüne bağlı teslim partileri (§12), en yeni önce. */
+  private async detailBatches(id: string): Promise<ProductDetail['batches']> {
+    const rows = await this.db.execute<{
+      id: string;
+      label: string;
+      status: string;
+      qty_received: number;
+    }>(sql`
+      SELECT id, label, status, qty_received
+      FROM batches
+      WHERE product_id = ${id}
+      ORDER BY received_at DESC, created_at DESC;
+    `);
+    const list = rows as unknown as Array<{
+      id: string;
+      label: string;
+      status: string;
+      qty_received: number;
+    }>;
+    return list.map((r) => ({
+      id: r.id,
+      label: r.label,
+      status: r.status,
+      qtyReceived: Number(r.qty_received),
+    }));
+  }
+
+  /** Bu ürüne verilmiş satın alma emirleri (§12), en yeni önce. */
+  private async detailPurchaseOrders(id: string): Promise<ProductDetail['purchaseOrders']> {
+    const rows = await this.db.execute<{
+      id: string;
+      status: string;
+      qty_ordered: number;
+      qty_received: number;
+      eta: string | null;
+    }>(sql`
+      SELECT id, status, qty_ordered, qty_received, eta
+      FROM purchase_orders
+      WHERE product_id = ${id}
+      ORDER BY created_at DESC;
+    `);
+    const list = rows as unknown as Array<{
+      id: string;
+      status: string;
+      qty_ordered: number;
+      qty_received: number;
+      eta: string | null;
+    }>;
+    return list.map((r) => ({
+      id: r.id,
+      status: r.status,
+      qtyOrdered: Number(r.qty_ordered),
+      qtyReceived: Number(r.qty_received),
+      eta: r.eta,
+    }));
+  }
+
+  /**
+   * Satış hızı: bu ürünün atamalarında (assignments→order_lines) 7/30 gün penceresinde
+   * tüketilen units toplamı. reports.velocity ile AYNI mantık, tek ürüne daraltılmış.
+   */
+  private async detailVelocity(id: string): Promise<{ sold7d: number; sold30d: number }> {
+    const rows = await this.db.execute<{ sold7d: number; sold30d: number }>(sql`
+      SELECT
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days'), 0)::int AS sold7d,
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days'), 0)::int AS sold30d
+      FROM assignments a
+      JOIN order_lines ol ON ol.id = a.line_id
+      WHERE ol.product_id = ${id};
+    `);
+    const list = rows as unknown as Array<{ sold7d: number; sold30d: number }>;
+    return { sold7d: Number(list[0]?.sold7d ?? 0), sold30d: Number(list[0]?.sold30d ?? 0) };
+  }
+
+  /** Sebepli stok düzeltme izi (§12), en yeni önce (son 50). */
+  private async detailAdjustments(id: string): Promise<ProductDetail['adjustments']> {
+    const rows = await this.db.execute<{
+      id: string;
+      action: string;
+      qty: number;
+      reason: string;
+      created_at: string;
+    }>(sql`
+      SELECT id, action, qty, reason, created_at
+      FROM stock_adjustments
+      WHERE product_id = ${id}
+      ORDER BY created_at DESC
+      LIMIT 50;
+    `);
+    const list = rows as unknown as Array<{
+      id: string;
+      action: string;
+      qty: number;
+      reason: string;
+      created_at: string;
+    }>;
+    return list.map((r) => ({
+      id: r.id,
+      action: r.action,
+      qty: Number(r.qty),
+      reason: r.reason,
+      createdAt: r.created_at,
+    }));
   }
 
   /** Site-facing sipariş akışı için: remote ürün → panel ürünü çöz (§2 mapping_not_found). */

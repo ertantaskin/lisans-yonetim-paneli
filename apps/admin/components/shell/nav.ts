@@ -37,6 +37,7 @@ export const NAV: NavSection[] = [
   {
     title: 'Operasyon',
     items: [
+      { label: 'Genel Bakış', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Bekleyen Teslimatlar', href: '/pending', icon: Inbox },
       { label: 'Siparişler', href: '/orders', icon: ShoppingCart },
     ],

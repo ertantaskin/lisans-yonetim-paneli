@@ -23,6 +23,7 @@ import { SecurityModule } from './security/security.module';
 import { SearchModule } from './search/search.module';
 import { TemplatesModule } from './templates/templates.module';
 import { OpsModule } from './ops/ops.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
 
 @Module({
@@ -75,6 +76,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     SearchModule,
     TemplatesModule,
     OpsModule,
+    DashboardModule,
     MaintenanceModule,
   ],
 })

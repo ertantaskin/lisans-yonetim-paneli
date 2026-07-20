@@ -30,6 +30,12 @@ export class SuppliersController {
     return this.suppliers.list();
   }
 
+  /** Tedarikçi karnesi (§12): PO/parti agregaları + lead süresi + geri-çekilme oranı. */
+  @Get(':id/scorecard')
+  scorecard(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.suppliers.scorecard(id);
+  }
+
   @Post()
   create(@Body(new ZodBody(CreateSupplierBody)) body: CreateSupplierBody) {
     return this.suppliers.create(body);

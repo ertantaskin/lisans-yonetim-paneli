@@ -144,8 +144,32 @@ detayı kart/timeline, shadcn form primitifleri, iki temada WCAG AA); çoklu-adm
 eklendi (`admin_users` scrypt/role/token_version, imzalı oturum + her-istek revocation, owner-only
 RBAC) — **env-gated (`SESSION_SECRET`+`ADMIN_SEED_*`), varsayılan KAPALI**. VPS'e deploy edildi (canlı).
 
-migration 0000-0008. Kalan: multi görünürlük + account admin UI formu (Commit C); tedarik
-zinciri, self-servis. Yol haritası §18.
+**Faz 2 — Dalga 1-8 (paralel-workflow inşası, hepsi CANLI + deploy):** Kalan roadmap, ayrık-dosya
+paralel işçi dalgalarıyla tamamlandı (her dalga: 3-5 işçi + merkezî glue → tek build → VPS deploy).
+Detay: memory `dalga-build-progress`.
+
+- **D1** (§16/§17): mutabakat/tutarlılık cron (`reconcile` — multi kapasite/fulfilled=Σunits/tek-kullanım
+  ≤1; düzeltmez, kritik loglar) · admin güvenlik başlıkları (X-Frame/CSP-Report-Only/HSTS) ·
+  HMAC secret rotasyon UI · products.list stok agregasyon perf (partial index).
+- **D2** (§13): `replacement_requests` (site-facing POST /v1/replacements HMAC + garanti penceresi;
+  admin destek kuyruğu /support Onayla/Reddet/Bilgi-İste; onay stok-ön-kontrollü değişim makinesi) ·
+  müşteri 360 (/customers + /customers/[email], değişim-oranı suistimal işareti, etiket/not) ·
+  WP "Sorun Bildir".
+- **D3** (§12/§13/§18): `notifications` + düşük-stok tespiti (BullMQ 30dk dedupe) + Telegram (env-gated) ·
+  /notifications · Raporlar (/reports, recharts: stok/velocity/tükenme-tahmini).
+- **D4** (§12): tedarik zinciri — `suppliers`/`purchase_orders`(kısmi teslim-al, over-receive kilidi)/
+  `batches`(recall→satılmamış 'voided')/`stock_adjustments`(sebepli+audit). /suppliers /purchase-orders /batches.
+- **D5** (§5/§9/§14/§15): `sites.sales_daily_quota`+`sandbox` · SalesQuotaGuard (429, çekirdek atama korundu) ·
+  sandbox mail-yönlendirme · `security_events` + anomali/velocity tespiti (auto-suspend YOK) ·
+  KVKK anonymize (PII maske, kayıt silinmez). /security.
+- **D6** (§13/§16): Ctrl+K global arama (sipariş/e-posta/key-son5, payload sızmaz) · şablonlar
+  (/templates CRUD+önizleme+test) · dead-letter/outbox (/ops + replay) · /settings durum.
+- **D7** (§13): toplu-değiştirme sihirbazı (recall'lı partide satılanları değiştir) · akıllı stok önizleme.
+- **D8** (§12/§13): ürün detayı · tedarikçi karnesi · site detayı · genel-bakış dashboard.
+- `audit_action` enum: +site_update/+anonymize. Bilgi mimarisi (§17) tam canlı ("Yakında" kalktı).
+
+migration 0000-0010. Kalan (bilinçli/ertelenen): §15 AI operasyon (Faz 4), site-bağlama 15dk sihirbazı,
+k6/Playwright yük-e2e (CI), private update endpoint. Yol haritası §18.
 
 ## Geliştirme
 

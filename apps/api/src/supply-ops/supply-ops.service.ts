@@ -14,6 +14,8 @@ export interface BulkReplaceResult {
   replaced: number;
   /** Stok bulunmadığı için atlanan (eski atama korunur) kalem sayısı. */
   skippedNoStock: number;
+  /** Çok-kullanımlı (MAK) olduğu için otomatik değiştirilemeyen kalem sayısı (elle işlenir). */
+  skippedUnsupported: number;
 }
 
 /** Geri çekilmiş partinin özet sonucu. */
@@ -176,10 +178,16 @@ export class SupplyOpsService {
       `);
       const voided = voidedRows as unknown as Array<{ id: string; product_id: string }>;
 
-      // Satılmış (available olmayan) adet — elle değiştirme gerektirenler.
+      // Satılmış + hâlâ CANLI (aktif atamalı) kalemler — elle değiştirme gerektirenler.
+      // (status<>'available' KULLANMA: aynı tx'te 'voided'e çekilenler + terminal statüler —
+      // quarantined/revoked/replaced/expired — yanlış sayılır. Aktif atama = sold+canlı, audit bulgusu.)
       const soldRows = await tx.execute<{ c: number }>(sql`
-        SELECT count(*)::int AS c FROM license_items
-        WHERE batch_id = ${batchId} AND status <> 'available';
+        SELECT count(*)::int AS c FROM license_items li
+        WHERE li.batch_id = ${batchId}
+          AND EXISTS (
+            SELECT 1 FROM assignments a
+            WHERE a.license_item_id = li.id AND a.status = 'active'
+          );
       `);
       const soldNeedingReplacement = Number(
         (soldRows as unknown as Array<{ c: number }>)[0]?.c ?? 0,
@@ -233,21 +241,38 @@ export class SupplyOpsService {
 
     // Bu partiye ait SATILMIŞ (status <> 'available') kalemlerin AKTİF atamaları.
     // license_items.batch_id üzerinden; assignments.status = 'active'. RAW SQL.
-    const candRows = await this.db.execute<{ assignment_id: string; line_id: string }>(sql`
-      SELECT a.id AS assignment_id, a.line_id AS line_id
+    const candRows = await this.db.execute<{
+      assignment_id: string;
+      line_id: string;
+      usage_mode: string;
+    }>(sql`
+      SELECT a.id AS assignment_id, a.line_id AS line_id, p.usage_mode AS usage_mode
       FROM license_items li
       JOIN assignments a ON a.license_item_id = li.id
+      JOIN products p ON p.id = li.product_id
       WHERE li.batch_id = ${batchId}
         AND li.status <> 'available'
         AND a.status = 'active'
       ORDER BY a.created_at ASC;
     `);
-    const candidates = candRows as unknown as Array<{ assignment_id: string; line_id: string }>;
+    const candidates = candRows as unknown as Array<{
+      assignment_id: string;
+      line_id: string;
+      usage_mode: string;
+    }>;
 
     let replaced = 0;
     let skippedNoStock = 0;
+    let skippedUnsupported = 0;
 
     for (const c of candidates) {
+      // MAK/çok-kullanımlı: otomatik değişim aynı paylaşımlı anahtarı yeniden atardı (no-op)
+      // → atla, elle işlensin (replacements.approve ile tutarlı, audit bulgusu).
+      if (c.usage_mode === 'multi') {
+        skippedUnsupported++;
+        continue;
+      }
+
       // 0) Stok ön-kontrolü: satırın ürününde uygun (available + kapasiteli) stok YOKSA
       // eskiyi REVOKE ETMEDEN atla — müşteriyi boşta bırakma (replacements.approve deseni).
       const availRows = await this.db.execute<{ n: number }>(sql`
@@ -284,10 +309,10 @@ export class SupplyOpsService {
       actor,
       targetType: 'batch',
       targetId: batchId,
-      meta: { op: 'bulk_replace', total: candidates.length, replaced, skippedNoStock },
+      meta: { op: 'bulk_replace', total: candidates.length, replaced, skippedNoStock, skippedUnsupported },
     });
 
-    return { total: candidates.length, replaced, skippedNoStock };
+    return { total: candidates.length, replaced, skippedNoStock, skippedUnsupported };
   }
 
   /**

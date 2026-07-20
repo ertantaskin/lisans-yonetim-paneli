@@ -150,6 +150,21 @@ export class ReplacementsService {
       throw new BadRequestException('Talep bir atama/satıra bağlı değil');
     }
 
+    // Çok-kullanımlı (MAK) ürünlerde otomatik değişim ANLAMLI DEĞİL: revoke kapasiteyi aynı
+    // paylaşımlı anahtara iade eder → completeLine onu tekrar seçer (no-op, aynı kusurlu key).
+    // Sessizce "onaylandı" demek yerine açıkça reddet; MAK sorunları elle işlenir (audit bulgusu).
+    const [prod] = await this.db
+      .select({ usageMode: products.usageMode })
+      .from(orderLines)
+      .innerJoin(products, eq(products.id, orderLines.productId))
+      .where(eq(orderLines.id, req.lineId))
+      .limit(1);
+    if (prod?.usageMode === 'multi') {
+      throw new BadRequestException(
+        'Çok-kullanımlı (MAK) üründe otomatik değişim desteklenmez — elle işleyin.',
+      );
+    }
+
     // 0) Stok ön-kontrolü: satırın ürününde uygun stok YOKSA eskiyi REVOKE ETMEDEN 409 dön.
     // (revoke→completeLine sırası zorunlu; ama stok baştan yoksa müşteriyi boşta bırakmayalım —
     // bu kontrol tamamen izin-verici; completeLine daha katı olsa bile mevcut revoke-sonrası-409

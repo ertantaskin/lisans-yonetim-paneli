@@ -1,8 +1,11 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '../lib/utils';
 import type { ProductRow } from '../lib/api';
+import { Button } from './ui/button';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
@@ -20,7 +23,14 @@ const columns: ColumnDef<ProductRow>[] = [
     accessorKey: 'name',
     meta: { title: 'Ürün' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Ürün" />,
-    cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    cell: ({ row }) => (
+      <Link
+        href={`/products/${row.original.id}`}
+        className="font-medium text-foreground underline-offset-4 hover:underline"
+      >
+        {row.original.name}
+      </Link>
+    ),
     filterFn: (row, _id, value) => {
       const q = String(value).toLowerCase();
       return (
@@ -66,6 +76,21 @@ const columns: ColumnDef<ProductRow>[] = [
         </span>
       );
     },
+  },
+  {
+    id: 'actions',
+    header: () => <span className="sr-only">Detay</span>,
+    enableSorting: false,
+    enableHiding: false,
+    cell: ({ row }) => (
+      <div className="text-right">
+        <Button asChild variant="ghost" size="sm">
+          <Link href={`/products/${row.original.id}`}>
+            Detay <ArrowRight />
+          </Link>
+        </Button>
+      </div>
+    ),
   },
 ];
 

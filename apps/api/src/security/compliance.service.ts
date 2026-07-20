@@ -6,6 +6,7 @@ import { DB, type Database } from '../db/db.module';
 export interface AnonymizeResult {
   anonymizedOrders: number;
   anonymizedReplacements: number;
+  anonymizedEmails: number;
   redactedEmail: string;
 }
 
@@ -35,6 +36,7 @@ export class ComplianceService {
    */
   async anonymize(email: string, actor: string): Promise<AnonymizeResult> {
     const normalized = email.trim().toLowerCase();
+    const original = email.trim();
     const redacted = this.redactedFor(normalized);
 
     return this.db.transaction(async (tx) => {
@@ -56,21 +58,34 @@ export class ComplianceService {
       `);
       const anonymizedReplacements = (replRows as unknown as Array<{ id: string }>).length;
 
+      // email_log.to_email de PII taşır (§9): teslimat mailleri gerçek müşteri e-postasını
+      // saklar → anonimleştirmede ATLANIRSA unutulma hakkı eksik kalır (audit bulgusu).
+      // to_email maskele + konuda geçen e-postayı best-effort değiştir (email_log gövde kolonu yok).
+      const emailRows = await tx.execute<{ id: string }>(sql`
+        UPDATE email_log
+        SET to_email = ${redacted},
+            subject = replace(replace(subject, ${original}, ${redacted}), ${normalized}, ${redacted})
+        WHERE lower(to_email) = ${normalized}
+        RETURNING id;
+      `);
+      const anonymizedEmails = (emailRows as unknown as Array<{ id: string }>).length;
+
       // customers profil satırını sil (kalıcı meta — etiket/not — PII taşır).
       await tx.execute(sql`DELETE FROM customers WHERE lower(email) = ${normalized};`);
 
       // KVKK silme isteği kritik aksiyon → audit'e düş (§9). Ham e-posta LOGLANMAZ; yalnız maske.
       // NOT: audit_action enum'una 'anonymize' değeri EKLENMELİ (orkestratör: shared + enums.ts + migration).
-      const auditMeta = JSON.stringify({ anonymizedOrders, anonymizedReplacements });
+      const auditMeta = JSON.stringify({ anonymizedOrders, anonymizedReplacements, anonymizedEmails });
       await tx.execute(sql`
         INSERT INTO audit_log (action, actor, target_type, target_id, meta)
         VALUES ('anonymize', ${actor}, 'customer', ${redacted}, ${auditMeta}::jsonb);
       `);
 
       this.logger.warn(
-        `KVKK anonimleştirme: ${anonymizedOrders} sipariş + ${anonymizedReplacements} değişim maskelendi (aktör=${actor})`,
+        `KVKK anonimleştirme: ${anonymizedOrders} sipariş + ${anonymizedReplacements} değişim + ` +
+          `${anonymizedEmails} mail kaydı maskelendi (aktör=${actor})`,
       );
-      return { anonymizedOrders, anonymizedReplacements, redactedEmail: redacted };
+      return { anonymizedOrders, anonymizedReplacements, anonymizedEmails, redactedEmail: redacted };
     });
   }
 }

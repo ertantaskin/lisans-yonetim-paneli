@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AccountPayloadSchema } from '@jetlisans/shared';
 import { AdminGuard } from '../auth/admin.guard';
@@ -60,6 +60,12 @@ export class ProductsController {
   @Get('products')
   list() {
     return this.products.list();
+  }
+
+  /** Ürün detay panosu (§13): stok kırılımı + parti + PO + satış hızı + düzeltmeler. */
+  @Get('products/:id/detail')
+  detail(@Param('id') id: string) {
+    return this.products.getDetail(id);
   }
 
   @Post('mappings')
