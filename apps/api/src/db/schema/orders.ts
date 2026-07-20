@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import { orderLineStatusEnum, orderStatusEnum } from './enums';
+import { fulfillmentPolicyEnum, orderLineStatusEnum, orderStatusEnum } from './enums';
 import { products } from './products';
 import { sites } from './sites';
 
@@ -43,6 +43,8 @@ export const orderLines = pgTable('order_lines', {
   qty: integer('qty').notNull(),
   fulfilledQty: integer('fulfilled_qty').notNull().default(0),
   status: orderLineStatusEnum('status').notNull().default('pending'),
+  // Sipariş bazlı politika ezme (§5) — null ise ürün politikası geçerli.
+  policyOverride: fulfillmentPolicyEnum('policy_override'),
   priority: integer('priority').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

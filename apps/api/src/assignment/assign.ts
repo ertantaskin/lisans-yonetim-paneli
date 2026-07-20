@@ -35,7 +35,8 @@ export async function assignAvailableSingleUse(
     WHERE id IN (
       SELECT id FROM license_items
       WHERE product_id = ${productId} AND status = 'available'
-      ORDER BY created_at
+        AND (expires_at IS NULL OR expires_at > now())
+      ORDER BY expires_at ASC NULLS LAST, created_at
       LIMIT ${qty}
       FOR UPDATE SKIP LOCKED
     )
@@ -62,6 +63,26 @@ export async function releaseToAvailable(db: Executor, ids: string[]): Promise<v
 }
 
 /**
+ * Atamaları geri alır — hem tek kullanımlık (status→available) hem çok kullanımlık
+ * (use_count -= units, depleted→available) için. all-or-nothing geri alımında ve
+ * revoke'ta kullanılır; multi kapasite sızıntısını önler.
+ */
+export async function releaseAllocations(
+  db: Executor,
+  allocations: Array<{ licenseItemId: string; units: number }>,
+): Promise<void> {
+  for (const a of allocations) {
+    await db.execute(sql`
+      UPDATE license_items SET
+        use_count = GREATEST(0, use_count - ${a.units}),
+        status = 'available',
+        assigned_at = NULL
+      WHERE id = ${a.licenseItemId};
+    `);
+  }
+}
+
+/**
  * Çok kullanımlık (multi / MAK) kapasite düşümü (§2). Satır seçmek yerine kilitli
  * tek satırda use_count += units (koşul: use_count + units <= max_uses).
  * Kapasite aşımı imkânsız.
@@ -82,7 +103,8 @@ export async function consumeMultiUseCapacity(
       WHERE product_id = ${productId}
         AND status = 'available'
         AND use_count + ${units} <= max_uses
-      ORDER BY created_at
+        AND (expires_at IS NULL OR expires_at > now())
+      ORDER BY expires_at ASC NULLS LAST, created_at
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )

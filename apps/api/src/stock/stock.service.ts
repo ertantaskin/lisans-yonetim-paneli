@@ -37,8 +37,8 @@ export class StockService {
     const values: NewLicenseItem[] = items.map((it) => ({
       productId,
       payloadEnc: this.crypto.encrypt(it.payload),
-      payloadHash: CryptoService.payloadHash(it.payload),
-      payloadSuffixHash: CryptoService.payloadSuffixHash(it.payload),
+      payloadHash: this.crypto.payloadHash(it.payload),
+      payloadSuffixHash: this.crypto.payloadSuffixHash(it.payload),
       maxUses,
       expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
       status: 'available',

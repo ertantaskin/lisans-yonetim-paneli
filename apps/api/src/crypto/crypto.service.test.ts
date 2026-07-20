@@ -39,9 +39,11 @@ describe('CryptoService (AES-256-GCM envelope)', () => {
     expect(() => svc.decrypt(parts.join('.'))).toThrow();
   });
 
-  it('payloadHash içerik için deterministik (mükerrer engeli)', () => {
-    expect(CryptoService.payloadHash('abc')).toBe(CryptoService.payloadHash('abc'));
-    expect(CryptoService.payloadHash('abc')).not.toBe(CryptoService.payloadHash('abd'));
+  it('payloadHash anahtarlı + deterministik (mükerrer engeli)', () => {
+    expect(svc.payloadHash('abc')).toBe(svc.payloadHash('abc'));
+    expect(svc.payloadHash('abc')).not.toBe(svc.payloadHash('abd'));
+    // Farklı master key → farklı hash (known-plaintext oracle engeli)
+    expect(makeService().payloadHash('abc')).not.toBe(svc.payloadHash('abc'));
   });
 
   it('MASTER_KEY 32 byte değilse başlatmada hata verir', () => {

@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import {
   products,
@@ -23,7 +23,8 @@ export class ProductsService {
     const rows = await this.db
       .select({
         product: products,
-        availableStock: sql<number>`count(${licenseItems.id}) filter (where ${licenseItems.status} = 'available')`,
+        // Kalan kapasite: single'da satır sayısı, multi'de (max_uses - use_count) toplamı.
+        availableStock: sql<number>`coalesce(sum(case when ${licenseItems.status} = 'available' then ${licenseItems.maxUses} - ${licenseItems.useCount} else 0 end), 0)`,
       })
       .from(products)
       .leftJoin(licenseItems, eq(licenseItems.productId, products.id))
@@ -44,6 +45,28 @@ export class ProductsService {
     remoteProductId: string,
     remoteVariationId?: string | null,
   ): Promise<{ productId: string; bundleQty: number } | null> {
+    // '0'/boş varyasyon = varyasyon yok (Woo bazen '0' gönderir).
+    const variation = remoteVariationId && remoteVariationId !== '0' ? remoteVariationId : null;
+
+    // 1) Varyasyon-özel eşleme (varsa) — en spesifik.
+    if (variation) {
+      const [row] = await this.db
+        .select()
+        .from(siteProductMappings)
+        .where(
+          and(
+            eq(siteProductMappings.siteId, siteId),
+            eq(siteProductMappings.remoteProductId, remoteProductId),
+            eq(siteProductMappings.remoteVariationId, variation),
+            eq(siteProductMappings.active, true),
+          ),
+        )
+        .orderBy(asc(siteProductMappings.createdAt))
+        .limit(1);
+      if (row) return { productId: row.productId, bundleQty: row.bundleQty };
+    }
+
+    // 2) Ürün-seviyesi (varyasyon null) eşleme — fallback, deterministik (en eski).
     const [row] = await this.db
       .select()
       .from(siteProductMappings)
@@ -51,16 +74,14 @@ export class ProductsService {
         and(
           eq(siteProductMappings.siteId, siteId),
           eq(siteProductMappings.remoteProductId, remoteProductId),
-          remoteVariationId
-            ? eq(siteProductMappings.remoteVariationId, remoteVariationId)
-            : sql`${siteProductMappings.remoteVariationId} is null`,
+          isNull(siteProductMappings.remoteVariationId),
           eq(siteProductMappings.active, true),
         ),
       )
+      .orderBy(asc(siteProductMappings.createdAt))
       .limit(1);
 
-    if (!row) return null;
-    return { productId: row.productId, bundleQty: row.bundleQty };
+    return row ? { productId: row.productId, bundleQty: row.bundleQty } : null;
   }
 
   async createMapping(input: {

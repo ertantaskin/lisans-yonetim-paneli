@@ -37,7 +37,8 @@ export class MailProcessor extends WorkerHost {
       this.transporter = nodemailer.createTransport({
         host: this.config.getOrThrow<string>('SMTP_HOST'),
         port: this.config.getOrThrow<number>('SMTP_PORT'),
-        secure: false,
+        // Üretimde SMTP_SECURE=true (TLS); dev Mailpit TLS'siz.
+        secure: this.config.get<boolean>('SMTP_SECURE') ?? false,
       });
     }
     return this.transporter;
@@ -45,6 +46,15 @@ export class MailProcessor extends WorkerHost {
 
   async process(job: Job<DeliveryJob>): Promise<void> {
     const { orderId, emailLogId } = job.data;
+
+    // Idempotency: bu log zaten gönderildiyse retry'da tekrar GÖNDERME (mükerrer mail engeli).
+    const [existing] = await this.db
+      .select({ status: emailLog.status })
+      .from(emailLog)
+      .where(eq(emailLog.id, emailLogId))
+      .limit(1);
+    if (existing?.status === 'sent') return;
+
     try {
       const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
       if (!order) throw new Error('Sipariş bulunamadı');
@@ -56,12 +66,19 @@ export class MailProcessor extends WorkerHost {
           units: assignments.units,
           payloadEnc: licenseItems.payloadEnc,
           productName: products.name,
+          productId: orderLines.productId,
         })
         .from(assignments)
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .leftJoin(products, eq(orderLines.productId, products.id))
         .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+
+      // Aktif atama yoksa (ör. tümü revoke edildikten sonra resend) BOŞ mail gönderme.
+      if (rows.length === 0) {
+        await this.setStatus(emailLogId, 'skipped', 'aktif atama yok');
+        return;
+      }
 
       const itemsBlock = rows
         .map((r) => {
@@ -72,11 +89,13 @@ export class MailProcessor extends WorkerHost {
         })
         .join('\n');
 
-      const productId = rows.length > 0 ? null : null; // varsayılan şablon yeterli (MVP)
-      const tpl = await this.templates.resolve(productId, order.siteId);
+      // Şablon: ilk satırın ürününe göre (site override > ürün > varsayılan, §6).
+      const tpl = await this.templates.resolve(rows[0]!.productId, order.siteId);
       const vars = {
         order_no: order.remoteOrderId,
         site_name: site?.domain ?? 'Jetlisans',
+        product_name: rows[0]!.productName ?? '',
+        units: String(rows.reduce((s, r) => s + r.units, 0)),
         customer_email: order.customerEmail,
         items: itemsBlock,
       };
@@ -88,20 +107,27 @@ export class MailProcessor extends WorkerHost {
         text: render(tpl.body, vars),
       });
 
-      await this.db
-        .update(emailLog)
-        .set({ status: 'sent', providerMessageId: info.messageId, updatedAt: new Date() })
-        .where(eq(emailLog.id, emailLogId));
+      // Mail GİTTİ. Log güncellemesi başarısız olsa bile job'ı FAIL etme (retry = mükerrer).
+      try {
+        await this.setStatus(emailLogId, 'sent', null, info.messageId);
+      } catch {
+        // yut — mail gönderildi, log güncellemesi kritik değil
+      }
     } catch (err) {
-      await this.db
-        .update(emailLog)
-        .set({
-          status: 'failed',
-          error: err instanceof Error ? err.message : String(err),
-          updatedAt: new Date(),
-        })
-        .where(eq(emailLog.id, emailLogId));
-      throw err; // BullMQ tekrar dener
+      await this.setStatus(emailLogId, 'failed', err instanceof Error ? err.message : String(err));
+      throw err; // gönderilmeden önceki hata → BullMQ tekrar dener
     }
+  }
+
+  private async setStatus(
+    id: string,
+    status: string,
+    error: string | null,
+    providerMessageId?: string,
+  ): Promise<void> {
+    await this.db
+      .update(emailLog)
+      .set({ status, error, providerMessageId, updatedAt: new Date() })
+      .where(eq(emailLog.id, id));
   }
 }

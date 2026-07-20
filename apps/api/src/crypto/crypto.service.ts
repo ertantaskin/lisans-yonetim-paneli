@@ -2,6 +2,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
+  createHmac,
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
@@ -90,23 +91,30 @@ export class CryptoService implements OnModuleInit {
     return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
   }
 
-  /** Mükerrer key engeli için içerik hash'i (şifrelemeden bağımsız, deterministik). */
-  static payloadHash(plaintext: string): string {
-    return createHash('sha256').update(plaintext, 'utf8').digest('hex');
+  /**
+   * Mükerrer key engeli için ANAHTARLI (HMAC) içerik hash'i. Deterministik ama
+   * master key olmadan hesaplanamaz → DB'yi ele geçiren biri known-plaintext ile
+   * "bu key var mı" oraklını çalıştıramaz (§8). Master key sabit olduğu için dedup korunur.
+   */
+  payloadHash(plaintext: string): string {
+    return createHmac('sha256', this.masterKey).update(plaintext, 'utf8').digest('hex');
   }
 
-  /** Son 5 hane araması için (Ctrl+K, §13). */
-  static payloadSuffixHash(plaintext: string): string {
-    const suffix = plaintext.slice(-5);
-    return createHash('sha256').update(suffix, 'utf8').digest('hex');
+  /** Son 5 hane araması için (Ctrl+K, §13) — anahtarlı, son 5 hane sızmaz. */
+  payloadSuffixHash(plaintext: string): string {
+    return createHmac('sha256', this.masterKey)
+      .update(`suffix:${plaintext.slice(-5)}`, 'utf8')
+      .digest('hex');
   }
 
-  /** Sabit-zamanlı string karşılaştırma (imza/token doğrulama). */
+  /**
+   * Sabit-zamanlı string karşılaştırma (imza/token doğrulama). Her iki girdi önce
+   * sabit uzunluğa (SHA-256) indirgenir → uzunluk timing ile sızmaz.
+   */
   static safeEqual(a: string, b: string): boolean {
-    const ba = Buffer.from(a);
-    const bb = Buffer.from(b);
-    if (ba.length !== bb.length) return false;
-    return timingSafeEqual(ba, bb);
+    const ha = createHash('sha256').update(a, 'utf8').digest();
+    const hb = createHash('sha256').update(b, 'utf8').digest();
+    return timingSafeEqual(ha, hb);
   }
 }
 

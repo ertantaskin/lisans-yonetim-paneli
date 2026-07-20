@@ -1,0 +1,1 @@
+ALTER TABLE "order_lines" ADD COLUMN "policy_override" "fulfillment_policy";

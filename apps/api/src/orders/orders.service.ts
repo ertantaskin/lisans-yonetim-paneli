@@ -22,7 +22,7 @@ import { CryptoService } from '../crypto/crypto.service';
 import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
-import { releaseToAvailable } from '../assignment/assign';
+import { releaseAllocations } from '../assignment/assign';
 import { allocate } from '../assignment/allocate';
 
 /** Sipariş durumu → geri kanal olay tipi (§2). */
@@ -106,10 +106,12 @@ export class OrdersService {
 
     const idempotencyKey = `${site.id}:${dto.remoteOrderId}`;
 
-    const result = await this.db.transaction(async (tx) => {
-      // Sipariş kaydı (idempotency_key UNIQUE — yarışta tek kazanır).
-      let order: Order;
-      try {
+    let result: CreateOrderResponse;
+    try {
+      result = await this.db.transaction(async (tx) => {
+        // Sipariş kaydı (idempotency_key UNIQUE — yarışta tek kazanır). UNIQUE ihlali
+        // transaction'ı abort eder; yakalama transaction DIŞINDA yapılır (aksi halde
+        // "current transaction is aborted" → 500).
         const [row] = await tx
           .insert(orders)
           .values({
@@ -120,164 +122,164 @@ export class OrdersService {
             idempotencyKey,
           })
           .returning();
-        order = row!;
-      } catch {
-        // Eşzamanlı ikizde UNIQUE ihlali → mevcut siparişi döndür.
-        const [row] = await tx
-          .select()
-          .from(orders)
-          .where(eq(orders.idempotencyKey, idempotencyKey))
-          .limit(1);
-        return this.loadOrderResult(row!);
-      }
+        const order = row!;
 
-      await tx.insert(fulfillmentEvents).values({
-        orderId: order.id,
-        type: 'order_received',
-        message: `${dto.lines.length} satır bildirildi`,
-      });
+        await tx.insert(fulfillmentEvents).values({
+          orderId: order.id,
+          type: 'order_received',
+          message: `${dto.lines.length} satır bildirildi`,
+        });
 
-      const assignmentResults: AssignmentResult[] = [];
-      const lineResults: OrderLineResult[] = [];
-      let anyFulfilled = false;
-      let anyMappedPending = false;
-      let anyUnmapped = false;
+        const assignmentResults: AssignmentResult[] = [];
+        const lineResults: OrderLineResult[] = [];
+        let anyFulfilled = false;
+        let anyMappedPending = false;
+        let anyUnmapped = false;
 
-      for (const line of dto.lines) {
-        const mapping = await this.products.resolveMapping(
-          site.id,
-          line.remoteProductId,
-          line.remoteVariationId,
-        );
-
-        if (!mapping) {
-          // Eşleme yok — sipariş kaybolmaz, satır product_id=null pending kalır (§4).
-          await tx.insert(orderLines).values({
-            orderId: order.id,
-            productId: null,
-            remoteLineId: line.remoteLineId,
-            qty: line.qty,
-            status: 'pending',
-          });
-          lineResults.push({
-            remoteLineId: line.remoteLineId,
-            status: 'pending',
-            requestedQty: line.qty,
-            fulfilledQty: 0,
-          });
-          anyUnmapped = true;
-          continue;
-        }
-
-        const product = await this.products.getById(mapping.productId);
-        const requiredUnits = line.qty * mapping.bundleQty;
-        const policy = line.policyOverride ?? product.fulfillmentPolicy;
-
-        const [ol] = await tx
-          .insert(orderLines)
-          .values({
-            orderId: order.id,
-            productId: mapping.productId,
-            remoteLineId: line.remoteLineId,
-            qty: requiredUnits,
-            status: 'pending',
-          })
-          .returning();
-        const orderLine = ol!;
-
-        // Atama — tek/çok kullanımlık (ortak allocate).
-        const allocations = await allocate(tx, product, requiredUnits);
-
-        let fulfilledUnits = allocations.reduce((s, a) => s + a.units, 0);
-
-        // all-or-nothing: tamamı hazır değilse hiçbirini teslim etme (§5).
-        if (policy === 'all-or-nothing' && fulfilledUnits < requiredUnits) {
-          await releaseToAvailable(
-            tx,
-            allocations.map((a) => a.licenseItemId),
+        for (const line of dto.lines) {
+          const mapping = await this.products.resolveMapping(
+            site.id,
+            line.remoteProductId,
+            line.remoteVariationId,
           );
-          allocations.length = 0;
-          fulfilledUnits = 0;
-        }
 
-        const validUntil = product.validityDays
-          ? new Date(Date.now() + product.validityDays * 86_400_000)
-          : null;
+          if (!mapping) {
+            // Eşleme yok — sipariş kaybolmaz, satır product_id=null pending kalır (§4).
+            await tx.insert(orderLines).values({
+              orderId: order.id,
+              productId: null,
+              remoteLineId: line.remoteLineId,
+              qty: line.qty,
+              status: 'pending',
+            });
+            lineResults.push({
+              remoteLineId: line.remoteLineId,
+              status: 'pending',
+              requestedQty: line.qty,
+              fulfilledQty: 0,
+            });
+            anyUnmapped = true;
+            continue;
+          }
 
-        for (const alloc of allocations) {
-          const [asg] = await tx
-            .insert(assignments)
+          const product = await this.products.getById(mapping.productId);
+          const requiredUnits = line.qty * mapping.bundleQty;
+          const policy = line.policyOverride ?? product.fulfillmentPolicy;
+
+          const [ol] = await tx
+            .insert(orderLines)
             .values({
               orderId: order.id,
-              lineId: orderLine.id,
-              licenseItemId: alloc.licenseItemId,
-              units: alloc.units,
-              validUntil,
-              status: 'active',
-              deliveredAt: new Date(),
+              productId: mapping.productId,
+              remoteLineId: line.remoteLineId,
+              qty: requiredUnits,
+              status: 'pending',
+              policyOverride: line.policyOverride ?? null,
             })
             .returning();
-          assignmentResults.push({
-            assignmentId: asg!.id,
+          const orderLine = ol!;
+
+          // Atama — tek/çok kullanımlık (ortak allocate).
+          const allocations = await allocate(tx, product, requiredUnits);
+
+          let fulfilledUnits = allocations.reduce((s, a) => s + a.units, 0);
+
+          // all-or-nothing: tamamı hazır değilse hiçbirini teslim etme (§5).
+          // releaseAllocations single + multi kapasiteyi geri verir (sızıntı yok).
+          if (policy === 'all-or-nothing' && fulfilledUnits < requiredUnits) {
+            await releaseAllocations(tx, allocations);
+            allocations.length = 0;
+            fulfilledUnits = 0;
+          }
+
+          const validUntil = product.validityDays
+            ? new Date(Date.now() + product.validityDays * 86_400_000)
+            : null;
+
+          for (const alloc of allocations) {
+            const [asg] = await tx
+              .insert(assignments)
+              .values({
+                orderId: order.id,
+                lineId: orderLine.id,
+                licenseItemId: alloc.licenseItemId,
+                units: alloc.units,
+                validUntil,
+                status: 'active',
+                deliveredAt: new Date(),
+              })
+              .returning();
+            assignmentResults.push({
+              assignmentId: asg!.id,
+              remoteLineId: line.remoteLineId,
+              units: alloc.units,
+              validUntil: validUntil ? validUntil.toISOString() : null,
+            });
+          }
+
+          const lineStatus =
+            fulfilledUnits >= requiredUnits
+              ? 'fulfilled'
+              : fulfilledUnits > 0
+                ? 'partial'
+                : 'pending';
+          await tx
+            .update(orderLines)
+            .set({ fulfilledQty: fulfilledUnits, status: lineStatus })
+            .where(eq(orderLines.id, orderLine.id));
+
+          if (fulfilledUnits >= requiredUnits) anyFulfilled = true;
+          else {
+            anyMappedPending = true;
+            if (fulfilledUnits > 0) anyFulfilled = true;
+          }
+
+          lineResults.push({
             remoteLineId: line.remoteLineId,
-            units: alloc.units,
-            validUntil: validUntil ? validUntil.toISOString() : null,
+            status: lineStatus,
+            requestedQty: requiredUnits,
+            fulfilledQty: fulfilledUnits,
           });
         }
 
-        const lineStatus =
-          fulfilledUnits >= requiredUnits
-            ? 'fulfilled'
-            : fulfilledUnits > 0
-              ? 'partial'
-              : 'pending';
-        await tx
-          .update(orderLines)
-          .set({ fulfilledQty: fulfilledUnits, status: lineStatus })
-          .where(eq(orderLines.id, orderLine.id));
+        // Sipariş durumu.
+        const orderStatus = anyFulfilled
+          ? anyMappedPending || anyUnmapped
+            ? 'partial'
+            : 'fulfilled'
+          : anyUnmapped && !anyMappedPending
+            ? 'unmapped'
+            : 'pending';
+        await tx.update(orders).set({ status: orderStatus }).where(eq(orders.id, order.id));
 
-        if (fulfilledUnits >= requiredUnits) anyFulfilled = true;
-        else {
-          anyMappedPending = true;
-          if (fulfilledUnits > 0) anyFulfilled = true;
-        }
-
-        lineResults.push({
-          remoteLineId: line.remoteLineId,
-          status: lineStatus,
-          requestedQty: requiredUnits,
-          fulfilledQty: fulfilledUnits,
+        await tx.insert(fulfillmentEvents).values({
+          orderId: order.id,
+          type:
+            orderStatus === 'fulfilled'
+              ? 'fulfilled'
+              : orderStatus === 'partial'
+                ? 'partially_fulfilled'
+                : 'pending_stock',
+          message: `Durum: ${orderStatus}`,
         });
-      }
 
-      // Sipariş durumu.
-      const orderStatus = anyFulfilled
-        ? anyMappedPending || anyUnmapped
-          ? 'partial'
-          : 'fulfilled'
-        : anyUnmapped && !anyMappedPending
-          ? 'unmapped'
-          : 'pending';
-      await tx.update(orders).set({ status: orderStatus }).where(eq(orders.id, order.id));
-
-      await tx.insert(fulfillmentEvents).values({
-        orderId: order.id,
-        type:
-          orderStatus === 'fulfilled'
-            ? 'fulfilled'
-            : orderStatus === 'partial'
-              ? 'partially_fulfilled'
-              : 'pending_stock',
-        message: `Durum: ${orderStatus}`,
+        return {
+          orderId: order.id,
+          status: orderStatus,
+          assignments: assignmentResults,
+          lines: lineResults,
+        } satisfies CreateOrderResponse;
       });
-
-      return {
-        orderId: order.id,
-        status: orderStatus,
-        assignments: assignmentResults,
-        lines: lineResults,
-      } satisfies CreateOrderResponse;
-    });
+    } catch (e) {
+      // Eşzamanlı ikiz (idempotency_key UNIQUE ihlali) → mevcut siparişi döndür (tx dışı).
+      const [row] = await this.db
+        .select()
+        .from(orders)
+        .where(eq(orders.idempotencyKey, idempotencyKey))
+        .limit(1);
+      if (row) return this.buildOutcome(await this.loadOrderResult(row));
+      throw e;
+    }
 
     // Atama yapıldıysa teslimat mailini kuyruğa al (asenkron, §2/§6).
     if (result.assignments.length > 0) {

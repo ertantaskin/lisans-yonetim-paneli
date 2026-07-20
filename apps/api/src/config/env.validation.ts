@@ -20,9 +20,13 @@ export const envSchema = z.object({
   /** Admin uçları (site/ürün/stok yönetimi) için basit yönetici token'ı. */
   ADMIN_TOKEN: z.string().min(1),
 
-  /** Teslimat maili SMTP (dev: Mailpit). */
+  /** Teslimat maili SMTP (dev: Mailpit, TLS'siz; üretim: SMTP_SECURE=true). */
   SMTP_HOST: z.string().default('mailpit'),
   SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  SMTP_SECURE: z
+    .string()
+    .transform((v) => v === 'true' || v === '1')
+    .default('false'),
   MAIL_FROM: z.string().default('Jetlisans <teslimat@jetlisans.local>'),
 
   SENTRY_DSN: z.string().optional(),

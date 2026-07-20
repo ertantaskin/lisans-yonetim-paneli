@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
+import { recomputeOrderStatus } from './order-status';
 import { DB, type Database } from '../db/db.module';
 import {
   assignments,
@@ -175,34 +176,70 @@ export class AdminOrdersService {
         .select()
         .from(assignments)
         .where(eq(assignments.id, assignmentId))
-        .limit(1);
+        .limit(1)
+        .for('update');
       if (!asg) throw new NotFoundException('Atama bulunamadı');
+      if (asg.status === 'revoked') return { assignmentId, status: 'revoked', already: true };
 
       await tx
         .update(assignments)
         .set({ status: 'revoked' })
         .where(eq(assignments.id, assignmentId));
 
-      await tx
-        .update(licenseItems)
-        .set({ status: 'quarantined' })
-        .where(eq(licenseItems.id, asg.licenseItemId));
+      // Lisans geri alımı: tek kullanımlık → karantina (iade edilen key satışa dönmez);
+      // çok kullanımlık (MAK) → kapasite geri ver (use_count -= units), tüm key'i imha etme.
+      const [li] = await tx
+        .select()
+        .from(licenseItems)
+        .where(eq(licenseItems.id, asg.licenseItemId))
+        .limit(1);
+      if (li) {
+        if (li.maxUses > 1) {
+          await tx.execute(sql`
+            UPDATE license_items SET
+              use_count = GREATEST(0, use_count - ${asg.units}),
+              status = CASE WHEN status = 'depleted' THEN 'available' ELSE status END
+            WHERE id = ${asg.licenseItemId};
+          `);
+        } else {
+          await tx
+            .update(licenseItems)
+            .set({ status: 'quarantined' })
+            .where(eq(licenseItems.id, asg.licenseItemId));
+        }
+      }
+
+      // Satır sayacını düş + satır/sipariş durumunu yeniden hesapla (tutarlılık).
+      const [line] = await tx
+        .select()
+        .from(orderLines)
+        .where(eq(orderLines.id, asg.lineId))
+        .limit(1)
+        .for('update');
+      if (line) {
+        const nf = Math.max(0, line.fulfilledQty - asg.units);
+        const lineStatus = nf >= line.qty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+        await tx
+          .update(orderLines)
+          .set({ fulfilledQty: nf, status: lineStatus })
+          .where(eq(orderLines.id, line.id));
+      }
+      await recomputeOrderStatus(tx, asg.orderId);
 
       await tx.insert(auditLog).values({
         action: 'revoke',
         actor,
         targetType: 'assignment',
         targetId: assignmentId,
-        meta: { reason, licenseItemId: asg.licenseItemId },
+        meta: { reason, licenseItemId: asg.licenseItemId, units: asg.units },
       });
-
       await tx.insert(fulfillmentEvents).values({
         orderId: asg.orderId,
         type: 'revoked',
         message: `Atama iptal edildi: ${reason}`,
       });
 
-      return { assignmentId, status: 'revoked', quarantined: asg.licenseItemId };
+      return { assignmentId, status: 'revoked', licenseItemId: asg.licenseItemId };
     });
   }
 }

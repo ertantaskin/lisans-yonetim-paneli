@@ -6,6 +6,7 @@ import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
+import { recomputeOrderStatus } from './order-status';
 
 export interface CompleteResult {
   lineId: string;
@@ -32,7 +33,14 @@ export class FulfillmentService {
    */
   async completeLine(lineId: string, maxUnits?: number): Promise<CompleteResult> {
     const result = await this.db.transaction(async (tx) => {
-      const [line] = await tx.select().from(orderLines).where(eq(orderLines.id, lineId)).limit(1);
+      // Satırı kilitle — eşzamanlı tamamlamalar (admin çift-tık, iki stok import'u,
+      // çoğaltılmış API replica'ları) serileşir; aşırı teslimat (fazla key) önlenir.
+      const [line] = await tx
+        .select()
+        .from(orderLines)
+        .where(eq(orderLines.id, lineId))
+        .limit(1)
+        .for('update');
       if (!line) throw new NotFoundException('Sipariş satırı bulunamadı');
       if (!line.productId) {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
@@ -79,7 +87,14 @@ export class FulfillmentService {
         });
       }
 
-      await this.recomputeOrderStatus(tx, line.orderId);
+      const orderStatus = await recomputeOrderStatus(tx, line.orderId);
+      if (orderStatus === 'fulfilled') {
+        await tx.insert(fulfillmentEvents).values({
+          orderId: line.orderId,
+          type: 'fulfilled',
+          message: 'Sipariş tamamlandı',
+        });
+      }
 
       return {
         lineId: line.id,
@@ -130,7 +145,8 @@ export class FulfillmentService {
         and(
           eq(orderLines.productId, productId),
           inArray(orderLines.status, ['pending', 'partial']),
-          eq(products.fulfillmentPolicy, 'partial-auto'),
+          // Efektif politika: satır override > ürün. Yalnız partial-auto oto-tamamlanır.
+          sql`coalesce(${orderLines.policyOverride}, ${products.fulfillmentPolicy}) = 'partial-auto'`,
         ),
       )
       .orderBy(sql`${orderLines.priority} desc`, asc(orderLines.createdAt));
@@ -142,35 +158,6 @@ export class FulfillmentService {
       if (res.status !== 'fulfilled') break; // stok bitti → sonraki satırlara gerek yok
     }
     return completedLines;
-  }
-
-  /** Siparişin tüm satırlarına bakıp genel durumu günceller. */
-  private async recomputeOrderStatus(tx: Database, orderId: string): Promise<void> {
-    const lines = await tx
-      .select({ status: orderLines.status })
-      .from(orderLines)
-      .where(eq(orderLines.orderId, orderId));
-
-    const anyFulfilled = lines.some((l) => l.status === 'fulfilled' || l.status === 'partial');
-    const anyPending = lines.some((l) => l.status === 'pending' || l.status === 'partial');
-    const allFulfilled = lines.every((l) => l.status === 'fulfilled');
-
-    const status = allFulfilled
-      ? 'fulfilled'
-      : anyFulfilled && anyPending
-        ? 'partial'
-        : anyFulfilled
-          ? 'partial'
-          : 'pending';
-
-    await tx.update(orders).set({ status }).where(eq(orders.id, orderId));
-    if (status === 'fulfilled') {
-      await tx.insert(fulfillmentEvents).values({
-        orderId,
-        type: 'fulfilled',
-        message: 'Sipariş tamamlandı',
-      });
-    }
   }
 
   private noop(

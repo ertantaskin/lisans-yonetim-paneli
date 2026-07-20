@@ -39,6 +39,7 @@ Tasarım (v2.6) + **Faz 0 + Faz 1 backend/panel CANLI ve e2e doğrulandı** (WP 
 `docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta.
 
 **Çalışan Faz 1 (MVP):**
+
 - Kripto: AES-256-GCM envelope (per-payload DEK + master key), payload_hash dedupe
 - Auth: HMAC imza guard (nonce replay, ±300sn) + admin token; site oluşturma
 - Sipariş akışı: `POST /v1/orders` — idempotency, transaction içinde atomik atama
@@ -48,10 +49,17 @@ Tasarım (v2.6) + **Faz 0 + Faz 1 backend/panel CANLI ve e2e doğrulandı** (WP 
 - Mail: BullMQ + Mailpit, şablon, email_log; aksiyonlar: reveal(loglu)/suspend/revoke/resend
 - Geri kanal webhook: HMAC imzalı, outbox, WP eklentisine hazır (order.fulfilled/partial)
 - Admin UI (Next.js, sunucu-taraflı): Bekleyen Teslimatlar / Siparişler+detay / Stok / Siteler
-- audit_log: reveal/revoke/suspend/import/… ; migration 0000-0003
+- audit_log: reveal/revoke/suspend/import/… ; migration 0000-0004
 
-**e2e doğrulandı** (gerçek stack): yarış (çifte atama=0), sipariş→atama→çözülmüş teslimat,
-idempotency, kısmi/all-or-nothing, tamamlama motoru, mail→Mailpit, webhook→imza doğrulama.
+**e2e doğrulandı** (gerçek stack, 50+ assert): yarış (çifte atama=0), sipariş→atama→çözülmüş
+teslimat, idempotency, kısmi/all-or-nothing, tamamlama motoru, mail→Mailpit, webhook→imza,
+revoke recompute, FEFO, eşzamanlı-tamamlama over-fulfillment kilidi.
+
+**Adversaryel review yapıldı** (37 ajan): 30 doğrulanmış bulgudan tüm HIGH (7 tekil) +
+etkili MEDIUM'lar düzeltildi ve regresyon testiyle sabitlendi. Faz 2'ye ertelenen
+sertleştirme: HMAC anahtar rotasyonu (24s dual-secret), envelope AAD (kayıt-id bağlama),
+nonce TTL sınır kenarı, imza yolu kanonikleştirme, mask format, autoComplete SKIP LOCKED
+erken-çıkış. Üretimde: SMTP_SECURE=true (TLS).
 
 Kalan: **WP eklentisi (Faz 3 — en son)**, VPS deploy (gerçek domain + Let's Encrypt + yedek),
 Faz 2 zenginleştirmeleri (hesap ürünleri, tedarik zinciri, self-servis). Yol haritası §18.
