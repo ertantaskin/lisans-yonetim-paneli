@@ -27,11 +27,17 @@ Canlı görsel kopya: https://claude.ai/code/artifact/4adb7a2c-ba7d-4379-b0ee-2f
 iadede hak otomatik dönmez). Tipler: key, hesap, süreli hesap (`validity_days`,
 teslimle başlar), kod/hediye çeki, stoksuz/ön sipariş (`stockless`, `release_at`).
 
-## Görsel kimlik (kesinleşti — Stripe tarzı)
+## Görsel kimlik (kesinleşti — rafine 2026 paleti; Stripe kimliği bırakıldı)
 
-Accent indigo `#635BFF` (koyu: `#8A84FF`), soft `#F0EFFF`/`#232057`, metin
-laciverti `#0A2540` (saf siyah yok), zemin `#F6F9FC` (koyu: `#0C1526`). İndigo
-yalnızca etkileşim; durum renkleri sabit: yeşil=bitti, amber=aksiyon, kırmızı=sorun.
+Stack: shadcn deseni + **Base UI** (2026 shadcn varsayılanı) + Tailwind v4 token +
+TanStack Table + Recharts + lucide + cmdk + sonner + next-themes; hepsi ücretsiz/MIT.
+Palet (serin Slate nötr + tek indigo accent + canlı semantik): accent `#5B57F2`
+(koyu `#8B87FF`), accent-soft `#ECEBFE`/`#241F52`, metin laciverti `#0C1E3A` (saf
+siyah yok, koyu `#E8EDF6`), muted `#6B7890`, kanvas `#F4F6FB` (koyu `#0B1220`),
+kart `#FFFFFF`/`#121B2E`, border `#E4E9F2`/`#24314B`. Semantik: success `#0E9F6E`
+(emerald), warning `#C47A09` (amber), danger `#E23D4B` (rose); veri paleti c1–c6.
+İndigo yalnız etkileşim; durum canlı semantikte. **Tek kaynak:** `apps/admin/app/globals.css`.
+Detay: MIMARI.md §17. Marka: "Lisans Paneli — Tedarik & Yönetim".
 
 ## Durum
 

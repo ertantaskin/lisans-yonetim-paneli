@@ -2,68 +2,136 @@
 @import 'tw-animate-css';
 
 /*
- * Jetlisans tasarım sistemi (MIMARI.md §17 — Stripe tarzı, kesinleşti).
- * İndigo YALNIZCA kimlik/etkileşim; durum anlamı dört semantik renkte.
- * Açık + koyu tema token seviyesinde, ilk günden.
+ * Lisans Paneli tasarım sistemi (MIMARI.md §17 — rafine 2026 paleti).
+ * Serin Slate nötrler + tek indigo accent (yalnız etkileşim) + canlı semantik
+ * renkler (emerald/amber/rose) + 6-renk veri paleti. Açık + koyu tema token
+ * seviyesinde. Stack: shadcn deseni + Base UI + Tailwind v4 + lucide.
  */
 @theme {
-  /* Marka / etkileşim */
-  --color-accent: #635bff;
-  --color-accent-soft: #f0efff;
+  /* Accent — indigo, YALNIZ etkileşim */
+  --color-accent: #5b57f2;
+  --color-accent-strong: #4a45e0; /* hover/active */
+  --color-accent-soft: #ecebfe; /* seçili satır, bilgi */
 
-  /* Metin — saf siyah YOK, lacivert */
-  --color-ink: #0a2540;
+  /* Metin — derin lacivert (saf siyah YOK) + ikincil */
+  --color-ink: #0c1e3a;
+  --color-muted: #6b7890;
 
-  /* Zemin — mavi-gri, saf gri değil */
-  --color-surface: #f6f9fc;
-  --color-surface-raised: #ffffff;
+  /* Zeminler — serin slate, katmanlı */
+  --color-surface: #f4f6fb; /* kanvas */
+  --color-surface-raised: #ffffff; /* kart/panel */
+  --color-surface-2: #eef1f7; /* ince dolgu */
 
-  /* Durum renkleri (sabit anlam) */
-  --color-success: #1a7f5a; /* bitti */
-  --color-warning: #b45309; /* aksiyon bekliyor */
-  --color-danger: #c0392b; /* sorun */
+  /* Kenarlıklar */
+  --color-border: #e4e9f2;
+  --color-border-strong: #d6ddeb;
+
+  /* Semantik durum (canlı, accent'ten ayrı) */
+  --color-success: #0e9f6e;
+  --color-success-soft: #e4f6ee;
+  --color-warning: #c47a09;
+  --color-warning-soft: #fbf0dc;
+  --color-danger: #e23d4b;
+  --color-danger-soft: #fce9eb;
+
+  /* Veri görselleştirme paleti (kategorik) */
+  --color-c1: #5b57f2;
+  --color-c2: #0e9f6e;
+  --color-c3: #2aa7e0;
+  --color-c4: #e4a33a;
+  --color-c5: #8b7cf6;
+  --color-c6: #e5688a;
+
+  --color-ring: var(--color-accent);
 
   --font-sans:
     var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono:
     var(--font-jbmono), 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
 
-  --radius-card: 0.7rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
+  --radius-card: 0.875rem;
+  --radius-sm: 0.4375rem;
+  --radius-md: 0.625rem;
   --radius-lg: 0.75rem;
-
-  /* Kenarlık + ince yüzey (token seviyesinde, tema-duyarlı) */
-  --color-border: color-mix(in srgb, var(--color-ink) 12%, transparent);
-  --color-muted: color-mix(in srgb, var(--color-ink) 58%, transparent);
-  --color-ring: var(--color-accent);
 }
 
-/* Koyu tema — token seviyesinde override (§17). */
+/* Koyu tema — token seviyesinde override. */
 @media (prefers-color-scheme: dark) {
   @theme {
-    --color-accent: #8a84ff;
-    --color-accent-soft: #232057;
-    --color-ink: #e6ebf4;
-    --color-surface: #0c1526;
-    --color-surface-raised: #111d33;
+    --color-accent: #8b87ff;
+    --color-accent-strong: #a49fff;
+    --color-accent-soft: #241f52;
+    --color-ink: #e8edf6;
+    --color-muted: #8593ac;
+    --color-surface: #0b1220;
+    --color-surface-raised: #121b2e;
+    --color-surface-2: #182338;
+    --color-border: #24314b;
+    --color-border-strong: #2f3e5c;
+    --color-success: #34d399;
+    --color-success-soft: #10281f;
+    --color-warning: #f5b547;
+    --color-warning-soft: #2a1e0a;
+    --color-danger: #fb7185;
+    --color-danger-soft: #2c1116;
+    --color-c1: #8b87ff;
+    --color-c2: #34d399;
+    --color-c3: #56bfea;
+    --color-c4: #f0b95c;
+    --color-c5: #a99cff;
+    --color-c6: #f18aa6;
   }
 }
 
+/* Manuel tema seçimi (next-themes data-theme) — media query'yi ezer. */
 :root[data-theme='dark'] {
-  --color-accent: #8a84ff;
-  --color-accent-soft: #232057;
-  --color-ink: #e6ebf4;
-  --color-surface: #0c1526;
-  --color-surface-raised: #111d33;
+  --color-accent: #8b87ff;
+  --color-accent-strong: #a49fff;
+  --color-accent-soft: #241f52;
+  --color-ink: #e8edf6;
+  --color-muted: #8593ac;
+  --color-surface: #0b1220;
+  --color-surface-raised: #121b2e;
+  --color-surface-2: #182338;
+  --color-border: #24314b;
+  --color-border-strong: #2f3e5c;
+  --color-success: #34d399;
+  --color-success-soft: #10281f;
+  --color-warning: #f5b547;
+  --color-warning-soft: #2a1e0a;
+  --color-danger: #fb7185;
+  --color-danger-soft: #2c1116;
+  --color-c1: #8b87ff;
+  --color-c2: #34d399;
+  --color-c3: #56bfea;
+  --color-c4: #f0b95c;
+  --color-c5: #a99cff;
+  --color-c6: #f18aa6;
 }
 
 :root[data-theme='light'] {
-  --color-accent: #635bff;
-  --color-accent-soft: #f0efff;
-  --color-ink: #0a2540;
-  --color-surface: #f6f9fc;
+  --color-accent: #5b57f2;
+  --color-accent-strong: #4a45e0;
+  --color-accent-soft: #ecebfe;
+  --color-ink: #0c1e3a;
+  --color-muted: #6b7890;
+  --color-surface: #f4f6fb;
   --color-surface-raised: #ffffff;
+  --color-surface-2: #eef1f7;
+  --color-border: #e4e9f2;
+  --color-border-strong: #d6ddeb;
+  --color-success: #0e9f6e;
+  --color-success-soft: #e4f6ee;
+  --color-warning: #c47a09;
+  --color-warning-soft: #fbf0dc;
+  --color-danger: #e23d4b;
+  --color-danger-soft: #fce9eb;
+  --color-c1: #5b57f2;
+  --color-c2: #0e9f6e;
+  --color-c3: #2aa7e0;
+  --color-c4: #e4a33a;
+  --color-c5: #8b7cf6;
+  --color-c6: #e5688a;
 }
 
 html,

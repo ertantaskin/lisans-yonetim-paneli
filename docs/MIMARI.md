@@ -305,20 +305,36 @@ Payload'lar modele maskeli gider; AI çökerse sistem AI'sız çalışır.
 **Felsefe:** operasyon aracı — "scan edilir, okunmaz". Yoğun tablo, net durum rengi,
 her ekranda aynı desen.
 
-**Yığın:** Tailwind v4 token'ları + shadcn/ui + TanStack Table/Query + Recharts +
-Inter/tabular-nums + lucide. Açık + koyu tema token seviyesinde, ilk günden.
+**Yığın (2026 standardı, kesinleşti):** Tailwind v4 token'ları + shadcn/ui deseni
+(kod sahipliği) üstünde **Base UI** primitifleri (Temmuz 2026'da shadcn'in varsayılanı;
+Radix'i yazan ekibin yeni kütüphanesi) + TanStack Table + Recharts/Tremor +
+Inter + JetBrains Mono / tabular-nums + lucide + cmdk (Ctrl+K) + sonner (toast) +
+next-themes. Açık + koyu tema token seviyesinde. Hazır styled kütüphane (Mantine/HeroUI)
+KULLANILMAZ — özel kimliği dayatır; hepsi ücretsiz/MIT.
 
-**Renk kimliği (Stripe tarzı — kesinleşti):**
+**Renk kimliği (rafine 2026 paleti — kesinleşti):** serin Slate nötrler (seçilmiş,
+düz gri değil) + tek indigo accent (yalnız etkileşim) + canlı-ama-zarif semantik
+(emerald/amber/rose) + katmanlı yüzeyler. Token'lar `apps/admin/app/globals.css`
+tek kaynağında; değişince tüm uygulama anında yayılır.
 
 | Token | Açık | Koyu | Kullanım |
 |---|---|---|---|
-| accent | `#635BFF` | `#8A84FF` | Buton, seçili menü, ilerleme, link |
-| accent-soft | `#F0EFFF` | `#232057` | Seçili satır zemini, bilgi kutuları |
-| ink (lacivert) | `#0A2540` | `#E6EBF4` | Metin + ikincil koyu buton (saf siyah yok) |
-| zemin | `#F6F9FC` | `#0C1526` | Sayfa/yüzey (mavi-gri, saf gri değil) |
-| success/warning/danger | yeşil/amber/kırmızı | (sabit) | bitti / aksiyon bekliyor / sorun |
+| accent | `#5B57F2` | `#8B87FF` | Buton, seçili menü, ilerleme, link (YALNIZ etkileşim) |
+| accent-strong | `#4A45E0` | `#A49FFF` | hover/active |
+| accent-soft | `#ECEBFE` | `#241F52` | Seçili satır zemini, bilgi kutuları |
+| ink (lacivert) | `#0C1E3A` | `#E8EDF6` | Metin (saf siyah yok) |
+| muted | `#6B7890` | `#8593AC` | İkincil metin |
+| surface (kanvas) | `#F4F6FB` | `#0B1220` | Sayfa zemini |
+| surface-raised | `#FFFFFF` | `#121B2E` | Kart/panel |
+| surface-2 | `#EEF1F7` | `#182338` | İnce dolgu |
+| border | `#E4E9F2` | `#24314B` | Kenarlık |
+| success | `#0E9F6E` | `#34D399` | bitti (canlı emerald) |
+| warning | `#C47A09` | `#F5B547` | aksiyon bekliyor (amber) |
+| danger | `#E23D4B` | `#FB7185` | sorun (rose) |
+| c1–c6 | indigo/emerald/sky/amber/violet/rose | (sabit) | veri görselleştirme (kategorik) |
 
-İndigo YALNIZCA kimlik/etkileşim; durum anlamı dört semantik renkte.
+İndigo YALNIZCA kimlik/etkileşim; durum anlamı canlı semantik renklerde; veri
+grafikleri 6-renk kategorik palette.
 
 **Bilgi mimarisi:** sol menü — Bekleyen Teslimatlar (ana), Siparişler, Stok
 (ürün/parti/PO), Tedarikçiler, Destek, Müşteriler, Kanallar, Şablonlar, Raporlar,
