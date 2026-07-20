@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "all (turbo: api + admin)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "api (NestJS/Fastify)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@jetlisans/api", "dev"],
+      "port": 3001
+    },
+    {
+      "name": "admin (Next.js)",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@jetlisans/admin", "dev"],
+      "port": 3000
+    }
+  ]
+}
