@@ -32,6 +32,7 @@ playwright-report/
 test-results/
 
 # Docker / veri hacimleri
+docker-compose.override.yml
 docker/data/
 pgdata/
 caddy_data/

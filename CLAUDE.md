@@ -35,11 +35,13 @@ yalnızca etkileşim; durum renkleri sabit: yeşil=bitti, amber=aksiyon, kırmı
 
 ## Durum
 
-Tasarım (v2.6) tamamlandı. **Faz 0 iskeleti kuruldu** (pnpm+Turborepo monorepo,
-NestJS/Fastify API, Next.js admin, Drizzle şema + ilk migration, Docker Compose
-PG17+Redis7+Caddy, CI + yarış testi). Build/typecheck/lint/test yeşil. Kalan:
-Docker'la lokal doğrulama + VPS deploy. Sıradaki iş: **Faz 1 (MVP)** — atomik atama
-akışı, kısmi teslimat motoru, sipariş API'si, WP eklentisi. Yol haritası `docs/MIMARI.md` §18.
+Tasarım (v2.6) tamamlandı. **Faz 0 CANLI ve uçtan uca doğrulandı**: `docker compose up`
+ile 5 servis (PG17+Redis7+API+admin+Caddy) ayakta; migration gerçek PG'ye uygulandı;
+`/v1/health` db+redis bağlı dönüyor; admin `https://localhost`, API `https://api.localhost`
+(Caddy iç TLS); **yarış testi canlı PG17'de geçti (100 sipariş×50 stok → çifte atama=0)**.
+Build/typecheck/lint/test yeşil. Kalan: VPS deploy (gerçek domain + Let's Encrypt + yedek).
+Sıradaki iş: **Faz 1 (MVP)** — atomik atama akışı, kısmi teslimat motoru, sipariş API'si,
+WP eklentisi. Yol haritası `docs/MIMARI.md` §18.
 
 ## Geliştirme
 
@@ -47,3 +49,5 @@ akışı, kısmi teslimat motoru, sipariş API'si, WP eklentisi. Yol haritası `
 (PG+Redis+API+admin+Caddy). Migration: `pnpm db:generate` (şema→SQL) / `pnpm db:migrate`.
 Yarış testi (gerçek PG ister): `pnpm --filter @jetlisans/api test:race`. Lokal Node 22
 önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
+DB dışa kapalıdır; lokalde host'tan PG/Redis'e erişmek için `docker-compose.override.yml`
+(gitignore'da) 127.0.0.1'e port açar — yarış testi bunu kullanır.
