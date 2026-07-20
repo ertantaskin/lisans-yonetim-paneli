@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { createProductAction } from '../app/stock/actions';
 
 const inputCls =
-  'rounded-md border border-ink/15 bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent';
+  'rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring';
 
 type SchemaField = { key: string; label: string; secret: boolean };
 
@@ -79,8 +79,8 @@ export function ProductCreateForm() {
 
       {/* account → payloadSchema editörü */}
       {kind === 'account' && (
-        <div className="rounded-md border border-ink/10 bg-surface/50 p-3">
-          <div className="mb-2 text-xs font-medium text-ink/60">Hesap alanları (payloadSchema)</div>
+        <div className="rounded-md border border-border bg-background/50 p-3">
+          <div className="mb-2 text-xs font-medium text-foreground/60">Hesap alanları (payloadSchema)</div>
           <input type="hidden" name="payloadSchema" value={schemaJson} />
           <div className="space-y-2">
             {fields.map((f, i) => (
@@ -97,7 +97,7 @@ export function ProductCreateForm() {
                   placeholder="etiket (Kullanıcı adı)"
                   className={`${inputCls} w-44`}
                 />
-                <label className="flex items-center gap-1 text-xs text-ink/60">
+                <label className="flex items-center gap-1 text-xs text-foreground/60">
                   <input
                     type="checkbox"
                     checked={f.secret}
@@ -108,7 +108,7 @@ export function ProductCreateForm() {
                 <button
                   type="button"
                   onClick={() => removeField(i)}
-                  className="text-xs text-danger hover:underline"
+                  className="text-xs text-destructive hover:underline"
                 >
                   sil
                 </button>
@@ -118,7 +118,7 @@ export function ProductCreateForm() {
           <button
             type="button"
             onClick={addField}
-            className="mt-2 text-xs text-accent hover:underline"
+            className="mt-2 text-xs text-primary hover:underline"
           >
             + alan ekle
           </button>
@@ -148,7 +148,7 @@ export function ProductCreateForm() {
 
       <button
         type="submit"
-        className="rounded-md bg-accent px-4 py-1.5 font-medium text-white hover:opacity-90"
+        className="rounded-md bg-primary px-4 py-1.5 font-medium text-primary-foreground hover:opacity-90"
       >
         Oluştur
       </button>

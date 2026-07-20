@@ -8,7 +8,7 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-ink/10 text-left text-xs uppercase tracking-wide text-ink/50">
+          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
             <th className="px-3 py-2 font-medium">Sipariş No</th>
             <th className="px-3 py-2 font-medium">Müşteri</th>
             <th className="px-3 py-2 font-medium">Durum</th>
@@ -18,17 +18,17 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
         </thead>
         <tbody>
           {orders.map((o) => (
-            <tr key={o.id} className="border-b border-ink/5 hover:bg-accent-soft/30">
-              <td className="px-3 py-2.5 font-medium text-ink">{o.remoteOrderId}</td>
-              <td className="px-3 py-2.5 text-ink/70">{o.customerEmail}</td>
+            <tr key={o.id} className="border-b border-border hover:bg-accent/30">
+              <td className="px-3 py-2.5 font-medium text-foreground">{o.remoteOrderId}</td>
+              <td className="px-3 py-2.5 text-foreground/70">{o.customerEmail}</td>
               <td className="px-3 py-2.5">
                 <StatusPill status={o.status} />
               </td>
-              <td className="px-3 py-2.5 tabular-nums text-ink/50">
+              <td className="px-3 py-2.5 tabular-nums text-muted-foreground">
                 {new Date(o.createdAt).toLocaleString('tr-TR')}
               </td>
               <td className="px-3 py-2.5 text-right">
-                <Link href={`/orders/${o.id}`} className="text-accent hover:underline">
+                <Link href={`/orders/${o.id}`} className="text-primary hover:underline">
                   detay →
                 </Link>
               </td>

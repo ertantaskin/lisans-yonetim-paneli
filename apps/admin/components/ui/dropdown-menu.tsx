@@ -17,7 +17,7 @@ export const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 min-w-[11rem] overflow-hidden rounded-[var(--radius-md)] border border-border bg-surface-raised p-1 shadow-lg',
+        'z-50 min-w-[11rem] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground p-1 shadow-lg',
         'animate-in fade-in-0 zoom-in-95',
         className,
       )}
@@ -34,8 +34,8 @@ export const DropdownMenuItem = React.forwardRef<
   <DropdownPrimitive.Item
     ref={ref}
     className={cn(
-      'relative flex cursor-pointer select-none items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-sm text-ink/90 outline-none transition-colors',
-      'focus:bg-accent-soft focus:text-accent data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4',
+      'relative flex cursor-pointer select-none items-center gap-2 rounded-sm px-2.5 py-1.5 text-sm text-popover-foreground outline-none transition-colors',
+      'focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:size-4',
       inset && 'pl-8',
       className,
     )}
@@ -50,7 +50,7 @@ export function DropdownMenuLabel({
 }: React.ComponentPropsWithoutRef<typeof DropdownPrimitive.Label>) {
   return (
     <DropdownPrimitive.Label
-      className={cn('px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted', className)}
+      className={cn('px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground', className)}
       {...props}
     />
   );
@@ -73,7 +73,7 @@ export const DropdownMenuCheckboxItem = React.forwardRef<
     ref={ref}
     checked={checked}
     className={cn(
-      'relative flex cursor-pointer select-none items-center gap-2 rounded-[var(--radius-sm)] py-1.5 pl-8 pr-2.5 text-sm outline-none focus:bg-accent-soft focus:text-accent',
+      'relative flex cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 pl-8 pr-2.5 text-sm outline-none focus:bg-accent focus:text-accent-foreground',
       className,
     )}
     {...props}

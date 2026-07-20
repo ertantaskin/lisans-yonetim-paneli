@@ -18,7 +18,7 @@ export default async function OrdersPage() {
       <PageHeader title="Siparişler" desc="Tüm siparişler (en yeni önce)." />
       <Card>
         {error ? (
-          <p className="text-sm text-danger">API'ye ulaşılamadı: {error}</p>
+          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         ) : (
           <OrdersTable orders={orders} />
         )}

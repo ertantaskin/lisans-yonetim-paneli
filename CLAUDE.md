@@ -27,16 +27,28 @@ Canlı görsel kopya: https://claude.ai/code/artifact/4adb7a2c-ba7d-4379-b0ee-2f
 iadede hak otomatik dönmez). Tipler: key, hesap, süreli hesap (`validity_days`,
 teslimle başlar), kod/hediye çeki, stoksuz/ön sipariş (`stockless`, `release_at`).
 
-## Görsel kimlik (kesinleşti — rafine 2026 paleti; Stripe kimliği bırakıldı)
+## Görsel kimlik (kesinleşti — satnaing/shadcn-admin nötr dili; Base UI + 2026 indigo BIRAKILDI)
 
-Stack: shadcn deseni + **Base UI** (2026 shadcn varsayılanı) + Tailwind v4 token +
-TanStack Table + Recharts + lucide + cmdk + sonner + next-themes; hepsi ücretsiz/MIT.
-Palet (serin Slate nötr + tek indigo accent + canlı semantik): accent `#5B57F2`
-(koyu `#8B87FF`), accent-soft `#ECEBFE`/`#241F52`, metin laciverti `#0C1E3A` (saf
-siyah yok, koyu `#E8EDF6`), muted `#6B7890`, kanvas `#F4F6FB` (koyu `#0B1220`),
-kart `#FFFFFF`/`#121B2E`, border `#E4E9F2`/`#24314B`. Semantik: success `#0E9F6E`
-(emerald), warning `#C47A09` (amber), danger `#E23D4B` (rose); veri paleti c1–c6.
-İndigo yalnız etkileşim; durum canlı semantikte. **Tek kaynak:** `apps/admin/app/globals.css`.
+Referans: **satnaing/shadcn-admin** (shadcn-admin.netlify.app) birebir. Stack: klasik
+**shadcn/ui deseni + Radix UI** (Base UI değil) + Tailwind v4 (CSS-first, `tailwind.config.js`
+YOK — token'lar `@theme`/`@theme inline` içinde) + TanStack Table + Recharts + lucide +
+cmdk + sonner + next-themes; hepsi ücretsiz/MIT. Framework: **Next.js 15 (sunucu-taraflı)**
+korunur (şablon Vite olsa da güvenlik gereği). Palet: **standart shadcn nötr oklch** —
+`--background/--foreground/--card/--primary/--secondary/--muted/--accent/--border/--ring`
++ `--sidebar-*` + `--chart-1..6`; nötr primary (açıkta koyu, koyuda açık), renk YOK
+(monokrom). Semantik uzantı (durum dili, renkli tutulur): `--success` (emerald),
+`--warning` (amber), `--destructive` (rose) — açık temada AA (≥4.5:1) sağlayacak koyulukta,
+koyu temada daha açık. Tema: `.dark` class (next-themes `attribute=class`). **Tek kaynak:**
+`apps/admin/app/globals.css`. Kabuk: resmi shadcn **sidebar block** deseni
+(`ui/sidebar.tsx` — SidebarProvider/Sidebar/SidebarInset/SidebarTrigger, cookie kalıcılık,
+Ctrl/⌘+B, icon-collapse, mobil sheet) + `app-sidebar` + `site-header` (breadcrumb).
+**Migrasyon TAMAM:** tüm sayfalar/primitifler standart shadcn token kullanıyor; legacy compat
+köprüsü kaldırıldı (kod tabanında sıfır `ink/surface/accent-soft…`). 20 dosya deterministik
+codemod ile taşındı, 5-lensli adversaryel denetimden geçti (kritik + kontrast bulguları
+düzeltildi), production build + iki temada WCAG AA tarayıcıda doğrulandı.
+**KRİTİK NOT:** `@theme inline`'da her renk token'ı base + `-foreground` çift olmalı
+(`--color-muted`+`--color-muted-foreground`, `--color-accent`+`--color-accent-foreground`);
+base atlanırsa Tailwind v4 o `bg-*` utility'sini HİÇ üretmez (sessiz kırılma).
 Detay: MIMARI.md §17. Marka: "Lisans Paneli — Tedarik & Yönetim".
 
 ## Durum

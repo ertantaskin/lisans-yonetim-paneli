@@ -305,36 +305,47 @@ Payload'lar modele maskeli gider; AI çökerse sistem AI'sız çalışır.
 **Felsefe:** operasyon aracı — "scan edilir, okunmaz". Yoğun tablo, net durum rengi,
 her ekranda aynı desen.
 
-**Yığın (2026 standardı, kesinleşti):** Tailwind v4 token'ları + shadcn/ui deseni
-(kod sahipliği) üstünde **Base UI** primitifleri (Temmuz 2026'da shadcn'in varsayılanı;
-Radix'i yazan ekibin yeni kütüphanesi) + TanStack Table + Recharts/Tremor +
-Inter + JetBrains Mono / tabular-nums + lucide + cmdk (Ctrl+K) + sonner (toast) +
-next-themes. Açık + koyu tema token seviyesinde. Hazır styled kütüphane (Mantine/HeroUI)
-KULLANILMAZ — özel kimliği dayatır; hepsi ücretsiz/MIT.
+**Yığın (kesinleşti — satnaing/shadcn-admin nötr dili):** Referans birebir
+**satnaing/shadcn-admin** (shadcn-admin.netlify.app). Tailwind v4 (CSS-first; `tailwind.config.js`
+YOK — token'lar `@theme`/`@theme inline`'da) + klasik **shadcn/ui deseni (kod sahipliği) +
+Radix UI** primitifleri (Base UI DEĞİL — 2026 indigo/Base UI kararı bırakıldı) + TanStack
+Table + Recharts + Inter + JetBrains Mono / tabular-nums + lucide + cmdk (Ctrl+K) +
+sonner (toast) + next-themes (`attribute=class`, `.dark`). Framework: **Next.js 15
+(sunucu-taraflı)** korunur — şablon Vite/TanStack Router olsa da veri çekimi sunucuda
+(ADMIN_TOKEN tarayıcıya sızmaz, HMAC/site-scope) kalması güvenlik gereği. Açık + koyu
+tema token seviyesinde. Hazır styled kütüphane (Mantine/HeroUI) KULLANILMAZ; hepsi ücretsiz/MIT.
 
-**Renk kimliği (rafine 2026 paleti — kesinleşti):** serin Slate nötrler (seçilmiş,
-düz gri değil) + tek indigo accent (yalnız etkileşim) + canlı-ama-zarif semantik
-(emerald/amber/rose) + katmanlı yüzeyler. Token'lar `apps/admin/app/globals.css`
-tek kaynağında; değişince tüm uygulama anında yayılır.
+**Renk kimliği (shadcn nötr paleti — kesinleşti):** standart shadcn **nötr oklch**
+token'ları — monokrom; **nötr primary** (açıkta koyu, koyuda açık; renkli marka accent'i YOK),
+katmanlı yüzeyler. Durum anlamı **semantik uzantı** renklerinde (nötr temada renkli tutulur).
+Token'lar `apps/admin/app/globals.css` tek kaynağında (`:root`/`.dark` + `@theme inline`);
+değişince tüm uygulama anında yayılır. Legacy sınıflar (`ink/surface/accent-soft…`) geçici
+**compat @theme köprüsüyle** yeni palete bağlı — sayfalar standart token'lara taşınınca kalkar.
 
-| Token | Açık | Koyu | Kullanım |
+| Token | Açık (oklch L) | Koyu (oklch L) | Kullanım |
 |---|---|---|---|
-| accent | `#5B57F2` | `#8B87FF` | Buton, seçili menü, ilerleme, link (YALNIZ etkileşim) |
-| accent-strong | `#4A45E0` | `#A49FFF` | hover/active |
-| accent-soft | `#ECEBFE` | `#241F52` | Seçili satır zemini, bilgi kutuları |
-| ink (lacivert) | `#0C1E3A` | `#E8EDF6` | Metin (saf siyah yok) |
-| muted | `#6B7890` | `#8593AC` | İkincil metin |
-| surface (kanvas) | `#F4F6FB` | `#0B1220` | Sayfa zemini |
-| surface-raised | `#FFFFFF` | `#121B2E` | Kart/panel |
-| surface-2 | `#EEF1F7` | `#182338` | İnce dolgu |
-| border | `#E4E9F2` | `#24314B` | Kenarlık |
-| success | `#0E9F6E` | `#34D399` | bitti (canlı emerald) |
-| warning | `#C47A09` | `#F5B547` | aksiyon bekliyor (amber) |
-| danger | `#E23D4B` | `#FB7185` | sorun (rose) |
-| c1–c6 | indigo/emerald/sky/amber/violet/rose | (sabit) | veri görselleştirme (kategorik) |
+| background | `1.0` | `0.145` | Sayfa zemini |
+| foreground | `0.145` | `0.985` | Metin |
+| card / popover | `1.0` | `0.205` | Kart/panel/overlay |
+| primary | `0.205` (koyu) | `0.922` (açık) | Buton, aktif, link (NÖTR — renk yok) |
+| secondary / muted / accent | `0.97` | `0.269` | Dolgu, hover, seçili satır |
+| muted-foreground | `0.556` | `0.708` | İkincil metin |
+| border / input | `0.922` | `1.0 /10%` | Kenarlık / alan çeperi |
+| ring | `0.708` | `0.556` | Odak halkası |
+| sidebar-* | `0.985` zemin | `0.205` zemin | Kenar menü ayrı token seti |
+| success | emerald | emerald | bitti (durum) |
+| warning | amber | amber | aksiyon bekliyor (durum) |
+| destructive | rose | rose | sorun / iptal |
+| chart-1..6 | shadcn kategorik | (koyu varyant) | veri görselleştirme |
 
-İndigo YALNIZCA kimlik/etkileşim; durum anlamı canlı semantik renklerde; veri
-grafikleri 6-renk kategorik palette.
+Primary NÖTR (marka renk vurgusu yok, shadcn-admin gibi); **durum anlamı** yalnız
+success/warning/destructive semantik renklerinde; veri grafikleri `chart-1..6` kategorik.
+
+**Kabuk (shadcn sidebar block):** `ui/sidebar.tsx` — resmi shadcn sidebar deseninin sadık
+uyarlaması: `SidebarProvider` (cookie kalıcılık `sidebar_state`, Ctrl/⌘+B kısayolu, mobil
+sheet), `Sidebar` (masaüstü icon-collapse rayı), `SidebarInset`, `SidebarTrigger`,
+`SidebarMenu*`. `components/shell/app-sidebar` (marka + gruplu nav + `nav-user` footer) +
+`site-header` (SidebarTrigger + breadcrumb + Ctrl+K + tema + CANLI rozeti).
 
 **Bilgi mimarisi:** sol menü — Bekleyen Teslimatlar (ana), Siparişler, Stok
 (ürün/parti/PO), Tedarikçiler, Destek, Müşteriler, Kanallar, Şablonlar, Raporlar,

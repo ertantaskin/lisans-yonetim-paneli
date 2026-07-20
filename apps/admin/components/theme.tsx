@@ -4,11 +4,11 @@ import { ThemeProvider as NextThemesProvider, useTheme } from 'next-themes';
 import { Moon, Sun } from 'lucide-react';
 import { Button } from './ui/button';
 
-/** Koyu/açık tema — data-theme attribute'una yazar (globals.css ile hizalı). */
+/** Koyu/açık tema — `.dark` class'ı html'e yazar (shadcn v4 stratejisi, globals.css ile hizalı). */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   return (
     <NextThemesProvider
-      attribute="data-theme"
+      attribute="class"
       defaultTheme="system"
       enableSystem
       disableTransitionOnChange

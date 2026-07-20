@@ -28,7 +28,7 @@ export default async function StockPage() {
   }
 
   const inputCls =
-    'rounded-md border border-ink/15 bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent';
+    'rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring';
 
   return (
     <div className="max-w-4xl">
@@ -36,20 +36,20 @@ export default async function StockPage() {
 
       {error && (
         <Card className="mb-5">
-          <p className="text-sm text-danger">API'ye ulaşılamadı: {error}</p>
+          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         </Card>
       )}
 
       {/* Ürünler + stok */}
       <Card className="mb-5">
-        <h2 className="mb-3 text-sm font-semibold text-ink">Ürünler</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Ürünler</h2>
         {products.length === 0 ? (
           <Empty>Ürün yok.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-ink/10 text-left text-xs uppercase text-ink/50">
+                <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Ürün</th>
                   <th className="px-3 py-2 font-medium">SKU</th>
                   <th className="px-3 py-2 font-medium">Tip</th>
@@ -59,15 +59,15 @@ export default async function StockPage() {
               </thead>
               <tbody>
                 {products.map((p) => (
-                  <tr key={p.id} className="border-b border-ink/5">
-                    <td className="px-3 py-2.5 font-medium text-ink">{p.name}</td>
-                    <td className="px-3 py-2.5 font-mono text-xs text-ink/60">{p.sku}</td>
-                    <td className="px-3 py-2.5 text-xs text-ink/70">{typeLabel(p)}</td>
-                    <td className="px-3 py-2.5 text-ink/70">{p.fulfillmentPolicy}</td>
+                  <tr key={p.id} className="border-b border-border">
+                    <td className="px-3 py-2.5 font-medium text-foreground">{p.name}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-foreground/60">{p.sku}</td>
+                    <td className="px-3 py-2.5 text-xs text-foreground/70">{typeLabel(p)}</td>
+                    <td className="px-3 py-2.5 text-foreground/70">{p.fulfillmentPolicy}</td>
                     <td className="px-3 py-2.5">
                       <span
                         className={`tabular-nums font-medium ${
-                          p.availableStock > 0 ? 'text-success' : 'text-danger'
+                          p.availableStock > 0 ? 'text-success' : 'text-destructive'
                         }`}
                         title={p.usageMode === 'multi' ? 'kalan kapasite (Σ max-kullanım − kullanılan)' : 'available satır'}
                       >
@@ -84,20 +84,20 @@ export default async function StockPage() {
 
       {/* Stok import */}
       <Card className="mb-5">
-        <h2 className="mb-3 text-sm font-semibold text-ink">Stok Import (Onayla ve Dağıt)</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Stok Import (Onayla ve Dağıt)</h2>
         <ImportStockForm products={products} />
       </Card>
 
       <div className="grid gap-5 md:grid-cols-2">
         {/* Ürün oluştur */}
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-ink">Ürün Oluştur</h2>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Ürün Oluştur</h2>
           <ProductCreateForm />
         </Card>
 
         {/* Eşleme */}
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-ink">Site-Ürün Eşleme</h2>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Site-Ürün Eşleme</h2>
           <form action={createMappingAction} className="space-y-3 text-sm">
             <select name="siteId" required className={`w-full ${inputCls}`}>
               <option value="">— site —</option>
@@ -123,7 +123,7 @@ export default async function StockPage() {
             />
             <button
               type="submit"
-              className="rounded-md bg-accent px-4 py-1.5 font-medium text-white hover:opacity-90"
+              className="rounded-md bg-primary px-4 py-1.5 font-medium text-primary-foreground hover:opacity-90"
             >
               Eşle
             </button>

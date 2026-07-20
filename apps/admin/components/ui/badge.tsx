@@ -18,12 +18,12 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        neutral: 'bg-ink/[0.07] text-ink/70',
-        accent: 'bg-accent-soft text-accent',
-        success: 'bg-[color-mix(in_srgb,var(--color-success)_13%,transparent)] text-success',
-        warning: 'bg-[color-mix(in_srgb,var(--color-warning)_16%,transparent)] text-warning',
-        danger: 'bg-[color-mix(in_srgb,var(--color-danger)_13%,transparent)] text-danger',
-        outline: 'border border-border text-ink/70',
+        neutral: 'bg-secondary text-secondary-foreground',
+        accent: 'bg-secondary text-foreground',
+        success: 'bg-[color-mix(in_oklch,var(--success)_16%,transparent)] text-success',
+        warning: 'bg-[color-mix(in_oklch,var(--warning)_18%,transparent)] text-warning',
+        danger: 'bg-[color-mix(in_oklch,var(--destructive)_15%,transparent)] text-destructive',
+        outline: 'border border-border text-muted-foreground',
       },
     },
     defaultVariants: { variant: 'neutral' },

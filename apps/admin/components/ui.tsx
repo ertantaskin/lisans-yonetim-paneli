@@ -33,10 +33,10 @@ const STATUS_LABEL: Record<string, string> = {
 export function StatusPill({ status }: { status: string }) {
   const color = STATUS_COLOR[status] ?? 'neutral';
   const styles: Record<string, string> = {
-    success: 'bg-[color-mix(in_srgb,var(--color-success)_14%,transparent)] text-success',
-    warning: 'bg-[color-mix(in_srgb,var(--color-warning)_16%,transparent)] text-warning',
-    danger: 'bg-[color-mix(in_srgb,var(--color-danger)_14%,transparent)] text-danger',
-    neutral: 'bg-accent-soft text-accent',
+    success: 'bg-[color-mix(in_srgb,var(--success)_14%,transparent)] text-success',
+    warning: 'bg-[color-mix(in_srgb,var(--warning)_16%,transparent)] text-warning',
+    danger: 'bg-[color-mix(in_srgb,var(--destructive)_14%,transparent)] text-destructive',
+    neutral: 'bg-accent text-accent-foreground',
   };
   return (
     <span
@@ -51,7 +51,7 @@ export function StatusPill({ status }: { status: string }) {
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <section
-      className={`rounded-[var(--radius-card)] border border-ink/10 bg-surface-raised p-5 shadow-sm ${className}`}
+      className={`rounded-xl border border-border bg-card p-5 shadow-sm ${className}`}
     >
       {children}
     </section>
@@ -61,12 +61,12 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 export function PageHeader({ title, desc }: { title: string; desc?: string }) {
   return (
     <header className="mb-6">
-      <h1 className="text-2xl font-semibold text-ink">{title}</h1>
-      {desc && <p className="mt-1 text-sm text-ink/60">{desc}</p>}
+      <h1 className="text-2xl font-semibold text-foreground">{title}</h1>
+      {desc && <p className="mt-1 text-sm text-foreground/60">{desc}</p>}
     </header>
   );
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="py-10 text-center text-sm text-ink/40">{children}</div>;
+  return <div className="py-10 text-center text-sm text-muted-foreground">{children}</div>;
 }

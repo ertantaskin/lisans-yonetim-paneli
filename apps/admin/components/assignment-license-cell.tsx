@@ -27,13 +27,13 @@ export function AssignmentLicenseCell({ assignmentId, kind, maskedPayload, maske
         <div className="space-y-0.5">
           {(revealed?.fields ?? maskedFields ?? []).map((f) => (
             <div key={f.key} className="flex gap-1.5 font-mono text-xs">
-              <span className="text-ink/50">{f.label}:</span>
-              <span className={f.secret && !revealed ? 'text-ink/50' : 'text-ink/80'}>{f.value}</span>
+              <span className="text-muted-foreground">{f.label}:</span>
+              <span className={f.secret && !revealed ? 'text-muted-foreground' : 'text-foreground/80'}>{f.value}</span>
             </div>
           ))}
         </div>
       ) : (
-        <div className="font-mono text-ink/80">{revealed ? revealed.payload : maskedPayload}</div>
+        <div className="font-mono text-foreground/80">{revealed ? revealed.payload : maskedPayload}</div>
       )}
 
       {!revealed && (
@@ -42,7 +42,7 @@ export function AssignmentLicenseCell({ assignmentId, kind, maskedPayload, maske
           <button
             type="submit"
             disabled={pending}
-            className="text-xs text-accent hover:underline disabled:opacity-50"
+            className="text-xs text-primary hover:underline disabled:opacity-50"
           >
             {pending ? 'Gösteriliyor…' : 'Göster'}
           </button>
@@ -50,7 +50,7 @@ export function AssignmentLicenseCell({ assignmentId, kind, maskedPayload, maske
       )}
       {revealed && <span className="text-[11px] text-warning">Gösterildi (audit'e düştü)</span>}
       {state.error && state.assignmentId === assignmentId && (
-        <span className="text-[11px] text-danger">{state.error}</span>
+        <span className="text-[11px] text-destructive">{state.error}</span>
       )}
     </div>
   );

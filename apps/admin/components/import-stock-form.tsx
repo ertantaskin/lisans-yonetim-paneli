@@ -22,13 +22,13 @@ export function ImportStockForm({ products }: { products: ProductRow[] }) {
     <form action={action} className="space-y-3">
       <div className="flex flex-wrap gap-3">
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Ürün</span>
+          <span className="text-foreground/60">Ürün</span>
           <select
             name="productId"
             required
             value={productId}
             onChange={(e) => setProductId(e.target.value)}
-            className="rounded-md border border-ink/15 bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent"
+            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-ring"
           >
             <option value="">— seçin —</option>
             {products.map((p) => (
@@ -40,13 +40,13 @@ export function ImportStockForm({ products }: { products: ProductRow[] }) {
         </label>
       </div>
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-ink/60">
+        <span className="text-foreground/60">
           {isAccount ? 'Hesaplar (her satır bir JSON nesne)' : "Key'ler (her satır bir key)"}
         </span>
         {isAccount && (
-          <span className="text-xs text-ink/50">
+          <span className="text-xs text-muted-foreground">
             Alanlar: {schemaKeys.join(', ') || '(şema tanımsız)'} — örn:{' '}
-            <code className="text-ink/70">{accountExample}</code>
+            <code className="text-foreground/70">{accountExample}</code>
           </span>
         )}
         <textarea
@@ -57,18 +57,18 @@ export function ImportStockForm({ products }: { products: ProductRow[] }) {
               ? `${accountExample}\n${accountExample}`
               : 'XXXXX-XXXXX-XXXXX-XXXXX-11111\nXXXXX-XXXXX-XXXXX-XXXXX-22222'
           }
-          className="w-full rounded-md border border-ink/15 bg-surface px-3 py-2 font-mono text-xs outline-none focus:border-accent"
+          className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-ring"
         />
       </label>
       <button
         type="submit"
         disabled={pending}
-        className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+        className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
       >
         {pending ? 'İçe aktarılıyor…' : 'Onayla ve Dağıt'}
       </button>
 
-      {state.error && <p className="text-sm text-danger">{state.error}</p>}
+      {state.error && <p className="text-sm text-destructive">{state.error}</p>}
       {state.ok && state.result && (
         <div className="space-y-1 text-sm">
           {/* imported=0 ise başarı DEĞİL — hiçbir şey girmedi (ör. hepsi reddedildi). */}

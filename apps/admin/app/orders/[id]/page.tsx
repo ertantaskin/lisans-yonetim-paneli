@@ -31,7 +31,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       <div>
         <PageHeader title="Sipariş" />
         <Card>
-          <p className="text-sm text-danger">Sipariş yüklenemedi: {error}</p>
+          <p className="text-sm text-destructive">Sipariş yüklenemedi: {error}</p>
         </Card>
       </div>
     );
@@ -41,7 +41,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
   return (
     <div className="max-w-4xl">
-      <Link href="/orders" className="text-sm text-accent hover:underline">
+      <Link href="/orders" className="text-sm text-primary hover:underline">
         ← Siparişler
       </Link>
       <div className="mt-2">
@@ -54,11 +54,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       <div className="grid gap-5">
         {/* Satırlar + Kalanları Ata */}
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-ink">Satırlar</h2>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Satırlar</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-ink/10 text-left text-xs uppercase text-ink/50">
+                <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Satır</th>
                   <th className="px-3 py-2 font-medium">Adet</th>
                   <th className="px-3 py-2 font-medium">Teslim</th>
@@ -68,8 +68,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               </thead>
               <tbody>
                 {lines.map((l) => (
-                  <tr key={l.id} className="border-b border-ink/5">
-                    <td className="px-3 py-2.5 font-medium text-ink">{l.remoteLineId}</td>
+                  <tr key={l.id} className="border-b border-border">
+                    <td className="px-3 py-2.5 font-medium text-foreground">{l.remoteLineId}</td>
                     <td className="px-3 py-2.5 tabular-nums">{l.qty}</td>
                     <td className="px-3 py-2.5 tabular-nums">
                       {l.fulfilledQty}/{l.qty}
@@ -84,7 +84,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                           <input type="hidden" name="orderId" value={order.id} />
                           <button
                             type="submit"
-                            className="rounded-md bg-accent px-3 py-1 text-xs font-medium text-white hover:opacity-90"
+                            className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"
                           >
                             Kalanları Ata
                           </button>
@@ -100,14 +100,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
         {/* Atamalar (maskeli) + revoke */}
         <Card>
-          <h2 className="mb-3 text-sm font-semibold text-ink">Atamalar (lisanslar)</h2>
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Atamalar (lisanslar)</h2>
           {assignments.length === 0 ? (
             <Empty>Henüz atama yok.</Empty>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-ink/10 text-left text-xs uppercase text-ink/50">
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                     <th className="px-3 py-2 font-medium">Lisans (maskeli)</th>
                     <th className="px-3 py-2 font-medium">Adet</th>
                     <th className="px-3 py-2 font-medium">Kullanım</th>
@@ -121,7 +121,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     const vu = fmtValidUntil(a.validUntil);
                     const isMulti = a.maxUses > 1;
                     return (
-                      <tr key={a.id} className="border-b border-ink/5 align-top">
+                      <tr key={a.id} className="border-b border-border align-top">
                         <td className="px-3 py-2.5">
                           <AssignmentLicenseCell
                             assignmentId={a.id}
@@ -131,10 +131,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                           />
                         </td>
                         <td className="px-3 py-2.5 tabular-nums">{a.units}</td>
-                        <td className="px-3 py-2.5 tabular-nums text-ink/70">
+                        <td className="px-3 py-2.5 tabular-nums text-foreground/70">
                           {isMulti ? `${a.useCount}/${a.maxUses} (kalan ${a.maxUses - a.useCount})` : '—'}
                         </td>
-                        <td className={`px-3 py-2.5 text-xs ${vu.expired ? 'text-warning' : 'text-ink/70'}`}>
+                        <td className={`px-3 py-2.5 text-xs ${vu.expired ? 'text-warning' : 'text-foreground/70'}`}>
                           {vu.text}
                           {vu.expired && a.validUntil ? ' (doldu)' : ''}
                         </td>
@@ -149,7 +149,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                               <input type="hidden" name="reason" value="iade/iptal" />
                               <button
                                 type="submit"
-                                className="rounded-md border border-danger/40 px-3 py-1 text-xs font-medium text-danger hover:bg-danger/10"
+                                className="rounded-md border border-destructive/40 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
                               >
                                 İptal
                               </button>
@@ -168,13 +168,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         <div className="grid gap-5 md:grid-cols-2">
           {/* Timeline */}
           <Card>
-            <h2 className="mb-3 text-sm font-semibold text-ink">Timeline</h2>
+            <h2 className="mb-3 text-sm font-semibold text-foreground">Timeline</h2>
             <ul className="space-y-2 text-sm">
               {events.map((e) => (
                 <li key={e.id} className="flex gap-2">
-                  <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" />
-                  <span className="text-ink/70">
-                    <span className="font-medium text-ink">{e.type}</span>
+                  <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary" />
+                  <span className="text-foreground/70">
+                    <span className="font-medium text-foreground">{e.type}</span>
                     {e.message ? ` — ${e.message}` : ''}
                   </span>
                 </li>
@@ -184,14 +184,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
           {/* Mailler */}
           <Card>
-            <h2 className="mb-3 text-sm font-semibold text-ink">Teslimat Mailleri</h2>
+            <h2 className="mb-3 text-sm font-semibold text-foreground">Teslimat Mailleri</h2>
             {emails.length === 0 ? (
               <Empty>Mail yok.</Empty>
             ) : (
               <ul className="space-y-2 text-sm">
                 {emails.map((m) => (
                   <li key={m.id} className="flex items-center justify-between gap-2">
-                    <span className="truncate text-ink/70">{m.subject}</span>
+                    <span className="truncate text-foreground/70">{m.subject}</span>
                     <StatusPill status={m.status} />
                   </li>
                 ))}

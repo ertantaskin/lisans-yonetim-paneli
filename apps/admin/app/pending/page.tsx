@@ -14,8 +14,8 @@ export const dynamic = 'force-dynamic';
 const waitColor: Record<string, string> = {
   success: 'text-success',
   warning: 'text-warning',
-  danger: 'text-danger',
-  muted: 'text-muted',
+  danger: 'text-destructive',
+  muted: 'text-muted-foreground',
 };
 
 export default async function DashboardPage() {
@@ -51,7 +51,7 @@ export default async function DashboardPage() {
 
       {error ? (
         <Card className="p-6">
-          <p className="text-sm text-danger">API'ye ulaşılamadı: {error}</p>
+          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         </Card>
       ) : (
         <>
@@ -89,8 +89,8 @@ export default async function DashboardPage() {
                 <TableBody>
                   {orders.map((o) => (
                     <TableRow key={o.id}>
-                      <TableCell className="font-medium text-ink">{o.remoteOrderId}</TableCell>
-                      <TableCell className="text-ink/80">{o.customerEmail}</TableCell>
+                      <TableCell className="font-medium text-foreground">{o.remoteOrderId}</TableCell>
+                      <TableCell className="text-foreground/80">{o.customerEmail}</TableCell>
                       <TableCell>
                         <StatusBadge status={o.status} />
                       </TableCell>

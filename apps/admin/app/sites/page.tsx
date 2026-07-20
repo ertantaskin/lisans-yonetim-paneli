@@ -18,20 +18,20 @@ export default async function SitesPage() {
       <PageHeader title="Siteler" desc="Her WooCommerce/pazar yeri kanalı bir tenant." />
 
       <Card className="mb-5">
-        <h2 className="mb-3 text-sm font-semibold text-ink">Yeni Site Bağla</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Site Bağla</h2>
         <CreateSiteForm />
       </Card>
 
       <Card>
         {error ? (
-          <p className="text-sm text-danger">API'ye ulaşılamadı: {error}</p>
+          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         ) : sites.length === 0 ? (
           <Empty>Henüz site yok.</Empty>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-ink/10 text-left text-xs uppercase text-ink/50">
+                <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                   <th className="px-3 py-2 font-medium">Domain</th>
                   <th className="px-3 py-2 font-medium">Tip</th>
                   <th className="px-3 py-2 font-medium">Gönderen</th>
@@ -40,10 +40,10 @@ export default async function SitesPage() {
               </thead>
               <tbody>
                 {sites.map((s) => (
-                  <tr key={s.id} className="border-b border-ink/5">
-                    <td className="px-3 py-2.5 font-medium text-ink">{s.domain}</td>
-                    <td className="px-3 py-2.5 text-ink/70">{s.type}</td>
-                    <td className="px-3 py-2.5 text-ink/70">{s.senderEmail ?? '—'}</td>
+                  <tr key={s.id} className="border-b border-border">
+                    <td className="px-3 py-2.5 font-medium text-foreground">{s.domain}</td>
+                    <td className="px-3 py-2.5 text-foreground/70">{s.type}</td>
+                    <td className="px-3 py-2.5 text-foreground/70">{s.senderEmail ?? '—'}</td>
                     <td className="px-3 py-2.5">
                       <StatusPill status={s.status === 'active' ? 'active' : s.status} />
                     </td>
