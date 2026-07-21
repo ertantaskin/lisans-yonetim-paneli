@@ -221,6 +221,12 @@ export async function updateMappingAction(formData: FormData) {
   const id = String(formData.get('id') || '');
   const active = String(formData.get('active') || '') === 'true';
   if (!id) return;
-  await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active }, await getActor());
+  try {
+    await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active }, await getActor());
+  } catch {
+    // Eşleme eşzamanlı silinmiş / API 500 dönmüş olabilir — throw'u YUT ki yakalanmamış
+    // hata tüm /stock sayfasını Next error boundary'sine düşürüp boşaltmasın (kardeş
+    // action'lar da hata yutar). revalidate UI'ı gerçek duruma tazeler.
+  }
   revalidatePath('/stock');
 }

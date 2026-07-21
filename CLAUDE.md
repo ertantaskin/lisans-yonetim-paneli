@@ -249,11 +249,9 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
 - **A11y (WCAG):** skip-to-content + aria-live duyurucu. **TZ:** compose postgres+api Europe/Istanbul (gün sınırı yerel).
 - **Test:** HmacGuard + findForAuth api_key grace(0017) + RiskScore + getDeliveries expiry filtresi (integration).
 
-migration 0000-0018. **Ertelenen (bilinçli, düşük öncelik):** `db.execute+as-unknown` 60× tipli-helper refactor
-(60 çağrı noktası — saf mekanik, kendi ayrı pasında); Sentry entegrasyonu (yeni bağımlılık, lockfile riski —
-AI SDK gibi ertelendi). **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+migration 0000-0018. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
 YOK — §2/§6/§10), marketplace dış-API adaptörü, Faz-3 WP-migrasyon (greenfield), abonelik/EFT/3DS (YAGNI).
-**Tek kalan mimari karar:** public zip gerçek-stream (DB base64 → depolama diske/S3 taşınmalı; kullanıcı onayıyla).
+(db.execute tipli-helper + Sentry + zip depolama kararı → aşağıdaki "Eksik-giderme partisi"nde kapandı.)
 Yol haritası §18.
 
 **Tam test doğrulaması + H1 REGRESYON düzeltmesi (CANLI, commit fa4c05e):** "eksiksiz çalışıyor mu" için VPS'te
@@ -268,6 +266,51 @@ Bayat testler: readonly-sql rowCount (OOM cap sonrası 200), onboarding.claim (R
 sipariş push 201 → çözülmüş key teslimat 200 → revoke 200 — tam zincir (envelope AES-GCM çözüm dahil) doğrulandı.
 **Ders:** H1 gibi terminal-durum eklerken revoke'un TÜM çağıranlarını (iade vs değişim) ayır; değişim testleri
 H1'den sonra koşulmadığı için regresyon kaçmıştı — entegrasyon paketi her davranış-değişikliğinden sonra koşulmalı.
+
+**Eksik-giderme partisi (5-boyutlu mimari-kapsam + adversaryel audit → 25 bulgu; CANLI):** Kullanıcı isteğiyle
+kalan eksikler paralel analiz workflow'uyla belirlenip (mimari-kapsam/correctness-güvenlik/test-kapsam/tip-kalite/
+ops-kenar) triyaj edildi; migration EKLENMEDİ (0000-0018 sabit). Yapılanlar:
+
+- **Zip depolama (§16):** `updates.latest()` artık tüm .zip base64 gövdelerini belleğe YÜKLEMEZ (yalnız meta kolon);
+  indirmeye `content-length`+`ETag`(sha256)+koşullu 304 eklendi. **Karar (kullanıcı): DB'de tutuldu** — plugin ≤1MB
+  (bodyLimit), API stateless/çoğaltılabilir (yerel disk paylaşılmaz), DB replikasyon-güvenli + DR yedeğinde; disk net
+  getiri sağlamaz, risk katar. (Önceki "tek kalan mimari karar" böylece kapandı.)
+- **db.execute → tipli helper:** `db/raw-query.rawRows<T>(exec, query)` — 16 dosyada 55 `as unknown as` cast tek noktaya
+  toplandı (davranış-nötr; `Pick<Database,'execute'>` ile tx+Executor da kapsanır). suppliers `poAgg` şekil-uyuşmazlığı
+  bilinçli bırakıldı.
+- **Sentry (§16):** `observability/instrument` + global `SentryExceptionFilter` (yalnız 5xx/beklenmeyen; PII göndermez,
+  trace örneklemesi kapalı). **env-gated, VARSAYILAN KAPALI** — `SENTRY_DSN` yoksa `Sentry.init` HİÇ çağrılmaz (tam
+  no-op). DSN kullanıcı sırrı. `@sentry/node` bağımlılığı eklendi (lockfile güncellendi, build doğrulandı).
+- **Güvenlik/correctness (audit):** [#9] `sites.list/update` şifreli önceki-secret (`hmacSecretPrevEnc`/`apiKeyHashPrev`)
+  sızıntısı → tek `toPublicSite()` mapper ile TÜM sır kolonları strip · [#11] `readonly-sql` denylist `SELECT *`+
+  `api_key_hash_prev` ile atlanıyordu → DÖNEN kolon adları (postgres.js `.columns`) denylist'e süzülür + varyant eklendi ·
+  [#10] `MailService.mailer()` SMTP auth eksikti (üretimde değişim bildirimleri sessizce fail) → tek `createMailTransport`
+  ortak kurucu · [#4] geri-kanal webhook'a monoton `seq` (outbox createdAt epoch-ms) + WP alıcıda `_jetlisans_seq`
+  karşılaştırması → bayat webhook durumu geri yazamaz · [#24] `webhook.processor` attempts atomik (`+1` SQL) · [#25]
+  SalesQuotaGuard kota aşımı → `quota_exceeded` security_event (dedupe'lu) + 429'a `Retry-After` (gün sınırı).
+- **WP eklentisi (§7):** [#1] kuyruk-log 30 gün BUDAMA cron'u (aktivasyonda schedule, `jetlisans_prune_queue`) — "DB
+  şişmesin" sözü artık kodda · [#8] staging/klon koruması (`jetlisans_bound_home`; home_url değişince push PASİF + admin
+  uyarısı) · [#16] My Account view-order'da `DONOTCACHEPAGE`+`nocache_headers` (çözülmüş key cache'lenmez).
+- **Admin UI/kalite:** [#21] `updateMappingAction` try/catch (fail → tüm /stock error-boundary'ye düşmez) · [#22]
+  `apiPost/apiSend` artık status-taşıyan `ApiError` + API `message` alanından temiz mesaj (ham gövde sızmaz) · [#23]
+  low-stock N+1 → dedupe ana sorguya `NOT EXISTS` ile gömüldü.
+- **Testler (audit test-kapsamı):** H1 gerçek-iade `canceled=true` yolu (revokeOrderForSite→autoComplete ATLAR),
+  `bulkReplaceBatch` (canceled=false meşru yeniden-atama), `CostsService.deliveredCogs` (para birimi ayrımı+uncovered),
+  `RateLimitService.hit` Lua sınır/TTL — 4 yeni entegrasyon testi (+ quota.guard testi yeni imzaya uyarlandı).
+
+**Bilinçli DOC-NARROW (spec-vs-gerçek — kod değil metin daraltıldı):** [#14] mail sağlayıcı delivered/bounced webhook
+YOK → SMTP-only bilinçli kapsam (`bounced` durumu üretilmez; §2.5/§6 fiili yeteneğe göre okunmalı) · [#17] §11 kiralık-slot
+(multi+validity_days) süre-bitişinde kapasite havuza dönüşü + şifre-rotasyon hatırlatması yapılmıyor (bilinçli; ana
+expiry `hide`/`keep` çalışır).
+
+**Bilinçli ERTELENEN (gerekçeli, düşük öncelik / feature):** [#5] `assignment_history` tablosu yazılmıyor — eski→yeni
+soyağacı revoke+completeLine sınırında doğru yakalama + tüketen UI gerektirir; şimdilik audit_log + fulfillment_events
+lineage'i taşır · [#6] admin PROAKTİF replace ucu (§4 `/assignments/:id/replace`) — kusurlu-key ana vakası zaten
+report-issue→onay akışıyla karşılanıyor; ayrık endpoint+UI takip işi · [#7] §8 TAM dinamik kota (30g-ort ×3 +
+held_for_review) — bu partide Retry-After + security_event yapıldı, dinamik eşik + inceleme-beklet feature · [#18] mail
+şablonu `{{key}}/{{password}}` değişkenleri (custom şablonda boş render) — renderer'a per-item besleme, mail kırılma
+riski nedeniyle ayrı pas · [#19] `revokeExcess` MAK/multi'de birim-granüler değil (tek-kullanımda sorunsuz) · [#20]
+`enforceSalesQuota` say-sonra-ekle TOCTOU (her sipariş gerçek ödenmiş Woo + gerçek stok ister → zayıf).
 
 ## Geliştirme
 

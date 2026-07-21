@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import type { CustomerRisk, RiskBand } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { customers } from '../db/schema/customers';
 
 /**
@@ -106,7 +107,13 @@ export class RiskScoreService {
     const tags = meta?.tags ?? [];
 
     // Türetilmiş istatistik (orders/assignments + RAW replacement_requests) — anlık.
-    const statRows = (await this.db.execute(sql`
+    const statRows = await rawRows<{
+      order_count: number;
+      assignment_count: number;
+      replacement_count: number;
+      first_order_at: Date | string | null;
+      last_order_at: Date | string | null;
+    }>(this.db, sql`
       SELECT
         (SELECT COUNT(*)::int FROM orders o WHERE lower(o.customer_email) = ${key}) AS order_count,
         (SELECT COUNT(*)::int FROM assignments asg
@@ -116,13 +123,7 @@ export class RiskScoreService {
            WHERE lower(customer_email) = ${key} AND status = 'approved') AS replacement_count,
         (SELECT MIN(created_at) FROM orders WHERE lower(customer_email) = ${key}) AS first_order_at,
         (SELECT MAX(created_at) FROM orders WHERE lower(customer_email) = ${key}) AS last_order_at
-    `)) as unknown as Array<{
-      order_count: number;
-      assignment_count: number;
-      replacement_count: number;
-      first_order_at: Date | string | null;
-      last_order_at: Date | string | null;
-    }>;
+    `);
     const s = statRows[0] ?? {
       order_count: 0,
       assignment_count: 0,
@@ -141,7 +142,7 @@ export class RiskScoreService {
 
     // Müşterinin site(ler)indeki son 48s güvenlik olayları (subject=e-posta eşleşmesi de dahil).
     // Pencere/türler sabit (kullanıcı girdisi değil); interval güvenli make_interval ile.
-    const secRows = (await this.db.execute(sql`
+    const secRows = await rawRows<{ total: number; critical: number }>(this.db, sql`
       SELECT
         COUNT(*)::int AS total,
         COUNT(*) FILTER (WHERE severity = 'critical')::int AS critical
@@ -158,7 +159,7 @@ export class RiskScoreService {
             WHERE lower(customer_email) = ${key} AND site_id IS NOT NULL
           )
         )
-    `)) as unknown as Array<{ total: number; critical: number }>;
+    `);
     const secTotal = Number(secRows[0]?.total ?? 0);
     const secCritical = Number(secRows[0]?.critical ?? 0);
     const secWarning = Math.max(0, secTotal - secCritical);

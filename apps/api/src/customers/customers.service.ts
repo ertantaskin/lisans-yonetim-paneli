@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { customers } from '../db/schema/customers';
 
 /** Liste satırı — sipariş/atama/değişim sayıları anlık türetilir (§13). */
@@ -51,7 +52,15 @@ export class CustomersService {
   async list(search?: string): Promise<{ items: CustomerListRow[] }> {
     const term = search?.trim();
     const filter = term ? sql`WHERE o.customer_email ILIKE ${'%' + term + '%'}` : sql``;
-    const rows = (await this.db.execute(sql`
+    const rows = await rawRows<{
+      email: string;
+      order_count: number;
+      first_order_at: Date | string | null;
+      last_order_at: Date | string | null;
+      assignment_count: number;
+      replacement_count: number;
+      tags: string[] | null;
+    }>(this.db, sql`
       SELECT
         lower(o.customer_email) AS email,
         COUNT(DISTINCT o.id)::int AS order_count,
@@ -77,15 +86,7 @@ export class CustomersService {
       ${filter}
       GROUP BY lower(o.customer_email), a.assignment_count, r.replacement_count, c.tags
       ORDER BY MAX(o.created_at) DESC
-    `)) as unknown as Array<{
-      email: string;
-      order_count: number;
-      first_order_at: Date | string | null;
-      last_order_at: Date | string | null;
-      assignment_count: number;
-      replacement_count: number;
-      tags: string[] | null;
-    }>;
+    `);
 
     const items = rows.map((row) => {
       const assignmentCount = Number(row.assignment_count);
@@ -116,7 +117,11 @@ export class CustomersService {
       .limit(1);
 
     // Türetilmiş istatistik (orders/assignments + RAW replacement_requests).
-    const statRows = (await this.db.execute(sql`
+    const statRows = await rawRows<{
+      order_count: number;
+      assignment_count: number;
+      replacement_count: number;
+    }>(this.db, sql`
       SELECT
         (SELECT COUNT(*)::int FROM orders o WHERE lower(o.customer_email) = ${key}) AS order_count,
         (SELECT COUNT(*)::int FROM assignments asg
@@ -124,40 +129,36 @@ export class CustomersService {
            WHERE lower(o.customer_email) = ${key}) AS assignment_count,
         (SELECT COUNT(*)::int FROM replacement_requests
            WHERE lower(customer_email) = ${key} AND status = 'approved') AS replacement_count
-    `)) as unknown as Array<{
-      order_count: number;
-      assignment_count: number;
-      replacement_count: number;
-    }>;
+    `);
     const s = statRows[0] ?? { order_count: 0, assignment_count: 0, replacement_count: 0 };
     const assignmentCount = Number(s.assignment_count);
     const replacementCount = Number(s.replacement_count);
 
     // Sipariş geçmişi.
-    const orderRows = (await this.db.execute(sql`
-      SELECT id, remote_order_id, status, created_at
-      FROM orders
-      WHERE lower(customer_email) = ${key}
-      ORDER BY created_at DESC
-    `)) as unknown as Array<{
+    const orderRows = await rawRows<{
       id: string;
       remote_order_id: string;
       status: string;
       created_at: Date | string;
-    }>;
-
-    // Değişim geçmişi — RAW SQL (drizzle import YOK).
-    const replacementRows = (await this.db.execute(sql`
-      SELECT id, status, reason, created_at
-      FROM replacement_requests
+    }>(this.db, sql`
+      SELECT id, remote_order_id, status, created_at
+      FROM orders
       WHERE lower(customer_email) = ${key}
       ORDER BY created_at DESC
-    `)) as unknown as Array<{
+    `);
+
+    // Değişim geçmişi — RAW SQL (drizzle import YOK).
+    const replacementRows = await rawRows<{
       id: string;
       status: string;
       reason: string;
       created_at: Date | string;
-    }>;
+    }>(this.db, sql`
+      SELECT id, status, reason, created_at
+      FROM replacement_requests
+      WHERE lower(customer_email) = ${key}
+      ORDER BY created_at DESC
+    `);
 
     return {
       email: key,

@@ -24,6 +24,7 @@ class Jetlisans_Settings {
         add_action('admin_menu', [$this, 'menu']);
         add_action('admin_init', [$this, 'register']);
         add_action('admin_post_jetlisans_connect', [$this, 'handle_connect']);
+        add_action('admin_notices', [$this, 'clone_notice']);
     }
 
     public static function panel_url() {
@@ -38,6 +39,35 @@ class Jetlisans_Settings {
     }
     public static function is_configured() {
         return self::panel_url() && self::api_key() && self::hmac_secret();
+    }
+
+    /**
+     * Staging/klon koruması (§7 "URL değişince pasif mod"). "Panele Bağlan" anında sitenin
+     * home_url'i `jetlisans_bound_home`'a yazılır. Site başka bir alan adına klonlanırsa
+     * (prod → staging, aynı wp-config → aynı api_key/hmac_secret) home_url DEĞİŞİR ve klon
+     * gerçek panele push edip CANLI stoğu tüketebilir. Bu kontrol o durumu yakalar.
+     *
+     * Baseline YOKSA (sabit-tabanlı kurulum veya bu sürümden önce bağlanmış eski site)
+     * false döner — kontrol atlanır (mevcut kurulumları kırmamak için güvenli varsayılan);
+     * korumayı etkinleştirmek için panele bir kez yeniden bağlanmak yeterlidir.
+     */
+    public static function is_clone() {
+        $bound = (string) get_option('jetlisans_bound_home', '');
+        if ($bound === '') return false;
+        return untrailingslashit(home_url()) !== untrailingslashit($bound);
+    }
+
+    /** Kopya/staging tespit edilirse yönetici panelinde kalıcı uyarı gösterir. */
+    public function clone_notice() {
+        if (!self::is_clone()) return;
+        if (!current_user_can('manage_options')) return;
+        $bound = (string) get_option('jetlisans_bound_home', '');
+        echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
+            'Jetlisans: Site adresi (%s) bağlanma anındaki adresten (%s) farklı. Kopya/staging koruması etkin: ' .
+            'siparişler panele İLETİLMİYOR (canlı stok korunur). Bu kasıtlı bir taşımaysa panele yeniden bağlanın.',
+            home_url(),
+            $bound
+        )) . '</p></div>';
     }
 
     /**
@@ -231,6 +261,9 @@ define('JETLISANS_WEBHOOK_SECRET', '...'); // opsiyonel, yoksa HMAC_SECRET kulla
         update_option('jetlisans_panel_url', $panel);
         update_option('jetlisans_api_key', (string) $data['apiKey']);
         update_option('jetlisans_hmac_secret', (string) $data['hmacSecret']);
+        // Staging/klon koruması baseline'ı (§7): bağlanma anındaki site adresi. Site başka
+        // alana klonlanırsa is_clone() bunu yakalar ve push'u pasifleştirir.
+        update_option('jetlisans_bound_home', home_url());
 
         $domain = isset($data['siteDomain']) ? (string) $data['siteDomain'] : '';
         self::redirect_settings('ok', $domain);

@@ -3,9 +3,10 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { eq } from 'drizzle-orm';
-import nodemailer, { type Transporter } from 'nodemailer';
+import { type Transporter } from 'nodemailer';
 import { DB, type Database } from '../db/db.module';
 import { emailLog, orders, sites } from '../db/schema';
+import { createMailTransport } from './mail.transport';
 
 export const MAIL_QUEUE = 'mail';
 
@@ -133,12 +134,10 @@ export class MailService {
   }
 
   private mailer(): Transporter {
+    // Ortak kurucu: teslimat maili (MailProcessor) ile AYNI auth/TLS yapılandırması →
+    // kimlik-doğrulamalı relay'de değişim bildirimleri artık sessizce 'failed' olmaz.
     if (!this.transporter) {
-      this.transporter = nodemailer.createTransport({
-        host: this.config.getOrThrow<string>('SMTP_HOST'),
-        port: this.config.getOrThrow<number>('SMTP_PORT'),
-        secure: this.config.get<boolean>('SMTP_SECURE') ?? false,
-      });
+      this.transporter = createMailTransport(this.config);
     }
     return this.transporter;
   }

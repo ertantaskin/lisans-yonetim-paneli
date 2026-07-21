@@ -52,9 +52,25 @@ class Jetlisans_Webhook {
 
         $order = wc_get_order((int) $body['remoteOrderId']);
         if ($order) {
+            // Monoton sıra kontrolü (§2/§7 "bayat webhook yok sayılır"): panel her olaya artan
+            // bir seq (outbox oluşturma epoch-ms) koyar. Retry sırayı bozup daha ESKİ bir olayı
+            // (ör. 'partial') daha yeni olandan ('fulfilled') SONRA ulaştırırsa, seq son-uygulanan
+            // değerden küçük/eşittir → güncel durumu GERİ yazma (no-op). seq yoksa (eski panel) 0
+            // → koşul devre dışı, eski davranış korunur (geriye dönük uyumlu).
+            $seq = isset($body['seq']) ? (int) $body['seq'] : 0;
+            $last_seq = (int) $order->get_meta('_jetlisans_seq');
+            if ($seq > 0 && $seq <= $last_seq) {
+                return new WP_REST_Response(['ok' => true, 'stale' => true], 200);
+            }
+
             $status = isset($body['status']) ? sanitize_text_field($body['status']) : '';
             if ($status) {
                 $order->update_meta_data('_jetlisans_status', $status);
+            }
+            if ($seq > 0) {
+                $order->update_meta_data('_jetlisans_seq', $seq);
+            }
+            if ($status || $seq > 0) {
                 $order->save();
             }
             $event = isset($body['event']) ? sanitize_text_field($body['event']) : 'update';

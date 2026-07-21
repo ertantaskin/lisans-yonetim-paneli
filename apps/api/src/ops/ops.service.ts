@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { auditLog, emailLog, outboxEvents } from '../db/schema';
 import { WEBHOOK_QUEUE, type WebhookJob } from '../webhook/webhook.service';
 import { MAIL_QUEUE, type DeliveryJob } from '../mail/mail.service';
@@ -58,7 +59,7 @@ export class OpsService {
    * (kind), yaş (ageSeconds) ve askıda bayrağı (stale) var → replay hedeflenebilir.
    */
   async deadLetter(): Promise<DeadLetterRow[]> {
-    const rows = await this.db.execute<{
+    const rows = await rawRows<{
       kind: ReplayKind;
       id: string;
       label: string;
@@ -71,7 +72,7 @@ export class OpsService {
       updated_at: string;
       age_seconds: number;
       stale: boolean;
-    }>(sql`
+    }>(this.db, sql`
       SELECT 'outbox'::text AS kind, oe.id::text AS id, oe.event_type AS label,
              oe.status AS status, oe.last_error AS error, oe.attempts AS attempts,
              oe.order_id::text AS order_id, NULL::text AS to_email,
@@ -97,22 +98,7 @@ export class OpsService {
       ORDER BY updated_at DESC
       LIMIT 100;
     `);
-    return (
-      rows as unknown as Array<{
-        kind: ReplayKind;
-        id: string;
-        label: string;
-        status: string;
-        error: string | null;
-        attempts: number | null;
-        order_id: string | null;
-        to_email: string | null;
-        created_at: string;
-        updated_at: string;
-        age_seconds: number;
-        stale: boolean;
-      }>
-    ).map((r) => ({
+    return rows.map((r) => ({
       kind: r.kind,
       id: r.id,
       label: r.label,

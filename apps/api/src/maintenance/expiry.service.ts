@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 
 export const EXPIRY_QUEUE = 'expiry';
 /** Süre-bitişi taraması periyodu (ms). Boşluk savunma amaçlı getDeliveries filtresiyle kapalı. */
@@ -40,7 +41,7 @@ export class ExpiryService implements OnModuleInit {
    * @returns expired'a çekilen atama sayısı
    */
   async sweepExpired(): Promise<number> {
-    const rows = await this.db.execute<{ id: string }>(sql`
+    const rows = await rawRows<{ id: string }>(this.db, sql`
       UPDATE assignments a
       SET status = 'expired'
       FROM order_lines ol
@@ -52,7 +53,7 @@ export class ExpiryService implements OnModuleInit {
         AND p.on_expiry = 'hide'
       RETURNING a.id;
     `);
-    const count = (rows as unknown as Array<{ id: string }>).length;
+    const count = rows.length;
     if (count > 0) this.logger.log(`Süre-bitişi: ${count} atama expired'a çekildi`);
     return count;
   }

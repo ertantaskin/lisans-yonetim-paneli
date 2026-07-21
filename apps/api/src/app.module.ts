@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { SentryExceptionFilter } from './observability/sentry-exception.filter';
 import { validateEnv } from './config/env.validation';
 import { DbModule } from './db/db.module';
 import { RedisModule } from './redis/redis.module';
@@ -101,6 +103,11 @@ import { RateLimitModule } from './common/rate-limit.module';
     RiskScoreModule,
     ChannelModule,
     RateLimitModule,
+  ],
+  providers: [
+    // Global istisna filtresi: 5xx/beklenmeyen hataları Sentry'ye iletir (env-gated; DSN
+    // yoksa no-op), sonra Nest varsayılanına devreder → yanıt biçimi değişmez.
+    { provide: APP_FILTER, useClass: SentryExceptionFilter },
   ],
 })
 export class AppModule {}

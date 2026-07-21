@@ -15,6 +15,22 @@ class Jetlisans_My_Account {
 
     private function __construct() {
         add_action('woocommerce_order_details_after_order_table', [$this, 'render'], 10, 1);
+        // (§7 "no-store — key cache'lenmez") Sipariş-görüntüle uçları çözülmüş lisans
+        // anahtarı içerebilir → sayfa önbelleğe/CDN'e alınmasın. template_redirect ÇIKTI
+        // başlamadan çalışır → nocache_headers() gerçekten header yazabilir; DONOTCACHEPAGE
+        // erkenden tanımlanır (page-cache eklentileri bunu kontrol eder).
+        add_action('template_redirect', [$this, 'nocache_account']);
+    }
+
+    /** Sipariş-görüntüle hesap uçlarında sayfa-cache/CDN önbelleklemesini kapatır (§7). */
+    public function nocache_account() {
+        if (!function_exists('is_wc_endpoint_url')) return;
+        if (is_wc_endpoint_url('view-order') || is_wc_endpoint_url('order-received')) {
+            if (!defined('DONOTCACHEPAGE')) {
+                define('DONOTCACHEPAGE', true);
+            }
+            nocache_headers();
+        }
     }
 
     public function render($order) {

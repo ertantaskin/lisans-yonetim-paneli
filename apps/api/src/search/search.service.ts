@@ -7,6 +7,7 @@ import {
   parseAccountPayload,
 } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { CryptoService } from '../crypto/crypto.service';
 
 /** Eşleşen sipariş özeti (payload/sır İÇERMEZ — yalnız meta). */
@@ -62,12 +63,12 @@ export class SearchService {
   /** remote_order_id + customer_email ILIKE (limit 10). ILIKE joker'leri kaçırılır. */
   private async searchOrders(term: string): Promise<SearchOrderHit[]> {
     const pattern = `%${escapeLike(term)}%`;
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       remote_order_id: string;
       customer_email: string;
       status: string;
-    }>(sql`
+    }>(this.db, sql`
       SELECT id, remote_order_id, customer_email, status
       FROM orders
       WHERE remote_order_id ILIKE ${pattern} ESCAPE '\\'
@@ -75,12 +76,6 @@ export class SearchService {
       ORDER BY created_at DESC
       LIMIT 10;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      remote_order_id: string;
-      customer_email: string;
-      status: string;
-    }>;
     return list.map((r) => ({
       id: r.id,
       remoteOrderId: r.remote_order_id,
@@ -99,14 +94,14 @@ export class SearchService {
     if (digitCount < 3) return [];
 
     const suffixHash = this.crypto.payloadSuffixHash(term);
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       payload_enc: string;
       sku: string;
       kind: string;
       payload_schema: unknown;
       order_id: string | null;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         li.id AS id,
         li.payload_enc AS payload_enc,
@@ -125,14 +120,6 @@ export class SearchService {
       WHERE li.payload_suffix_hash = ${suffixHash}
       LIMIT 10;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      payload_enc: string;
-      sku: string;
-      kind: string;
-      payload_schema: unknown;
-      order_id: string | null;
-    }>;
 
     return list.map((r) => ({
       licenseItemId: r.id,

@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 
 /** Tedarikçi bazında harcama satırı (para birimi başına AYRI). */
 export interface CostBySupplier {
@@ -116,13 +117,13 @@ export class CostsService {
    * karışımı ayrı satırlar (GROUP BY currency).
    */
   private async bySupplier(): Promise<CostBySupplier[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       supplier_id: string;
       supplier: string;
       currency: string;
       spent_cents: number;
       po_count: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         po.supplier_id AS supplier_id,
         s.name AS supplier,
@@ -134,13 +135,6 @@ export class CostsService {
       GROUP BY po.supplier_id, s.name, po.currency
       ORDER BY spent_cents DESC, s.name ASC;
     `);
-    const list = rows as unknown as Array<{
-      supplier_id: string;
-      supplier: string;
-      currency: string;
-      spent_cents: number;
-      po_count: number;
-    }>;
     return list.map((r) => ({
       supplierId: r.supplier_id,
       supplier: r.supplier,
@@ -155,11 +149,11 @@ export class CostsService {
    * alınan miktar × birim maliyet. En eski ay önce.
    */
   private async byMonth(): Promise<CostByMonth[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       month: string;
       currency: string;
       spent_cents: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         to_char(created_at, 'YYYY-MM') AS month,
         currency AS currency,
@@ -168,11 +162,6 @@ export class CostsService {
       GROUP BY to_char(created_at, 'YYYY-MM'), currency
       ORDER BY month ASC, currency ASC;
     `);
-    const list = rows as unknown as Array<{
-      month: string;
-      currency: string;
-      spent_cents: number;
-    }>;
     return list.map((r) => ({
       month: r.month,
       currency: r.currency,
@@ -185,13 +174,13 @@ export class CostsService {
    * alınan miktar × birim maliyet.
    */
   private async byProduct(): Promise<CostByProduct[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       product_id: string;
       product: string;
       currency: string;
       spent_cents: number;
       qty_received: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         po.product_id AS product_id,
         p.name AS product,
@@ -203,13 +192,6 @@ export class CostsService {
       GROUP BY po.product_id, p.name, po.currency
       ORDER BY spent_cents DESC, p.name ASC;
     `);
-    const list = rows as unknown as Array<{
-      product_id: string;
-      product: string;
-      currency: string;
-      spent_cents: number;
-      qty_received: number;
-    }>;
     return list.map((r) => ({
       productId: r.product_id,
       product: r.product,
@@ -227,12 +209,12 @@ export class CostsService {
    * sayılır (bilinmeyen para birimi = '' satırı); sessiz sıfırlanmaz.
    */
   private async valuation(): Promise<CostValuation[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       currency: string;
       valued_cents: number;
       valued_units: number;
       uncovered_units: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         coalesce(po.currency, '') AS currency,
         coalesce(
@@ -255,12 +237,6 @@ export class CostsService {
       GROUP BY coalesce(po.currency, '')
       ORDER BY currency ASC;
     `);
-    const list = rows as unknown as Array<{
-      currency: string;
-      valued_cents: number;
-      valued_units: number;
-      uncovered_units: number;
-    }>;
     return list.map((r) => ({
       currency: r.currency,
       valuedCents: Number(r.valued_cents),
@@ -276,12 +252,12 @@ export class CostsService {
    * AYRI sayılır. qty defansif olarak abs() ile alınır. Para birimine göre gruplu.
    */
   private async wastage(): Promise<CostWastage[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       currency: string;
       wasted_cents: number;
       events: number;
       uncovered_events: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         coalesce(po.currency, '') AS currency,
         coalesce(
@@ -298,12 +274,6 @@ export class CostsService {
       GROUP BY coalesce(po.currency, '')
       ORDER BY currency ASC;
     `);
-    const list = rows as unknown as Array<{
-      currency: string;
-      wasted_cents: number;
-      events: number;
-      uncovered_events: number;
-    }>;
     return list.map((r) => ({
       currency: r.currency,
       wastedCents: Number(r.wasted_cents),
@@ -321,12 +291,12 @@ export class CostsService {
    * sayılır (currency='' satırı) — sessiz sıfırlanmaz.
    */
   private async deliveredCogs(): Promise<CostDeliveredCogs[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       currency: string;
       cogs_cents: number;
       delivered_units: number;
       uncovered_units: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         coalesce(li.cost_currency, '') AS currency,
         coalesce(
@@ -347,12 +317,6 @@ export class CostsService {
       GROUP BY coalesce(li.cost_currency, '')
       ORDER BY currency ASC;
     `);
-    const list = rows as unknown as Array<{
-      currency: string;
-      cogs_cents: number;
-      delivered_units: number;
-      uncovered_units: number;
-    }>;
     return list.map((r) => ({
       currency: r.currency,
       cogsCents: Number(r.cogs_cents),

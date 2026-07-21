@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { desc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { auditLog } from '../db/schema/audit';
 import { stockAdjustments, type StockAdjustment } from '../db/schema/stockAdjustments';
 import { AdminOrdersService } from '../orders/admin-orders.service';
@@ -74,7 +75,7 @@ export class SupplyOpsService {
    * (available) / satılmış (available olmayan) adet. RAW SQL (batches W1'in dosyası).
    */
   async listBatches(): Promise<BatchRow[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       label: string;
       status: string;
@@ -88,7 +89,7 @@ export class SupplyOpsService {
       product_name: string;
       unsold_count: number;
       sold_count: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         b.id,
         b.label,
@@ -116,21 +117,6 @@ export class SupplyOpsService {
       ) sold ON sold.batch_id = b.id
       ORDER BY b.received_at DESC;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      label: string;
-      status: string;
-      qty_received: number;
-      received_at: string | null;
-      notes: string | null;
-      supplier_id: string | null;
-      supplier_name: string | null;
-      product_id: string;
-      product_sku: string;
-      product_name: string;
-      unsold_count: number;
-      sold_count: number;
-    }>;
     return list.map((r) => ({
       id: r.id,
       label: r.label,
@@ -157,10 +143,10 @@ export class SupplyOpsService {
   async recallBatch(batchId: string, reason: string, actor: string): Promise<RecallResult> {
     return this.db.transaction(async (tx) => {
       // Parti var mı + zaten çekilmiş mi? (RAW SQL — batches W1'in dosyası, import etme.)
-      const batchRows = await tx.execute<{ id: string; status: string }>(sql`
+      const batchRows = await rawRows<{ id: string; status: string }>(tx, sql`
         SELECT id, status FROM batches WHERE id = ${batchId} LIMIT 1;
       `);
-      const batch = (batchRows as unknown as Array<{ id: string; status: string }>)[0];
+      const batch = batchRows[0];
       if (!batch) throw new NotFoundException('Parti bulunamadı');
       if (batch.status === 'recalled') {
         throw new BadRequestException('Parti zaten geri çekilmiş');
@@ -170,18 +156,17 @@ export class SupplyOpsService {
       await tx.execute(sql`UPDATE batches SET status = 'recalled' WHERE id = ${batchId};`);
 
       // Satılmamış (available) lisanslar → voided; id + product_id geri al.
-      const voidedRows = await tx.execute<{ id: string; product_id: string }>(sql`
+      const voided = await rawRows<{ id: string; product_id: string }>(tx, sql`
         UPDATE license_items
         SET status = 'voided'
         WHERE batch_id = ${batchId} AND status = 'available'
         RETURNING id, product_id;
       `);
-      const voided = voidedRows as unknown as Array<{ id: string; product_id: string }>;
 
       // Satılmış + hâlâ CANLI (aktif atamalı) kalemler — elle değiştirme gerektirenler.
       // (status<>'available' KULLANMA: aynı tx'te 'voided'e çekilenler + terminal statüler —
       // quarantined/revoked/replaced/expired — yanlış sayılır. Aktif atama = sold+canlı, audit bulgusu.)
-      const soldRows = await tx.execute<{ c: number }>(sql`
+      const soldRows = await rawRows<{ c: number }>(tx, sql`
         SELECT count(*)::int AS c FROM license_items li
         WHERE li.batch_id = ${batchId}
           AND EXISTS (
@@ -189,9 +174,7 @@ export class SupplyOpsService {
             WHERE a.license_item_id = li.id AND a.status = 'active'
           );
       `);
-      const soldNeedingReplacement = Number(
-        (soldRows as unknown as Array<{ c: number }>)[0]?.c ?? 0,
-      );
+      const soldNeedingReplacement = Number(soldRows[0]?.c ?? 0);
 
       // Her void edilen lisans için sebepli stok düzeltmesi (§12 — sebepsiz değişiklik yok).
       if (voided.length > 0) {
@@ -234,10 +217,10 @@ export class SupplyOpsService {
     // Parti var mı + GERİ ÇEKİLMİŞ mi? (RAW SQL — batches W1'in dosyası, import etme.)
     // Toplu değiştirme YALNIZ recall sonrası çalışır: hedef parti 'recalled' değilse
     // (ör. hâlâ 'active') reddet — aksi halde kusurlu partiden müşteriye yeni key verilebilir.
-    const batchRows = await this.db.execute<{ id: string; status: string }>(sql`
+    const batchRows = await rawRows<{ id: string; status: string }>(this.db, sql`
       SELECT id, status FROM batches WHERE id = ${batchId} LIMIT 1;
     `);
-    const batch = (batchRows as unknown as Array<{ id: string; status: string }>)[0];
+    const batch = batchRows[0];
     if (!batch) {
       throw new NotFoundException('Parti bulunamadı');
     }
@@ -249,11 +232,11 @@ export class SupplyOpsService {
 
     // Bu partiye ait SATILMIŞ (status <> 'available') kalemlerin AKTİF atamaları.
     // license_items.batch_id üzerinden; assignments.status = 'active'. RAW SQL.
-    const candRows = await this.db.execute<{
+    const candidates = await rawRows<{
       assignment_id: string;
       line_id: string;
       usage_mode: string;
-    }>(sql`
+    }>(this.db, sql`
       SELECT a.id AS assignment_id, a.line_id AS line_id, p.usage_mode AS usage_mode
       FROM license_items li
       JOIN assignments a ON a.license_item_id = li.id
@@ -263,11 +246,6 @@ export class SupplyOpsService {
         AND a.status = 'active'
       ORDER BY a.created_at ASC;
     `);
-    const candidates = candRows as unknown as Array<{
-      assignment_id: string;
-      line_id: string;
-      usage_mode: string;
-    }>;
 
     let replaced = 0;
     let skippedNoStock = 0;
@@ -283,7 +261,7 @@ export class SupplyOpsService {
 
       // 0) Stok ön-kontrolü: satırın ürününde uygun (available + kapasiteli) stok YOKSA
       // eskiyi REVOKE ETMEDEN atla — müşteriyi boşta bırakma (replacements.approve deseni).
-      const availRows = await this.db.execute<{ n: number }>(sql`
+      const availRows = await rawRows<{ n: number }>(this.db, sql`
         SELECT count(*)::int AS n
         FROM license_items li
         JOIN order_lines ol ON ol.id = ${c.line_id}
@@ -298,7 +276,7 @@ export class SupplyOpsService {
             SELECT 1 FROM batches b WHERE b.id = li.batch_id AND b.status = 'voided'
           );
       `);
-      const n = Number((availRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
+      const n = Number(availRows[0]?.n ?? 0);
       if (n <= 0) {
         skippedNoStock++;
         continue;
@@ -340,17 +318,17 @@ export class SupplyOpsService {
   async createAdjustment(input: CreateAdjustmentInput, actor: string): Promise<StockAdjustment> {
     return this.db.transaction(async (tx) => {
       // Ürün var mı? (RAW SQL — mevcut products tablosu.)
-      const prodRows = await tx.execute<{ id: string }>(sql`
+      const prodRows = await rawRows<{ id: string }>(tx, sql`
         SELECT id FROM products WHERE id = ${input.productId} LIMIT 1;
       `);
-      if ((prodRows as unknown as Array<{ id: string }>).length === 0) {
+      if (prodRows.length === 0) {
         throw new NotFoundException('Ürün bulunamadı');
       }
 
       // Lisans satırını iptal statüsüne çek (yalnız void/damage + item verildiyse).
       let affectedItem = false;
       if (input.licenseItemId && (input.action === 'void' || input.action === 'damage')) {
-        const upd = await tx.execute<{ id: string }>(sql`
+        const upd = await rawRows<{ id: string }>(tx, sql`
           UPDATE license_items
           SET status = 'voided'
           WHERE id = ${input.licenseItemId}
@@ -358,7 +336,7 @@ export class SupplyOpsService {
             AND status = 'available'
           RETURNING id;
         `);
-        if ((upd as unknown as Array<{ id: string }>).length === 0) {
+        if (upd.length === 0) {
           throw new BadRequestException(
             'Lisans satırı bulunamadı ya da satılabilir (available) durumda değil',
           );

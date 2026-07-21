@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { securityEvents, type SecurityEvent } from '../db/schema/securityEvents';
 
 export const SECURITY_QUEUE = 'security';
@@ -83,7 +84,7 @@ export class SecurityService implements OnModuleInit {
    * @returns yazılan olay sayısı
    */
   private async scanVelocity(): Promise<number> {
-    const rows = await this.db.execute<{ site_id: string; cnt: number }>(sql`
+    const rows = await rawRows<{ site_id: string; cnt: number }>(this.db, sql`
       SELECT site_id, count(*)::int AS cnt
       FROM orders
       WHERE created_at >= now() - interval '1 hour'
@@ -91,7 +92,7 @@ export class SecurityService implements OnModuleInit {
       HAVING count(*) > ${VELOCITY_THRESHOLD};
     `);
     let n = 0;
-    for (const r of rows as unknown as Array<{ site_id: string; cnt: number }>) {
+    for (const r of rows) {
       const cnt = Number(r.cnt);
       const severity = cnt > VELOCITY_THRESHOLD * VELOCITY_CRITICAL_MULTIPLIER ? 'critical' : 'warning';
       const wrote = await this.recordEvent({
@@ -112,11 +113,11 @@ export class SecurityService implements OnModuleInit {
    * @returns yazılan olay sayısı
    */
   private async scanReplacementAnomaly(): Promise<number> {
-    const rows = await this.db.execute<{
+    const rows = await rawRows<{
       site_id: string;
       approved: number;
       assignments: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         o.site_id AS site_id,
         count(DISTINCT rr.id) FILTER (
@@ -130,11 +131,7 @@ export class SecurityService implements OnModuleInit {
       GROUP BY o.site_id;
     `);
     let n = 0;
-    for (const r of rows as unknown as Array<{
-      site_id: string;
-      approved: number;
-      assignments: number;
-    }>) {
+    for (const r of rows) {
       const approved = Number(r.approved);
       const assignments = Number(r.assignments);
       if (assignments < REPLACEMENT_MIN_ASSIGNMENTS) continue;
@@ -152,6 +149,25 @@ export class SecurityService implements OnModuleInit {
       if (wrote) n++;
     }
     return n;
+  }
+
+  /**
+   * Satış kotası aşımını 'quota_exceeded' güvenlik olayı olarak kaydeder (SalesQuotaGuard çağırır).
+   * Dedupe'lu (aynı site+type için 1 saat) → sürekli 429 yiyen site saatte en çok bir kez loglanır.
+   * Aşım kotanın 2 katını geçtiyse severity='critical'. §15: yalnız KAYDEDER + yüzeye çıkarır
+   * (/security akışı + risk skoru); otomatik yaptırım YOK — askıya alma insan onayına kalır.
+   * Best-effort: kaydedememe (çağıranda catch) sipariş reddini etkilemez.
+   * @returns yazıldıysa true (dedupe atlaması false)
+   */
+  async recordQuotaExceeded(siteId: string, todayCount: number, quota: number): Promise<boolean> {
+    const severity = todayCount >= quota * 2 ? 'critical' : 'warning';
+    return this.recordEvent({
+      type: 'quota_exceeded',
+      severity,
+      siteId,
+      detail: `Günlük satış kotası aşıldı: bugün ${todayCount} sipariş (kota ${quota}) — sipariş push 429 ile reddedildi`,
+      meta: { todayCount, quota },
+    });
   }
 
   /**

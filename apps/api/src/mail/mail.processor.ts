@@ -3,7 +3,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
-import nodemailer, { type Transporter } from 'nodemailer';
+import { type Transporter } from 'nodemailer';
 import { AccountPayloadSchema, parseAccountPayload } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
@@ -17,6 +17,7 @@ import {
   sites,
 } from '../db/schema';
 import { MAIL_QUEUE, type DeliveryJob } from './mail.service';
+import { createMailTransport } from './mail.transport';
 import { TemplatesService, render } from './templates.service';
 
 /** BullMQ worker — teslimat maili gönderimi (§6). Redis kuyruğundan asenkron. */
@@ -34,17 +35,9 @@ export class MailProcessor extends WorkerHost {
   }
 
   private mailer(): Transporter {
+    // Ortak kurucu (MailService ile tek doğruluk kaynağı) — auth/TLS yapılandırması aynı.
     if (!this.transporter) {
-      const user = this.config.get<string>('SMTP_USER');
-      const pass = this.config.get<string>('SMTP_PASS');
-      this.transporter = nodemailer.createTransport({
-        host: this.config.getOrThrow<string>('SMTP_HOST'),
-        port: this.config.getOrThrow<number>('SMTP_PORT'),
-        // Üretimde SMTP_SECURE=true (TLS); dev Mailpit TLS'siz.
-        secure: this.config.get<boolean>('SMTP_SECURE') ?? false,
-        // Kimlik verildiyse auth ekle (gerçek relay); yoksa kimliksiz (dev Mailpit).
-        ...(user ? { auth: { user, pass: pass ?? '' } } : {}),
-      });
+      this.transporter = createMailTransport(this.config);
     }
     return this.transporter;
   }

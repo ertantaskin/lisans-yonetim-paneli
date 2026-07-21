@@ -4,6 +4,7 @@ import type { Job } from 'bullmq';
 import { Queue } from 'bullmq';
 import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { NotificationsService } from '../notifications/notifications.service';
 
 export const RECONCILE_QUEUE = 'reconcile';
@@ -149,22 +150,18 @@ export class ReconcileService implements OnModuleInit {
    * @returns denetlenen multi license_item sayısı
    */
   private async checkMultiCapacity(out: ReconcileViolation[]): Promise<number> {
-    const rows = await this.db.execute<{
+    const rows = await rawRows<{
       license_item_id: string;
       use_count: number;
       max_uses: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT li.id AS license_item_id, li.use_count AS use_count, li.max_uses AS max_uses
       FROM license_items li
       JOIN products p ON p.id = li.product_id
       WHERE p.usage_mode = 'multi'
         AND li.use_count > li.max_uses;
     `);
-    for (const r of rows as unknown as Array<{
-      license_item_id: string;
-      use_count: number;
-      max_uses: number;
-    }>) {
+    for (const r of rows) {
       const useCount = Number(r.use_count);
       const maxUses = Number(r.max_uses);
       out.push({ check: 'multi_capacity', licenseItemId: r.license_item_id, useCount, maxUses });
@@ -188,12 +185,12 @@ export class ReconcileService implements OnModuleInit {
    * @returns denetlenen sipariş satırı sayısı
    */
   private async checkLineFulfillment(out: ReconcileViolation[]): Promise<number> {
-    const rows = await this.db.execute<{
+    const rows = await rawRows<{
       line_id: string;
       order_id: string;
       fulfilled_qty: number;
       standing_units: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         ol.id AS line_id,
         ol.order_id AS order_id,
@@ -205,12 +202,7 @@ export class ReconcileService implements OnModuleInit {
       HAVING ol.fulfilled_qty
         <> COALESCE(SUM(a.units) FILTER (WHERE a.status IN ${STANDING_STATUSES}), 0);
     `);
-    for (const r of rows as unknown as Array<{
-      line_id: string;
-      order_id: string;
-      fulfilled_qty: number;
-      standing_units: number;
-    }>) {
+    for (const r of rows) {
       const fulfilledQty = Number(r.fulfilled_qty);
       const standingUnits = Number(r.standing_units);
       out.push({
@@ -235,10 +227,10 @@ export class ReconcileService implements OnModuleInit {
    * @returns denetlenen tek-kullanım license_item sayısı
    */
   private async checkSingleOccupancy(out: ReconcileViolation[]): Promise<number> {
-    const rows = await this.db.execute<{
+    const rows = await rawRows<{
       license_item_id: string;
       standing_assignments: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT a.license_item_id AS license_item_id, COUNT(*)::int AS standing_assignments
       FROM assignments a
       JOIN license_items li ON li.id = a.license_item_id
@@ -247,10 +239,7 @@ export class ReconcileService implements OnModuleInit {
       GROUP BY a.license_item_id
       HAVING COUNT(*) > 1;
     `);
-    for (const r of rows as unknown as Array<{
-      license_item_id: string;
-      standing_assignments: number;
-    }>) {
+    for (const r of rows) {
       const standingAssignments = Number(r.standing_assignments);
       out.push({
         check: 'single_occupancy',
@@ -267,8 +256,7 @@ export class ReconcileService implements OnModuleInit {
 
   /** Tek satırlık count(*)::int sorgusunu çalıştırıp sayıyı döndürür. */
   private async count(query: SQL): Promise<number> {
-    const rows = await this.db.execute<{ c: number }>(query);
-    const list = rows as unknown as Array<{ c: number }>;
+    const list = await rawRows<{ c: number }>(this.db, query);
     return Number(list[0]?.c ?? 0);
   }
 }

@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 
 /** Genel-bakış son sipariş satırı (özet — sır/payload YOK). */
 export interface DashboardRecentOrder {
@@ -73,22 +74,22 @@ export class DashboardService {
 
   /** Teslim bekleyen satır sayısı (pending + partial). */
   private async pendingLines(): Promise<number> {
-    const rows = await this.db.execute<{ c: number }>(sql`
+    const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM order_lines
       WHERE status IN ('pending', 'partial');
     `);
-    return Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /** Bugün (gün başından itibaren) oluşturulan sipariş sayısı. */
   private async todayOrders(): Promise<number> {
-    const rows = await this.db.execute<{ c: number }>(sql`
+    const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM orders
       WHERE created_at >= date_trunc('day', now());
     `);
-    return Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /**
@@ -97,7 +98,7 @@ export class DashboardService {
    * TANIMLI ürünler (IS NOT NULL) değerlendirilir; available <= eşik olanlar sayılır.
    */
   private async lowStockCount(): Promise<number> {
-    const rows = await this.db.execute<{ c: number }>(sql`
+    const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM (
         SELECT
@@ -113,17 +114,17 @@ export class DashboardService {
       ) t
       WHERE t.available <= t.threshold;
     `);
-    return Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /** Açık değişim/garanti talebi (open + info_requested). RAW SQL (şema import edilmez). */
   private async openReplacements(): Promise<number> {
-    const rows = await this.db.execute<{ c: number }>(sql`
+    const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM replacement_requests
       WHERE status IN ('open', 'info_requested');
     `);
-    return Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /**
@@ -131,45 +132,38 @@ export class DashboardService {
    * yüzeye çıkar, aksiyon insanda); bu yüzden "açık" = son 7 gün penceresindeki olaylar.
    */
   private async openSecurityEvents(): Promise<number> {
-    const rows = await this.db.execute<{ c: number }>(sql`
+    const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM security_events
       WHERE created_at >= now() - interval '7 days';
     `);
-    return Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /** Toplam anlık atanabilir stok (available kapasite toplamı). */
   private async totalAvailableStock(): Promise<number> {
-    const rows = await this.db.execute<{ total: number }>(sql`
+    const rows = await rawRows<{ total: number }>(this.db, sql`
       SELECT coalesce(sum(max_uses - use_count), 0)::int AS total
       FROM license_items
       WHERE status = 'available';
     `);
-    return Number((rows as unknown as Array<{ total: number }>)[0]?.total ?? 0);
+    return Number(rows[0]?.total ?? 0);
   }
 
   /** En yeni 5 sipariş (özet satır — sır/payload dönmez). */
   private async recentOrders(): Promise<DashboardRecentOrder[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       remote_order_id: string;
       customer_email: string;
       status: string;
       created_at: string;
-    }>(sql`
+    }>(this.db, sql`
       SELECT id, remote_order_id, customer_email, status, created_at
       FROM orders
       ORDER BY created_at DESC
       LIMIT 5;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      remote_order_id: string;
-      customer_email: string;
-      status: string;
-      created_at: string;
-    }>;
     return list.map((r) => ({
       id: r.id,
       remoteOrderId: r.remote_order_id,

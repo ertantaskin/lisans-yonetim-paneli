@@ -1,6 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import {
   products,
   siteProductMappings,
@@ -144,7 +145,7 @@ export class ProductsService {
    * products.list/reports ile AYNI semantik); assigned/revoked/expired/voided = satır sayısı.
    */
   private async detailStock(id: string): Promise<ProductDetail['stock']> {
-    const rows = await this.db.execute<{ status: string; cnt: number; remaining: number }>(sql`
+    const list = await rawRows<{ status: string; cnt: number; remaining: number }>(this.db, sql`
       SELECT
         status,
         count(*)::int AS cnt,
@@ -153,7 +154,6 @@ export class ProductsService {
       WHERE product_id = ${id}
       GROUP BY status;
     `);
-    const list = rows as unknown as Array<{ status: string; cnt: number; remaining: number }>;
     const by: Record<string, { cnt: number; remaining: number }> = {};
     for (const r of list) by[r.status] = { cnt: Number(r.cnt), remaining: Number(r.remaining) };
     return {
@@ -167,23 +167,17 @@ export class ProductsService {
 
   /** Bu ürüne bağlı teslim partileri (§12), en yeni önce. */
   private async detailBatches(id: string): Promise<ProductDetail['batches']> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       label: string;
       status: string;
       qty_received: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT id, label, status, qty_received
       FROM batches
       WHERE product_id = ${id}
       ORDER BY received_at DESC, created_at DESC;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      label: string;
-      status: string;
-      qty_received: number;
-    }>;
     return list.map((r) => ({
       id: r.id,
       label: r.label,
@@ -194,25 +188,18 @@ export class ProductsService {
 
   /** Bu ürüne verilmiş satın alma emirleri (§12), en yeni önce. */
   private async detailPurchaseOrders(id: string): Promise<ProductDetail['purchaseOrders']> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       status: string;
       qty_ordered: number;
       qty_received: number;
       eta: string | null;
-    }>(sql`
+    }>(this.db, sql`
       SELECT id, status, qty_ordered, qty_received, eta
       FROM purchase_orders
       WHERE product_id = ${id}
       ORDER BY created_at DESC;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      status: string;
-      qty_ordered: number;
-      qty_received: number;
-      eta: string | null;
-    }>;
     return list.map((r) => ({
       id: r.id,
       status: r.status,
@@ -227,7 +214,7 @@ export class ProductsService {
    * tüketilen units toplamı. reports.velocity ile AYNI mantık, tek ürüne daraltılmış.
    */
   private async detailVelocity(id: string): Promise<{ sold7d: number; sold30d: number }> {
-    const rows = await this.db.execute<{ sold7d: number; sold30d: number }>(sql`
+    const list = await rawRows<{ sold7d: number; sold30d: number }>(this.db, sql`
       SELECT
         coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days'), 0)::int AS sold7d,
         coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days'), 0)::int AS sold30d
@@ -235,32 +222,24 @@ export class ProductsService {
       JOIN order_lines ol ON ol.id = a.line_id
       WHERE ol.product_id = ${id};
     `);
-    const list = rows as unknown as Array<{ sold7d: number; sold30d: number }>;
     return { sold7d: Number(list[0]?.sold7d ?? 0), sold30d: Number(list[0]?.sold30d ?? 0) };
   }
 
   /** Sebepli stok düzeltme izi (§12), en yeni önce (son 50). */
   private async detailAdjustments(id: string): Promise<ProductDetail['adjustments']> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       id: string;
       action: string;
       qty: number;
       reason: string;
       created_at: string;
-    }>(sql`
+    }>(this.db, sql`
       SELECT id, action, qty, reason, created_at
       FROM stock_adjustments
       WHERE product_id = ${id}
       ORDER BY created_at DESC
       LIMIT 50;
     `);
-    const list = rows as unknown as Array<{
-      id: string;
-      action: string;
-      qty: number;
-      reason: string;
-      created_at: string;
-    }>;
     return list.map((r) => ({
       id: r.id,
       action: r.action,

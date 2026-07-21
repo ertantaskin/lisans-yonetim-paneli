@@ -4,6 +4,7 @@ import { and, eq, gte, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as schema from '../../src/db/schema';
 import { SalesQuotaGuard } from '../../src/orders/sales-quota.guard';
+import type { SecurityService } from '../../src/security/security.service';
 import type { Database } from '../../src/db/db.module';
 import type { Site } from '../../src/db/schema';
 import {
@@ -35,12 +36,23 @@ let guard: SalesQuotaGuard;
 let productId: string;
 let siteId: string;
 
-/** Guard yalnız context.switchToHttp().getRequest().site okur — minimal fastify-benzeri sahte. */
+/**
+ * Guard, getRequest().site okur; 429 yolunda getResponse().header(...) ile Retry-After yazar.
+ * Minimal fastify-benzeri sahte: getResponse header no-op (başlık davranışı burada test edilmez).
+ */
 function ctxWithSite(site: Partial<Site> | undefined): ExecutionContext {
   return {
-    switchToHttp: () => ({ getRequest: () => ({ site }) }),
+    switchToHttp: () => ({
+      getRequest: () => ({ site }),
+      getResponse: () => ({ header: () => undefined }),
+    }),
   } as unknown as ExecutionContext;
 }
+
+/** recordQuotaExceeded yalnız gözlemleme (best-effort) — testte no-op stub yeter. */
+const fakeSecurity = {
+  recordQuotaExceeded: async () => true,
+} as unknown as SecurityService;
 
 /** req.site olarak geçilecek minimal site nesnesi (guard yalnız id + salesDailyQuota okur). */
 function siteObj(salesDailyQuota: number | null): Partial<Site> {
@@ -53,7 +65,7 @@ describe('SalesQuotaGuard (günlük satış kotası)', () => {
     db = h.db;
     end = h.end;
     const crypto = makeCrypto();
-    guard = new SalesQuotaGuard(db as unknown as Database);
+    guard = new SalesQuotaGuard(db as unknown as Database, fakeSecurity);
 
     // Sipariş FK'leri için gerçek site + ürün (kotayı req.site'ta ayarlıyoruz, DB'de değil).
     const site = await createSite(db, crypto, { tag });

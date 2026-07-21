@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 
 /**
  * db veya transaction (tx) — ikisi de execute() taşır. Atama fonksiyonları hem
@@ -30,7 +31,7 @@ export async function assignAvailableSingleUse(
   productId: string,
   qty: number,
 ): Promise<string[]> {
-  const rows = await db.execute<{ id: string }>(sql`
+  const rows = await rawRows<{ id: string }>(db, sql`
     UPDATE license_items SET status = 'assigned', assigned_at = now()
     WHERE id IN (
       SELECT id FROM license_items
@@ -44,7 +45,7 @@ export async function assignAvailableSingleUse(
   `);
 
   // postgres-js sürücüsünde execute() satır dizisi döner.
-  return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
+  return rows.map((r) => r.id);
 }
 
 /**
@@ -94,7 +95,7 @@ export async function consumeMultiUseCapacity(
   productId: string,
   units: number,
 ): Promise<string | null> {
-  const rows = await db.execute<{ id: string }>(sql`
+  const list = await rawRows<{ id: string }>(db, sql`
     UPDATE license_items SET
       use_count = use_count + ${units},
       status = CASE WHEN use_count + ${units} >= max_uses THEN 'depleted' ELSE status END
@@ -111,6 +112,5 @@ export async function consumeMultiUseCapacity(
     RETURNING id;
   `);
 
-  const list = rows as unknown as Array<{ id: string }>;
   return list.length > 0 ? list[0]!.id : null;
 }

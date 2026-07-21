@@ -69,7 +69,14 @@ export const envSchema = z.object({
   AI_MODEL: emptyToUndefined(z.string().optional()),
   AI_BASE_URL: emptyToUndefined(z.string().url().optional()),
 
-  SENTRY_DSN: z.string().optional(),
+  /**
+   * Sentry hata izleme (§16 gözlem) — env-gated, VARSAYILAN KAPALI. SENTRY_DSN verilmezse
+   * SDK init edilmez (tam no-op). DSN kullanıcı SIRRIDIR — üretilmez. SENTRY_ENVIRONMENT
+   * opsiyonel etiket (yoksa NODE_ENV). NOT: docker-compose `${VAR:-}` boş string geçer →
+   * boş'u undefined'a çeviriyoruz (aksi halde .url() boş string'de patlar).
+   */
+  SENTRY_DSN: emptyToUndefined(z.string().url().optional()),
+  SENTRY_ENVIRONMENT: emptyToUndefined(z.string().optional()),
 });
 
 export type Env = z.infer<typeof envSchema>;

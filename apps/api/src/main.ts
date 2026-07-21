@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+// Sentry init'i uygulama modüllerinden ÖNCE çalışmalı (env-gated; DSN yoksa no-op).
+import './observability/instrument';
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import type { Http2ServerRequest } from 'node:http2';

@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { Inject } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { buildSignaturePayload } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
@@ -46,6 +46,12 @@ export class WebhookProcessor extends WorkerHost {
         event: ob.eventType,
         orderId: ob.orderId,
         ...(ob.payload as Record<string, unknown>),
+        // Monoton sıra (§2/§7 "webhook sequence — bayat webhook yok sayılır"): outbox kaydının
+        // oluşturma anı (epoch-ms). Aynı sipariş için olaylar nedensel sırada üretilir (kısmi
+        // ÖNCE, tamamlanan SONRA) → seq artar. BullMQ retry sırayı bozup 'partial'ı 'fulfilled'
+        // SONRASINDA ulaştırırsa WP alıcısı seq <= son-uygulanan görüp yok sayar (durum gerilemez).
+        // İmzalı gövdenin parçası olduğundan (body sha256) kurcalanamaz.
+        seq: ob.createdAt.getTime(),
       });
       const ts = String(Math.floor(Date.now() / 1000));
       const nonce = randomUUID();
@@ -95,18 +101,11 @@ export class WebhookProcessor extends WorkerHost {
       .set({
         status,
         lastError: error,
-        attempts: (await this.attempts(id)) + 1,
+        // Atomik artış (read-modify-write yerine tek UPDATE): aynı outbox iki kez kuyruğa
+        // girse bile (ör. ops replay bir retry uçuşurken) sayaç kaybolmaz.
+        attempts: sql`${outboxEvents.attempts} + 1`,
         updatedAt: new Date(),
       })
       .where(eq(outboxEvents.id, id));
-  }
-
-  private async attempts(id: string): Promise<number> {
-    const [row] = await this.db
-      .select({ attempts: outboxEvents.attempts })
-      .from(outboxEvents)
-      .where(eq(outboxEvents.id, id))
-      .limit(1);
-    return row?.attempts ?? 0;
   }
 }

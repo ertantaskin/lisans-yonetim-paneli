@@ -37,12 +37,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Non-2xx yanıttan tipli `ApiError` üretir: HTTP status KORUNUR (detay sayfalarındaki
+ * `status === 404 → notFound()` dalları çalışır) ve kullanıcı-dostu mesaj API'nin JSON hata
+ * gövdesinin `message` alanından alınır — HAM gövde (Nest hata JSON'u) mesaja GÖMÜLMEZ
+ * (iç detay/sır kullanıcıya sızmaz). `message` yoksa generic `METHOD path → status` kalır.
+ */
+async function toApiError(method: string, path: string, res: Response): Promise<ApiError> {
+  let message = `${method} ${path} → ${res.status}`;
+  try {
+    const data = (await res.json()) as { message?: unknown };
+    const m = data?.message;
+    if (typeof m === 'string' && m.trim()) {
+      message = m;
+    } else if (Array.isArray(m)) {
+      const joined = m.filter((x): x is string => typeof x === 'string').join('; ');
+      if (joined) message = joined;
+    }
+  } catch {
+    /* gövde JSON değil → generic mesaj kalır */
+  }
+  return new ApiError(res.status, message);
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: headers(false),
     cache: 'no-store',
   });
-  if (!res.ok) throw new ApiError(res.status, `GET ${path} → ${res.status}`);
+  if (!res.ok) throw await toApiError('GET', path, res);
   return res.json() as Promise<T>;
 }
 
@@ -53,10 +76,7 @@ export async function apiPost<T>(path: string, body?: unknown, actor?: string): 
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`POST ${path} → ${res.status} ${text}`);
-  }
+  if (!res.ok) throw await toApiError('POST', path, res);
   return res.json() as Promise<T>;
 }
 
@@ -72,10 +92,7 @@ export async function apiSend<T>(
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${path} → ${res.status} ${text}`);
-  }
+  if (!res.ok) throw await toApiError(method, path, res);
   return res.json() as Promise<T>;
 }
 

@@ -45,7 +45,28 @@ function jetlisans_init() {
 add_action('plugins_loaded', 'jetlisans_init');
 
 /**
- * İstek kuyruğu log tablosu (30 gün budanır — DB şişmesin, §7).
+ * Kuyruk log budama işi — WP-cron her fırlattığında çalışabilmesi için action HER
+ * yüklemede kayıtlı olmalı (aktivasyon değil, plugin dosyası düzeyinde).
+ */
+add_action('jetlisans_prune_queue', 'jetlisans_do_prune_queue');
+
+/**
+ * 30 günden eski kuyruk log satırlarını siler (§7: "yerel tablo YALNIZ istek kuyruğu
+ * logudur ve 30 gün otomatik budanır — DB şişmesi geri gelmesin"). Aktivasyonda
+ * zamanlanan günlük cron bunu çağırır. Tablo adı $wpdb->prefix'ten türer (kullanıcı
+ * girdisi değil); tek dinamik değer aralık gün sayısıdır (prepare ile bağlanır).
+ */
+function jetlisans_do_prune_queue() {
+    global $wpdb;
+    $table = $wpdb->prefix . 'jetlisans_queue';
+    // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table güvenli (prefix)
+    $wpdb->query(
+        $wpdb->prepare("DELETE FROM `$table` WHERE created_at < ( NOW() - INTERVAL %d DAY )", 30)
+    );
+}
+
+/**
+ * İstek kuyruğu log tablosu (30 gün budanır — DB şişmesin, §7) + günlük budama cron'u.
  */
 function jetlisans_activate() {
     global $wpdb;
@@ -64,5 +85,18 @@ function jetlisans_activate() {
         KEY order_id (order_id),
         KEY created_at (created_at)
     ) $charset;");
+
+    // Günlük budama cron'u — DB şişmesini gerçekten önleyen kısım (§7). Yalnız yoksa kur.
+    if (!wp_next_scheduled('jetlisans_prune_queue')) {
+        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'jetlisans_prune_queue');
+    }
 }
 register_activation_hook(__FILE__, 'jetlisans_activate');
+
+/**
+ * Deaktivasyonda budama cron'unu temizle (yetim zamanlanmış olay kalmasın).
+ */
+function jetlisans_deactivate() {
+    wp_clear_scheduled_hook('jetlisans_prune_queue');
+}
+register_deactivation_hook(__FILE__, 'jetlisans_deactivate');

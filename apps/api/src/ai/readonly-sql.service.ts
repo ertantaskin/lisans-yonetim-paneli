@@ -29,10 +29,15 @@ const SECRET_COLUMN_DENYLIST = [
   'hmac_secret_enc',
   'hmac_secret_prev_enc',
   'api_key_hash',
+  // 0017 ile eklenen rekey-grace aynası; 'api_key_hash' regex'i \b sınırı nedeniyle bunu
+  // YAKALAMAZ (hash ile _prev arasında word-char '_' var) → ayrıca listelenir.
+  'api_key_hash_prev',
   'password_hash',
   'scrypt',
 ] as const;
 const SECRET_COLUMN_RE = new RegExp(`\\b(?:${SECRET_COLUMN_DENYLIST.join('|')})\\b`, 'i');
+/** Dönen kolon adı denetimi için hızlı küme (küçük harf; tam-ad eşleşmesi). */
+const SECRET_COLUMN_SET = new Set<string>(SECRET_COLUMN_DENYLIST);
 
 /**
  * ReadonlySqlService — doğal dilde rapor (§15 "salt-okunur DB rolü, üretilen SQL gösterilir")
@@ -71,16 +76,33 @@ export class ReadonlySqlService {
     const capped = `WITH __capped AS (\n${q}\n) SELECT * FROM __capped LIMIT ${MAX_ROWS + 1}`;
 
     let rows: Record<string, unknown>[];
+    let resultColumns: string[] = [];
     try {
-      rows = (await this.sql.begin(async (tx) => {
+      const raw = await this.sql.begin(async (tx) => {
         // SALT-OKUNUR + zaman sınırı: yazma imkânsız, uzun sorgu kesilir.
         await tx.unsafe('SET TRANSACTION READ ONLY');
         await tx.unsafe("SET LOCAL statement_timeout = '5s'");
         return tx.unsafe(capped);
-      })) as unknown as Record<string, unknown>[];
+      });
+      // postgres.js RowList satır YOKken bile kolon meta verisi (.columns) taşır → dönen
+      // gerçek kolon adlarını buradan alırız (metin eşleştirmeye bağlı kalmadan).
+      const meta = (raw as { columns?: Array<{ name?: unknown }> }).columns;
+      resultColumns = Array.isArray(meta)
+        ? meta.map((c) => (typeof c?.name === 'string' ? c.name : '')).filter(Boolean)
+        : [];
+      rows = raw as unknown as Record<string, unknown>[];
     } catch (err) {
       // Yazma denemesi / sözdizimi / timeout → 400 (kullanıcıya SQL hatası gösterilir).
       throw new HttpException(`Sorgu çalıştırılamadı: ${(err as Error).message}`, HttpStatus.BAD_REQUEST);
+    }
+
+    // Dönen kolon adı denetimi (savunma-derinliği): metin denylist'i `SELECT *` ile atlanabilir
+    // (sorgu metninde 'password_hash' geçmeden admin_users.* sır kolonu döner). DÖNEN kolon adlarını
+    // denylist'e karşı süz → SELECT * bypass'ı 0 satırda bile kapanır. AdminGuard + at-rest şifreleme
+    // düz-metin sızmayı zaten önler; bu, kontrolün taahhüdünü delinmeye karşı sağlamlaştırır.
+    const leaked = resultColumns.find((c) => SECRET_COLUMN_SET.has(c.toLowerCase()));
+    if (leaked) {
+      throw new HttpException('Sorgu sır kolonlarına erişemez.', HttpStatus.BAD_REQUEST);
     }
 
     // Belleğe en fazla MAX_ROWS+1 satır geldi: +1 varsa gerçekten kırpıldı demektir.

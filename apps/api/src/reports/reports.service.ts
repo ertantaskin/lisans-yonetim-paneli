@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 
 /** Ürün başına anlık stok satırı (products.service.list mantığı). */
 export interface StockByProduct {
@@ -54,12 +55,11 @@ export class ReportsService {
 
   /** Sipariş sayısı + duruma göre kırılım (orders.status). */
   private async orders(): Promise<ReportsOverview['orders']> {
-    const rows = await this.db.execute<{ status: string; c: number }>(sql`
+    const list = await rawRows<{ status: string; c: number }>(this.db, sql`
       SELECT status, count(*)::int AS c
       FROM orders
       GROUP BY status;
     `);
-    const list = rows as unknown as Array<{ status: string; c: number }>;
     const byStatus: Record<string, number> = {};
     let total = 0;
     for (const r of list) {
@@ -72,12 +72,11 @@ export class ReportsService {
 
   /** Sipariş satırı teslim durumu kırılımı (order_lines.status). */
   private async fulfillment(): Promise<ReportsOverview['fulfillment']> {
-    const rows = await this.db.execute<{ status: string; c: number }>(sql`
+    const list = await rawRows<{ status: string; c: number }>(this.db, sql`
       SELECT status, count(*)::int AS c
       FROM order_lines
       GROUP BY status;
     `);
-    const list = rows as unknown as Array<{ status: string; c: number }>;
     const by: Record<string, number> = {};
     let lines = 0;
     for (const r of list) {
@@ -99,12 +98,12 @@ export class ReportsService {
    * ürün de LEFT JOIN → coalesce 0 ile listede kalır.
    */
   private async stock(): Promise<ReportsOverview['stock']> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       product_id: string;
       sku: string;
       name: string;
       available: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         p.id AS product_id,
         p.sku AS sku,
@@ -116,12 +115,6 @@ export class ReportsService {
       GROUP BY p.id, p.sku, p.name
       ORDER BY p.name ASC;
     `);
-    const list = rows as unknown as Array<{
-      product_id: string;
-      sku: string;
-      name: string;
-      available: number;
-    }>;
     let totalAvailable = 0;
     const byProduct: StockByProduct[] = list.map((r) => {
       const available = Number(r.available);
@@ -138,13 +131,13 @@ export class ReportsService {
    * Yalnız satış geçmişi olan (en az bir atama) ürünler listelenir.
    */
   private async velocity(): Promise<VelocityRow[]> {
-    const rows = await this.db.execute<{
+    const list = await rawRows<{
       product_id: string;
       sku: string;
       sold7d: number;
       sold30d: number;
       available: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         p.id AS product_id,
         p.sku AS sku,
@@ -161,13 +154,6 @@ export class ReportsService {
       GROUP BY p.id, p.sku
       ORDER BY sold30d DESC, p.sku ASC;
     `);
-    const list = rows as unknown as Array<{
-      product_id: string;
-      sku: string;
-      sold7d: number;
-      sold30d: number;
-      available: number;
-    }>;
     return list.map((r) => {
       const sold7d = Number(r.sold7d);
       const sold30d = Number(r.sold30d);
@@ -191,13 +177,12 @@ export class ReportsService {
    * drizzle şema olarak import EDİLMEZ — RAW SQL ile sayılır. rate=approved/max(total,1).
    */
   private async replacements(): Promise<ReportsOverview['replacements']> {
-    const rows = await this.db.execute<{ total: number; approved: number }>(sql`
+    const list = await rawRows<{ total: number; approved: number }>(this.db, sql`
       SELECT
         count(*)::int AS total,
         count(*) FILTER (WHERE status = 'approved')::int AS approved
       FROM replacement_requests;
     `);
-    const list = rows as unknown as Array<{ total: number; approved: number }>;
     const total = Number(list[0]?.total ?? 0);
     const approved = Number(list[0]?.approved ?? 0);
     const rate = approved / Math.max(total, 1);

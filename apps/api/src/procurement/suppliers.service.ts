@@ -1,6 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { desc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { suppliers, type Supplier } from '../db/schema/suppliers';
 
 /** Tedarikçi karnesi parti satırı (§12). */
@@ -95,14 +96,14 @@ export class SuppliersService {
     const agg = (poAgg as unknown as Array<Record<string, unknown>>)[0] ?? {};
 
     // Parti agregası: geri-çekilme oranı (recalled / toplam).
-    const batchAgg = await this.db.execute<{ total: number; recalled: number }>(sql`
+    const batchAgg = await rawRows<{ total: number; recalled: number }>(this.db, sql`
       SELECT
         count(*)::int AS total,
         count(*) FILTER (WHERE status = 'recalled')::int AS recalled
       FROM batches
       WHERE supplier_id = ${id};
     `);
-    const bAgg = (batchAgg as unknown as Array<{ total: number; recalled: number }>)[0] ?? {
+    const bAgg = batchAgg[0] ?? {
       total: 0,
       recalled: 0,
     };
@@ -110,21 +111,19 @@ export class SuppliersService {
     const recalled = Number(bAgg.recalled ?? 0);
 
     // Parti listesi (en yeni önce).
-    const batchRows = await this.db.execute(sql`
+    const batchRows = await rawRows<{
+      id: string;
+      label: string;
+      status: string;
+      qty_received: number;
+      created_at: unknown;
+    }>(this.db, sql`
       SELECT id, label, status, qty_received, created_at
       FROM batches
       WHERE supplier_id = ${id}
       ORDER BY created_at DESC;
     `);
-    const batches: ScorecardBatchRow[] = (
-      batchRows as unknown as Array<{
-        id: string;
-        label: string;
-        status: string;
-        qty_received: number;
-        created_at: unknown;
-      }>
-    ).map((b) => {
+    const batches: ScorecardBatchRow[] = batchRows.map((b) => {
       // created_at pg sürücüde Date olarak gelebilir; ISO string'e normalize et.
       const created = b.created_at;
       const createdAt =

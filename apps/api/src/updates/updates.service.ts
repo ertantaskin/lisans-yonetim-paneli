@@ -43,8 +43,18 @@ export class UpdatesService {
    * Geçersiz biçimli sürüm daima en sona (en düşük) sıralanır. Sürümler benzersiz
    * (unique constraint) olduğundan eşitlik oluşmaz.
    */
-  async latest(): Promise<PluginRelease | null> {
-    const rows = await this.db.select().from(pluginReleases);
+  async latest(): Promise<PluginReleaseMeta | null> {
+    // Yalnız meta kolonları — zip_b64 gövdesi HARİÇ. En yüksek semver'i seçmek için TÜM
+    // sürümlerin tam .zip base64 gövdesini belleğe çekmek gereksizdi (N sürüm × ~1MB).
+    // info() zaten yalnız version/changelog/createdAt kullanır → gövdeye ihtiyaç yok.
+    const rows = await this.db
+      .select({
+        id: pluginReleases.id,
+        version: pluginReleases.version,
+        changelog: pluginReleases.changelog,
+        createdAt: pluginReleases.createdAt,
+      })
+      .from(pluginReleases);
     if (rows.length === 0) return null;
     return rows.reduce((best, row) => (compareVersions(row.version, best.version) > 0 ? row : best));
   }

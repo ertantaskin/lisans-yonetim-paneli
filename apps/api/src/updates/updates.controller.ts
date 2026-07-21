@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   Body,
   Controller,
@@ -111,6 +112,7 @@ export class UpdatesController {
   async download(
     @Param('version') version: string,
     @Ip() ip: string,
+    @Req() req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     // Hız sınırı: @Res() elle yönetildiği için (mevcut 404 deseni gibi) 429'u elle yaz.
@@ -128,9 +130,21 @@ export class UpdatesController {
     }
 
     const buffer = Buffer.from(zipB64, 'base64');
+    // ETag = paket içeriğinin sha256'sı (güçlü doğrulayıcı). WP güncelleyici/proxy aynı
+    // sürümü If-None-Match ile tekrar istediğinde 304 döner → gövde yeniden gönderilmez.
+    // Aynı sürüm yeniden yayınlanırsa içerik (dolayısıyla ETag) değişir → istemci taze indirir.
+    const etag = `"${createHash('sha256').update(buffer).digest('hex')}"`;
+    const ifNoneMatch = req.headers['if-none-match'];
+    if (typeof ifNoneMatch === 'string' && ifNoneMatch === etag) {
+      reply.header('etag', etag).header('cache-control', 'public, max-age=300').status(304).send();
+      return;
+    }
+
     reply
       .header('content-type', 'application/zip')
       .header('content-disposition', `attachment; filename=jetlisans-${version}.zip`)
+      .header('content-length', buffer.length)
+      .header('etag', etag)
       // Sürüm .zip'i kısa süre önbelleklenebilir: yinelenen DB base64 çözümünü azaltır.
       // Aynı sürüm yeniden yayınlanabildiğinden ölçülü tutuldu (300s).
       .header('cache-control', 'public, max-age=300')

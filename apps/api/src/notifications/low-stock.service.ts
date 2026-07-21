@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { NotificationsService } from './notifications.service';
 
 export const LOW_STOCK_QUEUE = 'low-stock';
@@ -51,7 +52,9 @@ export class LowStockService implements OnModuleInit {
   async checkLowStock(): Promise<number> {
     // available: products.service.list() ile aynı — coalesce(sum(max_uses-use_count)
     // FILTER status='available'). GROUP BY p.id (pk) → HAVING p.low_stock_threshold'a erişebilir.
-    const rows = (await this.db.execute<LowStockRow>(sql`
+    // Dedupe (son 12 saatte aynı ürün için 'low_stock' bildirimi) ANA sorguya NOT EXISTS ile
+    // gömülü → döngü-içi ürün-başına sorgu (N+1) YOK: tek tarama zaten dedupe'lu satırlar döner.
+    const rows = await rawRows<LowStockRow>(this.db, sql`
       SELECT
         p.id AS product_id,
         p.sku AS sku,
@@ -62,19 +65,21 @@ export class LowStockService implements OnModuleInit {
       FROM products p
       LEFT JOIN license_items li ON li.product_id = p.id
       WHERE p.low_stock_threshold IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+          WHERE n.type = 'low_stock'
+            AND n.meta->>'productId' = p.id::text
+            AND n.created_at > now() - (${DEDUPE_WINDOW_HOURS} * interval '1 hour')
+        )
       GROUP BY p.id
       HAVING COALESCE(SUM(li.max_uses - li.use_count) FILTER (WHERE li.status = 'available'), 0)
         <= p.low_stock_threshold;
-    `)) as unknown as LowStockRow[];
+    `);
 
     let created = 0;
     for (const r of rows) {
       const available = Number(r.available);
       const threshold = Number(r.threshold);
-
-      // Dedupe: son 12 saatte aynı ürün için 'low_stock' bildirimi varsa atla.
-      if (await this.recentlyNotified(r.product_id)) continue;
-
       await this.notifications.create({
         type: 'low_stock',
         severity: 'warning',
@@ -87,18 +92,5 @@ export class LowStockService implements OnModuleInit {
 
     if (created > 0) this.logger.log(`Düşük stok: ${created} bildirim üretildi`);
     return created;
-  }
-
-  /** Son DEDUPE_WINDOW_HOURS içinde bu ürün için 'low_stock' bildirimi var mı? */
-  private async recentlyNotified(productId: string): Promise<boolean> {
-    const rows = (await this.db.execute<{ hit: number }>(sql`
-      SELECT 1 AS hit
-      FROM notifications
-      WHERE type = 'low_stock'
-        AND meta->>'productId' = ${productId}
-        AND created_at > now() - (${DEDUPE_WINDOW_HOURS} * interval '1 hour')
-      LIMIT 1;
-    `)) as unknown as Array<{ hit: number }>;
-    return rows.length > 0;
   }
 }

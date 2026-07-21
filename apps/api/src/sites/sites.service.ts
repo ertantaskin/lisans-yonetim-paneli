@@ -62,6 +62,29 @@ export function hashApiKey(apiKey: string): string {
   return createHash('sha256').update(apiKey).digest('hex');
 }
 
+/**
+ * Site satırının admin yanıtlarında GÜVENLE dönebilecek biçimi: TÜM sır-kategorisi kolonlar
+ * çıkarılmış — şifreli HMAC secret blobları (mevcut + önceki) ve api_key sha256 hash'leri
+ * (mevcut + önceki). Rotasyon/rekey sonrası tutulan `hmacSecretPrevEnc`/`apiKeyHashPrev` de
+ * sızmaz (envelope sınırı korunur). Site dönen HER yol (list/update/…) bu mapper'ı kullanır ki
+ * sır kolonları tek yerde garanti strip edilsin ve gelecekte yeni bir yol yanlışlıkla sızdırmasın.
+ */
+export type PublicSite = Omit<
+  Site,
+  'hmacSecretEnc' | 'hmacSecretPrevEnc' | 'apiKeyHash' | 'apiKeyHashPrev'
+>;
+
+export function toPublicSite(row: Site): PublicSite {
+  const {
+    hmacSecretEnc: _s,
+    hmacSecretPrevEnc: _sp,
+    apiKeyHash: _a,
+    apiKeyHashPrev: _ap,
+    ...rest
+  } = row;
+  return rest;
+}
+
 @Injectable()
 export class SitesService {
   constructor(
@@ -136,7 +159,7 @@ export class SitesService {
       webhookUrl?: string | null;
       status?: 'active' | 'suspended';
     },
-  ): Promise<Omit<Site, 'hmacSecretEnc' | 'apiKeyHash' | 'apiKeyHashPrev'>> {
+  ): Promise<PublicSite> {
     await this.getById(id); // yoksa 404
 
     const patch: Partial<typeof sites.$inferInsert> = { updatedAt: new Date() };
@@ -157,9 +180,8 @@ export class SitesService {
       status: row!.status,
     });
 
-    // apiKeyHashPrev de (apiKeyHash gibi) yanıta konmaz — rotasyon grace'i için tutulan eski hash.
-    const { hmacSecretEnc: _s, apiKeyHash: _a, apiKeyHashPrev: _p, ...rest } = row!;
-    return rest;
+    // Tüm sır-kategorisi kolonlar tek mapper'da strip edilir (hmacSecretPrevEnc dâhil).
+    return toPublicSite(row!);
   }
 
   /**
@@ -186,9 +208,9 @@ export class SitesService {
     }
   }
 
-  async list(): Promise<Array<Omit<Site, 'hmacSecretEnc' | 'apiKeyHash'>>> {
+  async list(): Promise<PublicSite[]> {
     const rows = await this.db.select().from(sites);
-    return rows.map(({ hmacSecretEnc: _s, apiKeyHash: _a, ...rest }) => rest);
+    return rows.map(toPublicSite);
   }
 
   /**

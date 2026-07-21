@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { AiService } from './ai.service';
 
 /**
@@ -86,13 +87,13 @@ export class AiSummaryService {
    * — ops dead-letter tanımıyla aynı "sorunlu outbox" semantiği (§16).
    */
   private async collectMetrics(): Promise<DailyMetrics> {
-    const rows = await this.db.execute<{
+    const rows = await rawRows<{
       today_orders: number;
       open_replacements: number;
       security_events_24h: number;
       failed_outbox: number;
       available_stock: number;
-    }>(sql`
+    }>(this.db, sql`
       SELECT
         (SELECT count(*) FROM orders
            WHERE created_at >= date_trunc('day', now()))::int AS today_orders,
@@ -106,13 +107,7 @@ export class AiSummaryService {
         (SELECT coalesce(sum(max_uses - use_count), 0) FROM license_items
            WHERE status = 'available')::int AS available_stock;
     `);
-    const r = (rows as unknown as Array<{
-      today_orders: number;
-      open_replacements: number;
-      security_events_24h: number;
-      failed_outbox: number;
-      available_stock: number;
-    }>)[0];
+    const r = rows[0];
     return {
       todayOrders: Number(r?.today_orders ?? 0),
       openReplacements: Number(r?.open_replacements ?? 0),

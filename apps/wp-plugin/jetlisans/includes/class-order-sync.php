@@ -31,6 +31,9 @@ class Jetlisans_Order_Sync {
 
     public function push($order_id) {
         if (!Jetlisans_Settings::is_configured()) return;
+        // Kopya/staging koruması (§7): site adresi bağlanma anındakinden farklıysa CANLI
+        // panele push etme (klon ortamı gerçek stoğu tüketmesin). Admin'e uyarı gösterilir.
+        if (Jetlisans_Settings::is_clone()) return;
         $order = wc_get_order($order_id);
         if (!$order) return;
 
@@ -99,6 +102,8 @@ class Jetlisans_Order_Sync {
     public function resync_items($order_id, $items = null) {
         if (self::$syncing) return;
         if (!Jetlisans_Settings::is_configured()) return;
+        // Kopya/staging koruması (§7): klon ortamda uzlaştırma push'u yapma.
+        if (Jetlisans_Settings::is_clone()) return;
         $order = wc_get_order($order_id);
         if (!$order) return;
 
