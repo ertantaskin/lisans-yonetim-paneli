@@ -8,6 +8,7 @@ import { ZodBody } from '../common/zod-validation.pipe';
 import type { Site } from '../db/schema';
 import { OrdersService } from './orders.service';
 import { AdminOrdersService } from './admin-orders.service';
+import { SalesQuotaExceededException } from './sales-quota.exception';
 
 /** Site-facing revoke gövdesi — reason opsiyonel (WP iade/iptal sebebi). */
 const RevokeOrderRequest = z.object({ reason: z.string().min(1).max(500).optional() });
@@ -36,10 +37,19 @@ export class OrdersController {
     @Body(new ZodBody(CreateOrderRequest)) body: CreateOrderRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<CreateOrderResponse> {
-    const outcome = await this.orders.createOrder(site, body);
-    // 201 fully / 207 partial / 202 pending_stock (§4)
-    reply.status(outcome.httpStatus);
-    return outcome.body;
+    try {
+      const outcome = await this.orders.createOrder(site, body);
+      // 201 fully / 207 partial / 202 pending_stock / 202 held_for_review (§4/§8)
+      reply.status(outcome.httpStatus);
+      return outcome.body;
+    } catch (e) {
+      // Sert kota aşımı (§5): 429'a Retry-After başlığı ekle (gün sınırında sıfırlanır). Fastify
+      // reply header'ı istisna filtresi 429'u render etmeden ÖNCE korur → başlık yanıtta kalır.
+      if (e instanceof SalesQuotaExceededException) {
+        reply.header('retry-after', String(e.retryAfterSec));
+      }
+      throw e;
+    }
   }
 
   /** Müşteri ekranı: yalnız aktif atamalar + çözülmüş payload (§4, §7). */

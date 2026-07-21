@@ -61,6 +61,15 @@ class Jetlisans_Order_Sync {
             if (!empty($res['body']['status'])) {
                 $order->update_meta_data('_jetlisans_status', $res['body']['status']);
             }
+            // (§8 dinamik satış kotası) Panel siparişi KABUL etti ama dinamik kota eşiği
+            // aşıldığından teslimatı yönetici incelemesine aldı (202 + body.held=true). Sipariş
+            // pending kalır; yönetici onaylarsa normal teslimat + geri-kanal webhook devam eder,
+            // reddederse revoked olur (bulk-status poll'de görünür). Sadece EK işaret: held yok/
+            // false ise bugünküyle birebir aynı davranış (geriye dönük uyumlu).
+            if (!empty($res['body']['held']) && $order->get_meta('_jetlisans_held_for_review') !== 'yes') {
+                $order->update_meta_data('_jetlisans_held_for_review', 'yes');
+                $order->add_order_note('Jetlisans: Sipariş güvenlik incelemesine alındı — teslimat yönetici onayından sonra tamamlanacak.');
+            }
             $order->save();
         } else {
             // Başarısız → retry planla (§4 eklenti 1dk/5dk/30dk).

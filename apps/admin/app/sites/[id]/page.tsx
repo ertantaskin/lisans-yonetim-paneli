@@ -146,6 +146,12 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               <dd className="font-medium text-foreground">{site.sandbox ? 'açık' : 'kapalı'}</dd>
             </div>
             <div className="flex justify-between gap-4 sm:block">
+              <dt className="text-muted-foreground">Dinamik Satış Kotası</dt>
+              <dd className="font-medium text-foreground">
+                {site.dynamicQuotaEnabled ? `açık (× ${site.reviewMultiplier})` : 'kapalı'}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Oluşturulma</dt>
               <dd className="font-medium tabular-nums text-foreground">
                 {new Date(site.createdAt).toLocaleString('tr-TR', {
@@ -164,6 +170,8 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               sandbox={site.sandbox}
               senderEmail={site.senderEmail}
               webhookUrl={site.webhookUrl}
+              dynamicQuotaEnabled={site.dynamicQuotaEnabled}
+              reviewMultiplier={site.reviewMultiplier}
             />
           </div>
         </CardContent>

@@ -62,6 +62,8 @@ const orders = new OrdersService(
   webhookFake as never,
   fulfillmentService,
   adminOrdersService,
+  // SecurityService (8. arg) — kota bu testte ayarlı değil, tetiklenmez; işlevsel fake.
+  { recordQuotaExceeded: async () => false } as never,
 );
 
 const createdSiteIds: string[] = [];

@@ -26,6 +26,10 @@ export interface SiteDetail {
     /** Geri kanal webhook hedefi (§2) — null = webhook devre dışı. SIR değil. */
     webhookUrl: string | null;
     salesDailyQuota: number | null;
+    /** Dinamik kota (§8) açık mı — açıksa eşik aşımında sipariş held_for_review'e alınır. */
+    dynamicQuotaEnabled: boolean;
+    /** Dinamik eşik çarpanı (§8): 30g-ortalama × bu değer. */
+    reviewMultiplier: number;
     sandbox: boolean;
     createdAt: string;
   };
@@ -154,6 +158,8 @@ export class SitesService {
     id: string,
     input: {
       salesDailyQuota?: number | null;
+      dynamicQuotaEnabled?: boolean;
+      reviewMultiplier?: number;
       sandbox?: boolean;
       senderEmail?: string | null;
       webhookUrl?: string | null;
@@ -164,6 +170,9 @@ export class SitesService {
 
     const patch: Partial<typeof sites.$inferInsert> = { updatedAt: new Date() };
     if (input.salesDailyQuota !== undefined) patch.salesDailyQuota = input.salesDailyQuota;
+    // Dinamik kota (§8) — açık/kapalı + eşik çarpanı.
+    if (input.dynamicQuotaEnabled !== undefined) patch.dynamicQuotaEnabled = input.dynamicQuotaEnabled;
+    if (input.reviewMultiplier !== undefined) patch.reviewMultiplier = input.reviewMultiplier;
     if (input.sandbox !== undefined) patch.sandbox = input.sandbox;
     if (input.senderEmail !== undefined) patch.senderEmail = input.senderEmail;
     // Geri kanal webhook hedefi (§2) — null = temizle (webhook sessizce atlanır).
@@ -374,6 +383,8 @@ export class SitesService {
         senderEmail: site.senderEmail,
         webhookUrl: site.webhookUrl,
         salesDailyQuota: site.salesDailyQuota,
+        dynamicQuotaEnabled: site.dynamicQuotaEnabled,
+        reviewMultiplier: site.reviewMultiplier,
         sandbox: site.sandbox,
         createdAt: site.createdAt.toISOString(),
       },

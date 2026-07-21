@@ -100,6 +100,8 @@ describe('OrdersService.getDeliveries — süre-bitişi savunma filtresi', () =>
       {} as never,
       {} as never,
       {} as never,
+      // SecurityService (8. arg) — getDeliveries kullanmaz, güvenli stub.
+      {} as never,
     );
     const site = await createSite(db, crypto, { tag });
     siteId = site.id;

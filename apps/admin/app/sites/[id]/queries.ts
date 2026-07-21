@@ -18,6 +18,10 @@ export interface SiteDetail {
     webhookUrl: string | null;
     salesDailyQuota: number | null;
     sandbox: boolean;
+    /** Dinamik satış kotası (§8): açıksa sabit kota yerine 30g-ort × çarpan eşiği uygulanır. */
+    dynamicQuotaEnabled: boolean;
+    /** Dinamik eşik çarpanı (30g-ort × N, taban 20). */
+    reviewMultiplier: number;
     createdAt: string;
   };
   mappingCount: number;

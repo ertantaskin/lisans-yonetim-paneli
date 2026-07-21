@@ -25,12 +25,16 @@ export function SiteConfigForm({
   sandbox,
   senderEmail,
   webhookUrl,
+  dynamicQuotaEnabled,
+  reviewMultiplier,
 }: {
   siteId: string;
   salesDailyQuota: number | null;
   sandbox: boolean;
   senderEmail: string | null;
   webhookUrl: string | null;
+  dynamicQuotaEnabled: boolean;
+  reviewMultiplier: number;
 }) {
   const [state, action, pending] = useActionState(updateSiteAction, initial);
 
@@ -84,6 +88,31 @@ export function SiteConfigForm({
             className="w-40"
           />
         </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sc-review-multiplier">Eşik çarpanı (30g-ort × N)</Label>
+          <Input
+            id="sc-review-multiplier"
+            name="reviewMultiplier"
+            type="number"
+            min={1}
+            step={1}
+            defaultValue={reviewMultiplier}
+            className="w-44"
+          />
+        </div>
+        <label
+          htmlFor="sc-dynamic-quota"
+          className="flex h-9 items-center gap-2 text-sm text-foreground/80"
+        >
+          <input
+            id="sc-dynamic-quota"
+            name="dynamicQuotaEnabled"
+            type="checkbox"
+            defaultChecked={dynamicQuotaEnabled}
+            className="size-4 rounded border-border accent-primary"
+          />
+          Dinamik satış kotası
+        </label>
         <label
           htmlFor="sc-sandbox"
           className="flex h-9 items-center gap-2 text-sm text-foreground/80"
@@ -100,6 +129,10 @@ export function SiteConfigForm({
         <Button type="submit" disabled={pending}>
           {pending ? 'Kaydediliyor…' : 'Kaydet'}
         </Button>
+        <p className="w-full text-xs text-muted-foreground">
+          Açıksa günlük eşik = son 30 günün ortalama günlük siparişi × çarpan (taban 20); eşik
+          aşılırsa sipariş reddedilmez, İnceleme Kuyruğu&apos;na alınır.
+        </p>
       </form>
 
       {state.error && (

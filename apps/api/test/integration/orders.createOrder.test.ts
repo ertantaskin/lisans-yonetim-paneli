@@ -66,6 +66,9 @@ const orders = new OrdersService(
   webhookFake as never,
   fulfillmentService,
   adminOrdersService,
+  // SecurityService (8. arg): sert kota aşımı catch'i best-effort çağırır — bu testte
+  // kota ayarlı olmadığından hiç tetiklenmez ama undefined bırakmamak için işlevsel fake.
+  { recordQuotaExceeded: async () => false } as never,
 );
 
 /** Bu koşuda oluşturulan site id'leri — afterAll'da mapping'leri (restrict FK) temizlemek için. */

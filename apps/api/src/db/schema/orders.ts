@@ -28,6 +28,16 @@ export const orders = pgTable(
     customerEmail: text('customer_email').notNull(),
     status: orderStatusEnum('status').notNull().default('pending'),
     idempotencyKey: text('idempotency_key').notNull(),
+    /**
+     * Dinamik kota incelemesi (§8): true ise sipariş KABUL edildi ama teslimat manuel onaya
+     * alındı — atama YAPILMAZ, autoComplete bu siparişi ATLAR, admin "İnceleme Kuyruğu"nda
+     * Onayla (releaseHeld → completeLine) / Reddet (rejectHeld → satırlar canceled) eder.
+     * status enum'a 'held_for_review' EKLENMEZ (boolean bayrak → enum migration'ı gerekmez,
+     * status geçerli bir değer olarak 'pending' kalır; getDeliveries/recompute bozulmaz).
+     */
+    heldForReview: boolean('held_for_review').notNull().default(false),
+    heldAt: timestamp('held_at', { withTimezone: true }),
+    heldReason: text('held_reason'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -42,6 +52,11 @@ export const orders = pgTable(
     index('orders_created_idx').on(t.createdAt.desc()),
     // Site-kapsamlı sipariş listesi (site scope + en yeni önce) tek index'ten karşılanır.
     index('orders_site_created_idx').on(t.siteId, t.createdAt.desc()),
+    // İnceleme kuyruğu (§8): yalnız held siparişler — partial index küçük kalır (order_lines
+    // pending_product_idx felsefesi), kuyruk listesi seq-scan yapmaz.
+    index('orders_held_idx')
+      .on(t.createdAt.desc())
+      .where(sql`${t.heldForReview} = true`),
   ],
 );
 

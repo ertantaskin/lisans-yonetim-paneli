@@ -84,6 +84,18 @@ export async function updateSiteAction(
     const webhookUrl: string | null = webhookRaw ? webhookRaw : null;
     // Sandbox (test modu) — checkbox işaretliyse true.
     const sandbox = formData.get('sandbox') != null;
+    // Dinamik satış kotası (§8) — checkbox işaretliyse true.
+    const dynamicQuotaEnabled = formData.get('dynamicQuotaEnabled') != null;
+    // Eşik çarpanı — boş = varsayılan 3. Tam sayı ve ≥1 olmalı.
+    const rmRaw = String(formData.get('reviewMultiplier') || '').trim();
+    let reviewMultiplier = 3;
+    if (rmRaw) {
+      const n = Number(rmRaw);
+      if (!Number.isInteger(n) || n < 1) {
+        return { ok: false, error: 'Eşik çarpanı en az 1 (pozitif tam sayı) olmalı' };
+      }
+      reviewMultiplier = n;
+    }
 
     const actor = await getActor();
     await apiSend(
@@ -94,6 +106,8 @@ export async function updateSiteAction(
         sandbox,
         senderEmail,
         webhookUrl,
+        dynamicQuotaEnabled,
+        reviewMultiplier,
       },
       actor,
     );

@@ -41,6 +41,12 @@ class Jetlisans_Admin_Metabox {
 
         echo '<p><strong>Durum:</strong> ' . esc_html($status ?: 'bilinmiyor') . '</p>';
 
+        // (§8 dinamik satış kotası) Sipariş güvenlik incelemesine alındıysa görsel işaret.
+        // Yalnız pending iken göster; onaylanınca (webhook durumu tazeler) rozet düşer.
+        if ($order->get_meta('_jetlisans_held_for_review') === 'yes' && ($status === 'pending' || $status === '')) {
+            echo '<p><strong style="color:#b45309">' . esc_html__('İnceleme bekliyor', 'jetlisans') . '</strong></p>';
+        }
+
         if (!$panel_order_id) {
             echo '<p><em>Henüz panele iletilmedi.</em></p>';
             return;

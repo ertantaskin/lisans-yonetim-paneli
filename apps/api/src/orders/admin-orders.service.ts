@@ -21,6 +21,7 @@ import {
   orderLines,
   orders,
   products,
+  sites,
   type Site,
 } from '../db/schema';
 import {
@@ -445,6 +446,96 @@ export class AdminOrdersService {
   }
 
   /**
+   * #19 BİRİM-GRANÜLER kısmi revoke: bir atamanın YALNIZ `units` birimini geri alır (atamayı
+   * imha etmeden). Çok-kullanımlıkta (MAK) tek key birden çok birim taşıyabildiğinden re-push
+   * adet-düşür fazlalığı atamanın TAMAMINI değil yalnız fazlayı geri almalı — aksi halde over-revoke
+   * (müşteri hakkını fazladan kaybeder). Kapasite tam `take` kadar döner (use_count -= take); satır
+   * fulfilledQty `take` düşer. Satır 'canceled' İŞARETLENMEZ (adet düşür = iade DEĞİL → yeniden
+   * atanabilir kalır). `units >= atama.units` ise tam revoke'a düşer (tek-kullanım hep bu yola gelir).
+   */
+  async revokePartialUnits(assignmentId: string, units: number, reason: string, actor: string) {
+    if (units <= 0) return { assignmentId, revoked: 0 };
+    return this.db.transaction(async (tx) => {
+      const [asg] = await tx
+        .select()
+        .from(assignments)
+        .where(eq(assignments.id, assignmentId))
+        .limit(1)
+        .for('update');
+      if (!asg) throw new NotFoundException('Atama bulunamadı');
+      if (asg.status !== 'active') return { assignmentId, revoked: 0 };
+
+      const take = Math.min(units, asg.units);
+      const full = take >= asg.units;
+
+      if (full) {
+        await tx.update(assignments).set({ status: 'revoked' }).where(eq(assignments.id, assignmentId));
+      } else {
+        // Kısmi: yalnız units'i azalt — atama aktif kalır, kalan birim müşteride.
+        await tx
+          .update(assignments)
+          .set({ units: asg.units - take })
+          .where(eq(assignments.id, assignmentId));
+      }
+
+      // Kapasite iadesi: multi → use_count -= take (+ depleted ise available). Tek-kullanım
+      // (maxUses=1) yalnız full yolla gelir (take=asg.units=1) → karantina (satışa dönmez, §2).
+      const [li] = await tx
+        .select()
+        .from(licenseItems)
+        .where(eq(licenseItems.id, asg.licenseItemId))
+        .limit(1);
+      if (li) {
+        if (li.maxUses > 1) {
+          await tx.execute(sql`
+            UPDATE license_items SET
+              use_count = GREATEST(0, use_count - ${take}),
+              status = CASE WHEN status = 'depleted' THEN 'available' ELSE status END
+            WHERE id = ${asg.licenseItemId};
+          `);
+        } else if (full) {
+          await tx
+            .update(licenseItems)
+            .set({ status: 'quarantined' })
+            .where(eq(licenseItems.id, asg.licenseItemId));
+        }
+      }
+
+      // Satır sayacı: fulfilledQty -= take, durum yeniden. canceled İŞARETLENMEZ (adet düşür).
+      const [line] = await tx
+        .select()
+        .from(orderLines)
+        .where(eq(orderLines.id, asg.lineId))
+        .limit(1)
+        .for('update');
+      if (line) {
+        const nf = Math.max(0, line.fulfilledQty - take);
+        const lineStatus = nf >= line.qty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+        await tx
+          .update(orderLines)
+          .set({ fulfilledQty: nf, status: lineStatus })
+          .where(eq(orderLines.id, line.id));
+      }
+      await recomputeOrderStatus(tx, asg.orderId);
+
+      await tx.insert(auditLog).values({
+        action: 'revoke',
+        actor,
+        targetType: 'assignment',
+        targetId: assignmentId,
+        meta: { reason, licenseItemId: asg.licenseItemId, units: take, partial: !full },
+      });
+      await tx.insert(fulfillmentEvents).values({
+        orderId: asg.orderId,
+        type: 'revoked',
+        message: `${take} birim geri alındı (${reason})`,
+      });
+
+      return { assignmentId, revoked: take, partial: !full };
+    });
+  }
+
+  /**
    * Site-facing sipariş revoke sarmalayıcısı (§2): WooCommerce'te sipariş iade/iptal
    * edilince WP eklentisi tetikler → panelde CANLI key kalmaz. Siparişin bu siteye ait
    * olduğunu DOĞRULAR (başka sitenin siparişi geri alınamaz), aktif atamalarını MEVCUT
@@ -482,5 +573,109 @@ export class AdminOrdersService {
     }
 
     return { orderId: order.id, revoked, assignments: active.length };
+  }
+
+  // ─── İnceleme Kuyruğu (§8 held_for_review — dinamik kota) ──────────────────────────
+  /**
+   * İnceleme kuyruğu listesi (§8): dinamik kota eşiğini aşıp held_for_review'e alınmış
+   * siparişler (en yeni önce). Site domain + satır sayısı özetiyle — PAYLOAD/KEY YOK.
+   */
+  async listHeldOrders() {
+    return this.db
+      .select({
+        id: orders.id,
+        remoteOrderId: orders.remoteOrderId,
+        customerEmail: orders.customerEmail,
+        status: orders.status,
+        heldAt: orders.heldAt,
+        heldReason: orders.heldReason,
+        createdAt: orders.createdAt,
+        siteId: orders.siteId,
+        siteDomain: sites.domain,
+        lineCount: sql<number>`(select count(*)::int from order_lines ol where ol.order_id = ${orders.id})`,
+      })
+      .from(orders)
+      .leftJoin(sites, eq(orders.siteId, sites.id))
+      .where(eq(orders.heldForReview, true))
+      .orderBy(desc(orders.heldAt))
+      .limit(200);
+  }
+
+  /**
+   * İnceleme kuyruğu ONAYLA (§8): held bayrağını ÖNCE temizler (completeLine held savunmasına
+   * takılmasın), sonra her eşlemeli + iptal-edilmemiş satırı MEVCUT atama makinesiyle (completeLine
+   * — atomik SKIP LOCKED + kapasite + mail/webhook) doldurur. Stok kadar atar; yetmezse satır
+   * partial/pending kalır (normal akış, autoComplete sonra tamamlar). fulfillment_events + audit izi.
+   */
+  async releaseHeld(orderId: string, actor: string) {
+    const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+    if (!order.heldForReview) throw new BadRequestException('Sipariş incelemede değil');
+
+    await this.db
+      .update(orders)
+      .set({ heldForReview: false, updatedAt: new Date() })
+      .where(eq(orders.id, orderId));
+
+    const lines = await this.db
+      .select({ id: orderLines.id, productId: orderLines.productId, canceled: orderLines.canceled })
+      .from(orderLines)
+      .where(eq(orderLines.orderId, orderId));
+    for (const l of lines) {
+      if (l.productId && !l.canceled) await this.fulfillment.completeLine(l.id);
+    }
+
+    await this.db.insert(fulfillmentEvents).values({
+      orderId,
+      type: 'review_released',
+      message: `İnceleme onaylandı (${actor}) — teslimat başlatıldı`,
+    });
+    await this.db.insert(auditLog).values({
+      action: 'assign',
+      actor,
+      targetType: 'order',
+      targetId: orderId,
+      meta: { op: 'review_release' },
+    });
+
+    const [fresh] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    return { orderId, released: true, status: fresh?.status ?? order.status };
+  }
+
+  /**
+   * İnceleme kuyruğu REDDET (§8): held siparişi teslim ETMEDEN kapatır. Held siparişte hiç atama
+   * yapılmadığından geri alınacak lisans YOK; satırlar 'canceled' işaretlenir → recompute 'revoked'
+   * (tüm satırlar iptal) + değişim/yeniden-atama havuzuna girmez. Müşteri bir key ALMADI (mail/webhook
+   * gönderilmemişti). WP sipariş durumunu bulkStatus poll'unda 'revoked' görür. audit + event izi.
+   */
+  async rejectHeld(orderId: string, reason: string, actor: string) {
+    const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+    if (!order.heldForReview) throw new BadRequestException('Sipariş incelemede değil');
+
+    const status = await this.db.transaction(async (tx) => {
+      await tx
+        .update(orders)
+        .set({ heldForReview: false, updatedAt: new Date() })
+        .where(eq(orders.id, orderId));
+      // Held satırda atama yok → yalnız terminal 'canceled' işareti (yeniden-teslime uygun değil, §2).
+      await tx.update(orderLines).set({ canceled: true }).where(eq(orderLines.orderId, orderId));
+      const s = await recomputeOrderStatus(tx, orderId);
+      await tx.insert(fulfillmentEvents).values({
+        orderId,
+        type: 'review_rejected',
+        message: `İnceleme reddedildi (${actor}): ${reason}`,
+      });
+      await tx.insert(auditLog).values({
+        action: 'revoke',
+        actor,
+        targetType: 'order',
+        targetId: orderId,
+        meta: { op: 'review_reject', reason },
+      });
+      return s;
+    });
+
+    return { orderId, rejected: true, status };
   }
 }

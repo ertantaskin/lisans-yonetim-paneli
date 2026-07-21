@@ -59,6 +59,18 @@ export class FulfillmentService {
       if (!line.productId) {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
       }
+      // #7 (§8): incelemeye alınmış (held_for_review) siparişin satırı OTOMATİK atanmaz.
+      // Admin releaseHeld önce bayrağı temizler, SONRA completeLine çağırır (release bayrak
+      // KAPALIYKEN çalışır). autoComplete de held siparişleri sorgudan hariç tutar; bu
+      // savunma job gecikse/yarışsa bile held payload'ının erken sızmasını engeller.
+      const [ord] = await tx
+        .select({ held: orders.heldForReview })
+        .from(orders)
+        .where(eq(orders.id, line.orderId))
+        .limit(1);
+      if (ord?.held) {
+        return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
+      }
 
       const remaining = line.qty - line.fulfilledQty;
       const toAssign = maxUnits ? Math.min(remaining, maxUnits) : remaining;
@@ -188,12 +200,16 @@ export class FulfillmentService {
       .select({ id: orderLines.id })
       .from(orderLines)
       .innerJoin(products, eq(orderLines.productId, products.id))
+      // #7 (§8): incelemeye alınmış siparişleri sweep'ten HARİÇ tut — teslimat manuel onaya
+      // bağlı (held_for_review). Admin releaseHeld ile bayrağı temizleyince normal akışa döner.
+      .innerJoin(orders, eq(orderLines.orderId, orders.id))
       .where(
         and(
           eq(orderLines.productId, productId),
           inArray(orderLines.status, ['pending', 'partial']),
           // İade/iptal edilmiş satırları HARİÇ TUT — yeniden teslim edilmez (§2).
           eq(orderLines.canceled, false),
+          eq(orders.heldForReview, false),
           // Efektif politika: satır override > ürün. Yalnız partial-auto oto-tamamlanır.
           sql`coalesce(${orderLines.policyOverride}, ${products.fulfillmentPolicy}) = 'partial-auto'`,
         ),

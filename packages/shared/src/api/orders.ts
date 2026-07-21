@@ -53,6 +53,13 @@ export const CreateOrderResponse = z.object({
   status: OrderStatus,
   assignments: z.array(AssignmentResult),
   lines: z.array(OrderLineResult),
+  /**
+   * Dinamik satış kotası incelemesi (§8): sipariş KABUL edildi ama teslimat manuel onaya
+   * alındı (held_for_review) — atama YAPILMADI, admin "İnceleme Kuyruğu"nda Onayla/Reddet
+   * eder. Opsiyonel: yalnız held siparişte true; klasik akış alanı hiç göndermez (geriye
+   * dönük uyumlu — eski WP istemcisi yok sayar). HTTP durumu 202 (pending_stock ile aynı).
+   */
+  held: z.boolean().optional(),
 });
 export type CreateOrderResponse = z.infer<typeof CreateOrderResponse>;
 

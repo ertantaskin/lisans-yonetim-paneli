@@ -80,4 +80,27 @@ export class AdminOrdersController {
   resend(@Param('id') id: string) {
     return this.adminOrders.resend(id);
   }
+
+  // ─── İnceleme Kuyruğu (§8 dinamik kota held_for_review) ────────────────────────────
+  /** İnceleme kuyruğu: dinamik kota eşiğini aşıp beklemeye alınmış siparişler (payload yok). */
+  @Get('review')
+  reviewQueue() {
+    return this.adminOrders.listHeldOrders();
+  }
+
+  /** İnceleme ONAYLA: held bayrağını kaldırır + atama makinesini çalıştırır (teslimat başlar). */
+  @Post('orders/:id/release')
+  release(@Param('id') id: string, @AdminActor() actor: string) {
+    return this.adminOrders.releaseHeld(id, actor);
+  }
+
+  /** İnceleme REDDET: siparişi teslim etmeden kapatır (satırlar iptal, key verilmez). reason zorunlu. */
+  @Post('orders/:id/reject')
+  reject(
+    @Param('id') id: string,
+    @Body(new ZodBody(RevokeBody)) body: { reason: string },
+    @AdminActor() actor: string,
+  ) {
+    return this.adminOrders.rejectHeld(id, body.reason, actor);
+  }
 }

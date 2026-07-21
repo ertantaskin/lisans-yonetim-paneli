@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, desc, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type {
   CreateOrderRequest,
@@ -30,6 +30,23 @@ import { allocate } from '../assignment/allocate';
 import { recomputeOrderStatus } from './order-status';
 import { FulfillmentService } from './fulfillment.service';
 import { AdminOrdersService } from './admin-orders.service';
+import { SecurityService } from '../security/security.service';
+import { SalesQuotaExceededException } from './sales-quota.exception';
+
+/**
+ * Dinamik kota (§8) alt eşik tabanı: 30g-ortalama × çarpan bunun altında kalsa bile eşik
+ * bu değerin altına inmez — yeni/düşük-hacimli sitelerde "her sipariş held" yanlış-pozitifini
+ * önler (avg30≈0 → eşik 0 tuzağı). Site salesDailyQuota'dan BAĞIMSIZ (o sert tavan ayrı).
+ */
+const DYNAMIC_MIN_FLOOR = 20;
+
+/** Yerel gün sınırına (gece yarısı) kalan saniye — 429 Retry-After başlığı için (§4). */
+function secondsUntilLocalMidnight(): number {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  return Math.max(1, Math.ceil((midnight.getTime() - now.getTime()) / 1000));
+}
 
 /** Site-facing toplu durum satırı (#33) — PAYLOAD/KEY YOK, yalnız ilerleme. */
 export interface BulkStatusItem {
@@ -67,6 +84,8 @@ export class OrdersService {
     // çift satış/kilit invaryantları tek yerde kalsın diye kendi kopyasını yazmaz.
     private readonly fulfillment: FulfillmentService,
     private readonly adminOrders: AdminOrdersService,
+    // Sert kota aşımını (§5) best-effort security_events'e yazar (gözlemlenebilirlik, §15).
+    private readonly security: SecurityService,
   ) {}
 
   /**
@@ -174,18 +193,31 @@ export class OrdersService {
       return reconciled ?? this.buildOutcome(await this.loadOrderResult(existing[0]));
     }
 
-    // Satış kotası ön-kontrolü (§5) — idempotency lookup'ından SONRA. Aynı
-    // idempotency key ile gelen tekrar istekler yukarıda mevcut sonucu döner ve
-    // buraya HİÇ ulaşmaz → kabul edilmiş bir sipariş kotaya TAKILMADAN idempotent
-    // döner. Yalnız GERÇEKTEN yeni sipariş kotaya sayılır. (SalesQuotaGuard'dan
-    // buraya taşındı — guard idempotency'den önce çalıştığı için retry'ları 429'luyordu.)
-    await this.enforceSalesQuota(site);
-
     const idempotencyKey = `${site.id}:${dto.remoteOrderId}`;
 
     let result: CreateOrderResponse;
     try {
       result = await this.db.transaction(async (tx) => {
+        // #20 TOCTOU + #7: site başına advisory-lock. Aynı site için eşzamanlı sipariş
+        // oluşturma serileşir → kota SAY-sonra-EKLE yarışı (iki istek aynı anda sayıp ikisi
+        // de eklemesi) kapanır; held-eşik sayımı da tutarlı olur. Kilit commit/rollback'te
+        // bırakılır. Sipariş push tek-site için doğal olarak düşük-eşzamanlı → maliyet ihmal
+        // edilebilir; doğruluk > throughput. (Idempotent retry buraya HİÇ ulaşmaz — yukarıda
+        // mevcut sonuç döner; yalnız GERÇEKTEN yeni sipariş kotaya sayılır.)
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${site.id}))`);
+
+        // Kota kararı (§5 sert tavan REDDET / §8 dinamik eşik HOLD). Advisory-lock altında.
+        const quota = await this.evaluateQuota(tx, site);
+        if (quota.action === 'reject') {
+          // Sert tavan aşıldı → 429. Retry-After controller'da set edilir; security_event
+          // catch'te best-effort yazılır. Tx rollback → sipariş satırı OLUŞMAZ.
+          throw new SalesQuotaExceededException(
+            quota.todayCount,
+            quota.limit,
+            secondsUntilLocalMidnight(),
+          );
+        }
+
         // Sipariş kaydı (idempotency_key UNIQUE — yarışta tek kazanır). UNIQUE ihlali
         // transaction'ı abort eder; yakalama transaction DIŞINDA yapılır (aksi halde
         // "current transaction is aborted" → 500).
@@ -206,6 +238,59 @@ export class OrdersService {
           type: 'order_received',
           message: `${dto.lines.length} satır bildirildi`,
         });
+
+        // #7 (§8): dinamik eşik aşıldı → sipariş KABUL ama teslimat manuel onaya alınır
+        // (held_for_review). Atama YAPILMAZ; satırlar pending yazılır (eşlemesiz null kalır).
+        // autoComplete bu siparişi ATLAR; admin "İnceleme Kuyruğu"nda Onayla/Reddet eder.
+        if (quota.action === 'hold') {
+          await tx
+            .update(orders)
+            .set({
+              heldForReview: true,
+              heldAt: new Date(),
+              heldReason: `Dinamik kota incelemesi: bugün ${quota.todayCount} sipariş (eşik ${quota.threshold})`,
+            })
+            .where(eq(orders.id, order.id));
+
+          const heldLines: OrderLineResult[] = [];
+          for (const line of dto.lines) {
+            const mapping = await this.products.resolveMapping(
+              site.id,
+              line.remoteProductId,
+              line.remoteVariationId,
+            );
+            const requiredUnits = mapping ? line.qty * mapping.bundleQty : line.qty;
+            await tx.insert(orderLines).values({
+              orderId: order.id,
+              productId: mapping?.productId ?? null,
+              remoteLineId: line.remoteLineId,
+              qty: requiredUnits,
+              status: 'pending',
+              policyOverride: line.policyOverride ?? null,
+            });
+            heldLines.push({
+              remoteLineId: line.remoteLineId,
+              status: 'pending',
+              requestedQty: requiredUnits,
+              fulfilledQty: 0,
+            });
+          }
+
+          await tx.insert(fulfillmentEvents).values({
+            orderId: order.id,
+            type: 'held_for_review',
+            message: `İncelemeye alındı — bugün ${quota.todayCount} sipariş (dinamik eşik ${quota.threshold})`,
+          });
+
+          // status enum'da 'held_for_review' YOK → 'pending' kalır; ayrımı held bayrağı taşır.
+          return {
+            orderId: order.id,
+            status: 'pending',
+            assignments: [],
+            lines: heldLines,
+            held: true,
+          } satisfies CreateOrderResponse;
+        }
 
         const assignmentResults: AssignmentResult[] = [];
         const lineResults: OrderLineResult[] = [];
@@ -356,6 +441,14 @@ export class OrdersService {
         } satisfies CreateOrderResponse;
       });
     } catch (e) {
+      // Sert kota aşımı → best-effort security_event (dedupe'lu) + 429'u aynen fırlat.
+      // Retry-After başlığını controller (reply erişimi orada) set eder.
+      if (e instanceof SalesQuotaExceededException) {
+        await this.security
+          .recordQuotaExceeded(site.id, e.todayCount, e.limit)
+          .catch(() => undefined);
+        throw e;
+      }
       // Eşzamanlı ikiz (idempotency_key UNIQUE ihlali) → mevcut siparişi döndür (tx dışı).
       const [row] = await this.db
         .select()
@@ -503,18 +596,25 @@ export class OrdersService {
       .orderBy(desc(assignments.createdAt));
 
     const actor = `site:${site.domain ?? site.id}`;
+    const reason = 'Sipariş adedi düşürüldü (re-push)';
     let revoked = 0;
     for (const a of active) {
       if (revoked >= excessUnits) break;
-      // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (iade/iptal değil); ileride adet
-      // tekrar artarsa autoComplete meşru şekilde doldurabilmeli — 'canceled' bunu kalıcı bloklardı.
-      await this.adminOrders.revokeAssignment(
-        a.id,
-        'Sipariş adedi düşürüldü (re-push)',
-        actor,
-        false,
-      );
-      revoked += a.units;
+      const need = excessUnits - revoked;
+      if (a.units <= need) {
+        // Bu atamanın TAMAMI fazlalığa sığıyor → tam revoke (tek→karantina, multi→kapasite geri).
+        // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (iade/iptal değil); ileride adet
+        // tekrar artarsa autoComplete meşru şekilde doldurabilmeli — 'canceled' bunu kalıcı bloklardı.
+        await this.adminOrders.revokeAssignment(a.id, reason, actor, false);
+        revoked += a.units;
+      } else {
+        // #19 birim-granüler: atama fazladan büyük (multi/MAK'te tek key birden çok birim taşır) →
+        // yalnız `need` birimi geri al, atamayı imha ETME. Kapasite tam `need` kadar döner; kalan
+        // birim müşteride aktif kalır. Tek-kullanımda a.units=1 ⇒ need≥1 ⇒ bu dala hiç girilmez
+        // (eski davranış birebir korunur); yalnız çok-kullanımlıkta over-revoke düzelir.
+        await this.adminOrders.revokePartialUnits(a.id, need, reason, actor);
+        revoked += need;
+      }
     }
   }
 
@@ -547,27 +647,59 @@ export class OrdersService {
   }
 
   /**
-   * Günlük satış kotası ön-kontrolü (§5). Site salesDailyQuota tanımlıysa bugünkü
-   * (created_at >= date_trunc('day', now())) sipariş sayısını sayar; kota dolmuşsa
-   * 429 (TOO_MANY_REQUESTS) fırlatır ve çekirdek atama akışına girilmez. Kota null →
-   * limitsiz. SalesQuotaGuard ile birebir aynı pencere/eşik; farkı yalnız çağrı yeri:
-   * idempotency lookup'ından SONRA çağrılır (idempotent retry kotaya takılmaz).
+   * Kota kararı (§5 sert tavan + §8 dinamik eşik). createOrder içinde, site advisory-lock
+   * ALTINDA çağrılır (bugünkü sipariş sayısı tutarlı → say-sonra-ekle yarışı yok, #20).
+   *
+   *   - salesDailyQuota (sert tavan): todayCount ≥ kota → `reject` (429). null = limitsiz.
+   *   - dynamicQuotaEnabled (yumuşak): todayCount ≥ eşik → `hold` (incelemeye al, §8/§15).
+   *     Eşik = ceil(30g-ortalama günlük × reviewMultiplier), tabanı DYNAMIC_MIN_FLOOR.
+   *   - ikisi de geçilirse `allow`. İkisi de açıksa önce sert tavan bakılır (mutlak).
+   *
+   * Idempotent retry buraya ulaşmaz (yukarıda mevcut sonuç döner) → yalnız gerçek yeni sipariş.
    */
-  private async enforceSalesQuota(site: Site): Promise<void> {
-    // Kota tanımsız (null) → limitsiz, kontrol yok.
-    if (site.salesDailyQuota == null) return;
+  private async evaluateQuota(
+    tx: Database,
+    site: Site,
+  ): Promise<
+    | { action: 'allow' }
+    | { action: 'reject'; todayCount: number; limit: number }
+    | { action: 'hold'; todayCount: number; threshold: number }
+  > {
+    // Kota kontrolü gereksizse (ikisi de kapalı) sayım YAPMA — sıcak yol hızlı kalır.
+    if (site.salesDailyQuota == null && !site.dynamicQuotaEnabled) return { action: 'allow' };
 
-    const [row] = await this.db
+    const [today] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(orders)
       .where(
         and(eq(orders.siteId, site.id), gte(orders.createdAt, sql`date_trunc('day', now())`)),
       );
+    const todayCount = Number(today?.count ?? 0);
 
-    const todayCount = row?.count ?? 0;
-    if (todayCount >= site.salesDailyQuota) {
-      throw new HttpException('Günlük satış kotası aşıldı', HttpStatus.TOO_MANY_REQUESTS);
+    // 1) Sert tavan — aşımda REDDET (429).
+    if (site.salesDailyQuota != null && todayCount >= site.salesDailyQuota) {
+      return { action: 'reject', todayCount, limit: site.salesDailyQuota };
     }
+
+    // 2) Dinamik eşik — aşımda HOLD (incelemeye al, reddetme).
+    if (site.dynamicQuotaEnabled) {
+      const [recent] = await tx
+        .select({ count: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.siteId, site.id),
+            gte(orders.createdAt, sql`now() - interval '30 days'`),
+          ),
+        );
+      const avgDaily = Number(recent?.count ?? 0) / 30;
+      const threshold = Math.max(Math.ceil(avgDaily * site.reviewMultiplier), DYNAMIC_MIN_FLOOR);
+      if (todayCount >= threshold) {
+        return { action: 'hold', todayCount, threshold };
+      }
+    }
+
+    return { action: 'allow' };
   }
 
   /** Mevcut siparişin sonucunu (idempotent tekrar için) yeniden kurar. */

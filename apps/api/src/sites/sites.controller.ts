@@ -17,6 +17,9 @@ type CreateSiteBody = z.infer<typeof CreateSiteBody>;
 
 const UpdateSiteBody = z.object({
   salesDailyQuota: z.number().int().positive().nullable().optional(),
+  // Dinamik satış kotası (§8): açıksa eşik aşımında sipariş held_for_review'e alınır (429 değil).
+  dynamicQuotaEnabled: z.boolean().optional(),
+  reviewMultiplier: z.number().int().min(1).max(100).optional(),
   sandbox: z.boolean().optional(),
   // Gönderen e-posta (§14) — null = varsayılan gönderene dön.
   senderEmail: z.string().email().nullable().optional(),

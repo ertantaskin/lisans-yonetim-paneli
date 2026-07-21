@@ -57,7 +57,18 @@ class Jetlisans_My_Account {
 
         if (empty($deliveries)) {
             $status = isset($res['body']['status']) ? $res['body']['status'] : '';
-            echo '<p>' . esc_html($this->status_message($status)) . '</p>';
+            // (§8 dinamik satış kotası) Sipariş güvenlik incelemesine alındıysa (panele push
+            // anında _jetlisans_held_for_review işaretlendi) genel "hazırlanıyor" yerine
+            // incelemeye özel bilgi kutusu göster. Yönetici onaylayınca teslimat gelir (tablo
+            // dalına düşer); reddederse status 'revoked' olur → aşağıdaki genel mesaja düşer.
+            $held = ($order->get_meta('_jetlisans_held_for_review') === 'yes');
+            if ($held && ($status === 'pending' || $status === '')) {
+                echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
+                    esc_html__('Siparişiniz güvenlik incelemesindedir. Onaylandığında lisansınız burada görünecek ve e-posta ile bildirilecektir.', 'jetlisans') .
+                    '</div>';
+            } else {
+                echo '<p>' . esc_html($this->status_message($status)) . '</p>';
+            }
         } else {
             echo '<table class="woocommerce-table shop_table"><tbody>';
             foreach ($deliveries as $i => $d) {

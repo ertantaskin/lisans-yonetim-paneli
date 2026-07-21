@@ -11,6 +11,7 @@ import {
   Bell,
   Truck,
   ClipboardList,
+  ClipboardCheck,
   PackageCheck,
   MailWarning,
   Settings,
@@ -40,6 +41,7 @@ export const NAV: NavSection[] = [
     items: [
       { label: 'Genel Bakış', href: '/dashboard', icon: LayoutDashboard },
       { label: 'Bekleyen Teslimatlar', href: '/pending', icon: Inbox },
+      { label: 'İnceleme Kuyruğu', href: '/review', icon: ClipboardCheck },
       { label: 'Siparişler', href: '/orders', icon: ShoppingCart },
     ],
   },

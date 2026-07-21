@@ -33,9 +33,21 @@ export const sites = pgTable('sites', {
   webhookUrl: text('webhook_url'),
   /**
    * Günlük satış kotası (§5) — bu site günde en fazla bu kadar sipariş push edebilir.
-   * null = limitsiz. SalesQuotaGuard bugünkü sipariş sayısını sayar; aşımda 429 döner.
+   * null = limitsiz. SERT tavan: aşımda 429 (Retry-After) döner ve sipariş REDDEDİLİR.
+   * (Kontrol OrdersService.createOrder içinde, idempotency lookup'ından sonra + site
+   * advisory-lock altında → idempotent retry takılmaz, say-sonra-ekle yarışı yok.)
    */
   salesDailyQuota: integer('sales_daily_quota'),
+  /**
+   * Dinamik satış kotası (§8) — açıksa günlük eşik = son 30 günün ORTALAMA günlük sipariş
+   * sayısı × reviewMultiplier (tabanı DYNAMIC_MIN_FLOOR). Eşik aşılırsa sipariş REDDEDİLMEZ;
+   * held_for_review ile KABUL edilip manuel onaya alınır ("AI önerir/insan onaylar" felsefesi,
+   * §15). salesDailyQuota (sert 429) ile ortogonal — ikisi de açıksa önce sert tavan bakılır.
+   * Varsayılan KAPALI → hiçbir mevcut site etkilenmez (geriye dönük uyumlu).
+   */
+  dynamicQuotaEnabled: boolean('dynamic_quota_enabled').notNull().default(false),
+  /** Dinamik eşik çarpanı (§8): 30g-ortalama × bu değer. Varsayılan 3. */
+  reviewMultiplier: integer('review_multiplier').notNull().default(3),
   /**
    * Sandbox (test modu, §14). true ise teslimat maili gerçek müşteriye GİTMEZ;
    * yöneticiye (MAIL_FROM) yönlendirilir + konu başına '[TEST MODU] ' eklenir.
