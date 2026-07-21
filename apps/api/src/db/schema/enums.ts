@@ -43,13 +43,6 @@ export const assignmentStatusEnum = pgEnum('assignment_status', [
   'expired',
 ]);
 
-export const purchaseOrderStatusEnum = pgEnum('purchase_order_status', [
-  'ordered',
-  'partially_received',
-  'received',
-  'cancelled',
-]);
-
 export const auditActionEnum = pgEnum('audit_action', [
   'reveal',
   'replace',

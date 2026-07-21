@@ -12,6 +12,12 @@ import { AdminOrdersService } from './admin-orders.service';
 /** Site-facing revoke gövdesi — reason opsiyonel (WP iade/iptal sebebi). */
 const RevokeOrderRequest = z.object({ reason: z.string().min(1).max(500).optional() });
 
+/** Site-facing toplu durum gövdesi (#33) — en fazla 100 remote sipariş id (payload dönmez). */
+const BulkStatusRequest = z.object({
+  remoteOrderIds: z.array(z.string().min(1)).max(100),
+});
+type BulkStatusRequest = z.infer<typeof BulkStatusRequest>;
+
 /** Site-facing sipariş uçları (§4). HMAC imzalı. */
 @Controller('orders')
 @UseGuards(HmacGuard)
@@ -40,6 +46,21 @@ export class OrdersController {
   @Get(':id/deliveries')
   deliveries(@CurrentSite() site: Site, @Param('id') id: string) {
     return this.orders.getDeliveries(site, id);
+  }
+
+  /**
+   * Toplu durum yoklama (#33): WP eklentisi çok siparişi tek çağrıda kontrol eder. Yalnız
+   * site kapsamındaki siparişler için { remoteOrderId, status, fulfilled, total } döner —
+   * PAYLOAD/KEY YOK. @HttpCode(200): sorgu, kaynak yaratmaz (POST varsayılanı 201 olurdu).
+   * Tek segment yol (`orders/bulk-status`) — `:remoteOrderId/revoke` (iki segment) ile çakışmaz.
+   */
+  @Post('bulk-status')
+  @HttpCode(200)
+  bulkStatus(
+    @CurrentSite() site: Site,
+    @Body(new ZodBody(BulkStatusRequest)) body: BulkStatusRequest,
+  ) {
+    return this.orders.bulkStatus(site, body.remoteOrderIds);
   }
 
   /**

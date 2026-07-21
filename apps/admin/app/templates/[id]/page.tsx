@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
-import type { ProductRow, SiteRow } from '../../../lib/api';
+import { ApiError, type ProductRow, type SiteRow } from '../../../lib/api';
 import { PageHeader } from '../../../components/ui';
 import { Card } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -27,6 +28,7 @@ export default async function EditTemplatePage({
       listSites(),
     ]);
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Şablon yüklenemedi';
   }
 

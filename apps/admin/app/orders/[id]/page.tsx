@@ -1,6 +1,7 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { ArrowLeft, ListChecks, KeyRound, PackageCheck, CalendarClock, Mail, History } from 'lucide-react';
-import { apiGet, type OrderDetail } from '../../../lib/api';
+import { apiGet, ApiError, type OrderDetail } from '../../../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
 import { StatusBadge } from '../../../components/ui/badge';
@@ -36,6 +37,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   try {
     data = await apiGet<OrderDetail>(`/v1/admin/orders/${id}`);
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 

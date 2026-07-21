@@ -3,6 +3,8 @@ import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { CreateOrderRequest } from '@jetlisans/shared';
 import { OrdersService } from '../../src/orders/orders.service';
+import { FulfillmentService } from '../../src/orders/fulfillment.service';
+import { AdminOrdersService } from '../../src/orders/admin-orders.service';
 import { ProductsService } from '../../src/products/products.service';
 import { assignments, siteProductMappings, type Site } from '../../src/db/schema';
 import {
@@ -38,14 +40,31 @@ const crypto = makeCrypto();
 // createOrder yalnız `site.id` kullanır; kuyruk sahteleri no-op.
 const mailFake = { enqueueDelivery: async () => {} };
 const webhookFake = { emit: async () => {} };
+const redisFake = {} as never;
 
 const productsService = new ProductsService(db as never);
+// Re-push uzlaştırma (#16) bu iki servisi yeniden kullanır; ilk-push/idempotent testlerinde
+// yol dışıdır (adet değişmezse hiç çağrılmaz) ama constructor'a verilmeleri gerekir.
+const fulfillmentService = new FulfillmentService(
+  db as never,
+  productsService,
+  mailFake as never,
+  webhookFake as never,
+);
+const adminOrdersService = new AdminOrdersService(
+  db as never,
+  redisFake,
+  crypto,
+  mailFake as never,
+);
 const orders = new OrdersService(
   db as never,
   productsService,
   crypto,
   mailFake as never,
   webhookFake as never,
+  fulfillmentService,
+  adminOrdersService,
 );
 
 /** Bu koşuda oluşturulan site id'leri — afterAll'da mapping'leri (restrict FK) temizlemek için. */

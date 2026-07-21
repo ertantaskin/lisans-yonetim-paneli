@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
   Package,
@@ -25,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
+import { ApiError } from '../../../lib/api';
 import { getProductDetail, type ProductDetail } from './queries';
 import { StockAdjustForm } from './stock-adjust-form';
 
@@ -69,6 +71,7 @@ export default async function ProductDetailPage({
   try {
     data = await getProductDetail(id);
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 

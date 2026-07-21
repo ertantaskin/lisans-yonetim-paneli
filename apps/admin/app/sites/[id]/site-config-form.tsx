@@ -1,7 +1,13 @@
 'use client';
+import * as React from 'react';
 import { useActionState } from 'react';
-import { CheckCircle2, TriangleAlert } from 'lucide-react';
-import { updateSiteAction, type UpdateSiteState } from '../actions';
+import { CheckCircle2, CircleCheck, CircleX, Plug, TriangleAlert } from 'lucide-react';
+import {
+  testConnectionAction,
+  updateSiteAction,
+  type TestConnectionState,
+  type UpdateSiteState,
+} from '../actions';
 import { Input, Label } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
@@ -27,6 +33,17 @@ export function SiteConfigForm({
   webhookUrl: string | null;
 }) {
   const [state, action, pending] = useActionState(updateSiteAction, initial);
+
+  // Bağlantı sağlık testi (onboarding): plain-arg action → useTransition + local state
+  // (site-status-toggle deseniyle aynı). Sonuç check-check inline gösterilir; SIR yok.
+  const [testing, startTest] = React.useTransition();
+  const [test, setTest] = React.useState<TestConnectionState | null>(null);
+  const runTest = () => {
+    setTest(null);
+    startTest(async () => {
+      setTest(await testConnectionAction(siteId));
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -103,6 +120,49 @@ export function SiteConfigForm({
           </div>
         </Alert>
       )}
+
+      {/* Bağlantı sağlık testi (onboarding): site kaydı + durum + HMAC secret + (varsa)
+          webhook erişilebilirliği. Sonuç check-check yeşil/kırmızı satır olarak inline. */}
+      <div className="border-t border-border pt-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" onClick={runTest} disabled={testing}>
+            <Plug />
+            {testing ? 'Test ediliyor…' : 'Bağlantıyı Test Et'}
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Site kaydı, HMAC secret ve (varsa) webhook erişilebilirliğini doğrular.
+          </p>
+        </div>
+
+        {test?.error && (
+          <p className="mt-3 flex items-center gap-1.5 text-sm text-destructive">
+            <TriangleAlert className="size-4" /> {test.error}
+          </p>
+        )}
+
+        {test?.tested && test.checks && (
+          <div className="mt-3 space-y-1.5">
+            <p className="text-sm font-medium text-foreground">
+              {test.healthy ? 'Bağlantı sağlıklı' : 'Bağlantıda sorun var'}
+            </p>
+            <ul className="space-y-1">
+              {test.checks.map((c) => (
+                <li key={c.name} className="flex items-start gap-2 text-sm">
+                  {c.ok ? (
+                    <CircleCheck className="mt-0.5 size-4 shrink-0 text-success" />
+                  ) : (
+                    <CircleX className="mt-0.5 size-4 shrink-0 text-destructive" />
+                  )}
+                  <span className="min-w-0">
+                    <span className="font-medium text-foreground">{c.name}</span>
+                    <span className="text-muted-foreground"> — {c.detail}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -16,12 +16,28 @@ function headers(withBody: boolean, actor?: string): Record<string, string> {
   return h;
 }
 
+/**
+ * HTTP durum kodunu taşıyan tipli API hatası. Detay sayfaları `status === 404`
+ * dalında `notFound()` çağırıp global not-found.tsx'i render eder; diğer durumlar
+ * mevcut inline hata kartına düşer. `Error`'dan türer → mevcut `e instanceof Error`
+ * yakalayıcıları ve `.message` erişimi aynen çalışır (geriye dönük uyumlu).
+ */
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     headers: headers(false),
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, `GET ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
 

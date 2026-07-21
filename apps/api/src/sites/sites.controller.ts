@@ -67,4 +67,14 @@ export class SitesController {
   rotate(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.sites.rotateSecret(id);
   }
+
+  /**
+   * Bağlantı sağlık testi (onboarding): site kaydı + durum + HMAC secret geçerliliği +
+   * (varsa) webhook erişilebilirliği için yapısal teşhis döndürür ({ ok, checks }).
+   * SIR DÖNMEZ — yalnız ok/detay. Salt-okunur teşhis (mutation değil, audit'e düşmez).
+   */
+  @Post(':id/test-connection')
+  testConnection(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.sites.testConnection(id);
+  }
 }

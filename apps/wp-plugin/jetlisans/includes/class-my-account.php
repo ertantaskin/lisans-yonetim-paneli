@@ -30,6 +30,15 @@ class Jetlisans_My_Account {
         // Sorun Bildir işlem sonucu bildirimi (varsa).
         Jetlisans_Report_Issue::render_notice();
 
+        // (#32) Teslimat e-postası ulaşmadıysa (failed/bounced) bilgilendirici bant. Sır/sızıntı
+        // içermez — müşteriye lisansın bu sayfada görünür olduğunu ve destek yolunu söyler.
+        $mail_status = isset($res['body']['mailStatus']) ? (string) $res['body']['mailStatus'] : '';
+        if (in_array($mail_status, ['failed', 'bounced'], true)) {
+            echo '<div class="woocommerce-info" role="alert" style="margin-bottom:12px">' .
+                esc_html__('Teslimat e-postanız size ulaşmamış olabilir. Lisans bilgilerinizi bu sayfadan görüntüleyebilirsiniz; sorun yaşarsanız destek ekibimizle iletişime geçin.', 'jetlisans') .
+                '</div>';
+        }
+
         if (empty($deliveries)) {
             $status = isset($res['body']['status']) ? $res['body']['status'] : '';
             echo '<p>' . esc_html($this->status_message($status)) . '</p>';

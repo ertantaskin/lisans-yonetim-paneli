@@ -142,6 +142,42 @@ export interface RotateSecretState {
   hmacSecret?: string;
 }
 
+export interface ConnectionCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface TestConnectionState {
+  ok: boolean;
+  error?: string;
+  /** Teşhis çalıştı mı (sonuç var mı) — buton sonrası inline gösterim için. */
+  tested?: boolean;
+  /** Genel sağlık: tüm check'ler geçtiyse true. */
+  healthy?: boolean;
+  checks?: ConnectionCheck[];
+}
+
+/**
+ * Site bağlantı sağlık testi (onboarding): API test-connection ucunu çağırır — site
+ * kaydı + durum + HMAC secret geçerliliği + (varsa) webhook erişilebilirliği teşhisini
+ * döndürür. SIR göstermez. Salt-okunur teşhis (mutation değil); actor tutarlılık için geçilir.
+ */
+export async function testConnectionAction(siteId: string): Promise<TestConnectionState> {
+  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  try {
+    const actor = await getActor();
+    const result = await apiPost<{ ok: boolean; checks: ConnectionCheck[] }>(
+      `/v1/admin/sites/${encodeURIComponent(siteId)}/test-connection`,
+      undefined,
+      actor,
+    );
+    return { ok: true, tested: true, healthy: result.ok, checks: result.checks };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
 /**
  * HMAC secret rotasyonu (§4). Yeni secret YALNIZ bir kez döner; eski secret 24 saat
  * daha geçerli kalır → WP eklentisi kesintisiz yeni secret'a geçer.

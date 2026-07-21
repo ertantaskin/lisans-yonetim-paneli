@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
   ShoppingCart,
@@ -21,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
+import { ApiError } from '../../../lib/api';
 import { getCustomer, type CustomerDetail } from '../queries';
 import { CustomerEditForm } from './edit-form';
 
@@ -66,6 +68,7 @@ export default async function CustomerDetailPage({
   try {
     data = await getCustomer(email);
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 

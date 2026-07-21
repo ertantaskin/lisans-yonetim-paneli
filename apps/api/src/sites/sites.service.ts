@@ -38,6 +38,25 @@ export interface SiteDetail {
   recentOrders: Array<{ id: string; remoteOrderId: string; status: string; createdAt: string }>;
 }
 
+/** Bağlantı sağlık teşhisi (onboarding) — tek bir kontrol satırı. SIR İÇERMEZ. */
+export interface ConnectionCheck {
+  /** Kontrolün adı (ör. 'HMAC secret'). */
+  name: string;
+  /** Kontrol geçti mi. */
+  ok: boolean;
+  /** İnsan-okunur ayrıntı (sır sızdırmaz). */
+  detail: string;
+}
+
+/** POST /v1/admin/sites/:id/test-connection yanıtı. Genel `ok` = tüm check'ler geçti. */
+export interface ConnectionTestResult {
+  ok: boolean;
+  checks: ConnectionCheck[];
+}
+
+/** Webhook erişilebilirlik probe'u için kısa timeout — teşhis akışını bekletmemek için. */
+const WEBHOOK_PROBE_TIMEOUT_MS = 4000;
+
 /** API anahtarı hash'i — sabit sha256 (DB'de düz anahtar durmaz). */
 export function hashApiKey(apiKey: string): string {
   return createHash('sha256').update(apiKey).digest('hex');
@@ -278,5 +297,90 @@ export class SitesService {
         createdAt: o.createdAt.toISOString(),
       })),
     };
+  }
+
+  /**
+   * Bağlantı sağlık testi (onboarding): panelden açılan bir sitenin gerçekten
+   * çalışır durumda olduğunu doğrular. Yapısal teşhis döner (SIR İÇERMEZ):
+   *   - Site kaydı var mı (getById 404 atarsa uç zaten 404 döner)
+   *   - Site durumu 'active' mi (suspended → findForAuth HMAC auth reddeder, §8)
+   *   - HMAC secret çözülebiliyor + beklenen uzunlukta mı (secret'ın kendisi DÖNMEZ)
+   *   - (varsa) webhookUrl erişilebilir mi — kısa timeout ile probe, hata YUTULUR
+   * Genel `ok` = tüm check'ler geçti. Teşhisin kendisi hiç patlamaz (ağ hatası yutulur).
+   */
+  async testConnection(id: string): Promise<ConnectionTestResult> {
+    const site = await this.getById(id); // yoksa 404
+    const checks: ConnectionCheck[] = [];
+
+    // 1) Site kaydı — getById geçtiyse kayıt mevcut.
+    checks.push({ name: 'Site kaydı', ok: true, detail: site.domain });
+
+    // 2) Site durumu — 'suspended' ise HMAC auth reddedilir (findForAuth active şartı).
+    const active = site.status === 'active';
+    checks.push({
+      name: 'Site durumu',
+      ok: active,
+      detail: active ? 'aktif' : 'askıya alınmış — sipariş push reddedilir',
+    });
+
+    // 3) HMAC secret — AAD ile çözülebiliyor mu + beklenen uzunlukta mı. SECRET DÖNMEZ.
+    try {
+      const secret = this.crypto.decrypt(site.hmacSecretEnc, CryptoService.siteSecretAad(site.id));
+      const valid = secret.length >= 32;
+      checks.push({
+        name: 'HMAC secret',
+        ok: valid,
+        detail: valid ? 'geçerli (şifreli saklı)' : 'beklenmeyen biçim',
+      });
+    } catch {
+      checks.push({
+        name: 'HMAC secret',
+        ok: false,
+        detail: 'çözülemedi — master key uyumsuz olabilir',
+      });
+    }
+
+    // 4) Geri kanal webhook — yapılandırılmışsa erişilebilirlik probe'u; değilse devre dışı (sorun değil).
+    if (site.webhookUrl) {
+      checks.push(await this.probeWebhook(site.webhookUrl));
+    } else {
+      checks.push({
+        name: 'Geri kanal webhook',
+        ok: true,
+        detail: 'yapılandırılmamış (webhook devre dışı)',
+      });
+    }
+
+    return { ok: checks.every((c) => c.ok), checks };
+  }
+
+  /**
+   * Webhook hedefine kısa timeout ile ulaşılabilirlik probe'u (HEAD). Herhangi bir HTTP
+   * yanıtı (401/404/405 dâhil) hedefin ayakta olduğunu gösterir; yalnız ağ/DNS/timeout
+   * hatası erişilemez sayılır. Hata YUTULUR — teşhis akışı asla patlamaz. Bu URL sistemin
+   * zaten POST ettiği (§2) admin-yapılandırmalı hedeftir → yeni SSRF yüzeyi açmaz.
+   */
+  private async probeWebhook(url: string): Promise<ConnectionCheck> {
+    let host: string;
+    try {
+      host = new URL(url).host;
+    } catch {
+      return { name: 'Geri kanal webhook', ok: false, detail: 'geçersiz URL' };
+    }
+    try {
+      const res = await fetch(url, {
+        method: 'HEAD',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(WEBHOOK_PROBE_TIMEOUT_MS),
+      });
+      return {
+        name: 'Geri kanal webhook',
+        ok: true,
+        detail: `${host} erişilebilir (HTTP ${res.status})`,
+      };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      return { name: 'Geri kanal webhook', ok: false, detail: `${host} erişilemedi: ${reason}` };
+    }
   }
 }

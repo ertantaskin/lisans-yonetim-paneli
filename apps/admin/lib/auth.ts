@@ -127,3 +127,28 @@ export async function validateSessionRemote(
     return 'error';
   }
 }
+
+/**
+ * validateSessionRemote'un kısa-ömürlü önbellekli sarmalayıcısı. Her sayfa yükü + RSC
+ * navigasyonu + Link prefetch middleware'de bu kontrolü tetikliyor; her birinde API+DB'ye
+ * gitmek gereksiz yük. YALNIZ 'valid' sonucu 5sn önbelleklenir → revocation gecikmesi ≤5sn
+ * (12sa token TTL'ine kıyasla ihmal edilebilir), 'invalid'/'error' önbekleklenmez (iptal
+ * anında yansısın, hata takılıp kalmasın). Modül-düzeyi Map edge instance başına yaşar;
+ * admin sayısı az olduğundan büyümez.
+ */
+const REVALIDATE_TTL_MS = 5000;
+const validUntilByKey = new Map<string, number>();
+
+export async function validateSessionCached(
+  sub: string,
+  ver: number,
+): Promise<'valid' | 'invalid' | 'error'> {
+  const key = `${sub}:${ver}`;
+  const now = Date.now();
+  const cachedExp = validUntilByKey.get(key);
+  if (cachedExp !== undefined && cachedExp > now) return 'valid';
+  const state = await validateSessionRemote(sub, ver);
+  if (state === 'valid') validUntilByKey.set(key, now + REVALIDATE_TTL_MS);
+  else validUntilByKey.delete(key);
+  return state;
+}

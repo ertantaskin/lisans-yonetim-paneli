@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
   Boxes,
@@ -22,6 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
+import { ApiError } from '../../../lib/api';
 import { getSite, type SiteDetail } from './queries';
 import { SiteConfigForm } from './site-config-form';
 import { SiteStatusToggle } from './site-status-toggle';
@@ -41,6 +43,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
   try {
     data = await getSite(id);
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { authEnabled, verifySession, validateSessionRemote, SESSION_COOKIE } from './lib/auth';
+import { authEnabled, verifySession, validateSessionCached, SESSION_COOKIE } from './lib/auth';
 
 /**
  * Auth gate. SESSION_SECRET set DEĞİLSE hiçbir şey yapmaz (gate kapalı, lockout riski yok).
@@ -40,7 +40,8 @@ export async function middleware(req: NextRequest) {
   if (session) {
     // Uzak iptal kontrolü: admin pasif/silinmiş/tokenVersion değişmişse erişimi kes.
     // API erişilemezse ('error') fail-open — imzalı token yeterli, kilitlenme yok.
-    const state = await validateSessionRemote(session.sub, session.ver);
+    // Kısa-ömürlü önbellekli (5sn): navigasyon/prefetch bursts API'yi yormaz, iptal ≤5sn yansır.
+    const state = await validateSessionCached(session.sub, session.ver);
     if (state !== 'invalid') return NextResponse.next();
   }
 

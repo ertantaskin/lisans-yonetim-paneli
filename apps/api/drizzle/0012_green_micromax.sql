@@ -1,0 +1,1 @@
+DROP TYPE "public"."purchase_order_status";

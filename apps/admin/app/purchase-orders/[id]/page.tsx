@@ -1,5 +1,7 @@
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import { ArrowLeft, Boxes, PackageCheck, CalendarClock, Building2, Coins } from 'lucide-react';
+import { ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { Button } from '@/components/ui/button';
@@ -33,6 +35,7 @@ export default async function PurchaseOrderDetailPage({
   try {
     po = await getPurchaseOrder(id);
   } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 

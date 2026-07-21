@@ -8,6 +8,8 @@ if (!defined('ABSPATH')) exit;
  */
 class Jetlisans_Order_Sync {
     private static $instance = null;
+    /** Re-entrancy guard: resync sırasındaki save() zinciri kendini tetiklemesin (#16). */
+    private static $syncing = false;
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
         return self::$instance;
@@ -19,6 +21,9 @@ class Jetlisans_Order_Sync {
         // İade/iptal → panelde lisansı geri al (§2: iade edilen key satışta CANLI kalmaz).
         add_action('woocommerce_order_status_refunded', [$this, 'revoke'], 10, 1);
         add_action('woocommerce_order_status_cancelled', [$this, 'revoke'], 10, 1);
+        // (#16) Sipariş kalemleri düzenlenip kaydedilince (yalnız item değişimi) — daha önce
+        // panele iletilmiş siparişi güncel adetlerle yeniden uzlaştır. Guard sonsuz döngüyü keser.
+        add_action('woocommerce_saved_order_items', [$this, 'resync_items'], 20, 2);
         // Retry (Action Scheduler yoksa wp-cron).
         add_action('jetlisans_retry_push', [$this, 'push'], 10, 1);
         add_action('jetlisans_retry_revoke', [$this, 'revoke'], 10, 1);
@@ -32,21 +37,7 @@ class Jetlisans_Order_Sync {
         // Idempotency: bir kez push (panel de site+order ile idempotent).
         if ($order->get_meta('_jetlisans_pushed') === 'yes') return;
 
-        $lines = [];
-        foreach ($order->get_items() as $item_id => $item) {
-            $product = $item->get_product();
-            if (!$product) continue;
-            $line = [
-                'remoteLineId'    => (string) $item_id,
-                'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
-                'qty'             => (int) $item->get_quantity(),
-            ];
-            // Yalnız varyasyonlu üründe gönder — null gönderme (panel string bekler).
-            if ($product->is_type('variation')) {
-                $line['remoteVariationId'] = (string) $product->get_id();
-            }
-            $lines[] = $line;
-        }
+        $lines = $this->collect_lines($order);
         if (empty($lines)) return;
 
         $body = [
@@ -72,6 +63,69 @@ class Jetlisans_Order_Sync {
             // Başarısız → retry planla (§4 eklenti 1dk/5dk/30dk).
             $this->schedule_retry($order_id);
         }
+    }
+
+    /**
+     * Güncel sipariş kalemlerinden panel satırlarını üretir (push + resync ortak).
+     * Varyasyon id yalnız varyasyonlu üründe gönderilir (panel string bekler).
+     */
+    private function collect_lines($order) {
+        $lines = [];
+        foreach ($order->get_items() as $item_id => $item) {
+            $product = $item->get_product();
+            if (!$product) continue;
+            $line = [
+                'remoteLineId'    => (string) $item_id,
+                'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
+                'qty'             => (int) $item->get_quantity(),
+            ];
+            if ($product->is_type('variation')) {
+                $line['remoteVariationId'] = (string) $product->get_id();
+            }
+            $lines[] = $line;
+        }
+        return $lines;
+    }
+
+    /**
+     * (#16) Sipariş kalemleri düzenlenip kaydedilince yeniden uzlaştırır. Yalnız DAHA ÖNCE
+     * panele iletilmiş sipariş (_jetlisans_pushed=yes) için çalışır; güncel adetlerle mevcut
+     * POST /v1/orders akışını AYNI idempotency anahtarıyla (site+remoteOrder+remoteLine) yeniden
+     * çağırır — adet değişimini panel uzlaştırır. Re-entrancy guard sonsuz döngüyü engeller.
+     *
+     * `woocommerce_saved_order_items` hook'u YALNIZ kalem değişiminde ateşlenir; ayrıca
+     * içerideki $order->save() zinciri guard ile kendini yeniden tetikleyemez.
+     */
+    public function resync_items($order_id, $items = null) {
+        if (self::$syncing) return;
+        if (!Jetlisans_Settings::is_configured()) return;
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+
+        // Panele hiç iletilmemiş sipariş → uzlaştırılacak atama yok (ilk push status geçişinde olur).
+        if ($order->get_meta('_jetlisans_pushed') !== 'yes') return;
+
+        $lines = $this->collect_lines($order);
+        if (empty($lines)) return;
+
+        $body = [
+            'remoteOrderId' => (string) $order_id,
+            'customerEmail' => $order->get_billing_email(),
+            'lines'         => $lines,
+        ];
+
+        self::$syncing = true;
+        $res = Jetlisans_Panel_Client::post('/v1/orders', $body);
+        $this->log($order_id, 'resync', $body, $res);
+
+        // 200/201/207/202 → panel güncel adetlerle uzlaştı; durum meta'sını tazele.
+        if (in_array($res['code'], [200, 201, 202, 207], true)) {
+            if (!empty($res['body']['status'])) {
+                $order->update_meta_data('_jetlisans_status', $res['body']['status']);
+                $order->save();
+            }
+        }
+        self::$syncing = false;
     }
 
     /**

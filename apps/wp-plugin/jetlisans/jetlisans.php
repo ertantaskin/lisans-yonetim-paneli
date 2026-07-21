@@ -21,6 +21,7 @@ define('JETLISANS_DIR', plugin_dir_path(__FILE__));
 require_once JETLISANS_DIR . 'includes/class-settings.php';
 require_once JETLISANS_DIR . 'includes/class-panel-client.php';
 require_once JETLISANS_DIR . 'includes/class-order-sync.php';
+require_once JETLISANS_DIR . 'includes/class-order-list.php';
 require_once JETLISANS_DIR . 'includes/class-webhook.php';
 require_once JETLISANS_DIR . 'includes/class-my-account.php';
 require_once JETLISANS_DIR . 'includes/class-admin-metabox.php';

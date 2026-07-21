@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
-import { and, eq, gt, gte, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type {
   CreateOrderRequest,
   CreateOrderResponse,
@@ -12,6 +12,7 @@ import { NotFoundException } from '@nestjs/common';
 import { DB, type Database } from '../db/db.module';
 import {
   assignments,
+  emailLog,
   fulfillmentEvents,
   licenseItems,
   orderLines,
@@ -26,6 +27,17 @@ import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { releaseAllocations } from '../assignment/assign';
 import { allocate } from '../assignment/allocate';
+import { recomputeOrderStatus } from './order-status';
+import { FulfillmentService } from './fulfillment.service';
+import { AdminOrdersService } from './admin-orders.service';
+
+/** Site-facing toplu durum satırı (#33) — PAYLOAD/KEY YOK, yalnız ilerleme. */
+export interface BulkStatusItem {
+  remoteOrderId: string;
+  status: string;
+  fulfilled: number;
+  total: number;
+}
 
 /** Sipariş durumu → geri kanal olay tipi (§2). */
 function eventFor(status: string): string {
@@ -51,6 +63,10 @@ export class OrdersService {
     private readonly crypto: CryptoService,
     private readonly mail: MailService,
     private readonly webhook: WebhookService,
+    // Re-push uzlaştırma (#16) mevcut atama/revoke akışlarını YENİDEN KULLANIR —
+    // çift satış/kilit invaryantları tek yerde kalsın diye kendi kopyasını yazmaz.
+    private readonly fulfillment: FulfillmentService,
+    private readonly adminOrders: AdminOrdersService,
   ) {}
 
   /**
@@ -120,7 +136,23 @@ export class OrdersService {
       return { ...base, payload: plain, fields: null };
     });
 
-    return { orderId: order.id, status: order.status, deliveries };
+    // Mail durumu (#32): siparişin EN GÜNCEL email_log satırının status'u (sent|failed|
+    // queued|sending|…). WP "Sorun mu var?" ipucu için — PAYLOAD/KEY sızmaz, yalnız durum.
+    // Kayıt yoksa null. Savunma-filtresi/expired mantığı yukarıda korunur.
+    const mailStatus = await this.latestMailStatus(order.id);
+
+    return { orderId: order.id, status: order.status, mailStatus, deliveries };
+  }
+
+  /** Siparişin en güncel teslimat maili durumu (#32) — yoksa null. */
+  private async latestMailStatus(orderId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ status: emailLog.status })
+      .from(emailLog)
+      .where(eq(emailLog.orderId, orderId))
+      .orderBy(desc(emailLog.createdAt))
+      .limit(1);
+    return row?.status ?? null;
   }
 
   /**
@@ -136,7 +168,10 @@ export class OrdersService {
       .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, dto.remoteOrderId)))
       .limit(1);
     if (existing[0]) {
-      return this.buildOutcome(await this.loadOrderResult(existing[0]));
+      // Sipariş düzenleme (#16): re-push satır adedini değiştirmişse uzlaştır. Adet
+      // AYNIYSA reconcileOrder null döner → klasik idempotent (değişmeden) yanıt korunur.
+      const reconciled = await this.reconcileOrder(site, existing[0], dto);
+      return reconciled ?? this.buildOutcome(await this.loadOrderResult(existing[0]));
     }
 
     // Satış kotası ön-kontrolü (§5) — idempotency lookup'ından SONRA. Aynı
@@ -365,6 +400,143 @@ export class OrdersService {
     }
 
     return this.buildOutcome(result);
+  }
+
+  /**
+   * Sipariş düzenleme / re-push uzlaştırma (#16). Aynı site+sipariş tekrar geldiğinde
+   * (idempotency eşleşmesi) satır ADEDİ değişmişse mevcut atama/revoke akışlarıyla farkı
+   * kapatır. HİÇBİR satır değişmemişse `null` döner → çağıran klasik idempotent yanıtı
+   * verir (normal ilk-push ve değişmeyen tekrar davranışı ASLA bozulmaz).
+   *
+   *   (a) yeni qty > mevcut → line.qty yükselt, farkı ata (partial-auto ⇒ completeLine ile
+   *       otomatik; diğer politikalar ⇒ pending kalır, elle "Kalanları Ata").
+   *   (b) yeni qty < mevcut ve fulfilledQty > yeni qty → fazla AKTİF atamaları mevcut
+   *       idempotent revoke akışıyla (revokeAssignment: tek→karantina, multi→kapasite geri)
+   *       geri al, line.qty=yeni qty.
+   *   (c) aynı qty → no-op.
+   *
+   * Yalnız remoteLineId ile EŞLEŞEN mevcut satırlar uzlaştırılır; yeni satır ekleme/tam
+   * satır silme bilinçli kapsam dışı (WP re-push adet güncellemesi senaryosu).
+   */
+  private async reconcileOrder(
+    site: Site,
+    order: Order,
+    dto: CreateOrderRequest,
+  ): Promise<CreateOrderOutcome | null> {
+    const lines = await this.db.select().from(orderLines).where(eq(orderLines.orderId, order.id));
+    const lineByRemote = new Map(lines.map((l) => [l.remoteLineId, l]));
+
+    const changedLineIds: string[] = [];
+
+    for (const dtoLine of dto.lines) {
+      const line = lineByRemote.get(dtoLine.remoteLineId);
+      if (!line) continue; // Eşleşmeyen (yeni) satır — güvenli yoksay.
+
+      // Yeni gerekli birim = qty × bundleQty (eşlemesiz satırda bundle yok, qty=birim).
+      const mapping = line.productId
+        ? await this.products.resolveMapping(
+            site.id,
+            dtoLine.remoteProductId,
+            dtoLine.remoteVariationId,
+          )
+        : null;
+      const newQty = dtoLine.qty * (mapping?.bundleQty ?? 1);
+
+      if (newQty === line.qty) continue; // (c) değişiklik yok.
+
+      if (newQty > line.qty) {
+        // (a) Artış: önce line.qty yükselt (completeLine kalanı = qty−fulfilled ile hesaplar).
+        await this.db.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
+        if (line.productId) {
+          const product = await this.products.getById(line.productId);
+          const policy = line.policyOverride ?? product.fulfillmentPolicy;
+          // Yalnız partial-auto otomatik atanır — mevcut fulfillment mantığı (allocate +
+          // SKIP LOCKED + kapasite) stok elverdiğince farkı (ve varsa eski pending'i) kapatır.
+          if (policy === 'partial-auto') {
+            await this.fulfillment.completeLine(line.id);
+          }
+        }
+      } else {
+        // (b) Azalış: aşırı-teslim varsa (fulfilled > yeni qty) fazlayı geri al, sonra qty düş.
+        if (line.fulfilledQty > newQty) {
+          await this.revokeExcess(site, line.id, line.fulfilledQty - newQty);
+        }
+        await this.db.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
+      }
+
+      changedLineIds.push(line.id);
+    }
+
+    if (changedLineIds.length === 0) return null; // Hiç adet değişmedi → idempotent yol.
+
+    // Değişen satır + sipariş durumunu tek transaction'da yeniden hesapla + edit izi.
+    await this.db.transaction(async (tx) => {
+      for (const lineId of changedLineIds) {
+        const [l] = await tx.select().from(orderLines).where(eq(orderLines.id, lineId)).limit(1);
+        if (!l) continue;
+        const status =
+          l.fulfilledQty >= l.qty ? 'fulfilled' : l.fulfilledQty > 0 ? 'partial' : 'pending';
+        await tx.update(orderLines).set({ status }).where(eq(orderLines.id, lineId));
+      }
+      await recomputeOrderStatus(tx, order.id);
+      await tx.insert(fulfillmentEvents).values({
+        orderId: order.id,
+        type: 'order_edited',
+        message: `Sipariş adedi güncellendi (re-push) — ${changedLineIds.length} satır`,
+      });
+    });
+
+    const [fresh] = await this.db.select().from(orders).where(eq(orders.id, order.id)).limit(1);
+    return this.buildOutcome(await this.loadOrderResult(fresh ?? order));
+  }
+
+  /**
+   * Bir satırın AKTİF atamalarını (en yeni önce) `excessUnits` birim karşılanana dek
+   * mevcut idempotent revoke akışıyla geri alır (#16 azalış). revokeAssignment lisansı
+   * karantinaya/kapasiteye döndürür, satır sayacını düşer — çift satış/hak invaryantı korunur.
+   */
+  private async revokeExcess(site: Site, lineId: string, excessUnits: number): Promise<void> {
+    const active = await this.db
+      .select({ id: assignments.id, units: assignments.units })
+      .from(assignments)
+      .where(and(eq(assignments.lineId, lineId), eq(assignments.status, 'active')))
+      .orderBy(desc(assignments.createdAt));
+
+    const actor = `site:${site.domain ?? site.id}`;
+    let revoked = 0;
+    for (const a of active) {
+      if (revoked >= excessUnits) break;
+      await this.adminOrders.revokeAssignment(a.id, 'Sipariş adedi düşürüldü (re-push)', actor);
+      revoked += a.units;
+    }
+  }
+
+  /**
+   * Site-facing toplu durum (#33). Yalnız site.id kapsamındaki siparişler için ilerleme
+   * (status + Σ fulfilled_qty + Σ qty) döner — PAYLOAD/KEY YOK. WP eklentisi çok siparişi
+   * tek çağrıda yoklar. Kapsam dışı / bulunamayan remoteOrderId yanıtta yer almaz.
+   */
+  async bulkStatus(site: Site, remoteOrderIds: string[]): Promise<BulkStatusItem[]> {
+    if (remoteOrderIds.length === 0) return [];
+
+    const rows = await this.db
+      .select({
+        remoteOrderId: orders.remoteOrderId,
+        status: orders.status,
+        fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)::int`,
+        total: sql<number>`coalesce(sum(${orderLines.qty}), 0)::int`,
+      })
+      .from(orders)
+      .leftJoin(orderLines, eq(orderLines.orderId, orders.id))
+      .where(and(eq(orders.siteId, site.id), inArray(orders.remoteOrderId, remoteOrderIds)))
+      .groupBy(orders.id);
+
+    return rows.map((r) => ({
+      remoteOrderId: r.remoteOrderId,
+      status: r.status,
+      fulfilled: Number(r.fulfilled),
+      total: Number(r.total),
+    }));
   }
 
   /**
