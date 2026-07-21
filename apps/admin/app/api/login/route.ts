@@ -18,25 +18,37 @@ function sameOrigin(req: NextRequest): boolean {
 }
 
 /**
+ * 303 See Other — GÖRELİ Location ile yönlendirir. NextResponse.redirect MUTLAK URL ister ve
+ * bunu req.url'den kurar; ancak Caddy (reverse_proxy) arkasında req.url iç host/yanlış protokol
+ * (http://admin:3000…) taşır → Location tarayıcının erişemeyeceği bir adrese çıkar ve login/logout
+ * "yönlendirmiyor, sayfada kalıyor" bug'ı oluşur. GÖRELİ Location ise tarayıcının GERÇEK istek
+ * URL'ine (dış https panel) göre çözülür → her zaman doğru host+protokol. Cookie yine bindirilebilir.
+ */
+function seeOther(path: string): NextResponse {
+  return new NextResponse(null, { status: 303, headers: { location: path } });
+}
+
+/**
  * Login — native form POST. Kimlik+parola API'de (admin_users) doğrulanır; başarılıysa
- * imzalı oturum cookie'si set edilir + 303 redirect. Standart HTTP (RSC quirk'i yok).
+ * imzalı oturum cookie'si set edilir + 303 (göreli) redirect. Standart HTTP (RSC quirk'i yok).
  */
 export async function POST(req: NextRequest) {
   if (!sameOrigin(req)) return new NextResponse('forbidden', { status: 403 });
   const form = await req.formData();
   const from = String(form.get('from') ?? '/pending');
   // Açık yönlendirme koruması: `from`'u origin'e göre çöz; yalnız AYNI origin'e izin ver.
-  // (/\evil.com gibi ters-eğik-çizgi authority kaçışlarını da kapatır.)
+  // (/\evil.com gibi ters-eğik-çizgi authority kaçışlarını da kapatır.) Yalnız path+search
+  // kullanılır (göreli Location) → dış origin sızmaz, proxy proto/host sorunu da yaşanmaz.
   let to = '/pending';
   try {
     const origin = new URL(req.url).origin;
     const u = new URL(from, origin);
     if (u.origin === origin) to = u.pathname + u.search;
   } catch {
-    to = '/';
+    to = '/pending';
   }
 
-  if (!authEnabled()) return NextResponse.redirect(new URL('/pending', req.url), 303); // gate kapalı
+  if (!authEnabled()) return seeOther('/pending'); // gate kapalı
 
   const identifier = String(form.get('identifier') ?? '').trim();
   const password = String(form.get('password') ?? '');
@@ -45,10 +57,10 @@ export async function POST(req: NextRequest) {
   try {
     user = await adminLogin(identifier, password);
   } catch {
-    return NextResponse.redirect(new URL(`/login?error=api&from=${encodeURIComponent(to)}`, req.url), 303);
+    return seeOther(`/login?error=api&from=${encodeURIComponent(to)}`);
   }
   if (!user) {
-    return NextResponse.redirect(new URL(`/login?error=1&from=${encodeURIComponent(to)}`, req.url), 303);
+    return seeOther(`/login?error=1&from=${encodeURIComponent(to)}`);
   }
 
   const token = await createSession({
@@ -58,7 +70,7 @@ export async function POST(req: NextRequest) {
     role: user.role,
     ver: user.tokenVersion,
   });
-  const res = NextResponse.redirect(new URL(to, req.url), 303);
+  const res = seeOther(to);
   res.cookies.set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
