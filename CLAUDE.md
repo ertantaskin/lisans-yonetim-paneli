@@ -213,11 +213,25 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
   kapalıyken disabled · site-oluşturma yetki tutarlılığı. Testler: readonly-sql yazma-reddi + AI maskeleme +
   onboarding claim atomik.
 
-migration 0000-0015. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+**Auth yönlendirme + kalan iş partisi (CANLI):**
+- **Auth login/logout yönlendirme fix** (commit 270d7a8): Caddy `reverse_proxy` arkasında
+  `NextResponse.redirect(new URL(path, req.url))` iç host/yanlış-protokol Location üretiyordu → giriş/çıkış
+  "sayfada kalıyor" (cookie doğruydu, manuel yenileme çalışıyordu). Çözüm: iki route handler **göreli**
+  `Location` döndürür (tarayıcı gerçek istek URL'ine göre çözer → proxy-bağımsız). Curl doğrulandı (303 göreli).
+- **D17 (§12) teslim-edilen COGS** (migration 0016, additive): `license_items.unit_cost_cents/cost_currency`
+  snapshot (import anında yazılır, batch→PO backfill); `costs.service.deliveredCogs` (aktif+delivered atamalar,
+  satır snapshot'ı, currency ayrı, snapshot'sız=uncovered); `/reports/costs` "Teslim Edilen COGS" kartı.
+- **Onboarding sertleştirme:** `sites.create` app-düzeyi domain dedup (ConflictException); `issueConnectCode`
+  rekey+kod tek transaction (yetim/lockout site yok); wizard kurtarma yolu (`issueCodeForSite`).
+- **API hardening:** public plugin update uçları IP rate-limit (429); `readonly-sql` sır-kolon denylist (400);
+  AI report/suggest IP rate-limit. **presence** actor'ı `@AdminActor` header'dan (body-spoof kapalı).
+  Testler: reconcile/expiry cron (PG) + AI env-gate graceful (birim). api birim 27/27.
+
+migration 0000-0016. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
 YOK — §2/§6/§10), marketplace dış-API adaptörü (spekülatif), Faz-3 WP-migrasyon (greenfield, eski eklenti
-yok), abonelik/EFT/3DS (YAGNI). **Ertelenen (bilinçli):** D17 COGS maliyet-anlık-görüntü (license_items
-cost-snapshot + migration; costs.service teslim-edilen-COGS bloğu) — maliyet raporu 'kapsanmayan'ı dürüst
-gösterdiği için core import path riski alınmadı. Yol haritası §18.
+yok), abonelik/EFT/3DS (YAGNI). **Kalan minör (deferred, düşük değer):** api_key rekey grace (schema ister),
+public zip gerçek-stream (DB'de base64 — mimari kısıt), rate-limit dağıtık depo (şu an bellek-içi tek-süreç).
+Yol haritası §18.
 
 ## Geliştirme
 
