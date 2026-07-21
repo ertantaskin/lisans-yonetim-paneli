@@ -236,11 +236,25 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
 - **trustProxy: true → 1** (main.ts): tek Caddy hop → `@Ip()` X-Forwarded-For spoof edilemez, IP hız sınırları
   gerçekten etkili (smoke tutarlı-IP doğruladı). CDN eklenirse hop güncellenmeli.
 
-migration 0000-0017. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
-YOK — §2/§6/§10), marketplace dış-API adaptörü (spekülatif), Faz-3 WP-migrasyon (greenfield, eski eklenti
-yok), abonelik/EFT/3DS (YAGNI). **Tek kalan (bilinçli, mimari karar):** public zip gerçek-stream — zip DB'de
-base64 saklandığından streaming ancak depolamayı diske/S3'e taşımakla olur (küçük eklenti zip'i + rate-limit
-+ Caddy ile tamponlama yeterli; kullanıcı onayı olmadan depolama mimarisi değiştirilmez). Yol haritası §18.
+**İyileştirme partisi (6-boyutlu analiz → yüksek+orta değer; CANLI, commit 6f82b3f, migration 0018):**
+- **PERF (0018):** en hızlı büyüyen tabloların FK/sıcak-yol index'leri — assignments(order+status/line/
+  license_item), order_lines(order + partial pending-product), orders(created desc / site+created) +
+  orders `lower(customer_email)` fonksiyonel. Additive; getDeliveries/detay/autoComplete seq-scan → index scan.
+- **Kenar-durum:** günlük özet `availableStock` artık kapasite (Σ max_uses-use_count; MULTI/MAK yanlış alarm
+  düzeldi); maliyet raporu boş-currency 'kapsanamayan' + tek-para artık 'karışık' göstermiyor.
+- **Gözlem:** reconcile çifte-satış/tutarlılık ihlalleri → `NotificationsService` critical (Telegram alarm),
+  yalnız stdout değil; `/v1/health` degraded'da **503**; health version package.json'dan; `.env.example` AI(§15)+TZ+digest.
+- **Kod-kalite:** replacements actor yalnız `@AdminActor` header (body.actor spoof kaldırıldı); admin proxy'ler
+  `lib/api.apiRaw` ile x-trace-id taşır (inline fetch kopyası kalktı).
+- **A11y (WCAG):** skip-to-content + aria-live duyurucu. **TZ:** compose postgres+api Europe/Istanbul (gün sınırı yerel).
+- **Test:** HmacGuard + findForAuth api_key grace(0017) + RiskScore + getDeliveries expiry filtresi (integration).
+
+migration 0000-0018. **Ertelenen (bilinçli, düşük öncelik):** `db.execute+as-unknown` 60× tipli-helper refactor
+(60 çağrı noktası — saf mekanik, kendi ayrı pasında); Sentry entegrasyonu (yeni bağımlılık, lockfile riski —
+AI SDK gibi ertelendi). **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+YOK — §2/§6/§10), marketplace dış-API adaptörü, Faz-3 WP-migrasyon (greenfield), abonelik/EFT/3DS (YAGNI).
+**Tek kalan mimari karar:** public zip gerçek-stream (DB base64 → depolama diske/S3 taşınmalı; kullanıcı onayıyla).
+Yol haritası §18.
 
 ## Geliştirme
 
