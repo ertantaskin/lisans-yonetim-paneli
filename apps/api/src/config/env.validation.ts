@@ -60,6 +60,15 @@ export const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: emptyToUndefined(z.string().optional()),
   TELEGRAM_CHAT_ID: emptyToUndefined(z.string().optional()),
 
+  /**
+   * AI-destekli operasyon (§15) — env-gated, VARSAYILAN KAPALI. AI_ENABLED=true VE
+   * ANTHROPIC_API_KEY verilmezse AI çağrıları 503; sistem AI'sız tam çalışır. Üçü de opsiyonel.
+   */
+  AI_ENABLED: emptyToUndefined(z.string().optional()),
+  ANTHROPIC_API_KEY: emptyToUndefined(z.string().optional()),
+  AI_MODEL: emptyToUndefined(z.string().optional()),
+  AI_BASE_URL: emptyToUndefined(z.string().url().optional()),
+
   SENTRY_DSN: z.string().optional(),
 });
 

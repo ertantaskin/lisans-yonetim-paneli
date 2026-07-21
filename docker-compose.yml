@@ -82,6 +82,12 @@ services:
       # aktif; boşsa bildirim no-op (env-gated). Bot: @BotFather, chat id: @userinfobot.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      # AI-destekli operasyon (§15) — env-gated, VARSAYILAN KAPALI. AI_ENABLED=true VE
+      # ANTHROPIC_API_KEY set EDİLİRSE aktif (öneri/rapor uçları); boşsa AI kapalı, sistem
+      # AI'sız tam çalışır. Model opsiyonel (varsayılan claude-opus-4-8).
+      AI_ENABLED: ${AI_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
       SENTRY_DSN: ${SENTRY_DSN}
     # Açılışta migration'ları uygula, sonra servisi başlat.
     command: ['sh', '-c', 'node dist/db/migrate.js && node dist/main.js']

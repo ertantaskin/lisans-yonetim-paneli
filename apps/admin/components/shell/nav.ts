@@ -16,6 +16,7 @@ import {
   Settings,
   ShieldCheck,
   ShieldAlert,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -68,6 +69,7 @@ export const NAV: NavSection[] = [
     title: 'Raporlar & İzleme',
     items: [
       { label: 'Raporlar', href: '/reports', icon: BarChart3 },
+      { label: 'AI Operasyon', href: '/ai', icon: Sparkles },
       { label: 'Bildirimler', href: '/notifications', icon: Bell },
       { label: 'Dead-letter', href: '/ops', icon: MailWarning },
     ],

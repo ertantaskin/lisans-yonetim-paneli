@@ -28,6 +28,10 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { PresenceModule } from './presence/presence.module';
 import { SavedViewsModule } from './saved-views/saved-views.module';
 import { UpdatesModule } from './updates/updates.module';
+import { AiModule } from './ai/ai.module';
+import { AiSupportModule } from './ai/ai-support.module';
+import { AiSummaryModule } from './ai/ai-summary.module';
+import { AiReportModule } from './ai/ai-report.module';
 
 @Module({
   imports: [
@@ -83,6 +87,10 @@ import { UpdatesModule } from './updates/updates.module';
     PresenceModule,
     SavedViewsModule,
     UpdatesModule,
+    AiModule,
+    AiSupportModule,
+    AiSummaryModule,
+    AiReportModule,
   ],
 })
 export class AppModule {}
