@@ -227,11 +227,20 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
   AI report/suggest IP rate-limit. **presence** actor'ı `@AdminActor` header'dan (body-spoof kapalı).
   Testler: reconcile/expiry cron (PG) + AI env-gate graceful (birim). api birim 27/27.
 
-migration 0000-0016. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+**Kalan minör parti (CANLI, commit 4b6464d, migration 0017):**
+- **api_key rekey grace** (0017 additive): `sites.api_key_hash_prev + api_key_rotated_at` (hmac grace aynası);
+  `findForAuth` current-or-prev'i grace penceresinde kabul → rekey sonrası eski api_key anında 401 yemez
+  (LOOKUP başta patlıyordu, hmac grace'e sıra gelmiyordu). prev hash admin yanıtlarından soyulur.
+- **Redis rate-limit**: `common/rate-limit.service` (@Global, Lua INCR+EXPIRE atomik, `rl:` ad-alanı) — updates/
+  AI/connect-claim bellek-içi Map yerine Redis (dağıtık + restart-dayanıklı). Smoke: info 60×200→5×429 (tam).
+- **trustProxy: true → 1** (main.ts): tek Caddy hop → `@Ip()` X-Forwarded-For spoof edilemez, IP hız sınırları
+  gerçekten etkili (smoke tutarlı-IP doğruladı). CDN eklenirse hop güncellenmeli.
+
+migration 0000-0017. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
 YOK — §2/§6/§10), marketplace dış-API adaptörü (spekülatif), Faz-3 WP-migrasyon (greenfield, eski eklenti
-yok), abonelik/EFT/3DS (YAGNI). **Kalan minör (deferred, düşük değer):** api_key rekey grace (schema ister),
-public zip gerçek-stream (DB'de base64 — mimari kısıt), rate-limit dağıtık depo (şu an bellek-içi tek-süreç).
-Yol haritası §18.
+yok), abonelik/EFT/3DS (YAGNI). **Tek kalan (bilinçli, mimari karar):** public zip gerçek-stream — zip DB'de
+base64 saklandığından streaming ancak depolamayı diske/S3'e taşımakla olur (küçük eklenti zip'i + rate-limit
++ Caddy ile tamponlama yeterli; kullanıcı onayı olmadan depolama mimarisi değiştirilmez). Yol haritası §18.
 
 ## Geliştirme
 
