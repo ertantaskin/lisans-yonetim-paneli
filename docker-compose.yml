@@ -15,6 +15,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Gün sınırı yerel saate göre (§5 satış kotası + günlük metrikler). Varsayılan Europe/Istanbul;
+      # .env'de TZ ile değiştirilebilir. timestamptz mutlak saklanır — TZ yalnız now()/date_trunc/to_char'ı etkiler.
+      TZ: ${TZ:-Europe/Istanbul}
+      PGTZ: ${TZ:-Europe/Istanbul}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -60,6 +64,8 @@ services:
         condition: service_started
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      # JS tarih yerelleştirmesi (günlük digest toLocaleDateString vb.) PG ile aynı TZ'de olsun.
+      TZ: ${TZ:-Europe/Istanbul}
       API_PORT: 3001
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}

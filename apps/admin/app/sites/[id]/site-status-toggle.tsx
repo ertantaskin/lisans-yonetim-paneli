@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Ban, CircleCheck, TriangleAlert } from 'lucide-react';
 import { setSiteStatusAction } from '../actions';
 import { Button } from '../../../components/ui/button';
+import { useAnnouncer } from '../../../components/a11y/announcer';
 
 /**
  * Site yaşam döngüsü aksiyonu (§8): askıya al / aktifleştir. 'suspended' → HMAC auth
@@ -12,6 +13,7 @@ import { Button } from '../../../components/ui/button';
 export function SiteStatusToggle({ siteId, status }: { siteId: string; status: string }) {
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
+  const announce = useAnnouncer();
   const suspended = status === 'suspended';
   const next = suspended ? 'active' : 'suspended';
 
@@ -23,7 +25,14 @@ export function SiteStatusToggle({ siteId, status }: { siteId: string; status: s
     setError(null);
     startTransition(async () => {
       const res = await setSiteStatusAction(siteId, next);
-      if (!res.ok) setError(res.error ?? 'Durum değiştirilemedi');
+      if (!res.ok) {
+        const em = res.error ?? 'Durum değiştirilemedi';
+        setError(em);
+        announce(em, { assertive: true });
+      } else {
+        // Sonuç görsel olarak revalidate ile yansır; okuyucuya da duyur (WCAG 4.1.3).
+        announce(next === 'suspended' ? 'Site askıya alındı' : 'Site aktifleştirildi');
+      }
     });
   };
 

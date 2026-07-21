@@ -10,6 +10,14 @@ import {
   type MutationState,
 } from './actions';
 import { Button } from '../../../components/ui/button';
+import { useAnnouncer } from '../../../components/a11y/announcer';
+
+/** Mutasyon sonucunu ekran okuyucuya duyurur (WCAG 4.1.3): hata → assertive. */
+function announceResult(announce: (t: string, o?: { assertive?: boolean }) => void, state: MutationState) {
+  announce(state.ok ? (state.message ?? 'Tamam') : (state.error ?? 'İşlem başarısız'), {
+    assertive: !state.ok,
+  });
+}
 
 /**
  * Ortak inline geri bildirim. Server action fırlatmadığı için (bkz. actions.ts) hata da
@@ -35,11 +43,14 @@ function Feedback({ state }: { state: MutationState | null }) {
 export function CompleteLineButton({ lineId, orderId }: { lineId: string; orderId: string }) {
   const [pending, startTransition] = React.useTransition();
   const [state, setState] = React.useState<MutationState | null>(null);
+  const announce = useAnnouncer();
 
   const run = () => {
     setState(null);
     startTransition(async () => {
-      setState(await completeLineAction(lineId, orderId));
+      const res = await completeLineAction(lineId, orderId);
+      setState(res);
+      announceResult(announce, res);
     });
   };
 
@@ -68,6 +79,7 @@ export function AssignmentActions({
 }) {
   const [pending, startTransition] = React.useTransition();
   const [state, setState] = React.useState<MutationState | null>(null);
+  const announce = useAnnouncer();
 
   const suspend = () => {
     if (
@@ -78,7 +90,9 @@ export function AssignmentActions({
       return;
     setState(null);
     startTransition(async () => {
-      setState(await suspendAction(assignmentId, orderId));
+      const res = await suspendAction(assignmentId, orderId);
+      setState(res);
+      announceResult(announce, res);
     });
   };
 
@@ -91,14 +105,18 @@ export function AssignmentActions({
       return;
     setState(null);
     startTransition(async () => {
-      setState(await revokeAction(assignmentId, orderId, 'iade/iptal'));
+      const res = await revokeAction(assignmentId, orderId, 'iade/iptal');
+      setState(res);
+      announceResult(announce, res);
     });
   };
 
   const unsuspend = () => {
     setState(null);
     startTransition(async () => {
-      setState(await unsuspendAction(assignmentId, orderId));
+      const res = await unsuspendAction(assignmentId, orderId);
+      setState(res);
+      announceResult(announce, res);
     });
   };
 
@@ -136,11 +154,14 @@ export function AssignmentActions({
 export function ResendButton({ orderId }: { orderId: string }) {
   const [pending, startTransition] = React.useTransition();
   const [state, setState] = React.useState<MutationState | null>(null);
+  const announce = useAnnouncer();
 
   const run = () => {
     setState(null);
     startTransition(async () => {
-      setState(await resendAction(orderId));
+      const res = await resendAction(orderId);
+      setState(res);
+      announceResult(announce, res);
     });
   };
 

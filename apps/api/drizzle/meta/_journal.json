@@ -127,6 +127,13 @@
       "when": 1784604000000,
       "tag": "0017_sites_api_key_grace",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784605000000,
+      "tag": "0018_perf_indexes",
+      "breakpoints": true
     }
   ]
 }

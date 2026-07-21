@@ -79,6 +79,28 @@ export async function apiSend<T>(
   return res.json() as Promise<T>;
 }
 
+/**
+ * Sunucu-taraflı HAM API çağrısı — `Response`'u OLDUĞU GİBİ döndürür (status + gövde
+ * dokunulmaz). apiGet/apiPost non-2xx'te THROW eder; oysa bazı proxy'ler API yanıtını
+ * verbatim geçirmeli (ör. AI uçlarında 503/400/`ok:false`-in-200 anlamlıdır) VEYA graceful
+ * düşmeli. Bu yardımcı token + trace-id (§16) (+ opsiyonel actor) başlıklarını MERKEZÎ üretir
+ * — böylece inline fetch kopyalayan route'lar artık x-trace-id DÜŞÜRMEZ; çağıran kendi
+ * status/gövde mantığını korur. ADMIN_TOKEN yalnız sunucuda kalır.
+ */
+export async function apiRaw(
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  path: string,
+  opts?: { body?: unknown; actor?: string },
+): Promise<Response> {
+  const withBody = opts?.body !== undefined;
+  return fetch(`${API_URL}${path}`, {
+    method,
+    headers: headers(withBody, opts?.actor),
+    body: withBody ? JSON.stringify(opts!.body) : undefined,
+    cache: 'no-store',
+  });
+}
+
 // ── Paylaşılan tipler (API yanıtları) ───────────────────────────────────────
 export interface OrderRow {
   id: string;

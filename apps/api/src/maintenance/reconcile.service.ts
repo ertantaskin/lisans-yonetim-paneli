@@ -4,6 +4,7 @@ import type { Job } from 'bullmq';
 import { Queue } from 'bullmq';
 import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export const RECONCILE_QUEUE = 'reconcile';
 
@@ -68,6 +69,7 @@ export class ReconcileService implements OnModuleInit {
   constructor(
     @Inject(DB) private readonly db: Database,
     @InjectQueue(RECONCILE_QUEUE) private readonly queue: Queue,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Boot'ta tekrarlı denetim işini kaydeder (aynı repeat anahtarı → mükerrer eklenmez). */
@@ -95,10 +97,50 @@ export class ReconcileService implements OnModuleInit {
       this.logger.error(
         `Mutabakat: ${violations.length} İHLAL bulundu (${checked} kayıt denetlendi) — elle inceleme gerekli`,
       );
+      // Kritik alarm yolu (§16): logger.error tek başına gözlemlenebilir değil (kimse tail'lemiyorsa
+      // çifte-satış ihlali sessiz kalır). severity 'critical' bildirim NotificationsService üzerinden
+      // env-gated Telegram'a düşer. Bildirim best-effort — mutabakat sonucunu KESMEZ.
+      await this.notify(checked, violations);
     } else {
       this.logger.log(`Mutabakat temiz: ${checked} kayıt, ihlal yok`);
     }
     return { checked, violations };
+  }
+
+  /**
+   * Mutabakat ihlallerini kritik bildirime çevirir (§16 alarm yolu). NotificationsService.create
+   * severity 'critical' → env-gated Telegram'a düşer. GİZLİLİK: mesaj (Telegram'a giden) yalnız
+   * SAYAÇ içerir; iç kayıt id'leri sır/PII değildir ve yalnız DB'de kalan meta'ya yazılır (Telegram
+   * gövdesi meta'yı taşımaz). payload/e-posta/key ASLA konmaz. Best-effort: bildirim hatası yutulur
+   * (mutabakat çıktısı zaten döndürülür + kritik loglandı).
+   */
+  private async notify(checked: number, violations: ReconcileViolation[]): Promise<void> {
+    // Denetim başına kırılım (özet mesaj + meta için).
+    const byCheck: Record<ReconcileViolation['check'], number> = {
+      multi_capacity: 0,
+      line_fulfillment: 0,
+      single_occupancy: 0,
+    };
+    for (const v of violations) byCheck[v.check] += 1;
+
+    try {
+      await this.notifications.create({
+        type: 'reconcile_violation',
+        severity: 'critical',
+        title: 'Mutabakat ihlali (tutarlılık denetimi)',
+        // Telegram'a gider → yalnız sayaç/kırılım, sır/PII yok.
+        message:
+          `${violations.length} tutarlılık ihlali bulundu (${checked} kayıt denetlendi) — elle inceleme gerekli. ` +
+          `Kapasite aşımı=${byCheck.multi_capacity}, sayaç sapması=${byCheck.line_fulfillment}, ` +
+          `tek-kullanım çift atama=${byCheck.single_occupancy}.`,
+        // meta yalnız DB'de saklanır (Telegram'a gitmez) → kök-neden için iç kayıt id'leri + sayaçlar.
+        meta: { checked, total: violations.length, byCheck, violations },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Mutabakat bildirimi üretilemedi (best-effort): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**

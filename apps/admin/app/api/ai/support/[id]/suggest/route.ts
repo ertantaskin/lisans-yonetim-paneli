@@ -1,22 +1,18 @@
 import { NextResponse } from 'next/server';
+import { apiRaw } from '@/lib/api';
 import { getActor } from '@/lib/session';
 
 /**
  * AI destek triyajı proxy (§15). Bir değişim/garanti talebini AI kategorize eder +
  * müşteriye TASLAK cevap üretir; insan onaylar/gönderir (OTOMATİK GÖNDERİM YOK). Yanıt
  * gövdesi + status olduğu gibi iletilir — AI kapalıysa API 503, geçersiz id'de 400 döner.
- * Token yalnız sunucuda kalır — client'a ASLA sızmaz.
+ * apiRaw ile token + trace-id (§16) merkezî iletilir (ADMIN_TOKEN yalnız sunucuda kalır).
  */
-const API_URL = process.env.API_URL ?? 'http://localhost:3001';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
-
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    const res = await fetch(`${API_URL}/v1/admin/ai/support/${encodeURIComponent(id)}/suggest`, {
-      method: 'POST',
-      headers: { 'x-admin-token': ADMIN_TOKEN, 'x-admin-actor': await getActor() },
-      cache: 'no-store',
+    const res = await apiRaw('POST', `/v1/admin/ai/support/${encodeURIComponent(id)}/suggest`, {
+      actor: await getActor(),
     });
     const text = await res.text();
     return new NextResponse(text, {

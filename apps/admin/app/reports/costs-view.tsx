@@ -254,6 +254,9 @@ export function CostsView() {
   }, []);
 
   // Para birimi kümesi + karışık mı? (tüm bölümlerin birleşimi)
+  // NOT: boş ('') currency GERÇEK bir para birimi değil — maliyeti bağlanamayan
+  // (partiye/PO'ya/snapshot'a bağlı olmayan) kayıtların kovasıdır. Kümeden çıkarılır ki
+  // tek-para-birimli mağaza, yalnız uncovered kayıt yüzünden "karışık" sanılmasın.
   const currencies = React.useMemo(() => {
     if (!data) return [] as string[];
     const set = new Set<string>();
@@ -263,8 +266,10 @@ export function CostsView() {
     for (const r of data.bySupplier) set.add(r.currency);
     for (const r of data.byProduct) set.add(r.currency);
     for (const r of data.deliveredCogs ?? []) set.add(r.currency);
+    set.delete(''); // uncovered kova karışık para birimi saydırmaz
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [data]);
+  // Karışık uyarısı yalnız GERÇEK ayrı para birimi sayısı >1 iken.
   const multiCurrency = currencies.length > 1;
 
   // Aylık harcama (para birimi başına, ay artan) → Datum grupları.
@@ -375,28 +380,35 @@ export function CostsView() {
         </Alert>
       )}
 
-      {/* Değerleme + Fire (StatTile, para birimi başına) */}
+      {/* Değerleme + Fire (StatTile, para birimi başına). Boş ('') currency kovası maliyeti
+          bağlanamayan kayıtları taşır (parasal değeri daima 0); deliveredCogs ile aynı biçimde
+          değer kartı olarak ÇİZİLMEZ — bunun yerine aşağıdaki "kapsanamayan" uyarısında raporlanır.
+          Boş currency etiketi StatTile'da boş parantez ("()") olarak sızmasın diye elenir. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {data.valuation.map((v) => (
-          <StatTile
-            key={`val-${v.currency}`}
-            label={multiCurrency ? `Stok Değeri (${v.currency})` : 'Stok Değeri (maliyet)'}
-            value={money(v.valuedCents, v.currency)}
-            icon={Warehouse}
-            tone="accent"
-            hint={`${fmtNum(v.valuedUnits)} birim maliyetli`}
-          />
-        ))}
-        {data.wastage.map((w) => (
-          <StatTile
-            key={`waste-${w.currency}`}
-            label={multiCurrency ? `Fire / İmha (${w.currency})` : 'Fire / İmha (maliyet)'}
-            value={money(w.wastedCents, w.currency)}
-            icon={PackageX}
-            tone={w.wastedCents > 0 ? 'warning' : 'neutral'}
-            hint={`${fmtNum(w.events)} olay`}
-          />
-        ))}
+        {data.valuation
+          .filter((v) => v.currency !== '')
+          .map((v) => (
+            <StatTile
+              key={`val-${v.currency}`}
+              label={multiCurrency ? `Stok Değeri (${v.currency})` : 'Stok Değeri (maliyet)'}
+              value={money(v.valuedCents, v.currency)}
+              icon={Warehouse}
+              tone="accent"
+              hint={`${fmtNum(v.valuedUnits)} birim maliyetli`}
+            />
+          ))}
+        {data.wastage
+          .filter((w) => w.currency !== '')
+          .map((w) => (
+            <StatTile
+              key={`waste-${w.currency}`}
+              label={multiCurrency ? `Fire / İmha (${w.currency})` : 'Fire / İmha (maliyet)'}
+              value={money(w.wastedCents, w.currency)}
+              icon={PackageX}
+              tone={w.wastedCents > 0 ? 'warning' : 'neutral'}
+              hint={`${fmtNum(w.events)} olay`}
+            />
+          ))}
       </div>
 
       {/* Teslim edilen COGS (satılan mal maliyeti — para birimi başına ayrı) */}

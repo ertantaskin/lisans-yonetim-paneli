@@ -36,6 +36,13 @@ export const assignments = pgTable(
     index('assignments_expiry_idx')
       .on(t.validUntil)
       .where(sql`${t.status} = 'active' AND ${t.validUntil} IS NOT NULL`),
+    // Sipariş teslimatları (§4): getDeliveries + tamamlama motoru order_id üzerinden
+    // atamaları çeker; status bileşik → aktif/expired filtresi index'ten karşılanır.
+    index('assignments_order_idx').on(t.orderId, t.status),
+    // Satır-bazlı atama sorguları (recompute, kısmi teslimat) FK'yi indexler.
+    index('assignments_line_idx').on(t.lineId),
+    // license_item ↔ atama ters araması (revoke/değişim, mutabakat) FK'yi indexler.
+    index('assignments_license_item_idx').on(t.licenseItemId),
   ],
 );
 

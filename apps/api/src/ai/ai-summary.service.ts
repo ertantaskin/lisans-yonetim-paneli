@@ -16,7 +16,10 @@ export interface DailyMetrics {
   securityEvents24h: number;
   /** Başarısız (veya askıda kalıp denemesi tükenmiş) webhook outbox olayı sayısı. */
   failedOutbox: number;
-  /** Atanabilir (status='available') lisans kalemi sayısı. */
+  /**
+   * Atanabilir kalan KAPASİTE (Σ max_uses−use_count, status='available'). MULTI/MAK
+   * ürünlerde satır sayısı DEĞİL — products.service/channel-catalog ile aynı semantik.
+   */
   availableStock: number;
 }
 
@@ -100,7 +103,7 @@ export class AiSummaryService {
         (SELECT count(*) FROM outbox_events
            WHERE status = 'failed'
               OR (status = 'pending' AND created_at < now() - interval '15 minutes'))::int AS failed_outbox,
-        (SELECT count(*) FROM license_items
+        (SELECT coalesce(sum(max_uses - use_count), 0) FROM license_items
            WHERE status = 'available')::int AS available_stock;
     `);
     const r = (rows as unknown as Array<{

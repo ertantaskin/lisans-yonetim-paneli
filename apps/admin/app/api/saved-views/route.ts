@@ -1,34 +1,22 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { apiRaw } from '@/lib/api';
 import { getActor } from '@/lib/session';
 
 /**
  * Kayıtlı görünümler proxy'si (§14). Menü bir CLIENT bileşen olduğundan ADMIN_TOKEN'ı
  * doğrudan çağıramaz (token yalnız sunucuda kalmalı). Ayrıca list/create/delete ACTOR
- * bazlıdır: her istekte oturumdaki admin'i `x-admin-actor` başlığıyla iletmemiz gerekir.
- * `apiGet` actor göndermediğinden (fallback 'panel:admin' → filtre bozulur) burada
- * doğrudan sunucu-taraflı fetch yaparız — login route'undaki gibi. Token tarayıcıya
- * ASLA sızmaz; erişim uygulamanın geri kalanıyla aynı oturum gate'i altındadır.
+ * bazlıdır: her istekte oturumdaki admin'i `x-admin-actor` başlığıyla iletmemiz gerekir
+ * (`apiGet` actor göndermediğinden fallback 'panel:admin' → filtre bozulur). Bu yüzden
+ * apiRaw'ı actor ile çağırırız — token + trace-id (§16) merkezî iletilir, yanıt status/gövdesi
+ * korunur. Token tarayıcıya ASLA sızmaz; erişim uygulamanın geri kalanıyla aynı oturum gate'i altındadır.
  */
-const API_URL = process.env.API_URL ?? 'http://localhost:3001';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
-
-/** Sunucu-taraflı authed fetch: x-admin-token + x-admin-actor başlıklarıyla API'ye iletir. */
+/** Sunucu-taraflı authed fetch: oturum actor'ı + token + trace-id ile API'ye iletir. */
 async function apiFetch(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<Response> {
-  const headers: Record<string, string> = {
-    'x-admin-token': ADMIN_TOKEN,
-    'x-admin-actor': await getActor(),
-  };
-  if (body !== undefined) headers['content-type'] = 'application/json';
-  return fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    cache: 'no-store',
-  });
+  return apiRaw(method, path, { body, actor: await getActor() });
 }
 
 /** Bu admin'in ?page= ile verilen sayfaya ait kayıtlı görünümleri. */

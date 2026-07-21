@@ -1,30 +1,22 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { apiRaw } from '@/lib/api';
 import { getActor } from '@/lib/session';
 
 /**
  * NL→Rapor proxy (§15). Türkçe soruyu API'ye iletir; API salt-okunur bir SELECT üretip
  * güvenle çalıştırır. Yanıt gövdesi (üretilen SQL + sonuç veya hata) ve status kodu
  * OLDUĞU GİBİ iletilir — AI kapalıysa API 503, geçersiz soruda 400 döner; UI kibarca
- * gösterir. Token yalnız sunucuda kalır — client'a ASLA sızmaz.
+ * gösterir. apiRaw ile token + trace-id (§16) merkezî iletilir (ADMIN_TOKEN yalnız sunucuda kalır).
  */
-const API_URL = process.env.API_URL ?? 'http://localhost:3001';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
-
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as { question?: unknown } | null;
   if (!body || typeof body.question !== 'string') {
     return NextResponse.json({ error: 'Geçersiz istek: soru gerekli.' }, { status: 400 });
   }
   try {
-    const res = await fetch(`${API_URL}/v1/admin/ai/report`, {
-      method: 'POST',
-      headers: {
-        'x-admin-token': ADMIN_TOKEN,
-        'x-admin-actor': await getActor(),
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ question: body.question }),
-      cache: 'no-store',
+    const res = await apiRaw('POST', '/v1/admin/ai/report', {
+      body: { question: body.question },
+      actor: await getActor(),
     });
     // Gövdeyi (SQL + sonuç/hata) ve status'ü olduğu gibi ilet — ok:false 200 içinde gelir.
     const text = await res.text();
