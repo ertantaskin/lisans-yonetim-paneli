@@ -41,11 +41,29 @@ class Jetlisans_Settings {
     }
 
     /**
-     * Kimlik bilgileri sabitle tanımlı mı? Tanımlıysa option'lar yok sayılır,
-     * bu yüzden tek-seferlik kod ile bağlama anlamsızdır (devre dışı).
+     * SIR kimlik bilgileri (apiKey/hmacSecret) sabitle tanımlı mı? "Panele Bağlan"
+     * akışının tek amacı bu sırları panelden çekip option'a yazmaktır; sırlar sabitse
+     * yazılan option'lar yok sayılacağından akış anlamsızdır (devre dışı).
+     *
+     * NOT: Sırsız JETLISANS_PANEL_URL sabiti bu akışı KİLİTLEMEZ — yalnız panel
+     * adresi sabitken token/secret alma akışı geçerli kalmalıdır (panel URL yine
+     * connect isteğinde `self::panel_url()` sabit değerinden gelir).
      */
     private static function has_const() {
-        return defined('JETLISANS_API_KEY') || defined('JETLISANS_HMAC_SECRET') || defined('JETLISANS_PANEL_URL');
+        return defined('JETLISANS_API_KEY') || defined('JETLISANS_HMAC_SECRET');
+    }
+
+    /**
+     * Panel URL güvenli mi? "Panele Bağlan" yanıtı sırları düz metin döndürdüğü
+     * için https zorunludur; yalnız yerel geliştirme adresleri (localhost/127.0.0.1/::1)
+     * http'ye izinlidir.
+     */
+    private static function is_secure_panel_url($url) {
+        $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+        if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1') {
+            return true;
+        }
+        return strtolower((string) wp_parse_url($url, PHP_URL_SCHEME)) === 'https';
     }
 
     public function menu() {
@@ -147,6 +165,10 @@ define('JETLISANS_WEBHOOK_SECRET', '...'); // opsiyonel, yoksa HMAC_SECRET kulla
         } elseif ($flag === 'const') {
             echo '<div class="notice notice-warning is-dismissible"><p>' .
                 esc_html('Sabit tanımlı — kod ile bağlama devre dışı.') . '</p></div>';
+        } elseif ($flag === 'insecure') {
+            echo '<div class="notice notice-error is-dismissible"><p>' .
+                esc_html('Panel adresi https değil. Kimlik bilgileri düz metin gönderileceğinden bağlantı yapılmadı; güvenli (https) bir panel adresi girin.') .
+                '</p></div>';
         } elseif ($flag === 'error') {
             $text = $msg !== ''
                 ? sprintf('Panele bağlanılamadı: %s', $msg)
@@ -178,6 +200,13 @@ define('JETLISANS_WEBHOOK_SECRET', '...'); // opsiyonel, yoksa HMAC_SECRET kulla
 
         if ($panel === '' || $code === '') {
             self::redirect_settings('missing');
+        }
+
+        // Yanıt kimlik bilgilerini (apiKey/hmacSecret) DÜZ METİN döndürür; panel
+        // https değilse sırlar ağda açık geçer — göndermeden reddet (yerel geliştirme
+        // için localhost/127.0.0.1 istisna).
+        if (!self::is_secure_panel_url($panel)) {
+            self::redirect_settings('insecure');
         }
 
         $res = wp_remote_post($panel . '/v1/connect/claim', [

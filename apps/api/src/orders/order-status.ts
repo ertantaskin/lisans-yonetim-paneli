@@ -8,13 +8,22 @@ import { orderLines, orders } from '../db/schema';
  */
 export async function recomputeOrderStatus(tx: Database, orderId: string): Promise<string> {
   const lines = await tx
-    .select({ status: orderLines.status })
+    .select({ status: orderLines.status, canceled: orderLines.canceled })
     .from(orderLines)
     .where(eq(orderLines.orderId, orderId));
 
-  const allFulfilled = lines.length > 0 && lines.every((l) => l.status === 'fulfilled');
-  const anyFulfilled = lines.some((l) => l.status === 'fulfilled' || l.status === 'partial');
-  const status = allFulfilled ? 'fulfilled' : anyFulfilled ? 'partial' : 'pending';
+  // İade/iptal (canceled) satırlar aktif iş sayılmaz — otomatik yeniden teslime uygun
+  // değildir (§2). Sipariş durumu yalnız aktif satırlardan hesaplanır; tüm satırlar iade
+  // edilmişse sipariş terminal 'revoked' olur (bekleyen işmiş gibi 'pending'e düşmez).
+  const active = lines.filter((l) => !l.canceled);
+  let status: 'pending' | 'partial' | 'fulfilled' | 'revoked';
+  if (lines.length > 0 && active.length === 0) {
+    status = 'revoked';
+  } else {
+    const allFulfilled = active.length > 0 && active.every((l) => l.status === 'fulfilled');
+    const anyFulfilled = active.some((l) => l.status === 'fulfilled' || l.status === 'partial');
+    status = allFulfilled ? 'fulfilled' : anyFulfilled ? 'partial' : 'pending';
+  }
 
   await tx.update(orders).set({ status }).where(eq(orders.id, orderId));
   return status;

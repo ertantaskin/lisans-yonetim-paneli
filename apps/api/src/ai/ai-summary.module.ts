@@ -12,5 +12,7 @@ import { AiSummaryService } from './ai-summary.service';
   imports: [AiModule],
   controllers: [AiSummaryController],
   providers: [AiSummaryService],
+  // DailyDigestModule (§16) AiSummaryService'i enjekte eder → export şart.
+  exports: [AiSummaryService],
 })
 export class AiSummaryModule {}

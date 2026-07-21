@@ -204,7 +204,10 @@ function ReportSection({ enabled }: { enabled: boolean }) {
           />
         </div>
         <div className="flex items-center gap-3">
-          <Button onClick={() => void run()} disabled={loading || question.trim().length < 3}>
+          <Button
+            onClick={() => void run()}
+            disabled={!enabled || loading || question.trim().length < 3}
+          >
             {loading ? <Loader2 className="animate-spin" /> : <Play />}
             {loading ? 'Çalışıyor…' : 'Raporu çalıştır'}
           </Button>
@@ -459,7 +462,7 @@ function TriageSection({ enabled }: { enabled: boolean }) {
             />
             <Button
               onClick={() => void run()}
-              disabled={loading || id.trim().length === 0}
+              disabled={!enabled || loading || id.trim().length === 0}
               className="shrink-0"
             >
               {loading ? <Loader2 className="animate-spin" /> : <Sparkles />}

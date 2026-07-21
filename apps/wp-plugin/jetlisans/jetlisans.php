@@ -35,10 +35,12 @@ require_once JETLISANS_DIR . 'includes/class-updater.php';
 function jetlisans_init() {
     Jetlisans_Settings::instance();
     Jetlisans_Order_Sync::instance();
+    Jetlisans_Order_List::instance();
     Jetlisans_Webhook::instance();
     Jetlisans_My_Account::instance();
     Jetlisans_Admin_Metabox::instance();
     Jetlisans_Report_Issue::instance();
+    Jetlisans_Updater::instance();
 }
 add_action('plugins_loaded', 'jetlisans_init');
 

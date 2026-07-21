@@ -168,8 +168,29 @@ Detay: memory `dalga-build-progress`.
 - **D8** (§12/§13): ürün detayı · tedarikçi karnesi · site detayı · genel-bakış dashboard.
 - `audit_action` enum: +site_update/+anonymize. Bilgi mimarisi (§17) tam canlı ("Yakında" kalktı).
 
-migration 0000-0010. Kalan (bilinçli/ertelenen): §15 AI operasyon (Faz 4), site-bağlama 15dk sihirbazı,
-k6/Playwright yük-e2e (CI), private update endpoint. Yol haritası §18.
+**Faz 2 — Dalga 9-11 (son dalgalar, hepsi CANLI + deploy + smoke):** Ertelenen tüm roadmap
+maddeleri kapatıldı — proje mimari kapsamı %100 tamamlandı.
+
+- **D9** (§14): onboarding — tek-seferlik "bağlan kodu" (`site_connect_tokens`, 15dk TTL, atomik
+  tek-kullanım, şifreli kimlik; `sites.rekey`) + 3 adımlı admin sihirbazı (/sites/new) + WP "Panele
+  Bağlan" (PUBLIC `POST /v1/connect/claim`) · operatör presence (Redis sorted-set 30s heartbeat,
+  çakışma uyarısı) · kayıtlı görünümler (`saved_views`, aktör-kapsamlı CRUD). migration 0013.
+- **D10** (§16): private update endpoint (`plugin_releases`; PUBLIC update-checker JSON + zip indir;
+  admin publish) + WP `class-updater` (WP eklenti güncelleyici) · k6 yük testi (`load/`) + Playwright
+  e2e (`e2e/`, workspace-dışı standalone) · trace-id uçtan uca (Fastify req.id = gelen x-trace-id =
+  yanıt başlığı = log izi). migration 0014.
+- **D11** (§15): AI-destekli operasyon — **env-gated, VARSAYILAN KAPALI** (AI_ENABLED=true +
+  ANTHROPIC_API_KEY yoksa AI uçları 503, sistem AI'sız tam çalışır). `AiService` (Anthropic Messages
+  API ham fetch, SDK yok; refusal/timeout; AiUnavailableException) + `ReadonlySqlService` (tek-ifade +
+  SELECT/WITH + SALT-OKUNUR transaction + 5s timeout + 200 satır). Özellikler: triyaj (destek talebini
+  AI kategorize+taslak öner, MASKELİ bağlam, yalnız ÖNERİ — eylem yok), NL→SQL rapor (üretilen SQL HER
+  ZAMAN gösterilir), günlük anomali (metrikler HER ZAMAN döner; AI kapalı/hata → paragraph=null,
+  GRACEFUL, 503 atmaz). Admin UI /ai (proxy'lerde ADMIN_TOKEN sunucu-taraflı). "AI önerir, insan onaylar."
+  Migration YOK (mevcut tabloları salt-okunur okur). API anahtarı KULLANICI sırrı — üretilmez, aktivasyon
+  kullanıcının adımı. Canlı OFF-path smoke geçti (status disabled / 503 / graceful özet metrik döndü).
+
+migration 0000-0014. Kalan (bilinçli): AI operasyon Faz 4 gelişmiş akışları (temel §15 canlı),
+yük/e2e CI pipeline'a bağlama (testler yazıldı, çalışır). Yol haritası §18.
 
 ## Geliştirme
 

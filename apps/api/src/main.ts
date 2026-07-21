@@ -19,7 +19,16 @@ async function bootstrap(): Promise<void> {
       // kullanır) hem de aşağıdaki onSend yanıt başlığına yansır → istek/log/yanıt aynı iz.
       genReqId: (req: IncomingMessage | Http2ServerRequest) => {
         const incoming = req.headers['x-trace-id'];
-        return typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
+        // Gelen x-trace-id yalnız GÜVENLİYSE benimsenir: makul uzunluk (<=200) + güvenli
+        // karakter kümesi (harf/rakam/tire/alt-tire/nokta). Aksi halde (CRLF/kontrol
+        // karakteri, aşırı uzunluk vb.) log/yanıt-başlığı enjeksiyonunu önlemek için
+        // rastgele UUID üretilir. Başlık yok/geçersiz → mevcut fallback korunur.
+        return typeof incoming === 'string' &&
+          incoming.length > 0 &&
+          incoming.length <= 200 &&
+          /^[A-Za-z0-9._-]+$/.test(incoming)
+          ? incoming
+          : randomUUID();
       },
     }),
     // rawBody: HMAC imza gövde hash'i için ham istek gövdesi (req.rawBody) gerekli (§4).

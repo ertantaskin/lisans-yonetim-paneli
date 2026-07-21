@@ -23,6 +23,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { ApiError } from '../../../lib/api';
+import { RiskBadge } from '../../../components/risk-badge';
 import { getCustomer, type CustomerDetail } from '../queries';
 import { CustomerEditForm } from './edit-form';
 
@@ -134,6 +135,9 @@ export default async function CustomerDetailPage({
           hint={abusive ? 'suistimal işareti' : undefined}
         />
       </div>
+
+      {/* Advisory risk skoru (§8/§9) — salt bilgi, otomatik eylem yok */}
+      <RiskBadge email={data.email} />
 
       {/* Etiket/Not düzenleme */}
       <Card>

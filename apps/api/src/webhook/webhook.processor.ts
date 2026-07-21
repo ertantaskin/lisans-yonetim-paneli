@@ -77,6 +77,9 @@ export class WebhookProcessor extends WorkerHost {
           'x-trace-id': traceId,
         },
         body,
+        // Açık timeout (10sn): yavaş/asılı hedef worker'ı süresiz bloklamasın. Timeout →
+        // AbortError, aşağıdaki catch tarafından yakalanır → failed işaretle + BullMQ retry.
+        signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) throw new Error(`webhook ${res.status}`);
       await this.mark(outboxId, 'delivered', null);

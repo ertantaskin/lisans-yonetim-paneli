@@ -107,6 +107,12 @@ export class OnboardingService {
 
     if (!token) throw new NotFoundException('Kod geçersiz veya süresi dolmuş');
 
+    // Sıra ÖNEMLİ: HATA verebilecek doğrulama/aramalar (domain için getById — site
+    // yoksa fırlatır) ATOMIK tüketimden ÖNCE yapılır. Aksi halde arama, tek-kullanımlık
+    // kod tüketildikten SONRA patlarsa kod yanar ve rekeylenen creds telafisiz kaybolur.
+    // Tüketim yalnız her şey geçerliyken gerçekleşir.
+    const site = await this.sites.getById(token.siteId); // domain için (fırlatabilir)
+
     const creds = await this.db.transaction(async (tx) => {
       const aad = CryptoService.siteSecretAad(token.siteId);
       // Creds'i çöz (blob'lar hâlâ dolu) — null'lamadan ÖNCE.
@@ -124,7 +130,6 @@ export class OnboardingService {
       return { apiKey, hmacSecret };
     });
 
-    const site = await this.sites.getById(token.siteId); // domain için
     await this.writeAudit(token.siteId, 'connect_claim');
 
     return { siteDomain: site.domain, apiKey: creds.apiKey, hmacSecret: creds.hmacSecret };

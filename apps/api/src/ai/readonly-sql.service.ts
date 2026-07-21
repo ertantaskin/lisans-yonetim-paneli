@@ -8,7 +8,7 @@ export interface SqlResult {
   columns: string[];
   /** En fazla MAX_ROWS satır. */
   rows: Record<string, unknown>[];
-  /** Toplam üretilen satır sayısı (kırpma öncesi). */
+  /** Döndürülen satır sayısı (DB düzeyinde MAX_ROWS'a kırpılmış hâli). */
   rowCount: number;
   /** MAX_ROWS aşıldı mı (kırpıldı mı). */
   truncated: boolean;
@@ -25,7 +25,8 @@ const MAX_ROWS = 200;
  *   3) SALT-OKUNUR transaction (SET TRANSACTION READ ONLY) → her INSERT/UPDATE/DELETE/DDL,
  *      hatta yazan volatile fonksiyon çağrısı transaction düzeyinde REDDEDİLİR. Asıl güvence budur.
  *   4) statement_timeout=5s → pg_sleep vb. ile DoS önlenir.
- *   5) Sonuç MAX_ROWS'a kırpılır.
+ *   5) Sorgu bir CTE'ye sarılıp DB düzeyinde LIMIT MAX_ROWS+1 uygulanır → devasa sonuç
+ *      kümesi belleğe HİÇ çekilmez (heap OOM/DoS önlenir), yalnız kırpma tespiti için +1.
  * AdminGuard arkasındadır (yönetici zaten tam erişimli); payload_enc kolonları şifreli durur.
  */
 @Injectable()
@@ -43,22 +44,28 @@ export class ReadonlySqlService {
       throw new HttpException('Yalnız SELECT/WITH sorgusuna izin verilir.', HttpStatus.BAD_REQUEST);
     }
 
+    // Sorguyu bir CTE'ye sarıp dışa LIMIT MAX_ROWS+1 uygula: belleğe en fazla MAX_ROWS+1
+    // satır gelir (kırpma tespiti için +1). q "WITH ... SELECT" olsa bile iç-içe WITH geçerli;
+    // sarma yalnız SELECT/WITH ile başlayan (yukarıda doğrulanmış) tek ifadeyi kabul eder.
+    const capped = `WITH __capped AS (\n${q}\n) SELECT * FROM __capped LIMIT ${MAX_ROWS + 1}`;
+
     let rows: Record<string, unknown>[];
     try {
       rows = (await this.sql.begin(async (tx) => {
         // SALT-OKUNUR + zaman sınırı: yazma imkânsız, uzun sorgu kesilir.
         await tx.unsafe('SET TRANSACTION READ ONLY');
         await tx.unsafe("SET LOCAL statement_timeout = '5s'");
-        return tx.unsafe(q);
+        return tx.unsafe(capped);
       })) as unknown as Record<string, unknown>[];
     } catch (err) {
       // Yazma denemesi / sözdizimi / timeout → 400 (kullanıcıya SQL hatası gösterilir).
       throw new HttpException(`Sorgu çalıştırılamadı: ${(err as Error).message}`, HttpStatus.BAD_REQUEST);
     }
 
-    const rowCount = rows.length;
-    const truncated = rowCount > MAX_ROWS;
+    // Belleğe en fazla MAX_ROWS+1 satır geldi: +1 varsa gerçekten kırpıldı demektir.
+    const truncated = rows.length > MAX_ROWS;
     const limited = truncated ? rows.slice(0, MAX_ROWS) : rows;
+    const rowCount = limited.length;
     const columns = limited.length > 0 ? Object.keys(limited[0]!) : [];
     return { columns, rows: limited, rowCount, truncated };
   }

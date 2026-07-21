@@ -32,6 +32,10 @@ import { AiModule } from './ai/ai.module';
 import { AiSupportModule } from './ai/ai-support.module';
 import { AiSummaryModule } from './ai/ai-summary.module';
 import { AiReportModule } from './ai/ai-report.module';
+import { DailyDigestModule } from './ai/daily-digest.module';
+import { CostsModule } from './reports/costs.module';
+import { RiskScoreModule } from './security/risk-score.module';
+import { ChannelModule } from './channel/channel-catalog.module';
 
 @Module({
   imports: [
@@ -91,6 +95,10 @@ import { AiReportModule } from './ai/ai-report.module';
     AiSupportModule,
     AiSummaryModule,
     AiReportModule,
+    DailyDigestModule,
+    CostsModule,
+    RiskScoreModule,
+    ChannelModule,
   ],
 })
 export class AppModule {}

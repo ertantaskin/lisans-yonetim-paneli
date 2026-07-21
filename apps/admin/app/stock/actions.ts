@@ -13,6 +13,10 @@ export interface ImportState {
     rejected: number;
     rejections?: Array<{ index: number; reason: string }>;
     autoCompleted: number;
+    /** Kuru çalıştırma (§7): true ise hiçbir şey kaydedilmedi (yalnız önizleme). */
+    dryRun?: boolean;
+    /** Kuru çalıştırma tahmini: dedupe sonrası girilecek satır sayısı. */
+    wouldImport?: number;
   };
 }
 
@@ -111,6 +115,8 @@ export async function importStockAction(
 ): Promise<ImportState> {
   const productId = String(formData.get('productId') || '');
   const batchId = String(formData.get('batchId') || '').trim();
+  // Kuru çalıştırma (§7): "Kuru Çalıştır" butonu name=dryRun value=true gönderir.
+  const dryRun = String(formData.get('dryRun') || '') === 'true';
   const raw = String(formData.get('keys') || '');
   const items = raw
     .split('\n')
@@ -127,10 +133,13 @@ export async function importStockAction(
         items,
         // Boşsa gönderme — API opsiyonel uuid bekler (boş string uuid doğrulamasını bozar).
         ...(batchId ? { batchId } : {}),
+        // Kuru çalıştırmada yalnız true gönder; gerçek import'ta bayrağı hiç ekleme.
+        ...(dryRun ? { dryRun: true } : {}),
       },
       await getActor(),
     );
-    revalidatePath('/stock');
+    // Kuru çalıştırma DB'yi değiştirmez → cache invalidation gereksiz; yalnız gerçek import'ta.
+    if (!dryRun) revalidatePath('/stock');
     return { ok: true, result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };

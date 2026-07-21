@@ -115,12 +115,38 @@ export function ImportStockForm({
           )}
         </div>
 
-        <Button type="submit" disabled={pending}>
-          {pending ? 'İçe aktarılıyor…' : 'Onayla ve Dağıt'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Gerçek import: name=dryRun value=false → server action commit eder. */}
+          <Button type="submit" name="dryRun" value="false" disabled={pending}>
+            {pending ? 'İşleniyor…' : 'Onayla ve Dağıt'}
+          </Button>
+          {/* Kuru çalıştırma (§7): name=dryRun value=true → yalnız doğrula, hiçbir şey kaydetme. */}
+          <Button type="submit" name="dryRun" value="true" variant="outline" disabled={pending}>
+            <Eye className="size-4" />
+            Kuru Çalıştır (Önizleme)
+          </Button>
+        </div>
 
         {state.error && <p className="text-sm text-destructive">{state.error}</p>}
-        {state.ok && state.result && (
+        {state.ok && state.result && state.result.dryRun && (
+          <div className="space-y-1 rounded-md border border-border bg-muted/30 p-3 text-sm">
+            {/* Kuru çalıştırma: hiçbir şey commit edilmedi; yalnız kabul/ret önizlemesi. */}
+            <p className="flex items-center gap-1.5 text-foreground">
+              <Eye className="size-4" />
+              Kuru çalıştırma — <strong>hiçbir şey kaydedilmedi</strong>.{' '}
+              {state.result.wouldImport ?? 0} kabul edilecek, {state.result.duplicates} mükerrer
+              atlanacak, {state.result.rejected} reddedilecek ({state.result.requested} istendi).
+            </p>
+            {state.result.rejected > 0 && state.result.rejections
+              && state.result.rejections.length > 0 && (
+              <p className="text-warning">
+                İlk hata: satır {state.result.rejections[0].index + 1} —{' '}
+                {state.result.rejections[0].reason}
+              </p>
+            )}
+          </div>
+        )}
+        {state.ok && state.result && !state.result.dryRun && (
           <div className="space-y-1 text-sm">
             {/* imported=0 ise başarı DEĞİL — hiçbir şey girmedi (ör. hepsi reddedildi). */}
             <p

@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import {
@@ -27,6 +27,8 @@ export interface CompleteResult {
 
 @Injectable()
 export class FulfillmentService {
+  private readonly logger = new Logger(FulfillmentService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly products: ProductsService,
@@ -49,6 +51,11 @@ export class FulfillmentService {
         .limit(1)
         .for('update');
       if (!line) throw new NotFoundException('Sipariş satırı bulunamadı');
+      // İade/iptal edilmiş satır otomatik/elle YENIDEN TESLIM edilmez (§2) — taze key ile
+      // yeniden doldurulup iade edilen müşteriye bedava lisans gitmesini engeller.
+      if (line.canceled) {
+        return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
+      }
       if (!line.productId) {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
       }
@@ -126,25 +133,35 @@ export class FulfillmentService {
       };
     });
 
-    // Yeni atama yapıldıysa teslimat/güncelleme mailini kuyruğa al (§6).
+    // Yeni atama yapıldıysa teslimat/güncelleme mailini kuyruğa al (§6). Atama zaten commit
+    // edildi; enqueue best-effort — kuyruk/DB hatası teslimatı DÜŞÜRMEZ (createOrder deseni).
     if (result.added > 0) {
-      const [order] = await this.db
-        .select()
-        .from(orders)
-        .where(eq(orders.id, result.orderId))
-        .limit(1);
-      if (order) {
-        await this.mail.enqueueDelivery(
-          order.id,
-          order.customerEmail,
-          `Siparişiniz güncellendi — ${order.remoteOrderId}`,
+      try {
+        const [order] = await this.db
+          .select()
+          .from(orders)
+          .where(eq(orders.id, result.orderId))
+          .limit(1);
+        if (order) {
+          await this.mail.enqueueDelivery(
+            order.id,
+            order.customerEmail,
+            `Siparişiniz güncellendi — ${order.remoteOrderId}`,
+          );
+          // Geri kanal webhook — tamamlanma sonrası güncel durum (§2).
+          const evt =
+            order.status === 'fulfilled' ? 'order.fulfilled' : 'order.partially_fulfilled';
+          await this.webhook.emit(order.siteId, order.id, evt, {
+            status: order.status,
+            remoteOrderId: order.remoteOrderId,
+          });
+        }
+      } catch (err) {
+        this.logger.warn(
+          `completeLine sonrası mail/webhook kuyruğa alınamadı (order ${result.orderId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
         );
-        // Geri kanal webhook — tamamlanma sonrası güncel durum (§2).
-        const evt = order.status === 'fulfilled' ? 'order.fulfilled' : 'order.partially_fulfilled';
-        await this.webhook.emit(order.siteId, order.id, evt, {
-          status: order.status,
-          remoteOrderId: order.remoteOrderId,
-        });
       }
     }
 
@@ -175,6 +192,8 @@ export class FulfillmentService {
         and(
           eq(orderLines.productId, productId),
           inArray(orderLines.status, ['pending', 'partial']),
+          // İade/iptal edilmiş satırları HARİÇ TUT — yeniden teslim edilmez (§2).
+          eq(orderLines.canceled, false),
           // Efektif politika: satır override > ürün. Yalnız partial-auto oto-tamamlanır.
           sql`coalesce(${orderLines.policyOverride}, ${products.fulfillmentPolicy}) = 'partial-auto'`,
         ),

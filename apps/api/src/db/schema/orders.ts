@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { fulfillmentPolicyEnum, orderLineStatusEnum, orderStatusEnum } from './enums';
 import { products } from './products';
 import { sites } from './sites';
@@ -43,6 +43,10 @@ export const orderLines = pgTable('order_lines', {
   qty: integer('qty').notNull(),
   fulfilledQty: integer('fulfilled_qty').notNull().default(0),
   status: orderLineStatusEnum('status').notNull().default('pending'),
+  // İade/iptal terminal işareti (§2): revoke ile geri alınan satır TRUE olur ve otomatik/elle
+  // yeniden teslime UYGUN DEĞİLDİR — aksi halde iade edilen satır taze key ile yeniden
+  // doldurulup müşteriye bedava lisans verilirdi. status='pending'e dönse bile canceled kalır.
+  canceled: boolean('canceled').notNull().default(false),
   // Sipariş bazlı politika ezme (§5) — null ise ürün politikası geçerli.
   policyOverride: fulfillmentPolicyEnum('policy_override'),
   priority: integer('priority').notNull().default(0),

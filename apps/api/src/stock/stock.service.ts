@@ -25,6 +25,10 @@ export interface ImportResult {
   rejected: number;
   rejections: ImportRejection[];
   autoCompleted: number;
+  /** Kuru çalıştırma (§7): true ise HİÇBİR şey commit edilmedi (yalnız doğrulama). */
+  dryRun?: boolean;
+  /** Kuru çalıştırma tahmini: doğrulamayı geçip (dedupe sonrası) GİRİLECEK satır sayısı. */
+  wouldImport?: number;
 }
 
 export type ImportItem = { payload: string | Record<string, unknown>; expiresAt?: string };
@@ -61,6 +65,7 @@ export class StockService {
     productId: string,
     items: ImportItem[],
     batchId?: string,
+    dryRun = false,
   ): Promise<ImportResult> {
     const product = await this.products.getById(productId);
 
@@ -103,6 +108,42 @@ export class StockService {
         status: 'available',
       });
     });
+
+    // Kuru çalıştırma (§7): payloadlar DOĞRULANDI + rejected raporu üretildi; buradan
+    // ötesi (DB insert, audit, autoCompleteProduct) HİÇ ÇALIŞMAZ — hiçbir şey commit edilmez.
+    // Dedupe yalnız salt-okunur TAHMİN edilir: mevcut payload_hash'ler + parti-içi tekrar.
+    if (dryRun) {
+      let duplicates = 0;
+      let wouldImport = 0;
+      if (values.length > 0) {
+        const hashes = values.map((v) => v.payloadHash);
+        const existing = await this.db
+          .select({ hash: licenseItems.payloadHash })
+          .from(licenseItems)
+          .where(inArray(licenseItems.payloadHash, hashes));
+        const existingSet = new Set(existing.map((r) => r.hash));
+        const seen = new Set<string>();
+        for (const v of values) {
+          // Zaten DB'de var VEYA bu partide daha önce görüldü → mükerrer (girilmez).
+          if (existingSet.has(v.payloadHash) || seen.has(v.payloadHash)) {
+            duplicates += 1;
+          } else {
+            seen.add(v.payloadHash);
+            wouldImport += 1;
+          }
+        }
+      }
+      return {
+        requested: items.length,
+        imported: 0,
+        duplicates,
+        rejected: rejections.length,
+        rejections,
+        autoCompleted: 0,
+        dryRun: true,
+        wouldImport,
+      };
+    }
 
     if (values.length === 0) {
       return {

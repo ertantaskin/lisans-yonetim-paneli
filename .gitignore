@@ -38,6 +38,10 @@ pgdata/
 caddy_data/
 caddy_config/
 
+# DR yedek tatbikatı çıktıları (scripts/backup-drill.sh) — ASLA commit edilmez
+backups/
+*.dump
+
 # Editör / OS
 .DS_Store
 Thumbs.db

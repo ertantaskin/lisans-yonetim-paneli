@@ -1,0 +1,222 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Jetlisans — Yük (k6) + Uçtan-uca (Playwright) CI (§16 / D19)
+#
+# AYRI dosya: mevcut `ci.yml` (build/typecheck/lint/birim + YARIŞ testi) DOKUNULMADI.
+# Bu workflow onu bozmadan, ağır/ortam-bağımlı test paketlerini opsiyonel olarak koşar.
+#
+# ── Tetikleyiciler ──────────────────────────────────────────────────────────
+#   • workflow_dispatch : elle (Actions sekmesinden "Run workflow"), opsiyonel base_url
+#   • pull_request      : yalnız load/**, e2e/**, apps/** değiştiğinde (gürültüsüz)
+#
+# ── Gerekli / opsiyonel secret'lar ──────────────────────────────────────────
+#   Job A (k6-smoke)       : SECRET GEREKTİRMEZ — tamamen kendine yeterli. PG17 + Redis7
+#                            "services:" ile ephemeral ayağa kalkar, MASTER_KEY koşuda
+#                            üretilir, ADMIN_TOKEN atılabilir CI değeridir.
+#   Job B (playwright-e2e) : Hepsi OPSİYONEL (yoksa test graceful davranır):
+#       - secrets.E2E_BASE_URL : e2e hedef panel kökü. YOKSA playwright.config.ts
+#                                varsayılanı (canlı VPS admin) kullanılır. workflow_dispatch
+#                                "base_url" input'u bunu ezer.
+#       - secrets.E2E_USER / secrets.E2E_PASS : hedef panelde auth AÇIKSA (SESSION_SECRET)
+#                                gereklidir; verilmezse korumalı testler SKIP edilir
+#                                (kırılgan başarısızlık yok — bkz. e2e/README.md).
+#
+# ── Notlar ──────────────────────────────────────────────────────────────────
+#   • Testler CI'da her zaman YEŞİL olmayabilir (ortam-bağımlı: soğuk-başlangıç p95,
+#     canlı panelin erişilebilirliği). İş DOĞRU KURGULU ve çalıştırılabilir; continue-on-error
+#     KULLANILMADI — kırmızı sonuç gerçek bir sinyaldir, maskelenmez.
+#   • Ayağa kaldırılan servisler ephemeral: job bitince runner ile birlikte yok olur;
+#     arka plan API süreci "Stop API" adımında kapatılır. PROD DB'ye ASLA dokunulmaz.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Load & E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Playwright e2e hedef panel kökü (boş = playwright.config varsayılanı / canlı VPS)'
+        required: false
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - 'load/**'
+      - 'e2e/**'
+      - 'apps/**'
+      - '.github/workflows/load-e2e.yml'
+
+# Aynı ref için eski koşuyu iptal et; mevcut `ci.yml` grubundan AYRI ad (çakışmaz).
+concurrency:
+  group: load-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ── Job A — k6 YÜK smoke: ephemeral API + PG17 + Redis7, düşük yük ──────────
+  # setup() admin API ile test tenant+ürün+stok kurar; default() HMAC imzalı
+  # POST /v1/orders yollar. Eşikler load/orders.k6.js içinde gömülü (§16):
+  #   http_req_duration p(95)<300 · orders_fulfilled count<=STOCK (çifte atama=0) · checks>0.99
+  # "Düşük yük" = VUS/DURATION küçültülür (k6 script env'den okur); p95 EŞİĞİ README'ye
+  # göre 300ms KORUNUR (script'e gömülü olduğu için değiştirilmez).
+  k6-smoke:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: jetlisans
+          POSTGRES_PASSWORD: jetlisans
+          POSTGRES_DB: jetlisans_load
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jetlisans -d jetlisans_load"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # API boot + k6 aynı değerleri paylaşır (yarış-testi job deseninden alındı).
+      DATABASE_URL: postgres://jetlisans:jetlisans@localhost:5432/jetlisans_load
+      REDIS_URL: redis://localhost:6379
+      API_PORT: '3001'
+      NODE_ENV: production
+      # Atılabilir CI admin token — gerçek sır DEĞİL; yalnız API↔k6 setup() eşleşsin diye.
+      ADMIN_TOKEN: ci-load-admin-token
+      BASE_URL: http://localhost:3001
+      # Düşük-yük smoke ayarları (k6 script bunları env'den okur — script değişmez).
+      VUS: '10'
+      DURATION: '10s'
+      STOCK: '50'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # API @jetlisans/shared'a bağlı → önce onu, sonra API'yi derle (admin build'i atlanır, hafif).
+      - name: Ortak paketi derle
+        run: pnpm --filter @jetlisans/shared build
+
+      - name: API derle
+        run: pnpm --filter @jetlisans/api build
+
+      # MASTER_KEY (AES-256-GCM envelope, 32 byte base64) koşuda üretilir — asla loglanmaz.
+      - name: MASTER_KEY üret
+        run: echo "MASTER_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Migration'ları uygula
+        run: pnpm --filter @jetlisans/api db:migrate
+
+      # Arka planda API'yi başlat (GitHub Actions arka plan süreçleri job boyunca yaşar).
+      - name: API'yi başlat (arka plan)
+        run: |
+          node apps/api/dist/main.js > "$RUNNER_TEMP/api.log" 2>&1 &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+
+      - name: Sağlığı bekle (GET /v1/health)
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS "http://localhost:${API_PORT}/v1/health" > /dev/null 2>&1; then
+              echo "API ayakta (deneme $i)."
+              curl -fsS "http://localhost:${API_PORT}/v1/health"; echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::API 120sn içinde sağlıklı olmadı."
+          echo "── API log ──"; cat "$RUNNER_TEMP/api.log" || true
+          exit 1
+
+      # k6 kur (Node değil, ayrı yürütücü). Alternatif: binary'yi apt/dl ile kurmak.
+      - name: k6 kur
+        uses: grafana/setup-k6-action@v1
+
+      - name: k6 yük smoke — load/orders.k6.js
+        # Eşikler script'te gömülü (p95<300, orders_fulfilled<=STOCK, checks>0.99); herhangi
+        # biri kırılırsa k6 çıkış kodu ≠ 0 → bu adım FAIL eder (maskelenmez).
+        run: k6 run load/orders.k6.js
+
+      - name: API log (başarısızlıkta)
+        if: failure()
+        run: cat "$RUNNER_TEMP/api.log" || true
+
+      - name: API'yi durdur (ephemeral temizlik)
+        if: always()
+        run: kill "${API_PID}" 2>/dev/null || true
+
+  # ── Job B — Playwright e2e: standalone e2e/ paketi, BASE_URL hedefine karşı ──
+  # e2e/ pnpm workspace DIŞI (kendi package.json'ı) → npm ile kurulur, kendi
+  # Chromium'unu indirir. Testler auth durumuna göre graceful (bkz. e2e/README.md).
+  playwright-e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # NOT: e2e/ altında package-lock.json COMMIT EDİLMEDİĞİ için `npm ci` (lockfile ZORUNLU)
+      # kullanılamaz → `npm install`. Bir lockfile eklenirse buradaki komut `npm ci` yapılabilir.
+      - name: Bağımlılıkları kur (e2e standalone)
+        run: npm install --no-audit --no-fund
+
+      - name: Playwright tarayıcısını + sistem bağımlılıklarını kur
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright e2e testleri
+        # BASE_URL önceliği: workflow_dispatch input > secret > (boşsa) playwright.config
+        # varsayılanı (canlı VPS). BOŞ string EXPORT ETME — config `?? default` boş string'e
+        # düşmez (nullish değil), o yüzden yalnız dolu değeri export ediyoruz.
+        # E2E_USER/E2E_PASS verilmezse ve hedefte auth açıksa testler SKIP olur (kırılgan değil).
+        env:
+          INPUT_BASE_URL: ${{ github.event.inputs.base_url }}
+          SECRET_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_USER: ${{ secrets.E2E_USER }}
+          E2E_PASS: ${{ secrets.E2E_PASS }}
+        run: |
+          TARGET="${INPUT_BASE_URL:-${SECRET_BASE_URL:-}}"
+          if [ -n "$TARGET" ]; then
+            export BASE_URL="$TARGET"
+            echo "e2e hedefi: $BASE_URL"
+          else
+            echo "BASE_URL verilmedi → playwright.config.ts varsayılanı (canlı VPS admin) kullanılacak."
+          fi
+          npx playwright test
+
+      - name: Playwright izleri (başarısızlıkta)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

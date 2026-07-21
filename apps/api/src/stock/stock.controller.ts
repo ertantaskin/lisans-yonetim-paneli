@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
@@ -8,6 +8,8 @@ const ImportBody = z.object({
   productId: z.string().uuid(),
   /** Opsiyonel parti bağlama (§12): verilirse tüm satırlar bu batch'e yazılır (recall/toplu-değiştir). */
   batchId: z.string().uuid().optional(),
+  /** Kuru çalıştırma (§7): true ise yalnız DOĞRULA + önizleme raporu — hiçbir şey commit edilmez. */
+  dryRun: z.boolean().optional(),
   items: z
     .array(
       z.object({
@@ -35,8 +37,13 @@ export class StockController {
   constructor(private readonly stock: StockService) {}
 
   @Post('import')
-  import(@Body(new ZodBody(ImportBody)) body: ImportBody) {
-    return this.stock.import(body.productId, body.items, body.batchId);
+  import(
+    @Body(new ZodBody(ImportBody)) body: ImportBody,
+    @Query('dryRun') dryRunQuery?: string,
+  ) {
+    // Kuru çalıştırma (§7): body.dryRun VEYA ?dryRun=true|1 → yalnız doğrula, commit etme.
+    const dryRun = body.dryRun === true || dryRunQuery === 'true' || dryRunQuery === '1';
+    return this.stock.import(body.productId, body.items, body.batchId, dryRun);
   }
 
   /** "Onayla ve Dağıt" önizleme (§13): bu giriş bekleyen talebi ne kadar karşılar. */

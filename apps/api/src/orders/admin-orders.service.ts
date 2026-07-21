@@ -293,9 +293,12 @@ export class AdminOrdersService {
       if (line) {
         const nf = Math.max(0, line.fulfilledQty - asg.units);
         const lineStatus = nf >= line.qty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+        // canceled=true: iade/iptal edilen satır otomatik/elle YENIDEN TESLIM edilmez (§2).
+        // status 'pending'e dönse bile bu işaret satırı partial-auto yeniden-atama havuzundan
+        // kalıcı olarak çıkarır — iade edilen müşteriye taze key ile bedava lisans gitmez.
         await tx
           .update(orderLines)
-          .set({ fulfilledQty: nf, status: lineStatus })
+          .set({ fulfilledQty: nf, status: lineStatus, canceled: true })
           .where(eq(orderLines.id, line.id));
       }
       await recomputeOrderStatus(tx, asg.orderId);

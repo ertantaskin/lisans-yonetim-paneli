@@ -1,14 +1,12 @@
 import Link from 'next/link';
-import { ArrowLeft, ShieldAlert } from 'lucide-react';
-import { isOwner } from '../../../lib/session';
+import { ArrowLeft } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
-import { Card } from '../../../components/ui/card';
-import { PageHeader, EmptyState } from '../../../components/ui/page-header';
+import { PageHeader } from '../../../components/ui/page-header';
 import { Wizard } from './wizard';
 
 export const dynamic = 'force-dynamic';
 
-export default async function NewSitePage() {
+export default function NewSitePage() {
   return (
     <div className="space-y-6">
       <div>
@@ -25,18 +23,10 @@ export default async function NewSitePage() {
         </div>
       </div>
 
-      {/* Yalnız owner site bağlayabilir (auth açıkken). Defense-in-depth. */}
-      {(await isOwner()) ? (
-        <Wizard />
-      ) : (
-        <Card className="py-10">
-          <EmptyState
-            icon={ShieldAlert}
-            title="Yetkiniz yok (yalnız owner)"
-            description="Site bağlama sihirbazı yalnız 'owner' rolündeki yöneticiler içindir."
-          />
-        </Card>
-      )}
+      {/* Site bağlama, satır-içi 'Yeni Site Bağla' formu (createSiteAction) ile aynı
+          admin seviyesinde — owner şartı yok (M11 tutarlılık). Kimlik doğrulama
+          middleware'de zorlanır; sayfaya ulaşan herkes zaten yetkili admindir. */}
+      <Wizard />
     </div>
   );
 }
