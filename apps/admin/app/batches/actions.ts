@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '../../lib/api';
+import { getActor } from '../../lib/session';
 
 export interface ActionState {
   ok: boolean;
@@ -25,6 +26,7 @@ export async function recallBatchAction(id: string, reason: string): Promise<Rec
     const res = await apiPost<{ voided: number; soldNeedingReplacement: number }>(
       `/v1/admin/batches/${id}/recall`,
       { reason: reason.trim() },
+      await getActor(),
     );
     revalidatePath('/batches');
     return {
@@ -55,6 +57,7 @@ export async function bulkReplaceBatchAction(id: string): Promise<BulkReplaceRes
     const res = await apiPost<{ total: number; replaced: number; skippedNoStock: number }>(
       `/v1/admin/batches/${id}/bulk-replace`,
       {},
+      await getActor(),
     );
     revalidatePath('/batches');
     return {

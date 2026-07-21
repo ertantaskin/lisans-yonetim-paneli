@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '../../lib/api';
+import { getActor } from '../../lib/session';
 
 export interface ActionState {
   ok: boolean;
@@ -14,7 +15,7 @@ export interface ActionState {
 export async function approveReplacementAction(id: string, actor?: string): Promise<ActionState> {
   if (!id) return { ok: false, error: 'Talep id zorunlu' };
   try {
-    await apiPost(`/v1/admin/replacements/${id}/approve`, actor ? { actor } : {});
+    await apiPost(`/v1/admin/replacements/${id}/approve`, actor ? { actor } : {}, await getActor());
     revalidatePath('/support');
     return { ok: true };
   } catch (e) {
@@ -31,7 +32,11 @@ export async function rejectReplacementAction(
   if (!id) return { ok: false, error: 'Talep id zorunlu' };
   if (!note.trim()) return { ok: false, error: 'Not zorunlu' };
   try {
-    await apiPost(`/v1/admin/replacements/${id}/reject`, { note: note.trim(), ...(actor ? { actor } : {}) });
+    await apiPost(
+      `/v1/admin/replacements/${id}/reject`,
+      { note: note.trim(), ...(actor ? { actor } : {}) },
+      await getActor(),
+    );
     revalidatePath('/support');
     return { ok: true };
   } catch (e) {
@@ -48,10 +53,14 @@ export async function requestInfoReplacementAction(
   if (!id) return { ok: false, error: 'Talep id zorunlu' };
   if (!note.trim()) return { ok: false, error: 'Not zorunlu' };
   try {
-    await apiPost(`/v1/admin/replacements/${id}/request-info`, {
-      note: note.trim(),
-      ...(actor ? { actor } : {}),
-    });
+    await apiPost(
+      `/v1/admin/replacements/${id}/request-info`,
+      {
+        note: note.trim(),
+        ...(actor ? { actor } : {}),
+      },
+      await getActor(),
+    );
     revalidatePath('/support');
     return { ok: true };
   } catch (e) {

@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiSend } from '../../lib/api';
+import { getActor } from '../../lib/session';
 
 export interface ImportState {
   ok: boolean;
@@ -79,7 +80,7 @@ export async function createProductAction(
   formData: FormData,
 ): Promise<FormState> {
   try {
-    await apiPost('/v1/admin/products', buildProductBody(formData));
+    await apiPost('/v1/admin/products', buildProductBody(formData), await getActor());
     revalidatePath('/stock');
     return { ok: true };
   } catch (e) {
@@ -95,7 +96,7 @@ export async function updateProductAction(
   const id = String(formData.get('id') || '');
   if (!id) return { ok: false, error: 'Ürün ID eksik' };
   try {
-    await apiSend('PATCH', `/v1/admin/products/${id}`, buildProductBody(formData));
+    await apiSend('PATCH', `/v1/admin/products/${id}`, buildProductBody(formData), await getActor());
     revalidatePath('/stock');
     return { ok: true };
   } catch (e) {
@@ -119,12 +120,16 @@ export async function importStockAction(
   if (!productId) return { ok: false, error: 'Ürün seçin' };
   if (items.length === 0) return { ok: false, error: 'En az bir key girin' };
   try {
-    const result = await apiPost<ImportState['result']>('/v1/admin/stock/import', {
-      productId,
-      items,
-      // Boşsa gönderme — API opsiyonel uuid bekler (boş string uuid doğrulamasını bozar).
-      ...(batchId ? { batchId } : {}),
-    });
+    const result = await apiPost<ImportState['result']>(
+      '/v1/admin/stock/import',
+      {
+        productId,
+        items,
+        // Boşsa gönderme — API opsiyonel uuid bekler (boş string uuid doğrulamasını bozar).
+        ...(batchId ? { batchId } : {}),
+      },
+      await getActor(),
+    );
     revalidatePath('/stock');
     return { ok: true, result };
   } catch (e) {
@@ -184,13 +189,17 @@ export async function createMappingAction(
   const bundleQtyRaw = String(formData.get('bundleQty') || '').trim();
   const bundleQty = bundleQtyRaw ? Number(bundleQtyRaw) : undefined;
   try {
-    await apiPost('/v1/admin/mappings', {
-      siteId,
-      productId,
-      remoteProductId,
-      ...(remoteVariationId ? { remoteVariationId } : {}),
-      ...(bundleQty && bundleQty > 0 ? { bundleQty } : {}),
-    });
+    await apiPost(
+      '/v1/admin/mappings',
+      {
+        siteId,
+        productId,
+        remoteProductId,
+        ...(remoteVariationId ? { remoteVariationId } : {}),
+        ...(bundleQty && bundleQty > 0 ? { bundleQty } : {}),
+      },
+      await getActor(),
+    );
     revalidatePath('/stock');
     return { ok: true };
   } catch (e) {
@@ -203,6 +212,6 @@ export async function updateMappingAction(formData: FormData) {
   const id = String(formData.get('id') || '');
   const active = String(formData.get('active') || '') === 'true';
   if (!id) return;
-  await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active });
+  await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active }, await getActor());
   revalidatePath('/stock');
 }

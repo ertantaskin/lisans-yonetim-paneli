@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiSend } from '@/lib/api';
+import { getActor } from '@/lib/session';
 
 export interface SupplierFormState {
   ok: boolean;
@@ -19,11 +20,15 @@ export async function createSupplierAction(
   const contact = String(formData.get('contact') || '').trim();
   const notes = String(formData.get('notes') || '').trim();
   try {
-    await apiPost('/v1/admin/suppliers', {
-      name,
-      ...(contact ? { contact } : {}),
-      ...(notes ? { notes } : {}),
-    });
+    await apiPost(
+      '/v1/admin/suppliers',
+      {
+        name,
+        ...(contact ? { contact } : {}),
+        ...(notes ? { notes } : {}),
+      },
+      await getActor(),
+    );
     revalidatePath('/suppliers');
     return { ok: true };
   } catch (e) {
@@ -43,11 +48,16 @@ export async function updateSupplierAction(
   const contact = String(formData.get('contact') || '').trim();
   const notes = String(formData.get('notes') || '').trim();
   try {
-    await apiSend('PATCH', `/v1/admin/suppliers/${id}`, {
-      name,
-      contact: contact || null,
-      notes: notes || null,
-    });
+    await apiSend(
+      'PATCH',
+      `/v1/admin/suppliers/${id}`,
+      {
+        name,
+        contact: contact || null,
+        notes: notes || null,
+      },
+      await getActor(),
+    );
     revalidatePath('/suppliers');
     return { ok: true };
   } catch (e) {
@@ -59,7 +69,7 @@ export async function updateSupplierAction(
 export async function setSupplierActiveAction(id: string, active: boolean): Promise<SupplierFormState> {
   if (!id) return { ok: false, error: 'Tedarikçi id zorunlu' };
   try {
-    await apiSend('PATCH', `/v1/admin/suppliers/${id}`, { active });
+    await apiSend('PATCH', `/v1/admin/suppliers/${id}`, { active }, await getActor());
     revalidatePath('/suppliers');
     return { ok: true };
   } catch (e) {

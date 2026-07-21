@@ -18,3 +18,13 @@ export async function isOwner(): Promise<boolean> {
   const user = await getSessionUser();
   return user?.role === 'owner';
 }
+
+/**
+ * Audit için eylemi yapan admin'in kimliği. apiPost/apiSend'e 3. argüman olarak
+ * geçilir → `x-admin-actor` başlığı → API @AdminActor → audit_log.actor.
+ * Auth kapalıysa (veya oturum yok) 'panel:admin' (sistem/legacy).
+ */
+export async function getActor(): Promise<string> {
+  const user = await getSessionUser();
+  return user ? `admin:${user.email}` : 'panel:admin';
+}

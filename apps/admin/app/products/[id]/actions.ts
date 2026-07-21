@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '../../../lib/api';
+import { getActor } from '../../../lib/session';
 
 export interface StockAdjustState {
   ok: boolean;
@@ -48,7 +49,7 @@ export async function createStockAdjustmentAction(
   if (licenseItemId) body.licenseItemId = licenseItemId;
 
   try {
-    await apiPost('/v1/admin/stock-adjustments', body);
+    await apiPost('/v1/admin/stock-adjustments', body, await getActor());
     revalidatePath(`/products/${productId}`);
     return { ok: true, saved: true };
   } catch (e) {

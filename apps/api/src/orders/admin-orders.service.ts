@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
 import { DB, type Database } from '../db/db.module';
@@ -12,6 +12,7 @@ import {
   orderLines,
   orders,
   products,
+  type Site,
 } from '../db/schema';
 import {
   AccountPayloadSchema,
@@ -314,5 +315,45 @@ export class AdminOrdersService {
 
       return { assignmentId, status: 'revoked', licenseItemId: asg.licenseItemId };
     });
+  }
+
+  /**
+   * Site-facing sipariş revoke sarmalayıcısı (§2): WooCommerce'te sipariş iade/iptal
+   * edilince WP eklentisi tetikler → panelde CANLI key kalmaz. Siparişin bu siteye ait
+   * olduğunu DOĞRULAR (başka sitenin siparişi geri alınamaz), aktif atamalarını MEVCUT
+   * idempotent revoke akışıyla (revokeAssignment) geri alır. Payload/key DÖNMEZ.
+   *
+   * İdempotent: revokeAssignment zaten revoked ise no-op; ikinci çağrıda aktif atama
+   * kalmadığından tüm istek no-op olur (revoked=0). İade edilen key otomatik satışa
+   * DÖNMEZ (tek-kullanım → karantina; multi/MAK → kapasite geri, §2).
+   */
+  async revokeOrderForSite(
+    site: Site,
+    remoteOrderId: string,
+    reason: string,
+  ): Promise<{ orderId: string; revoked: number; assignments: number }> {
+    const [order] = await this.db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, remoteOrderId)))
+      .limit(1);
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+
+    // Yalnız AKTİF atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor).
+    // Site scope order üzerinden zaten doğrulandı; atamalar bu siparişe bağlı.
+    const active = await this.db
+      .select({ id: assignments.id })
+      .from(assignments)
+      .where(and(eq(assignments.orderId, order.id), eq(assignments.status, 'active')));
+
+    const actor = `site:${site.domain}`;
+    let revoked = 0;
+    for (const a of active) {
+      const res = await this.revokeAssignment(a.id, reason, actor);
+      // already=true → yarışta başka yol revoke etmiş; revoked sayacına katma.
+      if (!('already' in res)) revoked++;
+    }
+
+    return { orderId: order.id, revoked, assignments: active.length };
   }
 }

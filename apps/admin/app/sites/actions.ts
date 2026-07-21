@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiSend } from '../../lib/api';
+import { getActor, isOwner } from '../../lib/session';
 
 export interface CreateSiteState {
   ok: boolean;
@@ -29,12 +30,17 @@ export async function createSiteAction(
     }
     // Sandbox (test modu) — checkbox işaretliyse mailler gerçek müşteriye GİTMEZ.
     const sandbox = formData.get('sandbox') != null;
-    const site = await apiPost<CreateSiteState['site']>('/v1/admin/sites', {
-      domain,
-      ...(senderEmail ? { senderEmail } : {}),
-      ...(salesDailyQuota != null ? { salesDailyQuota } : {}),
-      ...(sandbox ? { sandbox: true } : {}),
-    });
+    const actor = await getActor();
+    const site = await apiPost<CreateSiteState['site']>(
+      '/v1/admin/sites',
+      {
+        domain,
+        ...(senderEmail ? { senderEmail } : {}),
+        ...(salesDailyQuota != null ? { salesDailyQuota } : {}),
+        ...(sandbox ? { sandbox: true } : {}),
+      },
+      actor,
+    );
     revalidatePath('/sites');
     return { ok: true, site };
   } catch (e) {
@@ -79,12 +85,18 @@ export async function updateSiteAction(
     // Sandbox (test modu) — checkbox işaretliyse true.
     const sandbox = formData.get('sandbox') != null;
 
-    await apiSend('PATCH', `/v1/admin/sites/${encodeURIComponent(siteId)}`, {
-      salesDailyQuota,
-      sandbox,
-      senderEmail,
-      webhookUrl,
-    });
+    const actor = await getActor();
+    await apiSend(
+      'PATCH',
+      `/v1/admin/sites/${encodeURIComponent(siteId)}`,
+      {
+        salesDailyQuota,
+        sandbox,
+        senderEmail,
+        webhookUrl,
+      },
+      actor,
+    );
     revalidatePath(`/sites/${siteId}`);
     revalidatePath('/sites');
     return { ok: true, saved: true };
@@ -108,9 +120,12 @@ export async function setSiteStatusAction(
   siteId: string,
   status: 'active' | 'suspended',
 ): Promise<SetSiteStatusState> {
+  // RBAC (§8): askıya alma HMAC auth'u kesip sipariş push'unu durdurur → yalnız owner.
+  if (!(await isOwner())) return { ok: false, error: 'Bu işlem için owner yetkisi gerekir.' };
   if (!siteId) return { ok: false, error: 'Site id zorunlu' };
   try {
-    await apiSend('PATCH', `/v1/admin/sites/${encodeURIComponent(siteId)}`, { status });
+    const actor = await getActor();
+    await apiSend('PATCH', `/v1/admin/sites/${encodeURIComponent(siteId)}`, { status }, actor);
     revalidatePath(`/sites/${siteId}`);
     revalidatePath('/sites');
     return { ok: true, siteId, status };
@@ -132,10 +147,15 @@ export interface RotateSecretState {
  * daha geçerli kalır → WP eklentisi kesintisiz yeni secret'a geçer.
  */
 export async function rotateSecretAction(siteId: string): Promise<RotateSecretState> {
+  // RBAC (§8): HMAC sır rotasyonu güven kökünü değiştirir → yalnız owner.
+  if (!(await isOwner())) return { ok: false, error: 'Bu işlem için owner yetkisi gerekir.' };
   if (!siteId) return { ok: false, error: 'Site id zorunlu' };
   try {
+    const actor = await getActor();
     const { hmacSecret } = await apiPost<{ hmacSecret: string }>(
       `/v1/admin/sites/${siteId}/rotate-secret`,
+      undefined,
+      actor,
     );
     revalidatePath('/sites');
     return { ok: true, siteId, hmacSecret };

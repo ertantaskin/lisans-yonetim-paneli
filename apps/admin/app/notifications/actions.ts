@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '../../lib/api';
+import { getActor } from '../../lib/session';
 
 export interface CheckLowStockState {
   ok: boolean;
@@ -14,7 +15,11 @@ export interface CheckLowStockState {
  */
 export async function checkLowStockAction(): Promise<CheckLowStockState> {
   try {
-    const res = await apiPost<{ created: number }>('/v1/admin/notifications/check-low-stock');
+    const res = await apiPost<{ created: number }>(
+      '/v1/admin/notifications/check-low-stock',
+      undefined,
+      await getActor(),
+    );
     revalidatePath('/notifications');
     return { ok: true, created: res.created ?? 0 };
   } catch (e) {

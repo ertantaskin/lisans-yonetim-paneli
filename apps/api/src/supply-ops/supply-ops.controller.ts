@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { SupplyOpsService } from './supply-ops.service';
 
@@ -34,8 +35,12 @@ export class SupplyOpsController {
   }
 
   @Post('batches/:id/recall')
-  recall(@Param('id') id: string, @Body(new ZodBody(RecallBody)) body: RecallBody) {
-    return this.supplyOps.recallBatch(id, body.reason, 'panel:admin');
+  recall(
+    @Param('id') id: string,
+    @Body(new ZodBody(RecallBody)) body: RecallBody,
+    @AdminActor() actor: string,
+  ) {
+    return this.supplyOps.recallBatch(id, body.reason, actor);
   }
 
   /**
@@ -46,13 +51,19 @@ export class SupplyOpsController {
   bulkReplace(
     @Param('id') id: string,
     @Body(new ZodBody(BulkReplaceBody)) body: BulkReplaceBody,
+    @AdminActor() actor: string,
   ) {
-    return this.supplyOps.bulkReplaceBatch(id, body.actor?.trim() || 'panel:admin');
+    // actor artık oturumdan (x-admin-actor header) gelir; body.actor legacy/yok sayılır.
+    void body;
+    return this.supplyOps.bulkReplaceBatch(id, actor);
   }
 
   @Post('stock-adjustments')
-  createAdjustment(@Body(new ZodBody(CreateAdjustmentBody)) body: CreateAdjustmentBody) {
-    return this.supplyOps.createAdjustment(body, 'panel:admin');
+  createAdjustment(
+    @Body(new ZodBody(CreateAdjustmentBody)) body: CreateAdjustmentBody,
+    @AdminActor() actor: string,
+  ) {
+    return this.supplyOps.createAdjustment(body, actor);
   }
 
   @Get('stock-adjustments')

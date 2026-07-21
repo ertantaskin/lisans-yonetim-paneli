@@ -1,0 +1,155 @@
+'use client';
+import * as React from 'react';
+import { CheckCircle2, TriangleAlert } from 'lucide-react';
+import {
+  completeLineAction,
+  revokeAction,
+  resendAction,
+  suspendAction,
+  unsuspendAction,
+  type MutationState,
+} from './actions';
+import { Button } from '../../../components/ui/button';
+
+/**
+ * Ortak inline geri bildirim. Server action fırlatmadığı için (bkz. actions.ts) hata da
+ * başarı da burada gösterilir — kök error boundary sayfayı silmez.
+ */
+function Feedback({ state }: { state: MutationState | null }) {
+  if (!state) return null;
+  if (!state.ok) {
+    return (
+      <p className="flex items-center gap-1.5 text-xs font-medium text-destructive">
+        <TriangleAlert className="size-3.5" /> {state.error ?? 'İşlem başarısız'}
+      </p>
+    );
+  }
+  return (
+    <p className="flex items-center gap-1.5 text-xs font-medium text-success">
+      <CheckCircle2 className="size-3.5" /> {state.message ?? 'Tamam'}
+    </p>
+  );
+}
+
+/** "Kalanları Ata" — kalan adedi atar; sonuç inline yüzeye çıkar (fırlatma yok). */
+export function CompleteLineButton({ lineId, orderId }: { lineId: string; orderId: string }) {
+  const [pending, startTransition] = React.useTransition();
+  const [state, setState] = React.useState<MutationState | null>(null);
+
+  const run = () => {
+    setState(null);
+    startTransition(async () => {
+      setState(await completeLineAction(lineId, orderId));
+    });
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <Button type="button" size="sm" onClick={run} disabled={pending}>
+        {pending ? 'Atanıyor…' : 'Kalanları Ata'}
+      </Button>
+      <Feedback state={state} />
+    </div>
+  );
+}
+
+/**
+ * Atama moderasyon aksiyonları (askıya al / iptal / askıdan çıkar). İptal ve askıya al
+ * geri-dönüşsüz/hassas olduğu için onay ister (§5); sonuç inline gösterilir.
+ */
+export function AssignmentActions({
+  assignmentId,
+  orderId,
+  status,
+}: {
+  assignmentId: string;
+  orderId: string;
+  status: string;
+}) {
+  const [pending, startTransition] = React.useTransition();
+  const [state, setState] = React.useState<MutationState | null>(null);
+
+  const suspend = () => {
+    if (
+      !window.confirm(
+        'Atama askıya alınsın mı? Müşteri görünümünde "inceleme altında" olur (geri alınabilir).',
+      )
+    )
+      return;
+    setState(null);
+    startTransition(async () => {
+      setState(await suspendAction(assignmentId, orderId));
+    });
+  };
+
+  const revoke = () => {
+    if (
+      !window.confirm(
+        'Atama İPTAL edilsin mi? Lisans karantinaya alınır ve müşteri görünümünden düşer. Bu işlem GERİ ALINAMAZ.',
+      )
+    )
+      return;
+    setState(null);
+    startTransition(async () => {
+      setState(await revokeAction(assignmentId, orderId, 'iade/iptal'));
+    });
+  };
+
+  const unsuspend = () => {
+    setState(null);
+    startTransition(async () => {
+      setState(await unsuspendAction(assignmentId, orderId));
+    });
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {status === 'active' && (
+          <>
+            <Button type="button" variant="outline" size="sm" onClick={suspend} disabled={pending}>
+              Askıya Al
+            </Button>
+            <Button
+              type="button"
+              variant="danger-outline"
+              size="sm"
+              onClick={revoke}
+              disabled={pending}
+            >
+              İptal
+            </Button>
+          </>
+        )}
+        {status === 'suspended' && (
+          <Button type="button" variant="outline" size="sm" onClick={unsuspend} disabled={pending}>
+            Askıdan Çıkar
+          </Button>
+        )}
+      </div>
+      <Feedback state={state} />
+    </div>
+  );
+}
+
+/** Teslimat mailini yeniden gönder — başarı/hata/çok-sık durumu inline yüzeye çıkar (§17). */
+export function ResendButton({ orderId }: { orderId: string }) {
+  const [pending, startTransition] = React.useTransition();
+  const [state, setState] = React.useState<MutationState | null>(null);
+
+  const run = () => {
+    setState(null);
+    startTransition(async () => {
+      setState(await resendAction(orderId));
+    });
+  };
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <Button type="button" variant="outline" size="sm" onClick={run} disabled={pending}>
+        {pending ? 'Gönderiliyor…' : 'Maili Yeniden Gönder'}
+      </Button>
+      <Feedback state={state} />
+    </div>
+  );
+}

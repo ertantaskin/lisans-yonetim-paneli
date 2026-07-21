@@ -16,8 +16,12 @@ class Jetlisans_Order_Sync {
     private function __construct() {
         add_action('woocommerce_order_status_processing', [$this, 'push'], 10, 1);
         add_action('woocommerce_order_status_completed', [$this, 'push'], 10, 1);
+        // İade/iptal → panelde lisansı geri al (§2: iade edilen key satışta CANLI kalmaz).
+        add_action('woocommerce_order_status_refunded', [$this, 'revoke'], 10, 1);
+        add_action('woocommerce_order_status_cancelled', [$this, 'revoke'], 10, 1);
         // Retry (Action Scheduler yoksa wp-cron).
         add_action('jetlisans_retry_push', [$this, 'push'], 10, 1);
+        add_action('jetlisans_retry_revoke', [$this, 'revoke'], 10, 1);
     }
 
     public function push($order_id) {
@@ -70,11 +74,54 @@ class Jetlisans_Order_Sync {
         }
     }
 
+    /**
+     * İade/iptal olan siparişin panel-tarafı lisanslarını geri alır (§2). Yalnız panele
+     * push edilmiş siparişler için anlamlı (atama var). İdempotent: panel zaten revoked
+     * ise no-op; bir kez işaretlenir. Lisans verisi WP'de tutulmadığından yalnız tetikler.
+     */
+    public function revoke($order_id) {
+        if (!Jetlisans_Settings::is_configured()) return;
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+
+        // Panele hiç gitmemiş sipariş → geri alınacak atama yok.
+        if ($order->get_meta('_jetlisans_pushed') !== 'yes') return;
+        // İdempotency: bir kez revoke (panel de order üzerinden idempotent).
+        if ($order->get_meta('_jetlisans_revoked') === 'yes') return;
+
+        $reason = 'WooCommerce: ' . $order->get_status();
+        $body = ['reason' => $reason];
+        $res = Jetlisans_Panel_Client::post(
+            '/v1/orders/' . rawurlencode((string) $order_id) . '/revoke',
+            $body
+        );
+        $this->log($order_id, 'revoke', $body, $res);
+
+        // 200 → geri alındı; 404 → panelde sipariş yok (zaten temiz). İkisi de idempotent tamam.
+        if (in_array($res['code'], [200, 404], true)) {
+            $order->update_meta_data('_jetlisans_revoked', 'yes');
+            $count = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
+            $order->add_order_note(sprintf('Jetlisans: %d lisans geri alındı (%s).', $count, $reason));
+            $order->save();
+        } else {
+            // Başarısız → retry planla.
+            $this->schedule_revoke_retry($order_id);
+        }
+    }
+
     private function schedule_retry($order_id) {
         if (function_exists('as_schedule_single_action')) {
             as_schedule_single_action(time() + 300, 'jetlisans_retry_push', [$order_id], 'jetlisans');
         } else {
             wp_schedule_single_event(time() + 300, 'jetlisans_retry_push', [$order_id]);
+        }
+    }
+
+    private function schedule_revoke_retry($order_id) {
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action(time() + 300, 'jetlisans_retry_revoke', [$order_id], 'jetlisans');
+        } else {
+            wp_schedule_single_event(time() + 300, 'jetlisans_retry_revoke', [$order_id]);
         }
     }
 

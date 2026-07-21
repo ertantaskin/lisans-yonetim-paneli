@@ -7,9 +7,12 @@ import 'server-only';
 const API_URL = process.env.API_URL ?? 'http://localhost:3001';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 
-function headers(withBody: boolean): Record<string, string> {
+function headers(withBody: boolean, actor?: string): Record<string, string> {
   const h: Record<string, string> = { 'x-admin-token': ADMIN_TOKEN };
   if (withBody) h['content-type'] = 'application/json';
+  // Eylemi yapan admin (audit attribution, §8). getActor() ile session'dan gelir;
+  // ADMIN_TOKEN ile aynı güven düzeyi (token'sız istemci API'ye erişemez).
+  if (actor) h['x-admin-actor'] = actor;
   return h;
 }
 
@@ -22,10 +25,10 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body?: unknown, actor?: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
-    headers: headers(body !== undefined),
+    headers: headers(body !== undefined, actor),
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
@@ -36,10 +39,15 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function apiSend<T>(method: 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
+export async function apiSend<T>(
+  method: 'PATCH' | 'DELETE',
+  path: string,
+  body?: unknown,
+  actor?: string,
+): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     method,
-    headers: headers(body !== undefined),
+    headers: headers(body !== undefined, actor),
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });

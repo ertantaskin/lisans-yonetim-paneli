@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '../../lib/api';
+import { getActor } from '../../lib/session';
 
 export interface ReplayState {
   ok: boolean;
@@ -13,7 +14,7 @@ export interface ReplayState {
  */
 export async function replayAction(kind: 'outbox' | 'email', id: string): Promise<ReplayState> {
   try {
-    await apiPost(`/v1/admin/ops/replay/${kind}/${id}`);
+    await apiPost(`/v1/admin/ops/replay/${kind}/${id}`, undefined, await getActor());
     revalidatePath('/ops');
     return { ok: true };
   } catch (e) {
@@ -44,7 +45,11 @@ export async function expireMaintenanceAction(
   _formData: FormData,
 ): Promise<MaintenanceState> {
   try {
-    const res = await apiPost<{ expired: number }>('/v1/admin/maintenance/expire');
+    const res = await apiPost<{ expired: number }>(
+      '/v1/admin/maintenance/expire',
+      undefined,
+      await getActor(),
+    );
     return { ok: true, message: `${res.expired} süresi geçmiş atama gizlendi (expired).` };
   } catch (e) {
     return {
@@ -65,6 +70,8 @@ export async function reconcileMaintenanceAction(
   try {
     const res = await apiPost<{ checked: number; violations: unknown[] }>(
       '/v1/admin/maintenance/reconcile',
+      undefined,
+      await getActor(),
     );
     const count = res.violations.length;
     return {

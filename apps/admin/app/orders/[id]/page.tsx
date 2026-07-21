@@ -15,13 +15,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
-import {
-  completeLineAction,
-  revokeAction,
-  resendAction,
-  suspendAction,
-  unsuspendAction,
-} from './actions';
+import { CompleteLineButton, AssignmentActions, ResendButton } from './order-actions';
 
 /** ISO tarihi tr-TR biçimler; süresi geçmişse amber vurgu bilgisi döner. */
 function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
@@ -133,13 +127,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   </TableCell>
                   <TableCell className="text-right">
                     {l.status !== 'fulfilled' && (
-                      <form action={completeLineAction}>
-                        <input type="hidden" name="lineId" value={l.id} />
-                        <input type="hidden" name="orderId" value={order.id} />
-                        <Button type="submit" size="sm">
-                          Kalanları Ata
-                        </Button>
-                      </form>
+                      <CompleteLineButton lineId={l.id} orderId={order.id} />
                     )}
                   </TableCell>
                 </TableRow>
@@ -199,36 +187,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                         <StatusBadge status={a.status} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                          {a.status === 'active' && (
-                            <>
-                              <form action={suspendAction}>
-                                <input type="hidden" name="assignmentId" value={a.id} />
-                                <input type="hidden" name="orderId" value={order.id} />
-                                <Button type="submit" variant="outline" size="sm">
-                                  Askıya Al
-                                </Button>
-                              </form>
-                              <form action={revokeAction}>
-                                <input type="hidden" name="assignmentId" value={a.id} />
-                                <input type="hidden" name="orderId" value={order.id} />
-                                <input type="hidden" name="reason" value="iade/iptal" />
-                                <Button type="submit" variant="danger-outline" size="sm">
-                                  İptal
-                                </Button>
-                              </form>
-                            </>
-                          )}
-                          {a.status === 'suspended' && (
-                            <form action={unsuspendAction}>
-                              <input type="hidden" name="assignmentId" value={a.id} />
-                              <input type="hidden" name="orderId" value={order.id} />
-                              <Button type="submit" variant="outline" size="sm">
-                                Askıdan Çıkar
-                              </Button>
-                            </form>
-                          )}
-                        </div>
+                        <AssignmentActions
+                          assignmentId={a.id}
+                          orderId={order.id}
+                          status={a.status}
+                        />
                       </TableCell>
                     </TableRow>
                   );
@@ -273,12 +236,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <CardTitle className="flex items-center gap-2">
               <Mail className="size-4 text-muted-foreground" /> Teslimat Mailleri
             </CardTitle>
-            <form action={resendAction}>
-              <input type="hidden" name="orderId" value={order.id} />
-              <Button type="submit" variant="outline" size="sm">
-                Maili Yeniden Gönder
-              </Button>
-            </form>
+            <ResendButton orderId={order.id} />
           </CardHeader>
           <CardContent>
             {emails.length === 0 ? (

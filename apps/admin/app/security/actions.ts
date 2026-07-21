@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost } from '../../lib/api';
+import { getActor, isOwner } from '../../lib/session';
 
 export interface ScanState {
   ok: boolean;
@@ -14,7 +15,12 @@ export interface ScanState {
  */
 export async function scanSecurityAction(): Promise<ScanState> {
   try {
-    const { created } = await apiPost<{ created: number }>('/v1/admin/security/scan');
+    const actor = await getActor();
+    const { created } = await apiPost<{ created: number }>(
+      '/v1/admin/security/scan',
+      undefined,
+      actor,
+    );
     revalidatePath('/security');
     return { ok: true, created };
   } catch (e) {
@@ -35,12 +41,16 @@ export interface AnonymizeState {
  * Sipariş/atama bütünlüğü korunur (kayıt silinmez), audit_log'a yazılır.
  */
 export async function anonymizeCustomerAction(email: string): Promise<AnonymizeState> {
+  // RBAC (§8): KVKK PII imhası geri alınamaz → yalnız owner.
+  if (!(await isOwner())) return { ok: false, error: 'Bu işlem için owner yetkisi gerekir.' };
   const trimmed = email.trim();
   if (!trimmed) return { ok: false, error: 'E-posta zorunlu' };
   try {
+    const actor = await getActor();
     const res = await apiPost<{ anonymizedOrders: number; anonymizedReplacements: number }>(
       '/v1/admin/compliance/anonymize',
       { email: trimmed },
+      actor,
     );
     revalidatePath('/security');
     return {

@@ -35,6 +35,16 @@ class Jetlisans_Webhook {
             return new WP_REST_Response(['error' => 'invalid_signature'], 401);
         }
 
+        // Nonce replay koruması (§4): imza DOĞRULANDIKTAN sonra, aksiyon almadan ÖNCE
+        // nonce'u harca. Zaman penceresi ±300sn olduğundan replay [T−300, T+300] aralığında
+        // olabilir → transient TTL bunu güvenle kapsayacak şekilde 600sn (tolerans+pay).
+        // Aynı nonce ikinci kez gelirse (replay) aksiyon TEKRARLANMAZ → no-op 200.
+        $nonce_key = 'jl_wh_' . md5((string) $nonce);
+        if (get_transient($nonce_key)) {
+            return new WP_REST_Response(['ok' => true, 'duplicate' => true], 200);
+        }
+        set_transient($nonce_key, 1, 600);
+
         $body = json_decode($raw, true);
         if (!is_array($body) || empty($body['remoteOrderId'])) {
             return new WP_REST_Response(['error' => 'bad_request'], 400);

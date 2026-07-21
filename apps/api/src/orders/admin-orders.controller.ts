@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { AdminOrdersService } from './admin-orders.service';
 import { FulfillmentService } from './fulfillment.service';
@@ -40,24 +41,28 @@ export class AdminOrdersController {
   }
 
   @Post('assignments/:id/revoke')
-  revoke(@Param('id') id: string, @Body(new ZodBody(RevokeBody)) body: { reason: string }) {
-    return this.adminOrders.revokeAssignment(id, body.reason, 'panel:admin');
+  revoke(
+    @Param('id') id: string,
+    @Body(new ZodBody(RevokeBody)) body: { reason: string },
+    @AdminActor() actor: string,
+  ) {
+    return this.adminOrders.revokeAssignment(id, body.reason, actor);
   }
 
   /** Loglu reveal (§17) — tam lisans payload'ı. */
   @Post('assignments/:id/reveal')
-  reveal(@Param('id') id: string) {
-    return this.adminOrders.reveal(id, 'panel:admin');
+  reveal(@Param('id') id: string, @AdminActor() actor: string) {
+    return this.adminOrders.reveal(id, actor);
   }
 
   @Post('assignments/:id/suspend')
-  suspend(@Param('id') id: string) {
-    return this.adminOrders.suspend(id, true, 'panel:admin');
+  suspend(@Param('id') id: string, @AdminActor() actor: string) {
+    return this.adminOrders.suspend(id, true, actor);
   }
 
   @Post('assignments/:id/unsuspend')
-  unsuspend(@Param('id') id: string) {
-    return this.adminOrders.suspend(id, false, 'panel:admin');
+  unsuspend(@Param('id') id: string, @AdminActor() actor: string) {
+    return this.adminOrders.suspend(id, false, actor);
   }
 
   /** Teslimat mailini tekrar gönder (60sn debounce). */

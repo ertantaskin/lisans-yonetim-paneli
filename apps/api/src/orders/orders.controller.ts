@@ -1,17 +1,25 @@
-import { Body, Controller, Get, Param, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
+import { z } from 'zod';
 import { CreateOrderRequest, type CreateOrderResponse } from '@jetlisans/shared';
 import { HmacGuard } from '../auth/hmac.guard';
 import { CurrentSite } from '../auth/current-site.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import type { Site } from '../db/schema';
 import { OrdersService } from './orders.service';
+import { AdminOrdersService } from './admin-orders.service';
+
+/** Site-facing revoke gövdesi — reason opsiyonel (WP iade/iptal sebebi). */
+const RevokeOrderRequest = z.object({ reason: z.string().min(1).max(500).optional() });
 
 /** Site-facing sipariş uçları (§4). HMAC imzalı. */
 @Controller('orders')
 @UseGuards(HmacGuard)
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly adminOrders: AdminOrdersService,
+  ) {}
 
   // Satış kotası ön-kontrolü artık OrdersService.createOrder içinde, idempotency
   // lookup'ından SONRA çalışır (idempotent retry 429'a takılmasın diye). Guard bu
@@ -32,5 +40,25 @@ export class OrdersController {
   @Get(':id/deliveries')
   deliveries(@CurrentSite() site: Site, @Param('id') id: string) {
     return this.orders.getDeliveries(site, id);
+  }
+
+  /**
+   * İade/iptal → lisans revoke (§2). WooCommerce sipariş refunded/cancelled olunca WP
+   * eklentisi çağırır. Siteye ait siparişin aktif atamalarını idempotent geri alır.
+   * Payload/key DÖNMEZ. @HttpCode(200): WP idempotent olarak 200'ü başarı sayar (Nest
+   * POST varsayılanı 201 olurdu → WP tekrar-tekrar denerdi).
+   */
+  @Post(':remoteOrderId/revoke')
+  @HttpCode(200)
+  revoke(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @Body(new ZodBody(RevokeOrderRequest)) body: { reason?: string },
+  ) {
+    return this.adminOrders.revokeOrderForSite(
+      site,
+      remoteOrderId,
+      body.reason ?? 'WooCommerce iade/iptal',
+    );
   }
 }

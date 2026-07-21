@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ComplianceService, type AnonymizeResult } from './compliance.service';
 import { SecurityService } from './security.service';
@@ -34,7 +35,10 @@ export class SecurityController {
    * kritik aksiyon → audit'e düşer. GET yok.
    */
   @Post('compliance/anonymize')
-  anonymize(@Body(new ZodBody(AnonymizeBody)) body: { email: string }): Promise<AnonymizeResult> {
-    return this.compliance.anonymize(body.email, 'panel:admin');
+  anonymize(
+    @Body(new ZodBody(AnonymizeBody)) body: { email: string },
+    @AdminActor() actor: string,
+  ): Promise<AnonymizeResult> {
+    return this.compliance.anonymize(body.email, actor);
   }
 }

@@ -2,6 +2,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { apiPost, apiSend } from '../../lib/api';
+import { getActor } from '../../lib/session';
 
 export interface TemplateFormState {
   ok: boolean;
@@ -28,12 +29,16 @@ export async function createTemplateAction(
 
   let newId: string;
   try {
-    const res = await apiPost<{ id: string }>('/v1/admin/templates', {
-      subject,
-      body,
-      productId: nullable(formData.get('productId')),
-      siteId: nullable(formData.get('siteId')),
-    });
+    const res = await apiPost<{ id: string }>(
+      '/v1/admin/templates',
+      {
+        subject,
+        body,
+        productId: nullable(formData.get('productId')),
+        siteId: nullable(formData.get('siteId')),
+      },
+      await getActor(),
+    );
     newId = res.id;
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
@@ -52,12 +57,17 @@ export async function updateTemplateAction(
   const body = String(formData.get('body') || '').trim();
   if (!subject || !body) return { ok: false, error: 'Konu ve gövde zorunlu' };
   try {
-    await apiSend('PATCH', `/v1/admin/templates/${id}`, {
-      subject,
-      body,
-      productId: nullable(formData.get('productId')),
-      siteId: nullable(formData.get('siteId')),
-    });
+    await apiSend(
+      'PATCH',
+      `/v1/admin/templates/${id}`,
+      {
+        subject,
+        body,
+        productId: nullable(formData.get('productId')),
+        siteId: nullable(formData.get('siteId')),
+      },
+      await getActor(),
+    );
     revalidatePath('/templates');
     revalidatePath(`/templates/${id}`);
     return { ok: true };
@@ -69,7 +79,7 @@ export async function updateTemplateAction(
 /** Şablon sil → listeye döner. */
 export async function deleteTemplateAction(id: string): Promise<TemplateFormState> {
   try {
-    await apiSend('DELETE', `/v1/admin/templates/${id}`);
+    await apiSend('DELETE', `/v1/admin/templates/${id}`, undefined, await getActor());
     revalidatePath('/templates');
     return { ok: true };
   } catch (e) {
@@ -111,6 +121,7 @@ export async function testTemplateAction(id: string, toEmail: string): Promise<T
     const res = await apiPost<{ ok: boolean; error?: string }>(
       `/v1/admin/templates/${id}/test`,
       { toEmail: email },
+      await getActor(),
     );
     if (!res.ok) return { ok: false, error: res.error ?? 'Gönderim başarısız' };
     return { ok: true, sent: true };

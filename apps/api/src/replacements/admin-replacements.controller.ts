@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ReplacementsService } from './replacements.service';
 
@@ -23,13 +24,18 @@ export class AdminReplacementsController {
   approve(
     @Param('id') id: string,
     @Body(new ZodBody(ApproveBody)) body: z.infer<typeof ApproveBody>,
+    @AdminActor() actor: string,
   ) {
-    return this.replacements.approve(id, body.actor ?? 'panel:admin');
+    return this.replacements.approve(id, body.actor ?? actor);
   }
 
   @Post(':id/reject')
-  reject(@Param('id') id: string, @Body(new ZodBody(NoteBody)) body: z.infer<typeof NoteBody>) {
-    return this.replacements.reject(id, body.note, body.actor ?? 'panel:admin');
+  reject(
+    @Param('id') id: string,
+    @Body(new ZodBody(NoteBody)) body: z.infer<typeof NoteBody>,
+    @AdminActor() actor: string,
+  ) {
+    return this.replacements.reject(id, body.note, body.actor ?? actor);
   }
 
   @Post(':id/request-info')

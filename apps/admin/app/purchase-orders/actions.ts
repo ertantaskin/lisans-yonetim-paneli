@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiSend } from '@/lib/api';
+import { getActor } from '@/lib/session';
 
 export interface POFormState {
   ok: boolean;
@@ -43,16 +44,20 @@ export async function createPurchaseOrderAction(
   const notes = String(formData.get('notes') || '').trim();
 
   try {
-    const po = await apiPost<{ id: string }>('/v1/admin/purchase-orders', {
-      supplierId,
-      productId,
-      qtyOrdered,
-      status: status === 'ordered' ? 'ordered' : 'draft',
-      currency,
-      ...(unitCostCents !== undefined ? { unitCostCents } : {}),
-      ...(eta ? { eta } : {}),
-      ...(notes ? { notes } : {}),
-    });
+    const po = await apiPost<{ id: string }>(
+      '/v1/admin/purchase-orders',
+      {
+        supplierId,
+        productId,
+        qtyOrdered,
+        status: status === 'ordered' ? 'ordered' : 'draft',
+        currency,
+        ...(unitCostCents !== undefined ? { unitCostCents } : {}),
+        ...(eta ? { eta } : {}),
+        ...(notes ? { notes } : {}),
+      },
+      await getActor(),
+    );
     revalidatePath('/purchase-orders');
     return { ok: true, id: po?.id };
   } catch (e) {
@@ -72,12 +77,17 @@ export async function updatePurchaseOrderAction(
   const etaRaw = String(formData.get('eta') || '').trim();
   const notes = String(formData.get('notes') || '').trim();
   try {
-    await apiSend('PATCH', `/v1/admin/purchase-orders/${id}`, {
-      ...(status ? { status } : {}),
-      // eta boş bırakılırsa null'a çek; geçerliyse ISO gönder
-      eta: etaRaw ? eta : null,
-      notes: notes || null,
-    });
+    await apiSend(
+      'PATCH',
+      `/v1/admin/purchase-orders/${id}`,
+      {
+        ...(status ? { status } : {}),
+        // eta boş bırakılırsa null'a çek; geçerliyse ISO gönder
+        eta: etaRaw ? eta : null,
+        notes: notes || null,
+      },
+      await getActor(),
+    );
     revalidatePath(`/purchase-orders/${id}`);
     revalidatePath('/purchase-orders');
     return { ok: true, id };
@@ -103,11 +113,15 @@ export async function receivePurchaseOrderAction(
   if (!batchLabel) return { ok: false, error: 'Parti etiketi zorunlu' };
   const notes = String(formData.get('notes') || '').trim();
   try {
-    await apiPost(`/v1/admin/purchase-orders/${id}/receive`, {
-      qty,
-      batchLabel,
-      ...(notes ? { notes } : {}),
-    });
+    await apiPost(
+      `/v1/admin/purchase-orders/${id}/receive`,
+      {
+        qty,
+        batchLabel,
+        ...(notes ? { notes } : {}),
+      },
+      await getActor(),
+    );
     revalidatePath(`/purchase-orders/${id}`);
     revalidatePath('/purchase-orders');
     return { ok: true, id };
