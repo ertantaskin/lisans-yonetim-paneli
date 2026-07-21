@@ -247,6 +247,15 @@ export async function createOrderWithLine(
  */
 export async function cleanupByTag(db: Db, tag: string): Promise<void> {
   const like = `${tagPrefix(tag)}-%`;
+  // 0) site_product_mappings — products'a RESTRICT FK'li; ürün/site SİLİNMEDEN ÖNCE temizlenmeli.
+  //    Tag'li ürün VEYA tag'li site referansı olan tüm eşlemeler. Eskiden her test bunu afterAll'da
+  //    ELLE yapıyordu (createdSiteIds izleyip mapping siliyordu); burada merkezileştirildi → yeni
+  //    testler mapping temizliğini atlarsa FK ihlali almaz (elle yapanlar için no-op: zaten silinmiş).
+  await db.execute(sql`
+    DELETE FROM site_product_mappings
+    WHERE product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
+       OR site_id IN (SELECT id FROM sites WHERE domain LIKE ${like})
+  `);
   // 1) Tag'li ürünlerin license_item'larına bağlı atamalar (restrict FK) — önce bunlar.
   await db.execute(sql`
     DELETE FROM assignments
