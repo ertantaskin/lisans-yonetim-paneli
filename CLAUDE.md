@@ -256,6 +256,19 @@ YOK — §2/§6/§10), marketplace dış-API adaptörü, Faz-3 WP-migrasyon (gre
 **Tek kalan mimari karar:** public zip gerçek-stream (DB base64 → depolama diske/S3 taşınmalı; kullanıcı onayıyla).
 Yol haritası §18.
 
+**Tam test doğrulaması + H1 REGRESYON düzeltmesi (CANLI, commit fa4c05e):** "eksiksiz çalışıyor mu" için VPS'te
+izole test DB'sine karşı entegrasyon+yarış paketi koşuldu — **ilk koşuda 59'da 4 fail** çıktı (testleri koşmanın
+değeri): 1 GERÇEK regresyon + 3 bayat test. **[REGRESYON]** H1'in `order_lines.canceled` bayrağı FAZLA GENİŞ'ti —
+`revokeAssignment` her çağrıda `canceled=true` yapıyordu → `replacements.approve` / `supply-ops` recall-bulkReplace /
+`orders.revokeExcess` revoke SONRASI `completeLine` ile MEŞRU yeniden-atama yapar ama `canceled` satır no-op'lanır →
+"Değişim için stok yok" (stok VARKEN). DÜZELTME: `revokeAssignment(...,markLineCanceled=true)` — GERÇEK iade/iptal
+(revokeOrderForSite + admin manuel revoke) `true` (H1 korunur), değişim/recall/qty-düşür üç çağıranı `false`.
+Bayat testler: readonly-sql rowCount (OOM cap sonrası 200), onboarding.claim (RateLimitService). Düzeltme sonrası
+**entegrasyon 59/59 + yarış 1/1 GEÇTİ**. Ayrıca **canlı HMAC e2e** (deploy edilmiş prod'a, gerçek signHmac ile):
+sipariş push 201 → çözülmüş key teslimat 200 → revoke 200 — tam zincir (envelope AES-GCM çözüm dahil) doğrulandı.
+**Ders:** H1 gibi terminal-durum eklerken revoke'un TÜM çağıranlarını (iade vs değişim) ayır; değişim testleri
+H1'den sonra koşulmadığı için regresyon kaçmıştı — entegrasyon paketi her davranış-değişikliğinden sonra koşulmalı.
+
 ## Geliştirme
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
