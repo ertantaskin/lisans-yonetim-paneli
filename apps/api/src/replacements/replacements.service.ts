@@ -148,6 +148,11 @@ export class ReplacementsService {
    */
   async approve(id: string, actor: string): Promise<ReplacementRequest> {
     const req = await this.getOrThrow(id);
+    // Idempotent koruma: yalnız açık/bilgi-istenen talep işlenir. Terminal (approved/rejected)
+    // durumda tekrar çağrı taze stok tüketmez — çifte değişim imkânsız.
+    if (req.status !== 'open' && req.status !== 'info_requested') {
+      throw new ConflictException('Talep zaten çözülmüş');
+    }
     if (!req.assignmentId || !req.lineId) {
       throw new BadRequestException('Talep bir atama/satıra bağlı değil');
     }
@@ -221,7 +226,11 @@ export class ReplacementsService {
 
   /** Reddet — çözüm notuyla kapat + müşteriye durum bildirimi (yalnız durum+not, sırsız). */
   async reject(id: string, note: string, actor: string): Promise<ReplacementRequest> {
-    await this.getOrThrow(id);
+    const req = await this.getOrThrow(id);
+    // Idempotent koruma: terminal (approved/rejected) durumdaki talep yeniden kapatılamaz.
+    if (req.status !== 'open' && req.status !== 'info_requested') {
+      throw new ConflictException('Talep zaten çözülmüş');
+    }
     const [updated] = await this.db
       .update(replacementRequests)
       .set({
@@ -246,7 +255,11 @@ export class ReplacementsService {
 
   /** Ek bilgi iste — müşteriye dönülür, talep açık kalır + durum bildirimi (sırsız). */
   async requestInfo(id: string, note: string): Promise<ReplacementRequest> {
-    await this.getOrThrow(id);
+    const req = await this.getOrThrow(id);
+    // Idempotent koruma: terminal (approved/rejected) durumdaki talepten bilgi istenemez.
+    if (req.status !== 'open' && req.status !== 'info_requested') {
+      throw new ConflictException('Talep zaten çözülmüş');
+    }
     const [updated] = await this.db
       .update(replacementRequests)
       .set({ status: 'info_requested', resolutionNote: note, updatedAt: new Date() })

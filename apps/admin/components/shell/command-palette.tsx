@@ -39,6 +39,10 @@ export function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setOpen((o) => !o);
+      } else if (e.key === 'Escape') {
+        // 'ESC' ipucu gösteriliyor; özel overlay (Dialog değil) olduğundan Escape'i
+        // global dinleyicide ele al — aksi halde ipucu yalan oluyordu.
+        setOpen(false);
       }
     };
     const onOpen = () => setOpen(true);

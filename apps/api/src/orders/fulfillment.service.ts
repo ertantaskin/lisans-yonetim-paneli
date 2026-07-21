@@ -60,6 +60,18 @@ export class FulfillmentService {
       }
 
       const product = await this.products.getById(line.productId);
+
+      // Ön sipariş/stoksuz kapısı (§11): release_at gelecekteyse stok girmiş olsa bile
+      // atama YAPMA (erken teslim engellenir). createOrder'daki kapıyla aynı invaryant;
+      // autoCompleteProduct (stok girişi) ve manuel "Kalanları Ata" bu yolu kullanır.
+      if (
+        product.stockless &&
+        product.releaseAt &&
+        new Date(product.releaseAt).getTime() > Date.now()
+      ) {
+        return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
+      }
+
       const allocations = await allocate(tx, product, toAssign);
       const added = allocations.reduce((s, a) => s + a.units, 0);
 
@@ -144,6 +156,17 @@ export class FulfillmentService {
    * FIFO (öncelik desc, created_at asc) tarar ve stok bitene kadar tamamlar.
    */
   async autoCompleteProduct(productId: string): Promise<number> {
+    // Ön sipariş kapısı: ürün stoksuz + release_at gelecekteyse stok girmiş olsa bile
+    // hiçbir satır tamamlanmaz → boşuna satır taramadan erken çık (completeLine ayrıca savunur).
+    const product = await this.products.getById(productId);
+    if (
+      product.stockless &&
+      product.releaseAt &&
+      new Date(product.releaseAt).getTime() > Date.now()
+    ) {
+      return 0;
+    }
+
     const pending = await this.db
       .select({ id: orderLines.id })
       .from(orderLines)

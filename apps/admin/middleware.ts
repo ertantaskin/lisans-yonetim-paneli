@@ -18,7 +18,18 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (!authEnabled()) return NextResponse.next(); // gate kapalı
+  if (!authEnabled()) {
+    // Auth kapalıyken /login gereksiz; login/page.tsx'in redirect('/')'ı async root
+    // layout stream'i yüzünden meta-refresh'e düşer (kök '/' ile aynı sınıf bug).
+    // Render'dan önce middleware'de temiz 307 ver.
+    if (pathname === '/login') {
+      const url = req.nextUrl.clone();
+      url.pathname = '/pending';
+      url.search = '';
+      return NextResponse.redirect(url);
+    }
+    return NextResponse.next(); // gate kapalı
+  }
 
   // Login/logout uçları gate'ten muaf (aksi halde giriş POST'u bounce olur).
   if (pathname === '/login' || pathname === '/api/login' || pathname === '/api/logout') {

@@ -8,6 +8,12 @@
  */
 export const SESSION_COOKIE = 'admin_session';
 
+/**
+ * İmzalı oturum ömrü (saniye). Cookie maxAge ile TEK kaynak — ikisi ayrışırsa
+ * cookie token'dan uzun yaşar ve "geçerli görünen ama süresi dolmuş" istek üretir.
+ */
+export const SESSION_TTL_SEC = 60 * 60 * 12; // 12 saat
+
 export interface SessionPayload {
   sub: string; // admin id
   email: string;
@@ -53,7 +59,7 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
 /** İmzalı oturum token'ı üretir (route handler, login sonrası). TTL kısa (iptal + uzak doğrulama var). */
 export async function createSession(
   user: Omit<SessionPayload, 'exp'>,
-  ttlSec = 60 * 60 * 12, // 12 saat
+  ttlSec = SESSION_TTL_SEC,
 ): Promise<string> {
   const secret = sessionSecret();
   if (!secret) throw new Error('SESSION_SECRET tanımlı değil');
@@ -104,11 +110,15 @@ export async function validateSessionRemote(
   const token = process.env.ADMIN_TOKEN;
   if (!url || !token) return 'error';
   try {
+    // Zaman aşımı ŞART: middleware her istekte bunu bekler. API "kapalı" değil de
+    // "asılı" ise (DB kilidi, havuz tükenmesi, yarı-açık TCP) fetch reddetmez de
+    // çözülmez de → tüm panel donar. 1.5sn sonra AbortError → catch → 'error' → fail-open.
     const res = await fetch(`${url}/v1/admin/auth/validate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-admin-token': token },
       body: JSON.stringify({ sub, ver }),
       cache: 'no-store',
+      signal: AbortSignal.timeout(1500),
     });
     if (!res.ok) return 'error';
     const data = (await res.json()) as { valid: boolean };

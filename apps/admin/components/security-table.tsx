@@ -4,6 +4,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import {
   Activity,
   Ban,
+  CheckCircle2,
   Gauge,
   Info,
   RadioTower,
@@ -256,7 +257,7 @@ function Notice({
 }) {
   return (
     <Alert variant={variant}>
-      <TriangleAlert />
+      {variant === 'success' ? <CheckCircle2 /> : <TriangleAlert />}
       <div className="min-w-0 flex-1">
         <AlertTitle>{title}</AlertTitle>
         <AlertDescription>{message}</AlertDescription>

@@ -231,12 +231,20 @@ export class SupplyOpsService {
    * işlenir (kısmi ilerleme, batch operasyonu için kabul edilir).
    */
   async bulkReplaceBatch(batchId: string, actor: string): Promise<BulkReplaceResult> {
-    // Parti var mı? (RAW SQL — batches W1'in dosyası, import etme.)
-    const batchRows = await this.db.execute<{ id: string }>(sql`
-      SELECT id FROM batches WHERE id = ${batchId} LIMIT 1;
+    // Parti var mı + GERİ ÇEKİLMİŞ mi? (RAW SQL — batches W1'in dosyası, import etme.)
+    // Toplu değiştirme YALNIZ recall sonrası çalışır: hedef parti 'recalled' değilse
+    // (ör. hâlâ 'active') reddet — aksi halde kusurlu partiden müşteriye yeni key verilebilir.
+    const batchRows = await this.db.execute<{ id: string; status: string }>(sql`
+      SELECT id, status FROM batches WHERE id = ${batchId} LIMIT 1;
     `);
-    if ((batchRows as unknown as Array<{ id: string }>).length === 0) {
+    const batch = (batchRows as unknown as Array<{ id: string; status: string }>)[0];
+    if (!batch) {
       throw new NotFoundException('Parti bulunamadı');
+    }
+    if (batch.status !== 'recalled') {
+      throw new BadRequestException(
+        'Toplu değiştirme yalnız geri çekilmiş (recalled) partide çalışır',
+      );
     }
 
     // Bu partiye ait SATILMIŞ (status <> 'available') kalemlerin AKTİF atamaları.
@@ -281,7 +289,14 @@ export class SupplyOpsService {
         JOIN order_lines ol ON ol.id = ${c.line_id}
         WHERE li.product_id = ol.product_id
           AND li.status = 'available'
-          AND li.use_count < li.max_uses;
+          AND li.use_count < li.max_uses
+          -- Değiştirilen key ASLA geri çekilen HEDEF partiden gelmesin. IS DISTINCT FROM:
+          -- batch'siz (batch_id NULL, elle girilen) key'ler aday olarak sayılmaya devam eder.
+          AND li.batch_id IS DISTINCT FROM ${batchId}
+          -- Ve 'voided' (elle geçersiz kılınmış) partilere ait key de aday olmasın.
+          AND NOT EXISTS (
+            SELECT 1 FROM batches b WHERE b.id = li.batch_id AND b.status = 'voided'
+          );
       `);
       const n = Number((availRows as unknown as Array<{ n: number }>)[0]?.n ?? 0);
       if (n <= 0) {

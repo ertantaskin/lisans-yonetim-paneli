@@ -2,7 +2,7 @@ import { Inject } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import nodemailer, { type Transporter } from 'nodemailer';
 import { AccountPayloadSchema, parseAccountPayload } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
@@ -80,7 +80,21 @@ export class MailProcessor extends WorkerHost {
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .leftJoin(products, eq(orderLines.productId, products.id))
-        .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+        .where(
+          and(
+            eq(assignments.orderId, orderId),
+            eq(assignments.status, 'active'),
+            // Savunma amaçlı süre filtresi (getDeliveries ile birebir aynı invaryant):
+            // expiry job gecikse bile onExpiry='hide' ürünün süresi geçmiş payload'ı
+            // mail gövdesine KONULMAZ (düz metin parola sızmaz). 'keep' ürün süre
+            // sonrası da teslim edilir.
+            or(
+              isNull(assignments.validUntil),
+              gt(assignments.validUntil, sql`now()`),
+              eq(products.onExpiry, 'keep'),
+            ),
+          ),
+        );
 
       // Aktif atama yoksa (ör. tümü revoke edildikten sonra resend) BOŞ mail gönderme.
       if (rows.length === 0) {

@@ -6,7 +6,6 @@ import { CurrentSite } from '../auth/current-site.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import type { Site } from '../db/schema';
 import { OrdersService } from './orders.service';
-import { SalesQuotaGuard } from './sales-quota.guard';
 
 /** Site-facing sipariş uçları (§4). HMAC imzalı. */
 @Controller('orders')
@@ -14,9 +13,10 @@ import { SalesQuotaGuard } from './sales-quota.guard';
 export class OrdersController {
   constructor(private readonly orders: OrdersService) {}
 
-  // SalesQuotaGuard: HmacGuard'dan SONRA (kota ön-kontrolü). createOrder gövdesi DEĞİŞMEZ.
+  // Satış kotası ön-kontrolü artık OrdersService.createOrder içinde, idempotency
+  // lookup'ından SONRA çalışır (idempotent retry 429'a takılmasın diye). Guard bu
+  // yüzden route'a bağlı DEĞİL — sadece HmacGuard kimlik doğrular.
   @Post()
-  @UseGuards(SalesQuotaGuard)
   async create(
     @CurrentSite() site: Site,
     @Body(new ZodBody(CreateOrderRequest)) body: CreateOrderRequest,

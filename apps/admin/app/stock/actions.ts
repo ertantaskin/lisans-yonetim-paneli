@@ -67,14 +67,24 @@ function buildProductBody(formData: FormData): Record<string, unknown> {
   return body;
 }
 
-export async function createProductAction(formData: FormData) {
-  await apiPost('/v1/admin/products', buildProductBody(formData));
-  revalidatePath('/stock');
-}
-
 export interface FormState {
   ok: boolean;
   error?: string;
+}
+
+/** Ürün oluşturma — useActionState uyumlu; doğrulama hatası (ör. multi⇒maxUses, account⇒schema)
+ *  tüm /stock sayfasını çökertmek yerine formda inline yüzeye çıkar. */
+export async function createProductAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    await apiPost('/v1/admin/products', buildProductBody(formData));
+    revalidatePath('/stock');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
 }
 
 /** Ürün düzenleme — useActionState uyumlu; hata (ör. duplicate SKU) yüzeye çıkar. */

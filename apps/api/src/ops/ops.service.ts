@@ -30,6 +30,10 @@ export interface DeadLetterRow {
   toEmail: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Kaydın yaşı (saniye) — askıda kalma eşiğini ve replay hedeflemeyi görünür kılar (§16). */
+  ageSeconds: number;
+  /** true → başarısız/bounce DEĞİL, askıda kalmış (pending/queued 15dk+); yalnız görünürlük. */
+  stale: boolean;
 }
 
 /**
@@ -48,8 +52,10 @@ export class OpsService {
   ) {}
 
   /**
-   * Başarısız outbox_events (status='failed') + email_log (status in failed/bounced) birleşik
-   * liste, en son güncellenene göre DESC, limit 100. RAW SQL (§16). Payload/sır DÖNMEZ.
+   * Başarısız outbox_events (status='failed') + email_log (status in failed/bounced) VE askıda
+   * kalmış kayıtlar (15dk+ pending outbox / queued|sending email_log) birleşik liste, en son
+   * güncellenene göre DESC, limit 100. RAW SQL (§16). Payload/sır DÖNMEZ. Her satırda kaynak
+   * (kind), yaş (ageSeconds) ve askıda bayrağı (stale) var → replay hedeflenebilir.
    */
   async deadLetter(): Promise<DeadLetterRow[]> {
     const rows = await this.db.execute<{
@@ -63,20 +69,31 @@ export class OpsService {
       to_email: string | null;
       created_at: string;
       updated_at: string;
+      age_seconds: number;
+      stale: boolean;
     }>(sql`
       SELECT 'outbox'::text AS kind, oe.id::text AS id, oe.event_type AS label,
              oe.status AS status, oe.last_error AS error, oe.attempts AS attempts,
              oe.order_id::text AS order_id, NULL::text AS to_email,
-             oe.created_at AS created_at, oe.updated_at AS updated_at
+             oe.created_at AS created_at, oe.updated_at AS updated_at,
+             -- yaş (saniye) + askıda-kalma bayrağı (§16 görünürlük)
+             EXTRACT(EPOCH FROM (now() - oe.created_at))::int AS age_seconds,
+             (oe.status <> 'failed') AS stale
       FROM outbox_events oe
+      -- başarısız + askıda kalmış (pending ama 15dk+ teslim edilememiş) webhook'lar
       WHERE oe.status = 'failed'
+         OR (oe.status = 'pending' AND oe.created_at < now() - interval '15 minutes')
       UNION ALL
       SELECT 'email'::text AS kind, el.id::text AS id, el.subject AS label,
              el.status AS status, el.error AS error, NULL::int AS attempts,
              el.order_id::text AS order_id, el.to_email AS to_email,
-             el.created_at AS created_at, el.updated_at AS updated_at
+             el.created_at AS created_at, el.updated_at AS updated_at,
+             EXTRACT(EPOCH FROM (now() - el.created_at))::int AS age_seconds,
+             (el.status NOT IN ('failed', 'bounced')) AS stale
       FROM email_log el
+      -- başarısız/bounce + askıda kalmış (queued|sending ama 15dk+ gönderilememiş) mailler
       WHERE el.status IN ('failed', 'bounced')
+         OR (el.status IN ('queued', 'sending') AND el.created_at < now() - interval '15 minutes')
       ORDER BY updated_at DESC
       LIMIT 100;
     `);
@@ -92,6 +109,8 @@ export class OpsService {
         to_email: string | null;
         created_at: string;
         updated_at: string;
+        age_seconds: number;
+        stale: boolean;
       }>
     ).map((r) => ({
       kind: r.kind,
@@ -104,6 +123,8 @@ export class OpsService {
       toEmail: r.to_email,
       createdAt: new Date(r.created_at).toISOString(),
       updatedAt: new Date(r.updated_at).toISOString(),
+      ageSeconds: r.age_seconds === null ? 0 : Number(r.age_seconds),
+      stale: Boolean(r.stale),
     }));
   }
 

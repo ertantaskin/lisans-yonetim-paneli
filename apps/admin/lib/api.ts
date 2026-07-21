@@ -78,6 +78,13 @@ export interface ProductRow {
   payloadSchema: PayloadFieldDef[] | null;
   fulfillmentPolicy: string;
   availableStock: number;
+  // Düzenleme formunun ön-dolumu için (API list() tam product satırı döndürür).
+  // stockless checkbox'ı ön-dolmazsa düzenlemede sessizce false'a çekiliyordu.
+  stockless: boolean;
+  releaseAt: string | null;
+  warrantyDays: number | null;
+  lowStockThreshold: number | null;
+  keyFormat: string | null;
 }
 
 export interface SiteRow {

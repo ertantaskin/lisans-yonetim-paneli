@@ -1,7 +1,7 @@
 'use client';
-import { useState } from 'react';
+import { useActionState, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { createProductAction } from '../app/stock/actions';
+import { createProductAction, type FormState } from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
 import { Input, Label, selectClass } from './ui/input';
 import { Button } from './ui/button';
@@ -173,6 +173,7 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
           min={0}
           aria-label="Garanti (gün)"
           placeholder="garanti (gün, ör. 30)"
+          defaultValue={defaults?.warrantyDays ?? undefined}
           className="w-44"
         />
         <Input
@@ -181,6 +182,7 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
           min={0}
           aria-label="Düşük stok eşiği"
           placeholder="düşük stok eşiği (boş=kapalı)"
+          defaultValue={defaults?.lowStockThreshold ?? undefined}
           className="w-56"
           title="boş bırakılırsa düşük stok uyarısı kapalı"
         />
@@ -189,7 +191,13 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
       {/* stoksuz / ön-sipariş */}
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <input type="checkbox" name="stockless" value="on" className="accent-primary" />
+          <input
+            type="checkbox"
+            name="stockless"
+            value="on"
+            defaultChecked={defaults?.stockless ?? false}
+            className="accent-primary"
+          />
           stoksuz / ön-sipariş
         </label>
         <div className="flex flex-col gap-1">
@@ -208,17 +216,29 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
         name="keyFormat"
         aria-label="Key format regex"
         placeholder="key_format regex (opsiyonel, ör. ^[A-Z0-9]{5}(-[A-Z0-9]{5}){4}$)"
+        defaultValue={defaults?.keyFormat ?? undefined}
         className="font-mono text-xs"
       />
     </div>
   );
 }
 
+const CREATE_INITIAL: FormState = { ok: false };
+
 export function ProductCreateForm() {
+  const [state, action, pending] = useActionState(createProductAction, CREATE_INITIAL);
   return (
-    <form action={createProductAction} className="space-y-3">
+    <form action={action} className="space-y-3">
       <ProductFormFields />
-      <Button type="submit">Oluştur</Button>
+      {state.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {state.error}
+        </p>
+      )}
+      {state.ok && <p className="text-sm text-success">Ürün oluşturuldu.</p>}
+      <Button type="submit" disabled={pending}>
+        {pending ? 'Oluşturuluyor…' : 'Oluştur'}
+      </Button>
     </form>
   );
 }

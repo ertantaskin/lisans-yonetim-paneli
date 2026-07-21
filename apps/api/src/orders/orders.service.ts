@@ -1,5 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { HttpException, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { and, eq, gt, gte, isNull, or, sql } from 'drizzle-orm';
 import type {
   CreateOrderRequest,
   CreateOrderResponse,
@@ -43,6 +43,8 @@ export interface CreateOrderOutcome {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly products: ProductsService,
@@ -137,6 +139,13 @@ export class OrdersService {
       return this.buildOutcome(await this.loadOrderResult(existing[0]));
     }
 
+    // Satış kotası ön-kontrolü (§5) — idempotency lookup'ından SONRA. Aynı
+    // idempotency key ile gelen tekrar istekler yukarıda mevcut sonucu döner ve
+    // buraya HİÇ ulaşmaz → kabul edilmiş bir sipariş kotaya TAKILMADAN idempotent
+    // döner. Yalnız GERÇEKTEN yeni sipariş kotaya sayılır. (SalesQuotaGuard'dan
+    // buraya taşındı — guard idempotency'den önce çalıştığı için retry'ları 429'luyordu.)
+    await this.enforceSalesQuota(site);
+
     const idempotencyKey = `${site.id}:${dto.remoteOrderId}`;
 
     let result: CreateOrderResponse;
@@ -212,8 +221,16 @@ export class OrdersService {
             .returning();
           const orderLine = ol!;
 
-          // Atama — tek/çok kullanımlık (ortak allocate).
-          const allocations = await allocate(tx, product, requiredUnits);
+          // Stoksuz/ön sipariş kapısı (§11): ürün stockless ve release_at gelecekteyse,
+          // stok gelmiş olsa bile release_at'ten ÖNCE atama YAPILMAZ — satır pending
+          // kalır (kısmi/pending akışı bozulmaz, yalnız erken teslim engellenir).
+          const releaseGated =
+            product.stockless &&
+            product.releaseAt != null &&
+            new Date(product.releaseAt).getTime() > Date.now();
+
+          // Atama — tek/çok kullanımlık (ortak allocate). Release kapısı açıksa atama yok.
+          const allocations = releaseGated ? [] : await allocate(tx, product, requiredUnits);
 
           let fulfilledUnits = allocations.reduce((s, a) => s + a.units, 0);
 
@@ -314,23 +331,64 @@ export class OrdersService {
       throw e;
     }
 
-    // Atama yapıldıysa teslimat mailini kuyruğa al (asenkron, §2/§6).
+    // Teslimat yan etkileri transaction COMMIT sonrası — her biri AYRI try/catch.
+    // Geçici bir enqueue hatası (Redis/kuyruk erişimi) ana yanıtı (201/207/202)
+    // DÜŞÜRMEMELİ: sipariş+atama zaten kalıcı; hata loglanıp YUTULUR.
     if (result.assignments.length > 0) {
-      await this.mail.enqueueDelivery(
-        result.orderId,
-        dto.customerEmail,
-        `Siparişiniz hazır — ${dto.remoteOrderId}`,
+      // Atama yapıldıysa teslimat mailini kuyruğa al (asenkron, §2/§6).
+      try {
+        await this.mail.enqueueDelivery(
+          result.orderId,
+          dto.customerEmail,
+          `Siparişiniz hazır — ${dto.remoteOrderId}`,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Teslimat maili kuyruğa alınamadı (order=${result.orderId}) — yanıt etkilenmedi: ${String(err)}`,
+        );
+      }
+    }
+
+    // Geri kanal webhook (§2) — WP eklentisi order meta'yı günceller. webhook.emit
+    // outbox'a YAZDIKTAN sonra kuyruğa alır; enqueue düşse bile outbox kaydı kalır
+    // ve /ops replay ile yeniden gönderilebilir (olay kaybolmaz).
+    try {
+      await this.webhook.emit(site.id, result.orderId, eventFor(result.status), {
+        status: result.status,
+        remoteOrderId: dto.remoteOrderId,
+        lines: result.lines,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Geri kanal webhook kuyruğa alınamadı (order=${result.orderId}) — outbox'tan replay edilebilir: ${String(err)}`,
       );
     }
 
-    // Geri kanal webhook (§2) — WP eklentisi order meta'yı günceller.
-    await this.webhook.emit(site.id, result.orderId, eventFor(result.status), {
-      status: result.status,
-      remoteOrderId: dto.remoteOrderId,
-      lines: result.lines,
-    });
-
     return this.buildOutcome(result);
+  }
+
+  /**
+   * Günlük satış kotası ön-kontrolü (§5). Site salesDailyQuota tanımlıysa bugünkü
+   * (created_at >= date_trunc('day', now())) sipariş sayısını sayar; kota dolmuşsa
+   * 429 (TOO_MANY_REQUESTS) fırlatır ve çekirdek atama akışına girilmez. Kota null →
+   * limitsiz. SalesQuotaGuard ile birebir aynı pencere/eşik; farkı yalnız çağrı yeri:
+   * idempotency lookup'ından SONRA çağrılır (idempotent retry kotaya takılmaz).
+   */
+  private async enforceSalesQuota(site: Site): Promise<void> {
+    // Kota tanımsız (null) → limitsiz, kontrol yok.
+    if (site.salesDailyQuota == null) return;
+
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(orders)
+      .where(
+        and(eq(orders.siteId, site.id), gte(orders.createdAt, sql`date_trunc('day', now())`)),
+      );
+
+    const todayCount = row?.count ?? 0;
+    if (todayCount >= site.salesDailyQuota) {
+      throw new HttpException('Günlük satış kotası aşıldı', HttpStatus.TOO_MANY_REQUESTS);
+    }
   }
 
   /** Mevcut siparişin sonucunu (idempotent tekrar için) yeniden kurar. */
