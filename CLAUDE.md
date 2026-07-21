@@ -303,14 +303,22 @@ YOK → SMTP-only bilinçli kapsam (`bounced` durumu üretilmez; §2.5/§6 fiili
 (multi+validity_days) süre-bitişinde kapasite havuza dönüşü + şifre-rotasyon hatırlatması yapılmıyor (bilinçli; ana
 expiry `hide`/`keep` çalışır).
 
-**Bilinçli ERTELENEN (gerekçeli, düşük öncelik / feature):** [#5] `assignment_history` tablosu yazılmıyor — eski→yeni
-soyağacı revoke+completeLine sınırında doğru yakalama + tüketen UI gerektirir; şimdilik audit_log + fulfillment_events
-lineage'i taşır · [#6] admin PROAKTİF replace ucu (§4 `/assignments/:id/replace`) — kusurlu-key ana vakası zaten
-report-issue→onay akışıyla karşılanıyor; ayrık endpoint+UI takip işi · [#7] §8 TAM dinamik kota (30g-ort ×3 +
+**Bilinçli ERTELENEN (gerekçeli, düşük öncelik / feature):** [#7] §8 TAM dinamik kota (30g-ort ×3 +
 held_for_review) — bu partide Retry-After + security_event yapıldı, dinamik eşik + inceleme-beklet feature · [#18] mail
 şablonu `{{key}}/{{password}}` değişkenleri (custom şablonda boş render) — renderer'a per-item besleme, mail kırılma
 riski nedeniyle ayrı pas · [#19] `revokeExcess` MAK/multi'de birim-granüler değil (tek-kullanımda sorunsuz) · [#20]
 `enforceSalesQuota` say-sonra-ekle TOCTOU (her sipariş gerçek ödenmiş Woo + gerçek stok ister → zayıf).
+
+**Kalan feature partisi — #6+#5 TAMAM (commit c4e9b26, CANLI, migration YOK):** [#6] Admin PROAKTİF değişim ucu
+(`POST /v1/admin/assignments/:id/replace`) — kusurlu key'i müşteri "Sorun Bildir" beklemeden aynı üründen TAZE key ile
+değiştirir. `AdminOrdersService.replaceAssignment` = replacements.approve deseni (MAK reddet, stok-ön-kontrol→409 eski
+korunur, revoke `markLineCanceled=false` → satır 'canceled' DEĞİL, eski karantina). Sipariş detayı "Değiştir" butonu
+(reason prompt) + "Değişim Geçmişi" kartı (eski key maskeli). [#5] `assignment_history` artık YAZILIYOR: paylaşılan
+`orders/assignment-history.recordReplacementLineage` (eski→yeni + reason + actor) → **üç değişim yolu** (admin replace /
+replacements.approve / supply-ops bulkReplace) bağlandı; ölü şema canlandı. `AdminOrdersService`→`FulfillmentService`
+enjekte edildi (asiklik; boot "OrdersModule dependencies initialized" doğruladı). 6 test wiring güncellendi + yeni
+`replace-assignment` testi (karantina/farklı-key/canceled=false/history + no-stock=409 + MAK=400). Entegrasyon **70/70**
++ yarış 1/1; deploy sonrası replace rotası map'lendi, /health 200.
 
 ## Geliştirme
 
