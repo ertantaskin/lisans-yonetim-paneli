@@ -25,6 +25,9 @@ import { TemplatesModule } from './templates/templates.module';
 import { OpsModule } from './ops/ops.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { MaintenanceModule } from './maintenance/maintenance.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { PresenceModule } from './presence/presence.module';
+import { SavedViewsModule } from './saved-views/saved-views.module';
 
 @Module({
   imports: [
@@ -78,6 +81,9 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
     OpsModule,
     DashboardModule,
     MaintenanceModule,
+    OnboardingModule,
+    PresenceModule,
+    SavedViewsModule,
   ],
 })
 export class AppModule {}

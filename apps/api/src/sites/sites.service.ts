@@ -228,6 +228,35 @@ export class SitesService {
     return { hmacSecret: newSecret };
   }
 
+  /**
+   * Site kimlik bilgilerini (api_key + hmac_secret) BİRLİKTE yeniler (§14 onboarding).
+   * Onboarding "tek-seferlik bağlan kodu" akışının çekirdeği: taze creds tek atışta
+   * üretilir; api_key hash'i değişir → ESKİ api_key anında geçersizleşir, hmac_secret
+   * rotasyona uğrar (mevcut → prev) → 24s zarafet penceresinde eski secret de kabul
+   * edilir (findForAuth) ve WP eklentisi kesintisiz yeni değerlere geçer. Yeni api_key
+   * + hmac_secret YALNIZ burada bir kez döner; DB'de düz metin saklanmaz (hash + envelope).
+   */
+  async rekey(siteId: string): Promise<{ apiKey: string; hmacSecret: string }> {
+    const site = await this.getById(siteId);
+    const newApiKey = `jl_${randomBytes(24).toString('hex')}`;
+    const newHmacSecret = randomBytes(32).toString('hex');
+    const aad = CryptoService.siteSecretAad(site.id);
+
+    await this.db
+      .update(sites)
+      .set({
+        apiKeyHash: hashApiKey(newApiKey),
+        // Eski blob'un AAD'si aynı site id'sine bağlı → prev olarak taşınır, çözülebilir kalır.
+        hmacSecretPrevEnc: site.hmacSecretEnc,
+        hmacSecretEnc: this.crypto.encrypt(newHmacSecret, aad),
+        hmacSecretRotatedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(sites.id, site.id));
+
+    return { apiKey: newApiKey, hmacSecret: newHmacSecret };
+  }
+
   /** Rotasyon için: siteyi + çözülmüş GÜNCEL secret'ı getirir (giden webhook imzası, §2). */
   async getCurrentSecret(siteId: string): Promise<string> {
     const site = await this.getById(siteId);

@@ -2,6 +2,7 @@
 export * from './enums';
 export * from './adminUsers';
 export * from './sites';
+export * from './siteConnectTokens';
 export * from './products';
 export * from './licenseItems';
 export * from './orders';
@@ -14,6 +15,7 @@ export * from './purchaseOrders';
 export * from './batches';
 export * from './stockAdjustments';
 export * from './securityEvents';
+export * from './savedViews';
 export * from './mappings';
 export * from './events';
 export * from './mail';

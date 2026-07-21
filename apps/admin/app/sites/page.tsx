@@ -1,6 +1,9 @@
+import Link from 'next/link';
+import { Plus } from 'lucide-react';
 import { apiGet, type SiteRow } from '../../lib/api';
-import { PageHeader } from '../../components/ui';
 import { Card } from '../../components/ui/card';
+import { Button } from '../../components/ui/button';
+import { PageHeader } from '../../components/ui/page-header';
 import { CreateSiteForm } from '../../components/create-site-form';
 import { SitesTable } from '../../components/sites-table';
 
@@ -17,7 +20,13 @@ export default async function SitesPage() {
 
   return (
     <div>
-      <PageHeader title="Siteler" desc="Her WooCommerce/pazar yeri kanalı bir tenant." />
+      <PageHeader title="Siteler" description="Her WooCommerce/pazar yeri kanalı bir tenant.">
+        <Button asChild>
+          <Link href="/sites/new">
+            <Plus /> Yeni Site (Sihirbaz)
+          </Link>
+        </Button>
+      </PageHeader>
 
       <Card className="mb-5 max-w-2xl p-5">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Site Bağla</h2>

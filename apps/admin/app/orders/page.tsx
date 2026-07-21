@@ -1,7 +1,8 @@
 import { apiGet, type OrderRow } from '../../lib/api';
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { OrdersTable } from '../../components/orders-table';
+import { SavedViewsMenu } from '../../components/saved-views-menu';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +17,9 @@ export default async function OrdersPage() {
 
   return (
     <div>
-      <PageHeader title="Siparişler" desc="Tüm siparişler — ara, filtrele, sırala." />
+      <PageHeader title="Siparişler" description="Tüm siparişler — ara, filtrele, sırala.">
+        <SavedViewsMenu page="orders" />
+      </PageHeader>
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>

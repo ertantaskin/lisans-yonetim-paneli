@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Search } from 'lucide-react';
 import { NAV } from './nav';
 import { ThemeToggle } from '../theme';
+import { PresenceIndicator } from '../presence-indicator';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { SidebarTrigger } from '../ui/sidebar';
@@ -85,6 +86,8 @@ export function SiteHeader() {
             Ctrl K
           </kbd>
         </button>
+        {/* Operatör çakışma uyarısı (§14) — aynı sayfada başka admin varsa görünür. */}
+        <PresenceIndicator />
         <Badge variant="success" className="hidden sm:inline-flex">
           <span className="size-1.5 rounded-full bg-current" />
           CANLI
