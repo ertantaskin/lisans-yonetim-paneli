@@ -249,7 +249,7 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
 - **A11y (WCAG):** skip-to-content + aria-live duyurucu. **TZ:** compose postgres+api Europe/Istanbul (gün sınırı yerel).
 - **Test:** HmacGuard + findForAuth api_key grace(0017) + RiskScore + getDeliveries expiry filtresi (integration).
 
-migration 0000-0018. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+migration 0000-0019. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
 YOK — §2/§6/§10), marketplace dış-API adaptörü, Faz-3 WP-migrasyon (greenfield), abonelik/EFT/3DS (YAGNI).
 (db.execute tipli-helper + Sentry + zip depolama kararı → aşağıdaki "Eksik-giderme partisi"nde kapandı.)
 Yol haritası §18.
@@ -303,11 +303,29 @@ YOK → SMTP-only bilinçli kapsam (`bounced` durumu üretilmez; §2.5/§6 fiili
 (multi+validity_days) süre-bitişinde kapasite havuza dönüşü + şifre-rotasyon hatırlatması yapılmıyor (bilinçli; ana
 expiry `hide`/`keep` çalışır).
 
-**Bilinçli ERTELENEN (gerekçeli — kullanıcı "şimdilik bırak" dedi / düşük değer):** [#7] §8 TAM dinamik kota (30g-ort
-×3 + held_for_review) — Retry-After + security_event yapıldı; dinamik eşik + inceleme-beklet yeni durum+migration+UI =
-büyük alt-sistem (kullanıcı erteledi) · [#19] `revokeExcess` MAK/multi'de birim-granüler değil (tek-kullanımda sorunsuz;
-fix = partial-unit revoke → kapasite invaryantı riski, LOW) · [#20] `enforceSalesQuota` say-sonra-ekle TOCTOU (fix =
-createOrder hot-path'ini tx'e alma → risk; her sipariş gerçek ödenmiş Woo + gerçek stok ister → bypass zaten zayıf, LOW).
+**#7 + #19 + #20 TAMAM (commit 7421b34→2af0ab1, CANLI + deploy + migration 0019 + 82/82 test):** Ertelenen son 3 madde
+paralel dalgayla kapatıldı — çekirdek seri (hepsi orders.service/şemada iç içe); UI/WP/test 3 AYRIK-dosya işçi (dalga deseni).
+- **[#7] §8 dinamik satış kotası + İnceleme Kuyruğu (held_for_review):** migration **0019** (additive) `sites.dynamic_quota_enabled`/
+  `review_multiplier` + `orders.held_for_review`/`held_at`/`held_reason` + kısmi index `orders_held_idx`. **NOT (drift):** drizzle
+  snapshot 0012'de kalmış (0013-0018 elle yazılmış); `db:generate` tüm ara tabloları yeniden yaratmak istedi → 0019 SQL yalnız
+  gerçek-yeni 5 kolon+1 index'e budandı (IF NOT EXISTS), 0019 snapshot tam şemayı yakalar → drift buradan iyileşir. Dinamik eşik =
+  `max(ceil(30g-ort × review_multiplier), 20)`. Aşımda sipariş REDDEDİLMEZ; `held_for_review` ile KABUL edilip manuel onaya alınır
+  ("insan onaylar", §15). **VARSAYILAN KAPALI** (`dynamic_quota_enabled=false`) → hiçbir mevcut site etkilenmez. createOrder held-branch
+  (atama yok, satır pending, `body.held=true`, 202); autoComplete + completeLine held siparişi ATLAR (job gecikse bile payload sızmaz).
+  `AdminOrdersService.listHeldOrders`/`releaseHeld`(onayla→completeLine)/`rejectHeld`(reddet→satır canceled→'revoked'). Uçlar:
+  `GET /v1/admin/review`, `POST /v1/admin/orders/:id/release|reject`. Admin UI **/review** kuyruğu (Onayla/Reddet) + sidebar +
+  site config dinamik-kota alanları. WP: 202 held → `_jetlisans_held_for_review` meta + My Account inceleme bildirimi + metabox rozeti.
+- **[#20] TOCTOU:** sert kota (`salesDailyQuota`) artık createOrder içinde `pg_advisory_xact_lock(hashtext(site.id))` ALTINDA →
+  say-sonra-ekle yarışı kapandı; idempotent retry advisory-lock'a HİÇ ulaşmaz (kotaya takılmaz). 429'a gerçekten Retry-After +
+  `security_event` (quota_exceeded) — guard route'a bağlı DEĞİLDİ, #25'in Retry-After'ı latent'ti; artık servis yolu üretiyor.
+- **[#19] birim-granüler revokeExcess:** MAK/multi'de `revokePartialUnits` ile yalnız fazlalık birim geri alınır (over-revoke düzeldi);
+  kapasite tam `take` kadar döner (`use_count -= take`). Tek-kullanımda davranış birebir korunur (units=1 ⇒ hep tam revoke).
+- OrdersService 8. arg (`SecurityService`) → 3 bayat test instantiation güncellendi (H1 dersi: yeni ctor arg = TÜM çağıranları güncelle).
+  `cleanupByTag`'e `site_product_mappings` step-0 eklendi (products'a RESTRICT FK; yeni testler mapping-temizliği atlarsa FK ihlali
+  almaz — elle yapanlar için no-op, merkezileştirildi). Testler: dinamik hold/release/reject (6) + revokeExcess partial (3) +
+  hard-cap TOCTOU (3). **VPS izole test DB: entegrasyon 82/82 + yarış 1/1** (ilk koşuda 4 fail = 3 teardown FK + 1 REDIS_URL env,
+  ikisi de harness/env; DÜZELTİLDİ). typecheck 3/3 + build 3/3 (/review dahil). Prod migration 0019 `db:migrate` (tracking 19→20);
+  api+admin rebuild → `/v1/admin/review|release|reject` map'lendi, `/health` 200 (db+redis ok), boot hatasız.
 
 **Kalan feature partisi — #6+#5 TAMAM (commit c4e9b26, CANLI, migration YOK):** [#6] Admin PROAKTİF değişim ucu
 (`POST /v1/admin/assignments/:id/replace`) — kusurlu key'i müşteri "Sorun Bildir" beklemeden aynı üründen TAZE key ile
@@ -325,7 +343,8 @@ artık `unknownVars` döner (şablonda kullanılan ama SAMPLE_VARS dışı token
 ("{{password}} gönderimde boş çıkar"); render sessizce '' yapmaya devam eder ama admin artık sessiz veri kaybını görür.
 `usedTemplateVars` birim testi (birim 30/30). ({{key}}/{{password}} TAM besleme değil — çok-kalemli mailde belirsiz;
 uyarı-yaklaşımı bilinçli.) [#R] reconcile testine `NotificationsService.create` stub'ı → "reading 'create'" best-effort
-WARN'i kalktı (prod'da DI'dan gelir, etkisizdi). **Kalan:** #7 (kullanıcı erteledi) + #19/#20 (LOW, gerekçeli — yukarı).
+WARN'i kalktı (prod'da DI'dan gelir, etkisizdi). **Kalan:** yok — #7/#19/#20 de tamamlandı (yukarı: #7+#19+#20 TAMAM).
+Kodlanabilir mimari eksik kalmadı; yalnızca yapısal kapsam-DIŞI maddeler (fiyat senkronu/marketplace/abonelik — §2/§6/§10) dışarıda.
 
 ## Geliştirme
 
