@@ -1,10 +1,9 @@
 import { createHash, randomInt } from 'node:crypto';
 import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
-import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
-import { REDIS } from '../redis/redis.module';
+import { RateLimitService } from '../common/rate-limit.service';
 import { SitesService } from '../sites/sites.service';
 import { auditLog, siteConnectTokens } from '../db/schema';
 
@@ -33,7 +32,7 @@ const CLAIM_RL_MAX = 10;
 export class OnboardingService {
   constructor(
     @Inject(DB) private readonly db: Database,
-    @Inject(REDIS) private readonly redis: Redis,
+    private readonly rateLimit: RateLimitService,
     private readonly crypto: CryptoService,
     private readonly sites: SitesService,
   ) {}
@@ -87,11 +86,8 @@ export class OnboardingService {
     code: string,
     ip: string,
   ): Promise<{ siteDomain: string; apiKey: string; hmacSecret: string }> {
-    // IP başına kısa pencere rate-limit (brute-force önleme). İlk artışta TTL kur.
-    const rlKey = `connect_claim_rl:${ip}`;
-    const hits = await this.redis.incr(rlKey);
-    if (hits === 1) await this.redis.expire(rlKey, CLAIM_RL_WINDOW_SEC);
-    if (hits > CLAIM_RL_MAX) {
+    // IP başına kısa pencere rate-limit (brute-force önleme) — Redis sabit-pencere sayaç.
+    if (!(await this.rateLimit.hit(`connect_claim:${ip}`, CLAIM_RL_MAX, CLAIM_RL_WINDOW_SEC))) {
       throw new HttpException(
         'Çok fazla deneme. Bir dakika sonra tekrar deneyin.',
         HttpStatus.TOO_MANY_REQUESTS,

@@ -19,6 +19,14 @@ export const sites = pgTable('sites', {
    */
   hmacSecretPrevEnc: text('hmac_secret_prev_enc'),
   hmacSecretRotatedAt: timestamp('hmac_secret_rotated_at', { withTimezone: true }),
+  /**
+   * api_key rotasyonunda (rekey, §14) eski anahtarın hash'i + rotasyon zamanı. rekey api_key'i
+   * anında değiştirdiğinden ESKİ api_key ile gelen istek normalde en başta (findForAuth lookup)
+   * 401 alırdı — hmac grace'i bile devreye giremezdi. Bu iki alan HMAC_KEY_ROTATION_GRACE_SEC
+   * (24s) boyunca eski api_key hash'iyle de siteyi bulmayı sağlar (hmac grace deseninin birebir aynası).
+   */
+  apiKeyHashPrev: text('api_key_hash_prev'),
+  apiKeyRotatedAt: timestamp('api_key_rotated_at', { withTimezone: true }),
   senderEmail: text('sender_email'),
   senderDomainVerified: boolean('sender_domain_verified').notNull().default(false),
   /** Geri kanal webhook hedefi (WP eklentisi) — null ise webhook gönderilmez (§2). */

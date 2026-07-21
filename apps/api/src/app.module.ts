@@ -36,6 +36,7 @@ import { DailyDigestModule } from './ai/daily-digest.module';
 import { CostsModule } from './reports/costs.module';
 import { RiskScoreModule } from './security/risk-score.module';
 import { ChannelModule } from './channel/channel-catalog.module';
+import { RateLimitModule } from './common/rate-limit.module';
 
 @Module({
   imports: [
@@ -99,6 +100,7 @@ import { ChannelModule } from './channel/channel-catalog.module';
     CostsModule,
     RiskScoreModule,
     ChannelModule,
+    RateLimitModule,
   ],
 })
 export class AppModule {}

@@ -12,7 +12,12 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({
-      trustProxy: true,
+      // trustProxy=1: TEK ters-proxy (Caddy) hop'una güven. `true` (tüm zinciri güven) X-Forwarded-For'un
+      // EN SOLDAKI (istemci-kontrollü) girişini req.ip yapardı → @Ip() spoof edilebilir, IP-başlı hız
+      // sınırları (connect-claim / update / AI) atlatılabilirdi. `1` ile Caddy'nin eklediği en sağdaki
+      // giriş (gerçek istemci IP'si) kullanılır; istemcinin öne eklediği sahte girişler yok sayılır.
+      // NOT: topoloji tek Caddy hop (CDN yok); önüne başka proxy eklenirse bu sayı güncellenmeli.
+      trustProxy: 1,
       bodyLimit: 1_048_576,
       // Trace-Id uçtan uca (§16): req.id = gelen x-trace-id (yoksa üretilir). Bu TEK
       // kimlik hem pino loglarına (pino, kendi genReqId'i yoksa Fastify req.id'sini

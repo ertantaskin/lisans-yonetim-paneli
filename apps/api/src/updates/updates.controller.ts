@@ -14,35 +14,18 @@ import {
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { RateLimitService } from '../common/rate-limit.service';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { UpdatesService, type PluginReleaseMeta } from './updates.service';
 
 /**
- * Basit bellek-içi sabit-pencere hız sınırı (IP başına) — PUBLIC güncelleme uçları için
- * hafif DoS/kötüye-kullanım savunması. Tek-süreç varsayar (kalıcı/dağıtık depo DEĞİL);
- * amaç kaba tepe trafiğini kırpmak. Süresi geçen kova erişimde tembel sıfırlanır; harita
- * büyürse fırsatçı temizlik yapılır (bellek sızıntısı önlenir).
+ * Redis sabit-pencere hız sınırı (IP başına) — PUBLIC güncelleme uçları için hafif
+ * DoS/kötüye-kullanım savunması. RateLimitService dağıtık + restart-dayanıklı sayaç tutar;
+ * info ve download AYRI kovadır (ad-alanlı anahtar) → biri diğerinin kotasını yemez.
  */
-const RL_WINDOW_MS = 60_000;
+const RL_WINDOW_SEC = 60;
 const RL_MAX_INFO = 60; // dakikada 60 info/IP
 const RL_MAX_DOWNLOAD = 20; // dakikada 20 indirme/IP
-const rlBuckets = new Map<string, { count: number; resetAt: number }>();
-
-/** true = izin ver; false = pencere kotası aşıldı (çağıran 429 üretmeli). */
-function updatesRateLimit(key: string, max: number): boolean {
-  const now = Date.now();
-  const bucket = rlBuckets.get(key);
-  if (!bucket || now >= bucket.resetAt) {
-    if (rlBuckets.size > 5000) {
-      for (const [k, v] of rlBuckets) if (now >= v.resetAt) rlBuckets.delete(k);
-    }
-    rlBuckets.set(key, { count: 1, resetAt: now + RL_WINDOW_MS });
-    return true;
-  }
-  if (bucket.count >= max) return false;
-  bucket.count += 1;
-  return true;
-}
 
 /** Yeni eklenti sürümü yayınlama gövdesi (§16). zipB64 = .zip paketinin base64'ü. */
 const PublishSchema = z.object({
@@ -82,7 +65,10 @@ export class UpdatesAdminController {
  */
 @Controller('updates')
 export class UpdatesController {
-  constructor(private readonly updates: UpdatesService) {}
+  constructor(
+    private readonly updates: UpdatesService,
+    private readonly rateLimit: RateLimitService,
+  ) {}
 
   /**
    * En son sürümü WordPress güncelleme-denetçisi biçimine çevirir. download_url MUTLAK URL:
@@ -91,7 +77,7 @@ export class UpdatesController {
    */
   @Get('plugin/info')
   async info(@Req() req: FastifyRequest, @Ip() ip: string) {
-    if (!updatesRateLimit(`info:${ip}`, RL_MAX_INFO)) {
+    if (!(await this.rateLimit.hit(`updates:info:${ip}`, RL_MAX_INFO, RL_WINDOW_SEC))) {
       throw new HttpException(
         'Çok fazla istek. Kısa süre sonra tekrar deneyin.',
         HttpStatus.TOO_MANY_REQUESTS,
@@ -128,7 +114,7 @@ export class UpdatesController {
     @Res() reply: FastifyReply,
   ): Promise<void> {
     // Hız sınırı: @Res() elle yönetildiği için (mevcut 404 deseni gibi) 429'u elle yaz.
-    if (!updatesRateLimit(`download:${ip}`, RL_MAX_DOWNLOAD)) {
+    if (!(await this.rateLimit.hit(`updates:download:${ip}`, RL_MAX_DOWNLOAD, RL_WINDOW_SEC))) {
       reply
         .status(429)
         .send({ error: 'rate_limited', message: 'Çok fazla istek. Kısa süre sonra tekrar deneyin.' });

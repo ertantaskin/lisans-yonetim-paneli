@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, eq, gte, sql } from 'drizzle-orm';
+import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
@@ -136,7 +136,7 @@ export class SitesService {
       webhookUrl?: string | null;
       status?: 'active' | 'suspended';
     },
-  ): Promise<Omit<Site, 'hmacSecretEnc' | 'apiKeyHash'>> {
+  ): Promise<Omit<Site, 'hmacSecretEnc' | 'apiKeyHash' | 'apiKeyHashPrev'>> {
     await this.getById(id); // yoksa 404
 
     const patch: Partial<typeof sites.$inferInsert> = { updatedAt: new Date() };
@@ -157,7 +157,8 @@ export class SitesService {
       status: row!.status,
     });
 
-    const { hmacSecretEnc: _s, apiKeyHash: _a, ...rest } = row!;
+    // apiKeyHashPrev de (apiKeyHash gibi) yanıta konmaz — rotasyon grace'i için tutulan eski hash.
+    const { hmacSecretEnc: _s, apiKeyHash: _a, apiKeyHashPrev: _p, ...rest } = row!;
     return rest;
   }
 
@@ -196,10 +197,23 @@ export class SitesService {
    * herhangi biriyle eşleşen imzayı kabul eder (kesintisiz anahtar geçişi, §4).
    */
   async findForAuth(apiKey: string): Promise<{ site: Site; hmacSecrets: string[] } | null> {
+    // Sabit-zamanlı: karşılaştırılan sha256 HASH'i (sır değil); eşitlik Postgres tarafında
+    // parametreli `=` ile yapılır → JS'te erken-çıkışlı string kıyası YOK.
+    const hash = hashApiKey(apiKey);
+    // api_key rotasyon zarafet penceresi (§4/§14): rekey api_key'i anında değiştirir; ESKİ api_key
+    // ile gelen istek normalde bu lookup'ta en başta 401 alır (hmac grace'i bile devreye giremez).
+    // Bu yüzden api_key_hash_prev == hash(apiKey) VE rekey HMAC_KEY_ROTATION_GRACE_SEC (24s) içindeyse
+    // siteyi yine döneriz — hmac secret grace'inin birebir aynası. Pencere dolunca eski hash reddedilir.
+    const graceCutoff = new Date(Date.now() - HMAC_KEY_ROTATION_GRACE_SEC * 1000);
     const [site] = await this.db
       .select()
       .from(sites)
-      .where(eq(sites.apiKeyHash, hashApiKey(apiKey)))
+      .where(
+        or(
+          eq(sites.apiKeyHash, hash),
+          and(eq(sites.apiKeyHashPrev, hash), gte(sites.apiKeyRotatedAt, graceCutoff)),
+        ),
+      )
       .limit(1);
 
     if (!site || site.status !== 'active') return null;
@@ -267,6 +281,10 @@ export class SitesService {
       .update(sites)
       .set({
         apiKeyHash: hashApiKey(newApiKey),
+        // Eski api_key hash'i prev'e taşınır → findForAuth grace penceresinde (24s) eski api_key
+        // ile gelen istek de siteyi bulabilir (hmac grace deseninin birebir aynası, §4/§14).
+        apiKeyHashPrev: site.apiKeyHash,
+        apiKeyRotatedAt: new Date(),
         // Eski blob'un AAD'si aynı site id'sine bağlı → prev olarak taşınır, çözülebilir kalır.
         hmacSecretPrevEnc: site.hmacSecretEnc,
         hmacSecretEnc: this.crypto.encrypt(newHmacSecret, aad),
