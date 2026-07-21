@@ -45,24 +45,30 @@ export class OnboardingService {
    * Yalnız {code, expiresAt} döner — creds burada DÖNMEZ (yalnız şifreli saklanır, claim'de teslim).
    */
   async issueConnectCode(siteId: string): Promise<{ code: string; expiresAt: Date }> {
-    // 404: site yoksa rekey içindeki getById fırlatır.
-    const creds = await this.sites.rekey(siteId);
-
-    // Aynı sitenin eski (tüketilmemiş) kodları geçersiz — tek aktif kod kalsın.
-    await this.db
-      .delete(siteConnectTokens)
-      .where(and(eq(siteConnectTokens.siteId, siteId), isNull(siteConnectTokens.consumedAt)));
-
     const code = this.generateCode();
     const aad = CryptoService.siteSecretAad(siteId);
     const expiresAt = new Date(Date.now() + CONNECT_CODE_TTL_MS);
 
-    await this.db.insert(siteConnectTokens).values({
-      siteId,
-      codeHash: hashCode(code),
-      apiKeyEnc: this.crypto.encrypt(creds.apiKey, aad),
-      hmacSecretEnc: this.crypto.encrypt(creds.hmacSecret, aad),
-      expiresAt,
+    // rekey + eski kod temizliği + yeni kod ekleme TEK transaction'da (§14 sertleştirme):
+    // rekey site creds'ini yeniler; token INSERT'i herhangi bir nedenle başarısız olursa rekey
+    // de GERİ ALINIR → site "yeni creds üretildi ama hiçbir koda gömülmedi/teslim edilmedi"
+    // durumuna (yetim/lockout: eski api_key ölü, yeni api_key kimsede yok) DÜŞMEZ.
+    // 404: site yoksa rekey içindeki getById fırlatır (transaction başında).
+    await this.db.transaction(async (tx) => {
+      const creds = await this.sites.rekey(siteId, tx);
+
+      // Aynı sitenin eski (tüketilmemiş) kodları geçersiz — tek aktif kod kalsın.
+      await tx
+        .delete(siteConnectTokens)
+        .where(and(eq(siteConnectTokens.siteId, siteId), isNull(siteConnectTokens.consumedAt)));
+
+      await tx.insert(siteConnectTokens).values({
+        siteId,
+        codeHash: hashCode(code),
+        apiKeyEnc: this.crypto.encrypt(creds.apiKey, aad),
+        hmacSecretEnc: this.crypto.encrypt(creds.hmacSecret, aad),
+        expiresAt,
+      });
     });
 
     await this.writeAudit(siteId, 'connect_issue');

@@ -19,6 +19,7 @@ import {
   Building2,
   Boxes,
   CalendarDays,
+  Truck,
   type LucideIcon,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
@@ -58,6 +59,12 @@ interface Wastage {
   events: number;
   uncoveredEvents: number;
 }
+interface DeliveredCogs {
+  currency: string;
+  cogsCents: number;
+  deliveredUnits: number;
+  uncoveredUnits: number;
+}
 interface CostReport {
   generatedAt: string;
   bySupplier: BySupplier[];
@@ -65,6 +72,7 @@ interface CostReport {
   byProduct: ByProduct[];
   valuation: Valuation[];
   wastage: Wastage[];
+  deliveredCogs: DeliveredCogs[];
 }
 
 // Grafik renk döngüsü (globals.css --chart-1..6, iki tema uyumlu).
@@ -254,6 +262,7 @@ export function CostsView() {
     for (const r of data.byMonth) set.add(r.currency);
     for (const r of data.bySupplier) set.add(r.currency);
     for (const r of data.byProduct) set.add(r.currency);
+    for (const r of data.deliveredCogs ?? []) set.add(r.currency);
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [data]);
   const multiCurrency = currencies.length > 1;
@@ -330,7 +339,8 @@ export function CostsView() {
     data.wastage.length > 0 ||
     data.byMonth.length > 0 ||
     data.bySupplier.length > 0 ||
-    data.byProduct.length > 0;
+    data.byProduct.length > 0 ||
+    (data.deliveredCogs?.length ?? 0) > 0;
 
   if (!hasAny) {
     return (
@@ -344,6 +354,11 @@ export function CostsView() {
 
   const uncoveredUnits = data.valuation.reduce((s, v) => s + v.uncoveredUnits, 0);
   const uncoveredEvents = data.wastage.reduce((s, w) => s + w.uncoveredEvents, 0);
+
+  // Teslim edilen COGS (§12, D17) — para birimi başına ayrı; '' kova = maliyet snapshot'ı
+  // olmayan (partiye/PO'ya bağlanamayan) teslimatlar (AYRI uncovered uyarısı).
+  const deliveredCogs = data.deliveredCogs ?? [];
+  const deliveredUncovered = deliveredCogs.reduce((s, d) => s + d.uncoveredUnits, 0);
 
   return (
     <div className="space-y-6">
@@ -383,6 +398,52 @@ export function CostsView() {
           />
         ))}
       </div>
+
+      {/* Teslim edilen COGS (satılan mal maliyeti — para birimi başına ayrı) */}
+      {deliveredCogs.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Truck className="size-4 text-muted-foreground" /> Teslim Edilen COGS
+            </CardTitle>
+            <CardDescription>
+              Aktif + teslim edilmiş atamaların satılan mal maliyeti (import anındaki birim
+              maliyet anlık-görüntüsü üzerinden; yalnız maliyet, gelir/kâr içermez).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {deliveredCogs.some((d) => d.currency !== '') && (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {deliveredCogs
+                  .filter((d) => d.currency !== '')
+                  .map((d) => (
+                    <StatTile
+                      key={`cogs-${d.currency}`}
+                      label={multiCurrency ? `Teslim COGS (${d.currency})` : 'Teslim COGS'}
+                      value={money(d.cogsCents, d.currency)}
+                      icon={Truck}
+                      tone="accent"
+                      hint={`${fmtNum(d.deliveredUnits)} birim teslim edildi`}
+                    />
+                  ))}
+              </div>
+            )}
+            {deliveredUncovered > 0 && (
+              <Alert variant="warning">
+                <TriangleAlert />
+                <div>
+                  <AlertTitle>Maliyeti bağlanamayan teslimat</AlertTitle>
+                  <AlertDescription>
+                    {fmtNum(deliveredUncovered)} teslim edilmiş birim bir maliyet
+                    anlık-görüntüsüne (partiye/PO'ya) bağlı değil; teslim COGS toplamı
+                    OLDUĞUNDAN DÜŞÜK görünebilir.
+                  </AlertDescription>
+                </div>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Maliyeti bağlanamayan uyarısı */}
       {(uncoveredUnits > 0 || uncoveredEvents > 0) && (

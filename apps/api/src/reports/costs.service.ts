@@ -52,6 +52,19 @@ export interface CostWastage {
 }
 
 /**
+ * Teslim edilen COGS satırı (para birimi başına, §12 D17). Aktif + teslim edilmiş
+ * atamaların license_items maliyet anlık-görüntüsü (unit_cost_cents) üzerinden hesap.
+ * Snapshot NULL olan (import anında partiye/PO'ya bağlanamayan) atamalar uncoveredUnits
+ * olarak AYRI sayılır (currency='' satırı) — sessiz sıfırlanmaz.
+ */
+export interface CostDeliveredCogs {
+  currency: string;
+  cogsCents: number;
+  deliveredUnits: number;
+  uncoveredUnits: number;
+}
+
+/**
  * Maliyet raporu (§12/§13) — salt-okunur agregasyon. TÜM tutarlar integer kuruş.
  * Panel ödemeye dokunmaz: bu rapor KÂR değil, YALNIZ MALİYET (PO unit_cost) yansıtır.
  * Para birimi karışımı tek toplamda birleştirilmez — her para birimi ayrı satır.
@@ -63,6 +76,7 @@ export interface CostReport {
   byProduct: CostByProduct[];
   valuation: CostValuation[];
   wastage: CostWastage[];
+  deliveredCogs: CostDeliveredCogs[];
 }
 
 /**
@@ -77,12 +91,13 @@ export class CostsService {
 
   /** Tüm maliyet bloklarını paralel toplayıp tek rapor nesnesi döndürür. */
   async getCostReport(): Promise<CostReport> {
-    const [bySupplier, byMonth, byProduct, valuation, wastage] = await Promise.all([
+    const [bySupplier, byMonth, byProduct, valuation, wastage, deliveredCogs] = await Promise.all([
       this.bySupplier(),
       this.byMonth(),
       this.byProduct(),
       this.valuation(),
       this.wastage(),
+      this.deliveredCogs(),
     ]);
     return {
       generatedAt: new Date().toISOString(),
@@ -91,6 +106,7 @@ export class CostsService {
       byProduct,
       valuation,
       wastage,
+      deliveredCogs,
     };
   }
 
@@ -293,6 +309,55 @@ export class CostsService {
       wastedCents: Number(r.wasted_cents),
       events: Number(r.events),
       uncoveredEvents: Number(r.uncovered_events),
+    }));
+  }
+
+  /**
+   * Teslim edilen COGS (§12, D17): AKTİF + teslim edilmiş (delivered_at IS NOT NULL)
+   * atamaların, bağlı license_item maliyet anlık-görüntüsü (unit_cost_cents) üzerinden
+   * teslim maliyeti. Maliyet PO join'iyle DEĞİL, satırda saklı SNAPSHOT ile hesaplanır
+   * (PO sonradan değişse bile teslim maliyeti sabit). Para birimi snapshot'tan (cost_currency)
+   * alınır ve AYRI gruplanır. Snapshot NULL olan atamalar uncoveredUnits olarak AYRI
+   * sayılır (currency='' satırı) — sessiz sıfırlanmaz.
+   */
+  private async deliveredCogs(): Promise<CostDeliveredCogs[]> {
+    const rows = await this.db.execute<{
+      currency: string;
+      cogs_cents: number;
+      delivered_units: number;
+      uncovered_units: number;
+    }>(sql`
+      SELECT
+        coalesce(li.cost_currency, '') AS currency,
+        coalesce(
+          sum(a.units * li.unit_cost_cents) FILTER (WHERE li.unit_cost_cents IS NOT NULL),
+          0
+        )::bigint AS cogs_cents,
+        coalesce(
+          sum(a.units) FILTER (WHERE li.unit_cost_cents IS NOT NULL),
+          0
+        )::int AS delivered_units,
+        coalesce(
+          sum(a.units) FILTER (WHERE li.unit_cost_cents IS NULL),
+          0
+        )::int AS uncovered_units
+      FROM assignments a
+      JOIN license_items li ON li.id = a.license_item_id
+      WHERE a.status = 'active' AND a.delivered_at IS NOT NULL
+      GROUP BY coalesce(li.cost_currency, '')
+      ORDER BY currency ASC;
+    `);
+    const list = rows as unknown as Array<{
+      currency: string;
+      cogs_cents: number;
+      delivered_units: number;
+      uncovered_units: number;
+    }>;
+    return list.map((r) => ({
+      currency: r.currency,
+      cogsCents: Number(r.cogs_cents),
+      deliveredUnits: Number(r.delivered_units),
+      uncoveredUnits: Number(r.uncovered_units),
     }));
   }
 }

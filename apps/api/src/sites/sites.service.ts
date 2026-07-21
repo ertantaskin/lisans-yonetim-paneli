@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
@@ -80,6 +80,20 @@ export class SitesService {
     /** Sandbox test modu (§14) — true ise mail müşteriye gitmez. */
     sandbox?: boolean;
   }): Promise<CreatedSite> {
+    // App-düzeyi domain tekilliği (§14 onboarding sertleştirme): aynı domain için ikinci bir
+    // tenant açılması ÇİFT site tenant'a yol açar (tek mağaza iki panel kaydına bölünür, sipariş
+    // push'u belirsiz siteye düşer). DB unique index EKLENMEZ — mevcut olası çift veri migration'ı
+    // patlatabilir; büyük/küçük harf duyarsız app-kontrolü yeterli. NOT: index yokluğunda eşzamanlı
+    // iki create teoride yarışabilir; onboarding düşük-frekanslı manuel bir admin akışı olduğundan
+    // (tek operatör, sihirbaz) bu kalan risk kabul edilir.
+    const domain = input.domain.trim();
+    const [dup] = await this.db
+      .select({ id: sites.id })
+      .from(sites)
+      .where(sql`lower(${sites.domain}) = lower(${domain})`)
+      .limit(1);
+    if (dup) throw new ConflictException(`Bu domain zaten kayıtlı: ${domain}`);
+
     const apiKey = `jl_${randomBytes(24).toString('hex')}`;
     const hmacSecret = randomBytes(32).toString('hex');
     // id'yi uygulamada üretiyoruz ki secret'ı bu siteye AAD ile bağlayabilelim (§8).
@@ -89,7 +103,7 @@ export class SitesService {
       .insert(sites)
       .values({
         id,
-        domain: input.domain,
+        domain,
         type: input.type ?? 'woocommerce',
         apiKeyHash: hashApiKey(apiKey),
         hmacSecretEnc: this.crypto.encrypt(hmacSecret, CryptoService.siteSecretAad(id)),
@@ -236,13 +250,20 @@ export class SitesService {
    * edilir (findForAuth) ve WP eklentisi kesintisiz yeni değerlere geçer. Yeni api_key
    * + hmac_secret YALNIZ burada bir kez döner; DB'de düz metin saklanmaz (hash + envelope).
    */
-  async rekey(siteId: string): Promise<{ apiKey: string; hmacSecret: string }> {
+  async rekey(
+    siteId: string,
+    executor: Database = this.db,
+  ): Promise<{ apiKey: string; hmacSecret: string }> {
     const site = await this.getById(siteId);
     const newApiKey = `jl_${randomBytes(24).toString('hex')}`;
     const newHmacSecret = randomBytes(32).toString('hex');
     const aad = CryptoService.siteSecretAad(site.id);
 
-    await this.db
+    // Yazım verilen executor üzerinden yapılır: onboarding "bağlan kodu" akışı rekey'i
+    // token INSERT'iyle AYNI transaction'da çağırır → kod yazılamazsa rekey de geri alınır
+    // (yeni creds üretilip kimseye teslim edilmeyen "yetim/lockout" siteyi önler). Executor
+    // verilmezse this.db ile eskisi gibi tek-yazım (geriye dönük uyumlu).
+    await executor
       .update(sites)
       .set({
         apiKeyHash: hashApiKey(newApiKey),

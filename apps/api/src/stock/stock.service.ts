@@ -8,7 +8,15 @@ import {
 } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
-import { auditLog, licenseItems, orderLines, type NewLicenseItem, type Product } from '../db/schema';
+import {
+  auditLog,
+  batches,
+  licenseItems,
+  orderLines,
+  purchaseOrders,
+  type NewLicenseItem,
+  type Product,
+} from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 
@@ -82,6 +90,11 @@ export class StockService {
     const accountSchema = this.resolveAccountSchema(product);
     const keyRegex = this.compileKeyFormat(product);
 
+    // COGS maliyet anlık-görüntüsü (§12, D17): parti verilmişse o partinin PO'sundan
+    // birim maliyet + para birimini salt-okunur çek. Her yeni satıra snapshot yazılır
+    // (import anında sabitlenir, sonradan değişmez). Parti yoksa / PO maliyeti yoksa null.
+    const costSnapshot = await this.resolveBatchCost(batchId);
+
     const rejections: ImportRejection[] = [];
     const values: NewLicenseItem[] = [];
 
@@ -106,6 +119,9 @@ export class StockService {
         maxUses,
         expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
         status: 'available',
+        // COGS snapshot (varsa) — parti PO'sunun import anındaki maliyeti.
+        unitCostCents: costSnapshot?.unitCostCents ?? null,
+        costCurrency: costSnapshot?.costCurrency ?? null,
       });
     });
 
@@ -188,6 +204,29 @@ export class StockService {
       rejections,
       autoCompleted,
     };
+  }
+
+  /**
+   * COGS snapshot kaynağı (§12, D17): verilen partinin PO'sundan birim maliyet +
+   * para birimini salt-okunur çeker. Parti yoksa, partinin PO bağı yoksa veya PO'da
+   * birim maliyet tanımlı değilse null döner (kayıt snapshot'sız kalır → "uncovered").
+   * Import davranışını DEĞİŞTİRMEZ; yalnız iki opsiyonel snapshot alanı besler.
+   */
+  private async resolveBatchCost(
+    batchId?: string,
+  ): Promise<{ unitCostCents: number; costCurrency: string } | null> {
+    if (!batchId) return null;
+    const [row] = await this.db
+      .select({
+        unitCostCents: purchaseOrders.unitCostCents,
+        costCurrency: purchaseOrders.currency,
+      })
+      .from(batches)
+      .innerJoin(purchaseOrders, eq(purchaseOrders.id, batches.purchaseOrderId))
+      .where(eq(batches.id, batchId))
+      .limit(1);
+    if (!row || row.unitCostCents == null) return null;
+    return { unitCostCents: row.unitCostCents, costCurrency: row.costCurrency };
   }
 
   /** Ürün account ise payloadSchema'yı doğrulayıp döner; değilse null. */

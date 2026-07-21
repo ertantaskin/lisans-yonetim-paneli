@@ -20,6 +20,14 @@ export const licenseItems = pgTable(
       .references(() => products.id, { onDelete: 'restrict' }),
     batchId: uuid('batch_id'),
 
+    /**
+     * COGS maliyet anlık-görüntüsü (§12, D17). Import anında bağlı partinin PO'sundan
+     * kopyalanır ve BİR DAHA DEĞİŞMEZ (snapshot). batch_id yoksa veya PO maliyeti
+     * yoksa NULL kalır — teslim COGS'ta "uncovered" olarak AYRI sayılır.
+     */
+    unitCostCents: integer('unit_cost_cents'),
+    costCurrency: text('cost_currency'),
+
     payloadEnc: text('payload_enc').notNull(),
     payloadHash: text('payload_hash').notNull(),
     payloadSuffixHash: text('payload_suffix_hash'),

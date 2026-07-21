@@ -18,6 +18,23 @@ export interface SqlResult {
 const MAX_ROWS = 200;
 
 /**
+ * Bilinen SIR kolonları — AI'nın ürettiği SQL bunların adına DEĞİNEMEZ (§15 savunma-derinliği).
+ * Salt-okunur transaction yalnız YAZMAYI engeller; bu EK katman şifreli/hash'li sır kolonlarının
+ * OKUNMASINI da (prompt enjeksiyonu / model sapması olasılığına karşı, prompt-DIŞI savunma) reddeder.
+ * Kelime-sınırıyla eşleşir → 'payload_encoding' gibi masum adları yanlışlıkla yakalamaz.
+ */
+const SECRET_COLUMN_DENYLIST = [
+  'payload_enc',
+  'payload_hash',
+  'hmac_secret_enc',
+  'hmac_secret_prev_enc',
+  'api_key_hash',
+  'password_hash',
+  'scrypt',
+] as const;
+const SECRET_COLUMN_RE = new RegExp(`\\b(?:${SECRET_COLUMN_DENYLIST.join('|')})\\b`, 'i');
+
+/**
  * ReadonlySqlService — doğal dilde rapor (§15 "salt-okunur DB rolü, üretilen SQL gösterilir")
  * için AI'nın ürettiği sorguyu GÜVENLE çalıştırır. Katmanlı güvence:
  *   1) Tek ifade (noktalı virgülle ifade zincirleme reddedilir).
@@ -42,6 +59,10 @@ export class ReadonlySqlService {
     }
     if (!/^\s*(select|with)\b/i.test(q)) {
       throw new HttpException('Yalnız SELECT/WITH sorgusuna izin verilir.', HttpStatus.BAD_REQUEST);
+    }
+    // Sır-kolon denylist (savunma-derinliği): sorgu metni bilinen sır kolonlarına değinemez.
+    if (SECRET_COLUMN_RE.test(q)) {
+      throw new HttpException('Sorgu sır kolonlarına erişemez.', HttpStatus.BAD_REQUEST);
     }
 
     // Sorguyu bir CTE'ye sarıp dışa LIMIT MAX_ROWS+1 uygula: belleğe en fazla MAX_ROWS+1
