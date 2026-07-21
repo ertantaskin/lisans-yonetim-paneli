@@ -32,8 +32,12 @@ import {
 const { db, end } = makeDb();
 const crypto = makeCrypto();
 
-// Her iki servis de sweep/reconcile'da Queue'ya dokunmaz (yalnız onModuleInit) — güvenli stub.
-const reconcileSvc = new ReconcileService(db as never, {} as never);
+// Queue yalnız onModuleInit'te kullanılır (çağrılmıyor → {} stub). reconcile() ihlal bulunca
+// NotificationsService.create ile kritik alarm üretir → create'i olan stub geçilir (aksi halde
+// "reading 'create' of undefined" best-effort WARN'i basar; davranış test edilmez, no-op yeter).
+const reconcileSvc = new ReconcileService(db as never, {} as never, {
+  create: async () => undefined,
+} as never);
 const expirySvc = new ExpiryService(db as never, {} as never);
 
 const tag = randomUUID().slice(0, 8);

@@ -61,6 +61,17 @@ export function TemplateEditor({
       'Merhaba,\n\n{{order_no}} numaralı siparişinizin teslimatı aşağıdadır:\n\n{{items}}\n\nİyi günler,\n{{site_name}}',
   );
 
+  // #18: DESTEKLENMEYEN {{degisken}} tespiti. render onları sessizce '' yapar (§6) → admin
+  // {{password}} gibi tanımsız bir token yazarsa gönderimde BOŞ çıkar (sessiz veri kaybı).
+  // Canlı uyarı ile fark ettirilir. Desteklenen set = TOKENS (mail.processor'ın beslediği).
+  const unknownVars = React.useMemo(() => {
+    const used = new Set<string>();
+    for (const m of `${subject}\n${body}`.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
+      if (m[1]) used.add(m[1]);
+    }
+    return [...used].filter((v) => !TOKENS.includes(v));
+  }, [subject, body]);
+
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       {/* Sol: editör */}
@@ -177,6 +188,15 @@ export function TemplateEditor({
               {render(body, SAMPLE_VARS)}
             </pre>
           </div>
+          {unknownVars.length > 0 && (
+            <div className="mt-3 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+              <span>
+                Desteklenmeyen değişken: {unknownVars.map((v) => `{{${v}}}`).join(', ')} — gönderimde{' '}
+                <strong>boş</strong> çıkar. Desteklenenler: {TOKENS.map((t) => `{{${t}}}`).join(', ')}.
+              </span>
+            </div>
+          )}
         </Card>
 
         {isEdit ? (

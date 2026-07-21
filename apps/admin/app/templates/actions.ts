@@ -92,16 +92,18 @@ export interface PreviewState {
   error?: string;
   subject?: string;
   body?: string;
+  /** Şablonda kullanılan ama DESTEKLENMEYEN değişkenler (render'da boş çıkar) — uyarı. */
+  unknownVars?: string[];
 }
 
 /** Sunucu-taraflı önizleme (örnek değişkenlerle render, gönderim yok). */
 export async function previewTemplateAction(id: string): Promise<PreviewState> {
   try {
-    const res = await apiPost<{ subject: string; body: string }>(
+    const res = await apiPost<{ subject: string; body: string; unknownVars: string[] }>(
       `/v1/admin/templates/${id}/preview`,
       {},
     );
-    return { ok: true, subject: res.subject, body: res.body };
+    return { ok: true, subject: res.subject, body: res.body, unknownVars: res.unknownVars };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
   }

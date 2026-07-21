@@ -13,6 +13,15 @@ export function renderTemplate(template: string, vars: Record<string, string>): 
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => vars[k] ?? '');
 }
 
+/** Şablonda kullanılan benzersiz {{degisken}} adlarını çıkarır (uyarı/doğrulama için). */
+export function usedTemplateVars(template: string): string[] {
+  const set = new Set<string>();
+  for (const m of template.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
+    if (m[1]) set.add(m[1]);
+  }
+  return [...set];
+}
+
 /** Önizleme/test için varsayılan örnek değişkenler (§6 token seti). */
 export const SAMPLE_VARS: Record<string, string> = {
   order_no: '10042',
@@ -141,10 +150,21 @@ export class DeliveryTemplatesService {
   async preview(
     id: string,
     sampleVars?: Record<string, string>,
-  ): Promise<{ subject: string; body: string }> {
+  ): Promise<{ subject: string; body: string; unknownVars: string[] }> {
     const tpl = await this.get(id);
     const vars = { ...SAMPLE_VARS, ...(sampleVars ?? {}) };
-    return { subject: renderTemplate(tpl.subject, vars), body: renderTemplate(tpl.body, vars) };
+    // Desteklenmeyen değişkenleri yüzeye çıkar: render onları sessizce '' yapar (§6). Admin
+    // {{password}} gibi tanımsız bir token yazarsa hem önizlemede hem gönderimde BOŞ çıkar
+    // (sessiz veri kaybı) — bunları uyarı olarak döndürürüz ki admin fark etsin. Desteklenen
+    // set = SAMPLE_VARS anahtarları (mail.processor'ın gerçekten beslediği değişkenler).
+    const known = new Set(Object.keys(vars));
+    const used = new Set([...usedTemplateVars(tpl.subject), ...usedTemplateVars(tpl.body)]);
+    const unknownVars = [...used].filter((v) => !known.has(v));
+    return {
+      subject: renderTemplate(tpl.subject, vars),
+      body: renderTemplate(tpl.body, vars),
+      unknownVars,
+    };
   }
 
   private mailer(): Transporter {
