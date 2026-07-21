@@ -78,6 +78,32 @@ export async function revokeAction(
 }
 
 /**
+ * Proaktif değişim (§4): kusurlu key'i aynı üründen TAZE key ile değiştirir — müşteri
+ * "Sorun Bildir" açmadan. Eski key karantinaya gider, satır 'canceled' işaretlenmez
+ * (iade DEĞİL). reason zorunlu. Stok yoksa API 409 → mesaj yüzeye çıkar (eski atama korunur).
+ */
+export async function replaceAction(
+  assignmentId: string,
+  orderId: string,
+  reason: string,
+): Promise<MutationState> {
+  if (!assignmentId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!reason?.trim()) return { ok: false, error: 'Değişim sebebi zorunlu.' };
+  try {
+    const actor = await getActor();
+    await apiPost(
+      `/v1/admin/assignments/${assignmentId}/replace`,
+      { reason: reason.trim() },
+      actor,
+    );
+    revalidatePath(`/orders/${orderId}`);
+    return { ok: true, message: 'Key değiştirildi — taze key atandı, eski karantinada.' };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Değişim başarısız' };
+  }
+}
+
+/**
  * Teslimat mailini yeniden gönder (§13/§17). API'de 60sn debounce var; çok sık denemede
  * 400 döner → kullanıcıya "çok sık" olarak yüzeye çıkarılır (artık sessiz değil).
  */

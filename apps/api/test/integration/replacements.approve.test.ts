@@ -121,8 +121,8 @@ describe('ReplacementsService.approve (entegrasyon)', () => {
     const products = new ProductsService(db as never);
     const mail = new MailService(db as never, fakeQueue, fakeConfig);
     const webhook = new WebhookService(db as never, fakeQueue);
-    const adminOrders = new AdminOrdersService(db as never, fakeRedis, crypto, mail);
     const fulfillment = new FulfillmentService(db as never, products, mail, webhook);
+    const adminOrders = new AdminOrdersService(db as never, fakeRedis, crypto, mail, fulfillment);
     service = new ReplacementsService(db as never, adminOrders, fulfillment, mail);
 
     site = await createSite(db, crypto, { tag });

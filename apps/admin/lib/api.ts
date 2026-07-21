@@ -191,6 +191,15 @@ export interface OrderDetail {
   }>;
   events: Array<{ id: string; type: string; message: string | null; createdAt: string }>;
   emails: Array<{ id: string; toEmail: string; subject: string; status: string }>;
+  /** Değişim soyağacı (§3 "eski anahtarlar"): eski key MASKELİ (son-4), yeni atama id'si. */
+  history: Array<{
+    id: string;
+    assignmentId: string;
+    reason: string;
+    actor: string;
+    createdAt: string;
+    oldMasked: string;
+  }>;
 }
 
 /** POST /v1/admin/assignments/:id/reveal yanıtı (loglu). */

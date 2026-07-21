@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ListChecks, KeyRound, PackageCheck, CalendarClock, Mail, History } from 'lucide-react';
+import { ArrowLeft, ListChecks, KeyRound, PackageCheck, CalendarClock, Mail, History, RefreshCw } from 'lucide-react';
 import { apiGet, ApiError, type OrderDetail } from '../../../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
@@ -56,7 +56,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     );
   }
 
-  const { order, lines, assignments, events, emails } = data;
+  const { order, lines, assignments, events, emails, history } = data;
   const totalQty = lines.reduce((s, l) => s + l.qty, 0);
   const totalFulfilled = lines.reduce((s, l) => s + l.fulfilledQty, 0);
   const createdAt = new Date(order.createdAt).toLocaleString('tr-TR', {
@@ -256,6 +256,41 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </CardContent>
         </Card>
       </div>
+
+      {/* Değişim geçmişi (§3/§7 "eski anahtarlar") — yalnız değişim olduysa görünür. */}
+      {history.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <RefreshCw className="size-4 text-muted-foreground" /> Değişim Geçmişi (eski anahtarlar)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Eski key (maskeli)</TableHead>
+                  <TableHead>Sebep</TableHead>
+                  <TableHead>Yapan</TableHead>
+                  <TableHead className="text-right">Tarih</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.map((h) => (
+                  <TableRow key={h.id}>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{h.oldMasked}</TableCell>
+                    <TableCell className="text-sm text-foreground">{h.reason}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{h.actor}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                      {new Date(h.createdAt).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

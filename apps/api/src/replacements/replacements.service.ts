@@ -16,6 +16,7 @@ import {
 import { MailService } from '../mail/mail.service';
 import { AdminOrdersService } from '../orders/admin-orders.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
+import { recordReplacementLineage } from '../orders/assignment-history';
 
 const DAY_MS = 86_400_000;
 
@@ -194,7 +195,8 @@ export class ReplacementsService {
     // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
     // markLineCanceled=false: hemen ardından completeLine ile MEŞRU yeniden-atama yapılacak;
     // satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok". (Iade DEĞİL, değişim.)
-    await this.adminOrders.revokeAssignment(req.assignmentId, 'replacement', actor, false);
+    // Revoke sonucundan eski key id'sini al (soyağacı için).
+    const revoked = await this.adminOrders.revokeAssignment(req.assignmentId, 'replacement', actor, false);
 
     // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi).
     const res = await this.fulfillment.completeLine(req.lineId, 1);
@@ -203,19 +205,19 @@ export class ReplacementsService {
       throw new ConflictException('Değişim için stok yok');
     }
 
-    // Yeni atamanın id'sini bul — bu satırın en yeni ataması.
-    const [fresh] = await this.db
-      .select({ id: assignments.id })
-      .from(assignments)
-      .where(eq(assignments.lineId, req.lineId))
-      .orderBy(desc(assignments.createdAt))
-      .limit(1);
+    // Soyağacı (§3 "eski anahtarlar"): eski→yeni assignment_history + yeni atama id'si (tek yerde).
+    const newAssignmentId = await recordReplacementLineage(this.db, {
+      lineId: req.lineId,
+      oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
+      reason: 'replacement',
+      actor,
+    });
 
     const [updated] = await this.db
       .update(replacementRequests)
       .set({
         status: 'approved',
-        newAssignmentId: fresh?.id ?? null,
+        newAssignmentId: newAssignmentId ?? null,
         resolvedBy: actor,
         resolvedAt: new Date(),
         updatedAt: new Date(),

@@ -58,8 +58,8 @@ describe('H1 gerçek-iade canceled=true yolu (revokeOrderForSite → autoComplet
     const products = new ProductsService(db as never);
     const mail = new MailService(db as never, fakeQueue, fakeConfig);
     const webhook = new WebhookService(db as never, fakeQueue);
-    admin = new AdminOrdersService(db as never, fakeRedis, crypto, mail);
     fulfillment = new FulfillmentService(db as never, products, mail, webhook);
+    admin = new AdminOrdersService(db as never, fakeRedis, crypto, mail, fulfillment);
 
     site = await createSite(db, crypto, { tag });
   });

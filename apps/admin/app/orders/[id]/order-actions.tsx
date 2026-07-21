@@ -3,6 +3,7 @@ import * as React from 'react';
 import { CheckCircle2, TriangleAlert } from 'lucide-react';
 import {
   completeLineAction,
+  replaceAction,
   revokeAction,
   resendAction,
   suspendAction,
@@ -120,6 +121,23 @@ export function AssignmentActions({
     });
   };
 
+  const replace = () => {
+    const reason = window.prompt(
+      'Değişim sebebi (ör. kusurlu key). Eski key karantinaya alınır, aynı üründen TAZE key atanır. Stok yoksa değişim yapılmaz:',
+    );
+    if (reason === null) return; // iptal
+    if (!reason.trim()) {
+      announce('Değişim sebebi zorunlu', { assertive: true });
+      return;
+    }
+    setState(null);
+    startTransition(async () => {
+      const res = await replaceAction(assignmentId, orderId, reason);
+      setState(res);
+      announceResult(announce, res);
+    });
+  };
+
   return (
     <div className="flex flex-col items-end gap-1.5">
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -127,6 +145,9 @@ export function AssignmentActions({
           <>
             <Button type="button" variant="outline" size="sm" onClick={suspend} disabled={pending}>
               Askıya Al
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={replace} disabled={pending}>
+              Değiştir
             </Button>
             <Button
               type="button"

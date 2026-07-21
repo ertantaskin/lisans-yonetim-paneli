@@ -6,6 +6,7 @@ import { auditLog } from '../db/schema/audit';
 import { stockAdjustments, type StockAdjustment } from '../db/schema/stockAdjustments';
 import { AdminOrdersService } from '../orders/admin-orders.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
+import { recordReplacementLineage } from '../orders/assignment-history';
 
 /** Toplu değiştirme (§13) özet sonucu. */
 export interface BulkReplaceResult {
@@ -285,7 +286,8 @@ export class SupplyOpsService {
       // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
       // markLineCanceled=false: recall/bulkReplace da revoke sonrası MEŞRU yeniden-atama yapar
       // (değişim deseni); satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok".
-      await this.adminOrders.revokeAssignment(c.assignment_id, 'replace', actor, false);
+      // Revoke sonucundan eski key id'sini al (soyağacı için).
+      const revoked = await this.adminOrders.revokeAssignment(c.assignment_id, 'replace', actor, false);
 
       // 2) Yenisini ata — açılan yere 1 birim (atomik atama makinesi). Stok araya girip
       // tükendiyse added=0 dönebilir → o kalemi atlanmış say (eski zaten revoke edildi;
@@ -293,6 +295,13 @@ export class SupplyOpsService {
       const res = await this.fulfillment.completeLine(c.line_id, 1);
       if (res.added > 0) {
         replaced++;
+        // Soyağacı (§3): eski→yeni assignment_history (recall-toplu-değiştir yolu da izlenir).
+        await recordReplacementLineage(this.db, {
+          lineId: c.line_id,
+          oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
+          reason: 'recall-bulk-replace',
+          actor,
+        });
       } else {
         skippedNoStock++;
       }

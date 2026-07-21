@@ -112,8 +112,8 @@ describe('SupplyOpsService.bulkReplaceBatch (recall sonrası toplu değiştirme)
     const products = new ProductsService(db as never);
     const mail = new MailService(db as never, fakeQueue, fakeConfig);
     const webhook = new WebhookService(db as never, fakeQueue);
-    const admin = new AdminOrdersService(db as never, fakeRedis, crypto, mail);
     const fulfillment = new FulfillmentService(db as never, products, mail, webhook);
+    const admin = new AdminOrdersService(db as never, fakeRedis, crypto, mail, fulfillment);
     svc = new SupplyOpsService(db as never, admin, fulfillment);
     site = await createSite(db, crypto, { tag });
   });

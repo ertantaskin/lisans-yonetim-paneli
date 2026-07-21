@@ -49,6 +49,16 @@ export class AdminOrdersController {
     return this.adminOrders.revokeAssignment(id, body.reason, actor);
   }
 
+  /** Proaktif değişim (§4): kusurlu key'i aynı üründen taze key ile değiştir (reason zorunlu). */
+  @Post('assignments/:id/replace')
+  replace(
+    @Param('id') id: string,
+    @Body(new ZodBody(RevokeBody)) body: { reason: string },
+    @AdminActor() actor: string,
+  ) {
+    return this.adminOrders.replaceAssignment(id, body.reason, actor);
+  }
+
   /** Loglu reveal (§17) — tam lisans payload'ı. */
   @Post('assignments/:id/reveal')
   reveal(@Param('id') id: string, @AdminActor() actor: string) {

@@ -56,6 +56,7 @@ const adminOrdersService = new AdminOrdersService(
   redisFake,
   crypto,
   mailFake as never,
+  fulfillmentService,
 );
 const orders = new OrdersService(
   db as never,

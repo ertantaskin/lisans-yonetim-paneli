@@ -1,9 +1,18 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
+import { recordReplacementLineage } from './assignment-history';
+import { FulfillmentService } from './fulfillment.service';
 import { DB, type Database } from '../db/db.module';
 import {
+  assignmentHistory,
   assignments,
   auditLog,
   emailLog,
@@ -63,6 +72,7 @@ export class AdminOrdersService {
     @Inject(REDIS) private readonly redis: Redis,
     private readonly crypto: CryptoService,
     private readonly mail: MailService,
+    private readonly fulfillment: FulfillmentService,
   ) {}
 
   /**
@@ -126,6 +136,79 @@ export class AdminOrdersService {
       targetId: assignmentId,
     });
     return { assignmentId, status: suspend ? 'suspended' : 'active' };
+  }
+
+  /**
+   * Admin PROAKTİF değişim (§4 /assignments/:id/replace): kusurlu bir key'i müşteri "Sorun
+   * Bildir" açmadan aynı üründen TAZE key ile değiştirir. Değişim makinesi (revoke false +
+   * completeLine) — iade DEĞİL, satır 'canceled' işaretlenmez → yeniden-atama meşru. Eski key
+   * karantinaya gider (satışa dönmez, §2); eski→yeni soyağacı assignment_history'ye yazılır.
+   *
+   * MAK/çok-kullanımlı ürün otomatik değişimi desteklenmez (paylaşımlı anahtar — elle);
+   * stok yoksa eski atama KORUNUR (revoke edilmeden 409) — müşteri boşta kalmaz. replacements.approve
+   * ile aynı güvence.
+   */
+  async replaceAssignment(assignmentId: string, reason: string, actor: string) {
+    const [row] = await this.db
+      .select({
+        status: assignments.status,
+        lineId: assignments.lineId,
+        licenseItemId: assignments.licenseItemId,
+        productId: orderLines.productId,
+        usageMode: products.usageMode,
+      })
+      .from(assignments)
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
+      .where(eq(assignments.id, assignmentId))
+      .limit(1);
+    if (!row) throw new NotFoundException('Atama bulunamadı');
+    if (row.status !== 'active') {
+      throw new BadRequestException('Yalnız aktif atama değiştirilebilir');
+    }
+    if (row.usageMode === 'multi') {
+      throw new BadRequestException(
+        'Çok-kullanımlı (MAK) üründe otomatik değişim desteklenmez — elle işleyin.',
+      );
+    }
+
+    // Stok ön-kontrolü: eskiyi REVOKE ETMEDEN önce uygun available stok var mı? (replacements deseni)
+    const [avail] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(licenseItems)
+      .where(
+        and(
+          eq(licenseItems.productId, row.productId!),
+          eq(licenseItems.status, 'available'),
+          sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
+        ),
+      );
+    if (!avail || Number(avail.n) <= 0) {
+      throw new ConflictException('Değişim için stok yok');
+    }
+
+    // 1) Eskiyi geri al — markLineCanceled=false (iade DEĞİL; satır yeniden atanabilir kalır).
+    await this.revokeAssignment(assignmentId, reason, actor, false);
+    // 2) Taze key ata (atomik atama makinesi).
+    const res = await this.fulfillment.completeLine(row.lineId, 1);
+    if (res.added <= 0) {
+      throw new ConflictException('Değişim için stok yok');
+    }
+    // 3) Soyağacı: eski→yeni assignment_history + newAssignmentId (§3 "eski anahtarlar").
+    const newAssignmentId = await recordReplacementLineage(this.db, {
+      lineId: row.lineId,
+      oldLicenseItemId: row.licenseItemId,
+      reason,
+      actor,
+    });
+    await this.db.insert(auditLog).values({
+      action: 'replace',
+      actor,
+      targetType: 'assignment',
+      targetId: assignmentId,
+      meta: { op: 'admin_replace', oldLicenseItemId: row.licenseItemId, newAssignmentId, reason },
+    });
+    return { oldAssignmentId: assignmentId, newAssignmentId, status: 'replaced' as const };
   }
 
   /** Teslimat mailini tekrar gönder — 60sn debounce (§13). */
@@ -210,10 +293,40 @@ export class AdminOrdersService {
       .where(eq(emailLog.orderId, orderId))
       .orderBy(emailLog.createdAt);
 
+    // Değişim soyağacı (§3/§7 "eski anahtar geçmişi"): bu siparişin atamalarına bağlı
+    // assignment_history satırları. Eski key MASKELİ gösterilir (son-4) → admin hangi key'in
+    // değiştiğini görür; düz payload sızmaz (leftJoin: eski kayıt silinmişse '—').
+    const historyRows = await this.db
+      .select({
+        id: assignmentHistory.id,
+        assignmentId: assignmentHistory.assignmentId,
+        reason: assignmentHistory.reason,
+        actor: assignmentHistory.actor,
+        createdAt: assignmentHistory.createdAt,
+        oldPayloadEnc: licenseItems.payloadEnc,
+        oldLicenseItemId: licenseItems.id,
+      })
+      .from(assignmentHistory)
+      .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
+      .leftJoin(licenseItems, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
+      .where(eq(assignments.orderId, orderId))
+      .orderBy(desc(assignmentHistory.createdAt));
+
     return {
       order,
       lines,
       emails,
+      history: historyRows.map((h) => ({
+        id: h.id,
+        assignmentId: h.assignmentId,
+        reason: h.reason,
+        actor: h.actor,
+        createdAt: h.createdAt,
+        oldMasked:
+          h.oldPayloadEnc && h.oldLicenseItemId
+            ? mask(this.crypto.decrypt(h.oldPayloadEnc, CryptoService.licenseItemAad(h.oldLicenseItemId)))
+            : '—',
+      })),
       assignments: asgRows.map((a) => {
         const plain = this.crypto.decrypt(
           a.payloadEnc,

@@ -47,7 +47,13 @@ const fulfillmentService = new FulfillmentService(
   mailFake as never,
   webhookFake as never,
 );
-const adminOrdersService = new AdminOrdersService(db as never, redisFake, crypto, mailFake as never);
+const adminOrdersService = new AdminOrdersService(
+  db as never,
+  redisFake,
+  crypto,
+  mailFake as never,
+  fulfillmentService,
+);
 const orders = new OrdersService(
   db as never,
   productsService,
