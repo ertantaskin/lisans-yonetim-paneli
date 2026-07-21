@@ -303,11 +303,11 @@ YOK → SMTP-only bilinçli kapsam (`bounced` durumu üretilmez; §2.5/§6 fiili
 (multi+validity_days) süre-bitişinde kapasite havuza dönüşü + şifre-rotasyon hatırlatması yapılmıyor (bilinçli; ana
 expiry `hide`/`keep` çalışır).
 
-**Bilinçli ERTELENEN (gerekçeli, düşük öncelik / feature):** [#7] §8 TAM dinamik kota (30g-ort ×3 +
-held_for_review) — bu partide Retry-After + security_event yapıldı, dinamik eşik + inceleme-beklet feature · [#18] mail
-şablonu `{{key}}/{{password}}` değişkenleri (custom şablonda boş render) — renderer'a per-item besleme, mail kırılma
-riski nedeniyle ayrı pas · [#19] `revokeExcess` MAK/multi'de birim-granüler değil (tek-kullanımda sorunsuz) · [#20]
-`enforceSalesQuota` say-sonra-ekle TOCTOU (her sipariş gerçek ödenmiş Woo + gerçek stok ister → zayıf).
+**Bilinçli ERTELENEN (gerekçeli — kullanıcı "şimdilik bırak" dedi / düşük değer):** [#7] §8 TAM dinamik kota (30g-ort
+×3 + held_for_review) — Retry-After + security_event yapıldı; dinamik eşik + inceleme-beklet yeni durum+migration+UI =
+büyük alt-sistem (kullanıcı erteledi) · [#19] `revokeExcess` MAK/multi'de birim-granüler değil (tek-kullanımda sorunsuz;
+fix = partial-unit revoke → kapasite invaryantı riski, LOW) · [#20] `enforceSalesQuota` say-sonra-ekle TOCTOU (fix =
+createOrder hot-path'ini tx'e alma → risk; her sipariş gerçek ödenmiş Woo + gerçek stok ister → bypass zaten zayıf, LOW).
 
 **Kalan feature partisi — #6+#5 TAMAM (commit c4e9b26, CANLI, migration YOK):** [#6] Admin PROAKTİF değişim ucu
 (`POST /v1/admin/assignments/:id/replace`) — kusurlu key'i müşteri "Sorun Bildir" beklemeden aynı üründen TAZE key ile
@@ -319,6 +319,13 @@ replacements.approve / supply-ops bulkReplace) bağlandı; ölü şema canlandı
 enjekte edildi (asiklik; boot "OrdersModule dependencies initialized" doğruladı). 6 test wiring güncellendi + yeni
 `replace-assignment` testi (karantina/farklı-key/canceled=false/history + no-stock=409 + MAK=400). Entegrasyon **70/70**
 + yarış 1/1; deploy sonrası replace rotası map'lendi, /health 200.
+
+**#18 + #R TAMAM (commit 7af3e89, CANLI):** [#18] mail şablonu DESTEKLENMEYEN değişken uyarısı — `templates.preview`
+artık `unknownVars` döner (şablonda kullanılan ama SAMPLE_VARS dışı token'lar) + template-editor CANLI uyarı
+("{{password}} gönderimde boş çıkar"); render sessizce '' yapmaya devam eder ama admin artık sessiz veri kaybını görür.
+`usedTemplateVars` birim testi (birim 30/30). ({{key}}/{{password}} TAM besleme değil — çok-kalemli mailde belirsiz;
+uyarı-yaklaşımı bilinçli.) [#R] reconcile testine `NotificationsService.create` stub'ı → "reading 'create'" best-effort
+WARN'i kalktı (prod'da DI'dan gelir, etkisizdi). **Kalan:** #7 (kullanıcı erteledi) + #19/#20 (LOW, gerekçeli — yukarı).
 
 ## Geliştirme
 
