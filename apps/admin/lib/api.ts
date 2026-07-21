@@ -93,6 +93,8 @@ export interface SiteRow {
   type: string;
   status: string;
   senderEmail: string | null;
+  /** Geri kanal webhook hedefi (§2) — null = webhook devre dışı. */
+  webhookUrl: string | null;
 }
 
 export interface OrderDetail {

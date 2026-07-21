@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { CheckCircle2, Mail, RefreshCw, TriangleAlert, Webhook, X } from 'lucide-react';
 import type { DeadLetterRow } from '../app/ops/queries';
+import { fmtDateTime } from '../lib/utils';
 import { replayAction } from '../app/ops/actions';
 import { Badge, StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
@@ -174,10 +175,7 @@ export function DeadLetterTable({ rows }: { rows: DeadLetterRow[] }) {
         header: ({ column }) => <DataTableColumnHeader column={column} title="Güncelleme" />,
         cell: ({ row }) => (
           <span className="tabular-nums text-muted-foreground">
-            {new Date(row.original.updatedAt).toLocaleString('tr-TR', {
-              dateStyle: 'short',
-              timeStyle: 'short',
-            })}
+            {fmtDateTime(row.original.updatedAt)}
           </span>
         ),
         sortingFn: 'datetime',

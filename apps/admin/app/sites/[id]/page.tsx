@@ -160,6 +160,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               salesDailyQuota={site.salesDailyQuota}
               sandbox={site.sandbox}
               senderEmail={site.senderEmail}
+              webhookUrl={site.webhookUrl}
             />
           </div>
         </CardContent>

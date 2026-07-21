@@ -18,11 +18,13 @@ export function SiteConfigForm({
   salesDailyQuota,
   sandbox,
   senderEmail,
+  webhookUrl,
 }: {
   siteId: string;
   salesDailyQuota: number | null;
   sandbox: boolean;
   senderEmail: string | null;
+  webhookUrl: string | null;
 }) {
   const [state, action, pending] = useActionState(updateSiteAction, initial);
 
@@ -39,6 +41,17 @@ export function SiteConfigForm({
             defaultValue={senderEmail ?? ''}
             placeholder="varsayılan gönderen"
             className="w-56"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sc-webhook">Geri kanal webhook URL</Label>
+          <Input
+            id="sc-webhook"
+            name="webhookUrl"
+            type="url"
+            defaultValue={webhookUrl ?? ''}
+            placeholder="webhook devre dışı"
+            className="w-72"
           />
         </div>
         <div className="flex flex-col gap-1.5">

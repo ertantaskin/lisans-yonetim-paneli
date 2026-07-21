@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import type { NotificationRow } from '../app/notifications/queries';
+import { fmtDateTime } from '../lib/utils';
 import { checkLowStockAction } from '../app/notifications/actions';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -107,10 +108,7 @@ const baseColumns: ColumnDef<NotificationRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Tarih" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
-        {new Date(row.original.createdAt).toLocaleString('tr-TR', {
-          dateStyle: 'short',
-          timeStyle: 'short',
-        })}
+        {fmtDateTime(row.original.createdAt)}
       </span>
     ),
     sortingFn: 'datetime',

@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ReplacementRow } from '../app/support/queries';
+import { fmtDateTime } from '../lib/utils';
 import {
   approveReplacementAction,
   rejectReplacementAction,
@@ -109,10 +110,7 @@ const baseColumns: ColumnDef<ReplacementRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Tarih" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
-        {new Date(row.original.createdAt).toLocaleString('tr-TR', {
-          dateStyle: 'short',
-          timeStyle: 'short',
-        })}
+        {fmtDateTime(row.original.createdAt)}
       </span>
     ),
     sortingFn: 'datetime',

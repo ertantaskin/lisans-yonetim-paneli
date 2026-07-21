@@ -1,6 +1,7 @@
 import { PageHeader } from '../../components/ui';
 import { Card } from '../../components/ui/card';
 import { DeadLetterTable } from '../../components/dead-letter-table';
+import { MaintenanceCard } from './maintenance-card';
 import { getDeadLetter, type DeadLetterRow } from './queries';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,7 @@ export default async function OpsPage() {
         title="Dead-letter"
         desc="Başarısız geri-kanal webhook olayları ve mail teslimleri — tek tıkla yeniden kuyruğa al."
       />
+      <MaintenanceCard />
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>

@@ -26,6 +26,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { getProductDetail, type ProductDetail } from './queries';
+import { StockAdjustForm } from './stock-adjust-form';
 
 export const dynamic = 'force-dynamic';
 
@@ -241,6 +242,18 @@ export default async function ProductDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {/* Stok düzeltme ekle (manuel, sebepli — audit'e düşer) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Wrench className="size-4 text-muted-foreground" /> Stok Düzeltme Ekle
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <StockAdjustForm productId={product.id} />
+        </CardContent>
+      </Card>
 
       {/* Stok düzeltmeleri */}
       <Card>

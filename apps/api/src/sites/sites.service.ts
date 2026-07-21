@@ -23,6 +23,8 @@ export interface SiteDetail {
     type: string;
     status: string;
     senderEmail: string | null;
+    /** Geri kanal webhook hedefi (§2) — null = webhook devre dışı. SIR değil. */
+    webhookUrl: string | null;
     salesDailyQuota: number | null;
     sandbox: boolean;
     createdAt: string;
@@ -98,6 +100,7 @@ export class SitesService {
       salesDailyQuota?: number | null;
       sandbox?: boolean;
       senderEmail?: string | null;
+      webhookUrl?: string | null;
       status?: 'active' | 'suspended';
     },
   ): Promise<Omit<Site, 'hmacSecretEnc' | 'apiKeyHash'>> {
@@ -107,6 +110,8 @@ export class SitesService {
     if (input.salesDailyQuota !== undefined) patch.salesDailyQuota = input.salesDailyQuota;
     if (input.sandbox !== undefined) patch.sandbox = input.sandbox;
     if (input.senderEmail !== undefined) patch.senderEmail = input.senderEmail;
+    // Geri kanal webhook hedefi (§2) — null = temizle (webhook sessizce atlanır).
+    if (input.webhookUrl !== undefined) patch.webhookUrl = input.webhookUrl;
     if (input.status !== undefined) patch.status = input.status;
 
     const [row] = await this.db.update(sites).set(patch).where(eq(sites.id, id)).returning();
@@ -115,6 +120,7 @@ export class SitesService {
       salesDailyQuota: row!.salesDailyQuota,
       sandbox: row!.sandbox,
       senderEmail: row!.senderEmail,
+      webhookUrl: row!.webhookUrl,
       status: row!.status,
     });
 
@@ -257,6 +263,7 @@ export class SitesService {
         type: site.type,
         status: site.status,
         senderEmail: site.senderEmail,
+        webhookUrl: site.webhookUrl,
         salesDailyQuota: site.salesDailyQuota,
         sandbox: site.sandbox,
         createdAt: site.createdAt.toISOString(),

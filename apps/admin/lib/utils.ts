@@ -17,6 +17,19 @@ export function formatDate(iso: string | null | undefined, withTime = true): str
   });
 }
 
+/**
+ * ISO zaman damgasını SABİT timezone (Europe/Istanbul) ile biçimler.
+ * İstemci tablo hücrelerinde kullanılır: SSR (UTC) ile istemci (yerel) çıktısı
+ * aynı olur → hydration mismatch olmaz. timeZone belirtmeyen toLocale* yerine bunu kullan.
+ */
+export function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('tr-TR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'Europe/Istanbul',
+  });
+}
+
 /** valid_until geçmiş mi. */
 export function isExpired(iso: string | null | undefined): boolean {
   if (!iso) return false;

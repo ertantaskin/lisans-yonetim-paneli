@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import type { SecurityEventRow } from '../app/security/queries';
+import { fmtDateTime } from '../lib/utils';
 import { scanSecurityAction, anonymizeCustomerAction } from '../app/security/actions';
 import { Badge, type BadgeProps } from './ui/badge';
 import { Button } from './ui/button';
@@ -124,10 +125,7 @@ const columns: ColumnDef<SecurityEventRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Zaman" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
-        {new Date(row.original.createdAt).toLocaleString('tr-TR', {
-          dateStyle: 'short',
-          timeStyle: 'short',
-        })}
+        {fmtDateTime(row.original.createdAt)}
       </span>
     ),
     sortingFn: 'datetime',

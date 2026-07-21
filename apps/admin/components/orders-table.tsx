@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ArrowRight, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { OrderRow } from '../lib/api';
+import { fmtDateTime } from '../lib/utils';
 import { StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { DataTable } from './data-table/data-table';
@@ -44,7 +45,7 @@ const columns: ColumnDef<OrderRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Tarih" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
-        {new Date(row.original.createdAt).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}
+        {fmtDateTime(row.original.createdAt)}
       </span>
     ),
     sortingFn: 'datetime',

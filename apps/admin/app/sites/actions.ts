@@ -73,6 +73,9 @@ export async function updateSiteAction(
     // Gönderen e-posta — boş = varsayılan gönderene dön (null).
     const senderRaw = String(formData.get('senderEmail') || '').trim();
     const senderEmail: string | null = senderRaw ? senderRaw : null;
+    // Geri kanal webhook hedefi (§2) — boş = temizle (webhook devre dışı, null).
+    const webhookRaw = String(formData.get('webhookUrl') || '').trim();
+    const webhookUrl: string | null = webhookRaw ? webhookRaw : null;
     // Sandbox (test modu) — checkbox işaretliyse true.
     const sandbox = formData.get('sandbox') != null;
 
@@ -80,6 +83,7 @@ export async function updateSiteAction(
       salesDailyQuota,
       sandbox,
       senderEmail,
+      webhookUrl,
     });
     revalidatePath(`/sites/${siteId}`);
     revalidatePath('/sites');

@@ -15,6 +15,7 @@ export interface SiteDetail {
     type: string;
     status: string;
     senderEmail: string | null;
+    webhookUrl: string | null;
     salesDailyQuota: number | null;
     sandbox: boolean;
     createdAt: string;

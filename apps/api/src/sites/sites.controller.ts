@@ -20,6 +20,8 @@ const UpdateSiteBody = z.object({
   sandbox: z.boolean().optional(),
   // Gönderen e-posta (§14) — null = varsayılan gönderene dön.
   senderEmail: z.string().email().nullable().optional(),
+  // Geri kanal webhook hedefi (§2) — null = temizle (webhook devre dışı).
+  webhookUrl: z.string().url().nullable().optional(),
   // Yaşam döngüsü (§8): 'suspended' → HMAC auth reddedilir (findForAuth active şartı).
   status: z.enum(['active', 'suspended']).optional(),
 });

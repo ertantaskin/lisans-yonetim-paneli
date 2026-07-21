@@ -1,10 +1,12 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Ban,
   CheckCircle2,
   MoreHorizontal,
+  PackagePlus,
   PackageX,
   Replace,
   ShieldX,
@@ -12,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import type { BatchRow } from '../app/batches/queries';
+import { fmtDateTime } from '../lib/utils';
 import { bulkReplaceBatchAction, recallBatchAction } from '../app/batches/actions';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -21,6 +24,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import { DataTable } from './data-table/data-table';
@@ -116,10 +120,7 @@ const baseColumns: ColumnDef<BatchRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Teslim Alındı" />,
     cell: ({ row }) => (
       <span className="tabular-nums text-muted-foreground">
-        {new Date(row.original.receivedAt).toLocaleString('tr-TR', {
-          dateStyle: 'short',
-          timeStyle: 'short',
-        })}
+        {fmtDateTime(row.original.receivedAt)}
       </span>
     ),
     sortingFn: 'datetime',
@@ -136,9 +137,15 @@ function canBulkReplace(batch: BatchRow) {
   return batch.status === 'recalled' && batch.soldCount > 0;
 }
 
+/** Yalnız aktif partiye yeni stok girilebilir (geri çekilmiş/iptal partiye ekleme anlamsız). */
+function canAddStock(batch: BatchRow) {
+  return batch.status === 'active';
+}
+
 /**
- * Parti satır aksiyonları — Geri Çek (aktif) VEYA Toplu Değiştir (geri çekilmiş + satılmış).
- * Recall aksiyonu değişmedi; toplu değiştirme ayrı bir menü kalemi.
+ * Parti satır aksiyonları — Bu partiye stok gir (aktif) · Geri Çek (aktif) VEYA
+ * Toplu Değiştir (geri çekilmiş + satılmış). Recall/toplu-değiştirme aksiyonları değişmedi;
+ * stok girişi ön-dolumlu import formuna (/stock?batchId=…) bağlanan ayrı bir menü kalemi.
  */
 function BatchRowActions({
   batch,
@@ -151,7 +158,8 @@ function BatchRowActions({
 }) {
   const recallable = isRecallable(batch.status);
   const bulkReplaceable = canBulkReplace(batch);
-  if (!recallable && !bulkReplaceable) {
+  const addStockable = canAddStock(batch);
+  if (!recallable && !bulkReplaceable && !addStockable) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
   return (
@@ -167,6 +175,15 @@ function BatchRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {addStockable && (
+          <DropdownMenuItem asChild>
+            <Link href={`/stock?batchId=${batch.id}`}>
+              <PackagePlus />
+              Bu partiye stok gir
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {addStockable && recallable && <DropdownMenuSeparator />}
         {recallable && (
           <DropdownMenuItem
             onSelect={() => onRecall(batch)}
