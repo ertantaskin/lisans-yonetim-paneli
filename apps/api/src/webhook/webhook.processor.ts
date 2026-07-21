@@ -49,6 +49,10 @@ export class WebhookProcessor extends WorkerHost {
       });
       const ts = String(Math.floor(Date.now() / 1000));
       const nonce = randomUUID();
+      // Trace-Id uçtan uca (§16): giden webhook'ta da izlenebilirlik. Kaydın
+      // kendi trace/id'si yoksa outbox id'siyle bağla (yoksa yeni üret) — böylece
+      // dış POST logda outbox olayına eşlenebilir. HMAC imzasına girmez (yalnız başlık).
+      const traceId = ob.id ?? randomUUID();
       const path = new URL(site.webhookUrl).pathname;
       const sig = createHmac('sha256', secret)
         .update(
@@ -70,6 +74,7 @@ export class WebhookProcessor extends WorkerHost {
           'x-nonce': nonce,
           'x-signature': sig,
           'x-event': ob.eventType,
+          'x-trace-id': traceId,
         },
         body,
       });

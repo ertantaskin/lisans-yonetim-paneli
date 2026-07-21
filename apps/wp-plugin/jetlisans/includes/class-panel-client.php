@@ -53,6 +53,10 @@ class Jetlisans_Panel_Client {
             'X-Timestamp' => $ts,
             'X-Nonce'     => $nonce,
             'X-Signature' => $sig,
+            // Trace-Id uçtan uca (§16): panel genReqId bunu yakalayıp req.id yapar ve
+            // yanıtta echo eder. HMAC imzasına GİRMEZ (yalnız başlık) — imza payload'i
+            // değişmez, yalnızca WP→panel isteği loglarda izlenebilir olur.
+            'X-Trace-Id'  => wp_generate_uuid4(),
         ];
         $args = [
             'method'  => $method,

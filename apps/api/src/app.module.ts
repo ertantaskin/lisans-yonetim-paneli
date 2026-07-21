@@ -28,6 +28,7 @@ import { MaintenanceModule } from './maintenance/maintenance.module';
 import { OnboardingModule } from './onboarding/onboarding.module';
 import { PresenceModule } from './presence/presence.module';
 import { SavedViewsModule } from './saved-views/saved-views.module';
+import { UpdatesModule } from './updates/updates.module';
 
 @Module({
   imports: [
@@ -84,6 +85,7 @@ import { SavedViewsModule } from './saved-views/saved-views.module';
     OnboardingModule,
     PresenceModule,
     SavedViewsModule,
+    UpdatesModule,
   ],
 })
 export class AppModule {}

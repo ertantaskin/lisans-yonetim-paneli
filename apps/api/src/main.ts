@@ -22,6 +22,15 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix('v1');
   app.enableShutdownHooks();
 
+  // Trace-Id uçtan uca (§16): her yanıta req.id'yi x-trace-id başlığı olarak
+  // yansıt. req.id = genReqId çıktısı (gelen x-trace-id yakalanır, yoksa üretilir),
+  // yani istemcinin gönderdiği trace-id echo edilir; göndermeyene üretilen atanır.
+  const instance = app.getHttpAdapter().getInstance();
+  instance.addHook('onSend', (req, reply, payload, done) => {
+    reply.header('x-trace-id', String(req.id));
+    done(null, payload);
+  });
+
   const port = Number(process.env.API_PORT ?? 3001);
   await app.listen({ port, host: '0.0.0.0' });
 

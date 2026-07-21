@@ -99,6 +99,13 @@
       "when": 1784600000000,
       "tag": "0013_connect_saved_views",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784601000000,
+      "tag": "0014_plugin_releases",
+      "breakpoints": true
     }
   ]
 }

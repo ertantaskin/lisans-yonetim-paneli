@@ -17,6 +17,7 @@ if (!defined('ABSPATH')) {
 
 define('JETLISANS_VERSION', '0.1.0');
 define('JETLISANS_DIR', plugin_dir_path(__FILE__));
+define('JETLISANS_FILE', __FILE__);
 
 require_once JETLISANS_DIR . 'includes/class-settings.php';
 require_once JETLISANS_DIR . 'includes/class-panel-client.php';
@@ -26,6 +27,7 @@ require_once JETLISANS_DIR . 'includes/class-webhook.php';
 require_once JETLISANS_DIR . 'includes/class-my-account.php';
 require_once JETLISANS_DIR . 'includes/class-admin-metabox.php';
 require_once JETLISANS_DIR . 'includes/class-report-issue.php';
+require_once JETLISANS_DIR . 'includes/class-updater.php';
 
 /**
  * Eklentiyi başlat.
