@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
@@ -43,11 +42,9 @@ import { UpdatesModule } from './updates/updates.module';
           process.env.NODE_ENV === 'production'
             ? undefined
             : { target: 'pino-pretty', options: { singleLine: true } },
-        // Trace-Id uçtan uca (§4). Eklentiden gelen başlığı taşı, yoksa üret.
-        genReqId: (req) => {
-          const incoming = req.headers['x-trace-id'];
-          return typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
-        },
+        // Trace-Id uçtan uca (§4/§16): genReqId'i main.ts'teki Fastify adapter belirler
+        // (gelen x-trace-id → req.id). pino kendi genReqId'i olmadığında Fastify req.id'sini
+        // kullanır → log iz-kimliği = yanıt x-trace-id başlığı = tek uçtan uca iz.
         // Payload/sır loglara sızmasın (§9 redaksiyon).
         redact: {
           paths: [

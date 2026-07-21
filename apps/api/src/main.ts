@@ -1,4 +1,7 @@
 import 'reflect-metadata';
+import { randomUUID } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
+import type { Http2ServerRequest } from 'node:http2';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { Logger } from 'nestjs-pino';
@@ -8,7 +11,17 @@ import { AppModule } from './app.module';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true, bodyLimit: 1_048_576 }),
+    new FastifyAdapter({
+      trustProxy: true,
+      bodyLimit: 1_048_576,
+      // Trace-Id uçtan uca (§16): req.id = gelen x-trace-id (yoksa üretilir). Bu TEK
+      // kimlik hem pino loglarına (pino, kendi genReqId'i yoksa Fastify req.id'sini
+      // kullanır) hem de aşağıdaki onSend yanıt başlığına yansır → istek/log/yanıt aynı iz.
+      genReqId: (req: IncomingMessage | Http2ServerRequest) => {
+        const incoming = req.headers['x-trace-id'];
+        return typeof incoming === 'string' && incoming.length > 0 ? incoming : randomUUID();
+      },
+    }),
     // rawBody: HMAC imza gövde hash'i için ham istek gövdesi (req.rawBody) gerekli (§4).
     { bufferLogs: true, rawBody: true },
   );
