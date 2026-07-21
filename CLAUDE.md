@@ -189,8 +189,35 @@ maddeleri kapatıldı — proje mimari kapsamı %100 tamamlandı.
   Migration YOK (mevcut tabloları salt-okunur okur). API anahtarı KULLANICI sırrı — üretilmez, aktivasyon
   kullanıcının adımı. Canlı OFF-path smoke geçti (status disabled / 503 / graceful özet metrik döndü).
 
-migration 0000-0014. Kalan (bilinçli): AI operasyon Faz 4 gelişmiş akışları (temel §15 canlı),
-yük/e2e CI pipeline'a bağlama (testler yazıldı, çalışır). Yol haritası §18.
+**Faz 2 — Faz-4 dalgaları + adversaryel denetim (CANLI + deploy + smoke):** Kalan roadmap paralel
+belirleme-workflow'u (5 alan veri modeline dayalı analiz) ile kapsamlandı; build-now dalgalar + 31
+CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim 20/20.
+
+- **D12** (§12/§13) Maliyet raporu: `costs.service/controller/module` + `/reports/costs` (recharts) —
+  tedarik harcaması (tedarikçi/ürün/ay) + stok değerleme + zayi; para birimi AYRI; maliyeti bağlanamayan
+  'kapsanmayan' olarak dürüst. **KÂR DEĞİL** — satış fiyatı Woo'da (panel ödemeye dokunmaz). Migration YOK.
+- **D13** (§8/§9) Risk skoru: `risk-score.*` + `packages/shared/domain/risk` + `risk-badge` — müşteri başına
+  okuma-anında advisory skor (0-100, faktör kırılımlı). **OTOMATİK EYLEM YOK** (§15 "insan onaylar"). Migration YOK.
+- **D14** (§16) Günlük Telegram özeti: `daily-digest.*` — BullMQ cron 08:00, metrik özeti + sabit-eşik kritik
+  alarm; Telegram env yoksa no-op. Migration YOK.
+- **D15** (§10) Reseller katalog ucu: `channel-catalog.*` — HMAC salt-okunur stok-durumu, **FİYAT DÖNMEZ**.
+- **D16** (§16) DR: `scripts/backup-drill.sh` (ayrı `*_drill` DB, çifte-atama=0 kontrolü) + `docs/RUNBOOK-DR.md`
+  (RPO≤5dk/RTO≤2sa, MASTER_KEY DB'den ayrı). **D18** stok import 'kuru çalıştırma' (validateOnly, commit'siz).
+  **D19** `.github/workflows/load-e2e.yml` (k6 smoke + Playwright e2e; mevcut CI'a dokunmaz).
+- **Denetim düzeltmeleri:** **[H1]** iade/iptal edilen satır partial-auto ile taze key'le yeniden teslim
+  ediliyordu (bedava lisans) → migration **0015** `order_lines.canceled` terminal işareti; revoke→canceled,
+  autoComplete/completeLine iptal satırı hariç, recompute iptalleri aktif saymaz (hepsi iptalse 'revoked').
+  **[H2]** WP Updater + Order_List `jetlisans_init`'te örneklenmiyordu (ölü) → düzeltildi. **[M3]** readonly-sql
+  OOM → CTE+DB-LIMIT. **[M4]** plugin latest SEMVER. **[M5]** completeLine enqueue try/catch. LOW: WP https
+  zorlama · webhook timeout · x-trace-id sanitize · onboarding claim atomik-öncesi doğrulama · AI butonları
+  kapalıyken disabled · site-oluşturma yetki tutarlılığı. Testler: readonly-sql yazma-reddi + AI maskeleme +
+  onboarding claim atomik.
+
+migration 0000-0015. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+YOK — §2/§6/§10), marketplace dış-API adaptörü (spekülatif), Faz-3 WP-migrasyon (greenfield, eski eklenti
+yok), abonelik/EFT/3DS (YAGNI). **Ertelenen (bilinçli):** D17 COGS maliyet-anlık-görüntü (license_items
+cost-snapshot + migration; costs.service teslim-edilen-COGS bloğu) — maliyet raporu 'kapsanmayan'ı dürüst
+gösterdiği için core import path riski alınmadı. Yol haritası §18.
 
 ## Geliştirme
 
