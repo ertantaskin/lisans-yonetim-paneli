@@ -244,7 +244,12 @@ export class AdminOrdersService {
    * İade/iptal → atama revoke, key karantinaya (§2: iade edilen key otomatik
    * satışa dönmez). audit_log'a düşer. Müşteri deliveries'te artık görünmez.
    */
-  async revokeAssignment(assignmentId: string, reason: string, actor: string) {
+  async revokeAssignment(
+    assignmentId: string,
+    reason: string,
+    actor: string,
+    markLineCanceled = true,
+  ) {
     return this.db.transaction(async (tx) => {
       const [asg] = await tx
         .select()
@@ -293,12 +298,18 @@ export class AdminOrdersService {
       if (line) {
         const nf = Math.max(0, line.fulfilledQty - asg.units);
         const lineStatus = nf >= line.qty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
-        // canceled=true: iade/iptal edilen satır otomatik/elle YENIDEN TESLIM edilmez (§2).
-        // status 'pending'e dönse bile bu işaret satırı partial-auto yeniden-atama havuzundan
-        // kalıcı olarak çıkarır — iade edilen müşteriye taze key ile bedava lisans gitmez.
+        // markLineCanceled (varsayılan true): GERÇEK iade/iptal (refund / admin-revoke) → satır
+        // 'canceled' terminal işaretiyle partial-auto yeniden-atama havuzundan KALICI çıkarılır
+        // (iade edilen müşteriye taze key ile bedava lisans gitmez, §2). AMA değişim / recall-
+        // bulkReplace / sipariş-adedi-düşür gibi "revoke sonrası MEŞRU yeniden-atama" akışları
+        // false geçer → satır completeLine ile yeniden atanabilir kalır (aksi halde "stok yok" hatası).
         await tx
           .update(orderLines)
-          .set({ fulfilledQty: nf, status: lineStatus, canceled: true })
+          .set({
+            fulfilledQty: nf,
+            status: lineStatus,
+            ...(markLineCanceled ? { canceled: true } : {}),
+          })
           .where(eq(orderLines.id, line.id));
       }
       await recomputeOrderStatus(tx, asg.orderId);

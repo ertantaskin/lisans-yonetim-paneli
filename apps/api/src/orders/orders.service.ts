@@ -506,7 +506,14 @@ export class OrdersService {
     let revoked = 0;
     for (const a of active) {
       if (revoked >= excessUnits) break;
-      await this.adminOrders.revokeAssignment(a.id, 'Sipariş adedi düşürüldü (re-push)', actor);
+      // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (iade/iptal değil); ileride adet
+      // tekrar artarsa autoComplete meşru şekilde doldurabilmeli — 'canceled' bunu kalıcı bloklardı.
+      await this.adminOrders.revokeAssignment(
+        a.id,
+        'Sipariş adedi düşürüldü (re-push)',
+        actor,
+        false,
+      );
       revoked += a.units;
     }
   }

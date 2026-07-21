@@ -93,8 +93,10 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
 
   it('MAX_ROWS (200) aşılınca sonuç kırpılır ve truncated=true olur', async () => {
     const res = await service.runSelect('SELECT generate_series(1, 250) AS n');
-    // rowCount kırpma ÖNCESİ toplam; rows ise MAX_ROWS'a inilmiş.
-    expect(res.rowCount).toBe(250);
+    // OOM koruması: sorgu DB'de LIMIT MAX_ROWS+1 (201) ile sarılır → belleğe 250'nin tamamı DEĞİL,
+    // en fazla 201 satır gelir. rowCount getirilen+kırpılan satır sayısıdır (MAX_ROWS=200); gerçek
+    // toplam (250) fetch edilmeden bilinemez — bu, OOM korumasının bilinçli ödünüdür.
+    expect(res.rowCount).toBe(200);
     expect(res.rows).toHaveLength(200);
     expect(res.truncated).toBe(true);
     expect(res.columns).toEqual(['n']);

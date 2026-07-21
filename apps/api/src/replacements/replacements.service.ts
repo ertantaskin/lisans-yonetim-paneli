@@ -192,7 +192,9 @@ export class ReplacementsService {
     }
 
     // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
-    await this.adminOrders.revokeAssignment(req.assignmentId, 'replacement', actor);
+    // markLineCanceled=false: hemen ardından completeLine ile MEŞRU yeniden-atama yapılacak;
+    // satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok". (Iade DEĞİL, değişim.)
+    await this.adminOrders.revokeAssignment(req.assignmentId, 'replacement', actor, false);
 
     // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi).
     const res = await this.fulfillment.completeLine(req.lineId, 1);

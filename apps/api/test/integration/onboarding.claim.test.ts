@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { NotFoundException } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
-import type Redis from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as schema from '../../src/db/schema';
 import { OnboardingService } from '../../src/onboarding/onboarding.service';
+import type { RateLimitService } from '../../src/common/rate-limit.service';
 import { SitesService } from '../../src/sites/sites.service';
 import { cleanupByTag, createSite, makeCrypto, makeDb, type Db } from './_helpers';
 
@@ -24,12 +24,11 @@ let onboarding: OnboardingService;
 let siteId: string;
 let siteDomain: string;
 
-// Sahte Redis — incr artan sayaç (iki claim: 1,2 → CLAIM_RL_MAX=10 altında), expire no-op.
-let redisHits = 0;
-const fakeRedis = {
-  incr: async () => ++redisHits,
-  expire: async () => 1,
-} as unknown as Redis;
+// Sahte RateLimitService — hit() her zaman true (limit altında). Testin odağı DB atomikliği;
+// rate-limit ayrı test edilir (onboarding artık ham Redis yerine RateLimitService kullanır).
+const fakeRateLimit = {
+  hit: async () => true,
+} as unknown as RateLimitService;
 
 describe('OnboardingService.claim (tek-seferlik bağlan kodu — atomik)', () => {
   beforeAll(async () => {
@@ -43,7 +42,7 @@ describe('OnboardingService.claim (tek-seferlik bağlan kodu — atomik)', () =>
     siteDomain = site.domain;
 
     const sites = new SitesService(db as never, crypto);
-    onboarding = new OnboardingService(db as never, fakeRedis, crypto, sites);
+    onboarding = new OnboardingService(db as never, fakeRateLimit, crypto, sites);
   });
 
   afterAll(async () => {

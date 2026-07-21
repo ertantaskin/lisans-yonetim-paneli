@@ -305,7 +305,9 @@ export class SupplyOpsService {
       }
 
       // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
-      await this.adminOrders.revokeAssignment(c.assignment_id, 'replace', actor);
+      // markLineCanceled=false: recall/bulkReplace da revoke sonrası MEŞRU yeniden-atama yapar
+      // (değişim deseni); satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok".
+      await this.adminOrders.revokeAssignment(c.assignment_id, 'replace', actor, false);
 
       // 2) Yenisini ata — açılan yere 1 birim (atomik atama makinesi). Stok araya girip
       // tükendiyse added=0 dönebilir → o kalemi atlanmış say (eski zaten revoke edildi;
