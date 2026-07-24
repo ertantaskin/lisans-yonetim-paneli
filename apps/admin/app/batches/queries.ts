@@ -27,8 +27,8 @@ export interface BatchRow {
   createdAt: string;
 }
 
-/** Tüm partileri getirir (receivedAt DESC). */
+/** Tüm partileri getirir (receivedAt DESC). API dizi VEYA {items} döndürebilir → ikisini de karşıla. */
 export async function getBatches(): Promise<BatchRow[]> {
-  const data = await apiGet<{ items: BatchRow[] }>('/v1/admin/batches');
-  return data.items;
+  const data = await apiGet<BatchRow[] | { items: BatchRow[] }>('/v1/admin/batches');
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }

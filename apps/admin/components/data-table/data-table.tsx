@@ -51,7 +51,8 @@ export function DataTable<TData, TValue>({
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
 
   const table = useReactTable({
-    data,
+    // Savunma: veri (ör. beklenmeyen API şekli) undefined gelse bile tablo çökmez, boş gösterir.
+    data: data ?? [],
     columns,
     state: { sorting, columnFilters, columnVisibility },
     onSortingChange: setSorting,

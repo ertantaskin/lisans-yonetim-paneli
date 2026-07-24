@@ -20,6 +20,6 @@ export interface DeadLetterRow {
 
 /** Başarısız outbox + mail kayıtlarını getirir (updatedAt DESC, API limit 100). */
 export async function getDeadLetter(): Promise<DeadLetterRow[]> {
-  const data = await apiGet<{ items: DeadLetterRow[] }>('/v1/admin/ops/dead-letter');
-  return data.items;
+  const data = await apiGet<DeadLetterRow[] | { items: DeadLetterRow[] }>('/v1/admin/ops/dead-letter');
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }

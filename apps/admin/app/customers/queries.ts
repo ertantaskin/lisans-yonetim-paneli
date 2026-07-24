@@ -38,8 +38,8 @@ export interface CustomerDetail {
 /** Müşteri listesi (opsiyonel e-posta araması). Sıralama/filtre istemcide DataTable'da. */
 export async function getCustomers(search?: string): Promise<CustomerRow[]> {
   const qs = search ? `?search=${encodeURIComponent(search)}` : '';
-  const data = await apiGet<{ items: CustomerRow[] }>(`/v1/admin/customers${qs}`);
-  return data.items;
+  const data = await apiGet<CustomerRow[] | { items: CustomerRow[] }>(`/v1/admin/customers${qs}`);
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }
 
 /** Tek müşteri 360 görünümü (stats + sipariş + değişim + etiket/not). */

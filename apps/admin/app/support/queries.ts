@@ -23,6 +23,6 @@ export interface ReplacementRow {
 /** Değişim taleplerini getirir. status verilirse sunucu filtreler; yoksa hepsi (createdAt DESC). */
 export async function getReplacements(status?: string): Promise<ReplacementRow[]> {
   const qs = status ? `?status=${encodeURIComponent(status)}` : '';
-  const data = await apiGet<{ items: ReplacementRow[] }>(`/v1/admin/replacements${qs}`);
-  return data.items;
+  const data = await apiGet<ReplacementRow[] | { items: ReplacementRow[] }>(`/v1/admin/replacements${qs}`);
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }

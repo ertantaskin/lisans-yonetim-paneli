@@ -24,5 +24,5 @@ export async function getNotifications(limit = 50): Promise<NotificationRow[]> {
   const data = await apiGet<NotificationRow[] | { items: NotificationRow[] }>(
     `/v1/admin/notifications?limit=${limit}`,
   );
-  return Array.isArray(data) ? data : data.items;
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }

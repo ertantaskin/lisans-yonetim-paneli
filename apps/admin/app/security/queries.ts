@@ -25,5 +25,5 @@ export async function getSecurityEvents(type?: string): Promise<SecurityEventRow
   const data = await apiGet<{ items: SecurityEventRow[] } | SecurityEventRow[]>(
     `/v1/admin/security-events${qs}`,
   );
-  return Array.isArray(data) ? data : data.items;
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }
