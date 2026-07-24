@@ -1,64 +1,15 @@
 'use client';
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowRight, Pencil } from 'lucide-react';
+import { ArrowRight, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '../lib/utils';
 import type { ProductRow } from '../lib/api';
-import { updateProductAction, type FormState } from '../app/stock/actions';
 import { Button } from './ui/button';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from './ui/sheet';
-import { ProductFormFields } from './product-create-form';
+import { ProductEditSheet } from './product-edit-sheet';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
-
-const editInitial: FormState = { ok: false };
-
-/** Satır içi ürün düzenleme paneli (§11) — Sheet + ön-dolu form; başarıda kapanır. */
-function ProductEditSheet({ product }: { product: ProductRow }) {
-  const [open, setOpen] = React.useState(false);
-  const [state, action, pending] = React.useActionState(updateProductAction, editInitial);
-
-  // Başarılı güncellemede paneli kapat (revalidatePath tabloyu tazeler).
-  React.useEffect(() => {
-    if (state.ok) setOpen(false);
-  }, [state.ok]);
-
-  return (
-    <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild>
-        <Button variant="ghost" size="sm" aria-label={`${product.name} düzenle`}>
-          <Pencil /> Düzenle
-        </Button>
-      </SheetTrigger>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
-        <SheetHeader>
-          <SheetTitle>Ürün düzenle</SheetTitle>
-          <SheetDescription>
-            {product.name} · {product.sku}
-          </SheetDescription>
-        </SheetHeader>
-        {/* key={open}: her açılışta formu ürün varsayılanlarıyla sıfırla. */}
-        <form key={String(open)} action={action} className="space-y-3 p-4 pt-0">
-          <input type="hidden" name="id" value={product.id} />
-          <ProductFormFields defaults={product} />
-          {state.error && <p className="text-sm text-destructive">{state.error}</p>}
-          <Button type="submit" disabled={pending}>
-            {pending ? 'Kaydediliyor…' : 'Kaydet'}
-          </Button>
-        </form>
-      </SheetContent>
-    </Sheet>
-  );
-}
 
 /** Ürün tip etiketi: kind + (multi ise) kapasite + geçerlilik. */
 function typeLabel(p: ProductRow): string {
@@ -113,16 +64,28 @@ const columns: ColumnDef<ProductRow>[] = [
     header: ({ column }) => <DataTableColumnHeader column={column} title="Stok" />,
     cell: ({ row }) => {
       const s = row.original.availableStock;
+      const threshold = row.original.lowStockThreshold;
+      const low = threshold != null && s <= threshold;
       return (
-        <span
-          className={cn('font-medium tabular-nums', s > 0 ? 'text-success' : 'text-destructive')}
-          title={
-            row.original.usageMode === 'multi'
-              ? 'kalan kapasite (Σ max-kullanım − kullanılan)'
-              : 'available satır'
-          }
-        >
-          {s}
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            className={cn('font-medium tabular-nums', s > 0 ? 'text-success' : 'text-destructive')}
+            title={
+              row.original.usageMode === 'multi'
+                ? 'kalan kapasite (Σ max-kullanım − kullanılan)'
+                : 'available satır'
+            }
+          >
+            {s}
+          </span>
+          {low && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded bg-warning/10 px-1 py-0.5 text-[10px] font-medium text-warning"
+              title={`Düşük stok (eşik ${threshold})`}
+            >
+              <ShieldAlert className="size-3" /> düşük
+            </span>
+          )}
         </span>
       );
     },

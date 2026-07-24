@@ -45,6 +45,19 @@ export interface ProductDetail {
     reason: string;
     createdAt: string;
   }>;
+  /** Bu ürünün site eşlemeleri (§3) — ürün-merkezli yönetim: eşleme artık ürün detayında. */
+  mappings: Array<{
+    id: string;
+    siteId: string;
+    siteDomain: string;
+    productId: string;
+    productName: string;
+    remoteProductId: string;
+    remoteVariationId: string | null;
+    bundleQty: number;
+    active: boolean;
+    createdAt: string;
+  }>;
 }
 
 @Injectable()
@@ -111,12 +124,13 @@ export class ProductsService {
   async getDetail(id: string): Promise<ProductDetail> {
     const product = await this.getById(id);
 
-    const [stock, batches, purchaseOrders, velocity, adjustments] = await Promise.all([
+    const [stock, batches, purchaseOrders, velocity, adjustments, mappings] = await Promise.all([
       this.detailStock(id),
       this.detailBatches(id),
       this.detailPurchaseOrders(id),
       this.detailVelocity(id),
       this.detailAdjustments(id),
+      this.detailMappings(id),
     ]);
 
     // Tükenme tahmini: kalan available kapasitesini günlük satış hızına böl.
@@ -137,7 +151,38 @@ export class ProductsService {
         daysRemaining,
       },
       adjustments,
+      mappings,
     };
+  }
+
+  /**
+   * Bu ürüne bağlı site eşlemeleri (§3) — listMappings ile aynı zenginleştirme, tek ürüne
+   * daraltılmış (ürün-merkezli yönetim: eşleme oluşturma/aç-kapa artık ürün detayında).
+   */
+  private async detailMappings(id: string): Promise<ProductDetail['mappings']> {
+    const rows = await this.db
+      .select({
+        id: siteProductMappings.id,
+        siteId: siteProductMappings.siteId,
+        siteDomain: sites.domain,
+        productId: siteProductMappings.productId,
+        productName: products.name,
+        remoteProductId: siteProductMappings.remoteProductId,
+        remoteVariationId: siteProductMappings.remoteVariationId,
+        bundleQty: siteProductMappings.bundleQty,
+        active: siteProductMappings.active,
+        createdAt: siteProductMappings.createdAt,
+      })
+      .from(siteProductMappings)
+      .innerJoin(sites, eq(sites.id, siteProductMappings.siteId))
+      .innerJoin(products, eq(products.id, siteProductMappings.productId))
+      .where(eq(siteProductMappings.productId, id))
+      .orderBy(desc(siteProductMappings.createdAt));
+    return rows.map((r) => ({
+      ...r,
+      bundleQty: Number(r.bundleQty),
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+    }));
   }
 
   /**

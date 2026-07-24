@@ -17,17 +17,20 @@ const previewInitial: PreviewState = { ok: false };
 export function ImportStockForm({
   products,
   defaultBatchId,
+  fixedProductId,
 }: {
   products: ProductRow[];
   /** URL ?batchId= ile gelen parti (recall/toplu-değiştir akışı ön-doldurur). */
   defaultBatchId?: string;
+  /** Ürün-merkezli kullanım (ürün detayı): ürün SABİT → dropdown gizlenir, hidden input gönderilir. */
+  fixedProductId?: string;
 }) {
   const [state, action, pending] = useActionState(importStockAction, initial);
   const [previewState, previewAction, previewPending] = useActionState(
     previewStockAction,
     previewInitial,
   );
-  const [productId, setProductId] = useState('');
+  const [productId, setProductId] = useState(fixedProductId ?? '');
   // keys textarea'yı kontrol altına al ki satır sayısını önizlemeye taşıyabilelim.
   const [keys, setKeys] = useState('');
   // Önizleme adedi (tahmini giriş) — kullanıcı elle değişmediyse satır sayısını izler.
@@ -55,24 +58,29 @@ export function ImportStockForm({
   return (
     <div className="space-y-4">
       <form action={action} className="space-y-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="is-product">Ürün</Label>
-          <select
-            id="is-product"
-            name="productId"
-            required
-            value={productId}
-            onChange={(e) => setProductId(e.target.value)}
-            className={`w-full max-w-md ${selectClass}`}
-          >
-            <option value="">— seçin —</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.sku}) · {p.kind}
-              </option>
-            ))}
-          </select>
-        </div>
+        {fixedProductId ? (
+          // Ürün-merkezli: ürün zaten belli → dropdown yok, yalnız gizli alan.
+          <input type="hidden" name="productId" value={fixedProductId} />
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="is-product">Ürün</Label>
+            <select
+              id="is-product"
+              name="productId"
+              required
+              value={productId}
+              onChange={(e) => setProductId(e.target.value)}
+              className={`w-full max-w-md ${selectClass}`}
+            >
+              <option value="">— seçin —</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.sku}) · {p.kind}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="is-keys">

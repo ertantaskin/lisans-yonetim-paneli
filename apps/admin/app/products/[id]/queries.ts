@@ -20,6 +20,11 @@ export interface ProductRecord {
   payloadSchema: PayloadFieldDef[] | null;
   fulfillmentPolicy: string;
   lowStockThreshold: number | null;
+  // Düzenleme sheet'inin ön-dolumu için (detay ucu tam Product satırı döndürür).
+  stockless: boolean;
+  releaseAt: string | null;
+  warrantyDays: number | null;
+  keyFormat: string | null;
   createdAt: string;
 }
 
@@ -51,6 +56,19 @@ export interface ProductDetail {
     action: string;
     qty: number;
     reason: string;
+    createdAt: string;
+  }>;
+  /** Bu ürünün site eşlemeleri (MappingRow ile aynı şekil) — ürün-merkezli yönetim. */
+  mappings: Array<{
+    id: string;
+    siteId: string;
+    siteDomain: string;
+    productId: string;
+    productName: string;
+    remoteProductId: string;
+    remoteVariationId: string | null;
+    bundleQty: number;
+    active: boolean;
     createdAt: string;
   }>;
 }

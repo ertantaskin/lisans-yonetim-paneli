@@ -37,10 +37,14 @@ export function MappingsManager({
   sites,
   products,
   mappings,
+  productId,
 }: {
   sites: SiteRow[];
-  products: ProductRow[];
+  /** Global kullanımda ürün seçimi için; ürün-merkezli (productId set) kullanımda gereksiz. */
+  products?: ProductRow[];
   mappings: MappingRow[];
+  /** Ürün-merkezli kullanım (ürün detayı): ürün SABİT → seçim/kolon gizlenir, hidden gönderilir. */
+  productId?: string;
 }) {
   const [state, action, pending] = useActionState(createMappingAction, initial);
 
@@ -59,17 +63,21 @@ export function MappingsManager({
               ))}
             </select>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="map-product">Panel ürünü</Label>
-            <select id="map-product" name="productId" required className={`w-full ${selectClass}`}>
-              <option value="">— ürün —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {productId ? (
+            <input type="hidden" name="productId" value={productId} />
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="map-product">Panel ürünü</Label>
+              <select id="map-product" name="productId" required className={`w-full ${selectClass}`}>
+                <option value="">— ürün —</option>
+                {(products ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="map-remote">Woo ürün ID</Label>
             <Input id="map-remote" name="remoteProductId" placeholder="ör. 555" required />
@@ -113,7 +121,7 @@ export function MappingsManager({
                 <TableRow>
                   <TableHead>Site</TableHead>
                   <TableHead>Remote (ürün · varyasyon)</TableHead>
-                  <TableHead>Panel ürünü</TableHead>
+                  {!productId && <TableHead>Panel ürünü</TableHead>}
                   <TableHead className="text-right">Paket</TableHead>
                   <TableHead>Durum</TableHead>
                   <TableHead className="text-right">Aksiyon</TableHead>
@@ -127,12 +135,14 @@ export function MappingsManager({
                       {m.remoteProductId}
                       {m.remoteVariationId ? ` · ${m.remoteVariationId}` : ''}
                     </TableCell>
-                    <TableCell className="font-medium text-foreground">
-                      <span className="inline-flex items-center gap-1">
-                        <ArrowRight className="size-3 text-muted-foreground" />
-                        {m.productName}
-                      </span>
-                    </TableCell>
+                    {!productId && (
+                      <TableCell className="font-medium text-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <ArrowRight className="size-3 text-muted-foreground" />
+                          {m.productName}
+                        </span>
+                      </TableCell>
+                    )}
                     <TableCell className="text-right tabular-nums">{m.bundleQty}</TableCell>
                     <TableCell>
                       <Badge variant={m.active ? 'success' : 'neutral'}>
@@ -143,6 +153,7 @@ export function MappingsManager({
                       <form action={updateMappingAction} className="inline">
                         <input type="hidden" name="id" value={m.id} />
                         <input type="hidden" name="active" value={String(!m.active)} />
+                        {productId && <input type="hidden" name="productId" value={productId} />}
                         <Button
                           type="submit"
                           variant="ghost"

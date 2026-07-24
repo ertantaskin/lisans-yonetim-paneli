@@ -1,68 +1,41 @@
-import { apiGet, type ProductRow, type SiteRow } from '../../lib/api';
-import { Card, PageHeader } from '../../components/ui';
-import { ImportStockForm } from '../../components/import-stock-form';
-import { ProductCreateForm } from '../../components/product-create-form';
+import { apiGet, type ProductRow } from '../../lib/api';
+import { PageHeader } from '../../components/ui/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
 import { ProductsTable } from '../../components/products-table';
-import { MappingsManager, type MappingRow } from '../../components/mappings-manager';
+import { ProductCreateSheet } from '../../components/product-create-sheet';
 
 export const dynamic = 'force-dynamic';
 
-export default async function StockPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ batchId?: string }>;
-}) {
-  const { batchId } = await searchParams;
-
+/**
+ * Stok & Ürünler — ürün-merkezli sadeleştirilmiş liste. Yalnız ürün tablosu + "Yeni Ürün" (Sheet).
+ * Key import, site eşlemeleri ve düzenleme her ürünün DETAY sayfasında (bağlamsal) → bu ekran
+ * çok üründe bile taranabilir kalır (eski hepsi-üst-üste global formlar kaldırıldı).
+ */
+export default async function StockPage() {
   let products: ProductRow[] = [];
-  let sites: SiteRow[] = [];
-  let mappings: MappingRow[] = [];
   let error: string | null = null;
   try {
-    [products, sites, mappings] = await Promise.all([
-      apiGet<ProductRow[]>('/v1/admin/products'),
-      apiGet<SiteRow[]>('/v1/admin/sites'),
-      apiGet<MappingRow[]>('/v1/admin/mappings'),
-    ]);
+    products = await apiGet<ProductRow[]>('/v1/admin/products');
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 
   return (
-    <div>
-      <PageHeader title="Stok & Ürünler" desc="Ürünler, anlık stok ve şifreli key import." />
+    <div className="space-y-5">
+      <PageHeader
+        title="Stok & Ürünler"
+        description="Ürünleri yönetin. Key import, site eşlemeleri ve düzenleme her ürünün detay sayfasında."
+      >
+        <ProductCreateSheet />
+      </PageHeader>
 
       {error && (
-        <Card className="mb-5">
-          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
-        </Card>
+        <Alert variant="destructive">
+          <AlertDescription>API&apos;ye ulaşılamadı: {error}</AlertDescription>
+        </Alert>
       )}
 
-      {/* Ürünler + stok — DataTable */}
-      <section className="mb-6">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Ürünler</h2>
-        <ProductsTable products={products} />
-      </section>
-
-      <div className="max-w-4xl space-y-5">
-        {/* Stok import */}
-        <Card>
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Stok Import (Onayla ve Dağıt)</h2>
-          <ImportStockForm products={products} defaultBatchId={batchId} />
-        </Card>
-
-        {/* Ürün oluştur */}
-        <Card>
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Ürün Oluştur</h2>
-          <ProductCreateForm />
-        </Card>
-
-        {/* Site-Ürün Eşleme */}
-        <Card>
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Site-Ürün Eşleme</h2>
-          <MappingsManager sites={sites} products={products} mappings={mappings} />
-        </Card>
-      </div>
+      <ProductsTable products={products} />
     </div>
   );
 }

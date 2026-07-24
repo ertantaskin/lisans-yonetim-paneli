@@ -101,7 +101,9 @@ export async function updateProductAction(
   if (!id) return { ok: false, error: 'Ürün ID eksik' };
   try {
     await apiSend('PATCH', `/v1/admin/products/${id}`, buildProductBody(formData), await getActor());
+    // Düzenleme sheet'i hem /stock listesinde hem ürün detayında açılabilir → ikisini de tazele.
     revalidatePath('/stock');
+    revalidatePath(`/products/${id}`);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
@@ -139,7 +141,11 @@ export async function importStockAction(
       await getActor(),
     );
     // Kuru çalıştırma DB'yi değiştirmez → cache invalidation gereksiz; yalnız gerçek import'ta.
-    if (!dryRun) revalidatePath('/stock');
+    // Import artık ürün detayında yapılıyor → o sayfayı tazele (+ /stock stok kolonu için).
+    if (!dryRun) {
+      revalidatePath(`/products/${productId}`);
+      revalidatePath('/stock');
+    }
     return { ok: true, result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
@@ -209,24 +215,28 @@ export async function createMappingAction(
       },
       await getActor(),
     );
-    revalidatePath('/stock');
+    // Eşleme oluşturma artık ürün detayında (ürün-merkezli) → o sayfayı tazele.
+    revalidatePath(`/products/${productId}`);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
   }
 }
 
-/** Eşlemeyi pasifleştir/etkinleştir (§3). */
+/** Eşlemeyi pasifleştir/etkinleştir (§3). productId ürün detayını tazelemek için (opsiyonel). */
 export async function updateMappingAction(formData: FormData) {
   const id = String(formData.get('id') || '');
   const active = String(formData.get('active') || '') === 'true';
+  const productId = String(formData.get('productId') || '').trim();
   if (!id) return;
   try {
     await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active }, await getActor());
   } catch {
     // Eşleme eşzamanlı silinmiş / API 500 dönmüş olabilir — throw'u YUT ki yakalanmamış
-    // hata tüm /stock sayfasını Next error boundary'sine düşürüp boşaltmasın (kardeş
-    // action'lar da hata yutar). revalidate UI'ı gerçek duruma tazeler.
+    // hata tüm sayfayı Next error boundary'sine düşürüp boşaltmasın (kardeş action'lar da
+    // hata yutar). revalidate UI'ı gerçek duruma tazeler.
   }
-  revalidatePath('/stock');
+  // Toggle formu productId taşıyorsa ürün detayını tazele; yoksa (geriye dönük) /stock.
+  if (productId) revalidatePath(`/products/${productId}`);
+  else revalidatePath('/stock');
 }

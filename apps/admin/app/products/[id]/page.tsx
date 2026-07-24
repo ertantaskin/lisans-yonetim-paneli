@@ -12,6 +12,9 @@ import {
   Truck,
   ClipboardList,
   Wrench,
+  Upload,
+  Link2,
+  Pencil,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
@@ -26,9 +29,12 @@ import {
   TableHeader,
   TableRow,
 } from '../../../components/ui/table';
-import { ApiError } from '../../../lib/api';
+import { ApiError, apiGet, type SiteRow } from '../../../lib/api';
 import { getProductDetail, type ProductDetail } from './queries';
 import { StockAdjustForm } from './stock-adjust-form';
+import { ProductEditSheet } from '../../../components/product-edit-sheet';
+import { ImportStockForm } from '../../../components/import-stock-form';
+import { MappingsManager } from '../../../components/mappings-manager';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,15 +67,24 @@ const dtFmt = (iso: string) =>
 
 export default async function ProductDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ batchId?: string }>;
 }) {
   const { id } = await params;
+  // ?batchId= — /batches "Bu partiye stok gir" derin bağlantısı import formunu ön-doldurur.
+  const { batchId } = await searchParams;
 
   let data: ProductDetail | null = null;
+  let sites: SiteRow[] = [];
   let error: string | null = null;
   try {
-    data = await getProductDetail(id);
+    // Detay + siteler paralel (siteler eşleme formunun site seçimi için).
+    [data, sites] = await Promise.all([
+      getProductDetail(id),
+      apiGet<SiteRow[]>('/v1/admin/sites'),
+    ]);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
@@ -116,12 +131,23 @@ export default async function ProductDetailPage({
               <span>{product.fulfillmentPolicy}</span>
             </div>
           </div>
-          {lowStock && (
-            <Badge variant="warning" className="mt-1">
-              <ShieldAlert />
-              Düşük stok (eşik {product.lowStockThreshold})
-            </Badge>
-          )}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {lowStock && (
+              <Badge variant="warning">
+                <ShieldAlert />
+                Düşük stok (eşik {product.lowStockThreshold})
+              </Badge>
+            )}
+            {/* Ürün-merkezli hub: düzenleme artık burada (paylaşımlı edit sheet). */}
+            <ProductEditSheet
+              product={{ ...product, availableStock: stock.available }}
+              trigger={
+                <Button variant="outline" size="sm">
+                  <Pencil /> Düzenle
+                </Button>
+              }
+            />
+          </div>
         </div>
       </div>
 
@@ -161,6 +187,34 @@ export default async function ProductDetailPage({
           hint={velocity.daysRemaining == null ? 'tahmin edilemez' : undefined}
         />
       </div>
+
+      {/* Key/Stok import — ürün-merkezli (ürün SABİT, dropdown yok). ?batchId= ön-doldurur. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Upload className="size-4 text-muted-foreground" /> Key / Stok İçe Aktar
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ImportStockForm
+            fixedProductId={product.id}
+            products={[{ ...product, availableStock: stock.available }]}
+            defaultBatchId={batchId}
+          />
+        </CardContent>
+      </Card>
+
+      {/* Site eşlemeleri — yalnız bu ürünün eşlemeleri (Woo → panel), oluştur + aç-kapa */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Link2 className="size-4 text-muted-foreground" /> Site Eşlemeleri
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <MappingsManager productId={product.id} sites={sites} mappings={data.mappings} />
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Partiler */}

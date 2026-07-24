@@ -1,7 +1,6 @@
 'use client';
-import { useActionState, useState } from 'react';
+import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { createProductAction, type FormState } from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
 import { Input, Label, selectClass } from './ui/input';
 import { Button } from './ui/button';
@@ -222,23 +221,5 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
     </div>
   );
 }
-
-const CREATE_INITIAL: FormState = { ok: false };
-
-export function ProductCreateForm() {
-  const [state, action, pending] = useActionState(createProductAction, CREATE_INITIAL);
-  return (
-    <form action={action} className="space-y-3">
-      <ProductFormFields />
-      {state.error && (
-        <p role="alert" className="text-sm text-destructive">
-          {state.error}
-        </p>
-      )}
-      {state.ok && <p className="text-sm text-success">Ürün oluşturuldu.</p>}
-      <Button type="submit" disabled={pending}>
-        {pending ? 'Oluşturuluyor…' : 'Oluştur'}
-      </Button>
-    </form>
-  );
-}
+// NOT: ProductCreateForm kaldırıldı → oluşturma artık product-create-sheet.tsx (Sheet). Bu dosya
+// yalnız paylaşımlı ProductFormFields'ı export eder (create-sheet + edit-sheet + [gelecek] kullanır).
