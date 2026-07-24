@@ -8,8 +8,9 @@ import {
   type PreviewState,
 } from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
-import { Input, Textarea, selectClass } from './ui/input';
+import { Input, Textarea } from './ui/input';
 import { Button } from './ui/button';
+import { Combobox } from './ui/combobox';
 import { Field } from './ui/field';
 
 const initial: ImportState = { ok: false };
@@ -63,22 +64,25 @@ export function ImportStockForm({
           // Ürün-merkezli: ürün zaten belli → dropdown yok, yalnız gizli alan.
           <input type="hidden" name="productId" value={fixedProductId} />
         ) : (
-          <Field label="Ürün" htmlFor="is-product">
-            <select
+          <Field label="Ürün" htmlFor="is-product" hint="Ada veya SKU'ya göre arayın.">
+            <Combobox
               id="is-product"
               name="productId"
               required
+              ariaLabel="Ürün"
+              className="max-w-md"
               value={productId}
-              onChange={(e) => setProductId(e.target.value)}
-              className={`w-full max-w-md ${selectClass}`}
-            >
-              <option value="">— seçin —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} ({p.sku}) · {p.kind}
-                </option>
-              ))}
-            </select>
+              onValueChange={setProductId}
+              items={products.map((p) => ({
+                value: p.id,
+                label: p.name,
+                hint: `${p.sku} · ${p.kind}`,
+                keywords: [p.sku, p.kind],
+              }))}
+              placeholder="— ürün seçin —"
+              searchPlaceholder="Ürün adı veya SKU…"
+              emptyText="Ürün bulunamadı"
+            />
           </Field>
         )}
 

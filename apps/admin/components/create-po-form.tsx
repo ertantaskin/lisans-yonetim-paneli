@@ -7,6 +7,7 @@ import type { SupplierOption } from '@/app/purchase-orders/queries';
 import type { ProductRow } from '@/lib/api';
 import { Input, Textarea, selectClass } from './ui/input';
 import { Button } from './ui/button';
+import { Combobox } from './ui/combobox';
 import { Field, FormSection, FieldRow } from './ui/field';
 
 /**
@@ -33,25 +34,34 @@ export function CreatePOForm({
     <form action={action} className="space-y-6 text-sm">
       <FormSection title="Tedarik" description="Emrin verileceği tedarikçi ve stoklanacak ürün.">
         <FieldRow>
-          <Field label="Tedarikçi" htmlFor="po-supplier" required>
-            <select id="po-supplier" name="supplierId" required className={`${selectClass} w-full`}>
-              <option value="">— tedarikçi —</option>
-              {activeSuppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+          <Field label="Tedarikçi" htmlFor="po-supplier" required hint="Yazarak arayın.">
+            <Combobox
+              id="po-supplier"
+              name="supplierId"
+              required
+              ariaLabel="Tedarikçi"
+              items={activeSuppliers.map((s) => ({ value: s.id, label: s.name }))}
+              placeholder="— tedarikçi seçin —"
+              searchPlaceholder="Tedarikçi ara…"
+              emptyText="Tedarikçi bulunamadı"
+            />
           </Field>
-          <Field label="Ürün" htmlFor="po-product" required>
-            <select id="po-product" name="productId" required className={`${selectClass} w-full`}>
-              <option value="">— ürün —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.sku} · {p.name}
-                </option>
-              ))}
-            </select>
+          <Field label="Ürün" htmlFor="po-product" required hint="Ada veya SKU'ya göre arayın.">
+            <Combobox
+              id="po-product"
+              name="productId"
+              required
+              ariaLabel="Ürün"
+              items={products.map((p) => ({
+                value: p.id,
+                label: p.name,
+                hint: p.sku,
+                keywords: [p.sku],
+              }))}
+              placeholder="— ürün seçin —"
+              searchPlaceholder="Ürün adı veya SKU…"
+              emptyText="Ürün bulunamadı"
+            />
           </Field>
         </FieldRow>
       </FormSection>

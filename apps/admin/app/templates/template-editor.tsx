@@ -13,8 +13,9 @@ import {
   updateTemplateAction,
   type TemplateFormState,
 } from './actions';
-import { Input, Label, Textarea, selectClass } from '../../components/ui/input';
+import { Input, Label, Textarea } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
+import { Combobox } from '../../components/ui/combobox';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Card } from '../../components/ui/card';
 
@@ -105,35 +106,38 @@ export function TemplateEditor({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="te-product">Ürün (ops.)</Label>
-              <select
+              <Combobox
                 id="te-product"
                 name="productId"
+                ariaLabel="Ürün kapsamı"
+                allowClear
+                clearLabel="— tüm ürünler —"
                 defaultValue={template?.productId ?? ''}
-                className={selectClass}
-              >
-                <option value="">— tüm ürünler —</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.sku})
-                  </option>
-                ))}
-              </select>
+                items={products.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                  hint: p.sku,
+                  keywords: [p.sku],
+                }))}
+                placeholder="— tüm ürünler —"
+                searchPlaceholder="Ürün adı veya SKU…"
+                emptyText="Ürün bulunamadı"
+              />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="te-site">Site (ops.)</Label>
-              <select
+              <Combobox
                 id="te-site"
                 name="siteId"
+                ariaLabel="Site kapsamı"
+                allowClear
+                clearLabel="— tüm siteler —"
                 defaultValue={template?.siteId ?? ''}
-                className={selectClass}
-              >
-                <option value="">— tüm siteler —</option>
-                {sites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.domain}
-                  </option>
-                ))}
-              </select>
+                items={sites.map((s) => ({ value: s.id, label: s.domain }))}
+                placeholder="— tüm siteler —"
+                searchPlaceholder="Site alan adı ara…"
+                emptyText="Site bulunamadı"
+              />
             </div>
           </div>
 

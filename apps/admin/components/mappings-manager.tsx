@@ -7,8 +7,9 @@ import {
   type FormState,
 } from '../app/stock/actions';
 import type { ProductRow, SiteRow } from '../lib/api';
-import { Input, selectClass } from './ui/input';
+import { Input } from './ui/input';
 import { Button } from './ui/button';
+import { Combobox } from './ui/combobox';
 import { Badge } from './ui/badge';
 import { Field } from './ui/field';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
@@ -53,28 +54,37 @@ export function MappingsManager({
     <div className="space-y-4 text-sm">
       <form action={action} className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Site" htmlFor="map-site">
-            <select id="map-site" name="siteId" required className={`w-full ${selectClass}`}>
-              <option value="">— site —</option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.domain}
-                </option>
-              ))}
-            </select>
+          <Field label="Site" htmlFor="map-site" hint="Yazarak arayın.">
+            <Combobox
+              id="map-site"
+              name="siteId"
+              required
+              ariaLabel="Site"
+              items={sites.map((s) => ({ value: s.id, label: s.domain }))}
+              placeholder="— site seçin —"
+              searchPlaceholder="Site alan adı ara…"
+              emptyText="Site bulunamadı"
+            />
           </Field>
           {productId ? (
             <input type="hidden" name="productId" value={productId} />
           ) : (
-            <Field label="Panel ürünü" htmlFor="map-product">
-              <select id="map-product" name="productId" required className={`w-full ${selectClass}`}>
-                <option value="">— ürün —</option>
-                {(products ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+            <Field label="Panel ürünü" htmlFor="map-product" hint="Ada veya SKU'ya göre arayın.">
+              <Combobox
+                id="map-product"
+                name="productId"
+                required
+                ariaLabel="Panel ürünü"
+                items={(products ?? []).map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                  hint: p.sku,
+                  keywords: [p.sku],
+                }))}
+                placeholder="— ürün seçin —"
+                searchPlaceholder="Ürün adı veya SKU…"
+                emptyText="Ürün bulunamadı"
+              />
             </Field>
           )}
           <Field
