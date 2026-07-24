@@ -57,6 +57,10 @@ export const orders = pgTable(
     index('orders_held_idx')
       .on(t.createdAt.desc())
       .where(sql`${t.heldForReview} = true`),
+    // 0018'de eklenen fonksiyonel index (customers 360 case-insensitive e-posta grup/arama) prod'da
+    // var ama schema'da DECLARE edilmemişti → drift. Burada tanımlanır ki schema tekrar TEK doğruluk
+    // kaynağı olsun (#7 denetim M): db:generate 0020 CREATE üretir, prod'da IF NOT EXISTS ile no-op.
+    index('orders_email_lower_idx').on(sql`lower(${t.customerEmail})`),
   ],
 );
 

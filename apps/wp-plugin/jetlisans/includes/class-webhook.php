@@ -66,6 +66,16 @@ class Jetlisans_Webhook {
             $status = isset($body['status']) ? sanitize_text_field($body['status']) : '';
             if ($status) {
                 $order->update_meta_data('_jetlisans_status', $status);
+                // (§8 İnceleme Kuyruğu) Panel geri-kanal bir TERMİNAL/teslim durumu bildirdiyse
+                // (order.fulfilled/partially_fulfilled → fulfilled/partial, ya da revoked) inceleme
+                // SONUÇLANMIŞ demektir (held sipariş yalnız release SONRASI webhook üretir). Bayat
+                // "güvenlik incelemesinde" bildirimini kalıcı düşürmek için held işaretini temizle.
+                // İdempotent: işaret yoksa/zaten boşsa no-op. _jetlisans_status güncellemesini aynadan
+                // izler → aşağıdaki mevcut $order->save() ($status doğru olduğu için) silmeyi kalıcılar.
+                if (in_array($status, ['fulfilled', 'partial', 'revoked'], true)
+                    && $order->get_meta('_jetlisans_held_for_review') === 'yes') {
+                    $order->delete_meta_data('_jetlisans_held_for_review');
+                }
             }
             if ($seq > 0) {
                 $order->update_meta_data('_jetlisans_seq', $seq);

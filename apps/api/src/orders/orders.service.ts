@@ -121,6 +121,10 @@ export class OrdersService {
         and(
           eq(assignments.orderId, order.id),
           eq(assignments.status, 'active'),
+          // #7 denetim (yarış savunması): iptal/iade edilmiş satırın (canceled) atamasını ASLA
+          // döndürme. release/reject yarışı stray bir aktif atama bıraksa bile reddedilen/iade
+          // edilen siparişte müşteri canlı key GÖRMEZ (satır canceled → filtrelenir).
+          eq(orderLines.canceled, false),
           // Savunma amaçlı süre filtresi: expiry job gecikse bile onExpiry='hide'
           // ürünün süresi geçmiş payload'ı SIZMAZ. 'keep' ürün süre sonrası da görünür.
           or(
@@ -195,16 +199,21 @@ export class OrdersService {
 
     const idempotencyKey = `${site.id}:${dto.remoteOrderId}`;
 
+    // #7 denetim B: held-dalı bilgisini tx dışına taşı → commit SONRASI 'quota_review' alarmı
+    // (security_event) yazılır (reject yoluyla simetri; held artık sessiz değil).
+    let heldMeta: { todayCount: number; threshold: number } | null = null;
     let result: CreateOrderResponse;
     try {
       result = await this.db.transaction(async (tx) => {
-        // #20 TOCTOU + #7: site başına advisory-lock. Aynı site için eşzamanlı sipariş
-        // oluşturma serileşir → kota SAY-sonra-EKLE yarışı (iki istek aynı anda sayıp ikisi
-        // de eklemesi) kapanır; held-eşik sayımı da tutarlı olur. Kilit commit/rollback'te
-        // bırakılır. Sipariş push tek-site için doğal olarak düşük-eşzamanlı → maliyet ihmal
-        // edilebilir; doğruluk > throughput. (Idempotent retry buraya HİÇ ulaşmaz — yukarıda
-        // mevcut sonuç döner; yalnız GERÇEKTEN yeni sipariş kotaya sayılır.)
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${site.id}))`);
+        // #20 TOCTOU + #7: site başına advisory-lock — kota SAY-sonra-EKLE yarışını kapatır.
+        // YALNIZ bir kota özelliği açıkken alınır (#7 denetim H): kota tamamen kapalı sitelerde
+        // (salesDailyQuota=null && !dynamicQuotaEnabled) sipariş oluşturmayı gereksiz yere site-
+        // başına serileştirmemek için — o durumda evaluateQuota zaten sayım yapmadan 'allow' döner
+        // ve eski paralel davranış korunur. Açıkken kilit commit/rollback'te bırakılır (idempotent
+        // retry buraya HİÇ ulaşmaz; yalnız GERÇEKTEN yeni sipariş kotaya sayılır).
+        if (site.salesDailyQuota != null || site.dynamicQuotaEnabled) {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${site.id}))`);
+        }
 
         // Kota kararı (§5 sert tavan REDDET / §8 dinamik eşik HOLD). Advisory-lock altında.
         const quota = await this.evaluateQuota(tx, site);
@@ -243,6 +252,7 @@ export class OrdersService {
         // (held_for_review). Atama YAPILMAZ; satırlar pending yazılır (eşlemesiz null kalır).
         // autoComplete bu siparişi ATLAR; admin "İnceleme Kuyruğu"nda Onayla/Reddet eder.
         if (quota.action === 'hold') {
+          heldMeta = { todayCount: quota.todayCount, threshold: quota.threshold };
           await tx
             .update(orders)
             .set({
@@ -492,6 +502,18 @@ export class OrdersService {
       );
     }
 
+    // #7 denetim B (§8 "held_for_review + ALARM"): dinamik eşik aşımıyla incelemeye alınan sipariş
+    // için 'quota_review' güvenlik olayı (dedupe'lu) → /security + daily-digest görünür. Best-effort:
+    // yazamama teslimat/yanıtı ETKİLEMEZ. Yalnız GERÇEK held'te (idempotent retry heldMeta=null).
+    // (Tip assertion: heldMeta closure içinde atandığından TS akış-analizi init'e (null) sabitliyor;
+    // `as` ile birlik tipi geri kazanılır, sonra if daraltır.)
+    const held = heldMeta as { todayCount: number; threshold: number } | null;
+    if (held) {
+      await this.security
+        .recordQuotaHeld(site.id, held.todayCount, held.threshold)
+        .catch(() => undefined);
+    }
+
     return this.buildOutcome(result);
   }
 
@@ -681,8 +703,11 @@ export class OrdersService {
       return { action: 'reject', todayCount, limit: site.salesDailyQuota };
     }
 
-    // 2) Dinamik eşik — aşımda HOLD (incelemeye al, reddetme).
+    // 2) Dinamik eşik — aşımda HOLD (incelemeye al, reddetme). §8: 30g-ortalama × çarpan.
     if (site.dynamicQuotaEnabled) {
+      // Taban YALNIZ meşru-teslim edilmiş (fulfilled/partial), held-OLMAYAN, BUGÜN-ÖNCESİ siparişleri
+      // sayar → held/reddedilmiş/unmapped bir yükseliş gelecekteki eşiği ŞİŞİRMESİN (saldırgan kendi
+      // eşiğini yükseltemez, #7 denetim E). Bölen sabit 30 (genç sitede düşük avg = daha erken hold = güvenli).
       const [recent] = await tx
         .select({ count: sql<number>`count(*)::int` })
         .from(orders)
@@ -690,10 +715,20 @@ export class OrdersService {
           and(
             eq(orders.siteId, site.id),
             gte(orders.createdAt, sql`now() - interval '30 days'`),
+            sql`${orders.createdAt} < date_trunc('day', now())`,
+            eq(orders.heldForReview, false),
+            inArray(orders.status, ['fulfilled', 'partial']),
           ),
         );
-      const avgDaily = Number(recent?.count ?? 0) / 30;
-      const threshold = Math.max(Math.ceil(avgDaily * site.reviewMultiplier), DYNAMIC_MIN_FLOOR);
+      const recent30 = Number(recent?.count ?? 0);
+      const avgDaily = recent30 / 30;
+      // Taban (DYNAMIC_MIN_FLOOR) YALNIZ yetersiz geçmişi olan siteye uygulanır (yeni-site yanlış-
+      // pozitif koruması). Yeterli geçmiş varsa §8 "×çarpan"a güven — düşük-hacimli meşru sitede
+      // sabit taban ×çarpan hassasiyetini maskelemesin (#7 denetim L). En az 1 (0-eşik tuzağını önle).
+      const threshold =
+        recent30 >= DYNAMIC_MIN_FLOOR
+          ? Math.max(Math.ceil(avgDaily * site.reviewMultiplier), 1)
+          : DYNAMIC_MIN_FLOOR;
       if (todayCount >= threshold) {
         return { action: 'hold', todayCount, threshold };
       }
@@ -711,6 +746,10 @@ export class OrdersService {
     return {
       orderId: order.id,
       status: order.status as CreateOrderResponse['status'],
+      // #7 denetim K: idempotent re-push (retry/kayıp-yanıt) held bayrağını tutarlı bildirsin →
+      // WP eklentisi ilk yanıt kaybolsa da retry'da held işaretini set edebilir (aksi halde
+      // yalnız İLK oluşturmada held:true dönüyordu, retry'da düşüyordu).
+      held: order.heldForReview,
       assignments: asgs.map((a) => ({
         assignmentId: a.id,
         remoteLineId: lineById.get(a.lineId)?.remoteLineId ?? '',

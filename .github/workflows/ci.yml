@@ -61,8 +61,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # #7 denetim G: rate-limit.service.test.ts REDIS_URL zorunlu — Redis servisi olmadan
+      # beforeAll'da patlıyor ve TÜM entegrasyon adımını kırmızıya düşürüyordu (yeni #7/#19/#20
+      # testleri otomatik gate ile korunmuyordu). Redis eklenince entegrasyon paketi tam geçer.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://jetlisans:jetlisans@localhost:5432/jetlisans_test
+      REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
 

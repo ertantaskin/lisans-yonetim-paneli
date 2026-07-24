@@ -57,12 +57,19 @@ class Jetlisans_My_Account {
 
         if (empty($deliveries)) {
             $status = isset($res['body']['status']) ? $res['body']['status'] : '';
-            // (§8 dinamik satış kotası) Sipariş güvenlik incelemesine alındıysa (panele push
-            // anında _jetlisans_held_for_review işaretlendi) genel "hazırlanıyor" yerine
-            // incelemeye özel bilgi kutusu göster. Yönetici onaylayınca teslimat gelir (tablo
-            // dalına düşer); reddederse status 'revoked' olur → aşağıdaki genel mesaja düşer.
+            // (§8 dinamik satış kotası / İnceleme Kuyruğu) Panel TERMİNAL/teslim durumu bildirdiyse
+            // (fulfilled/partial/revoked) inceleme sonuçlanmıştır → bayat _jetlisans_held_for_review
+            // işaretini kalıcı temizle; "güvenlik incelemesinde" bildirimi bir daha çıkmaz.
+            if (in_array($status, ['fulfilled', 'partial', 'revoked'], true)) {
+                self::clear_held($order);
+            }
+            // (§8) Sipariş güvenlik incelemesine alındıysa (panele push anında held işaretlendi)
+            // genel "hazırlanıyor" yerine incelemeye özel bilgi kutusu göster. Bildirimi YALNIZ
+            // durum GERÇEKTEN 'pending' iken göster: /deliveries çağrısı başarısız/boş gövde
+            // dönerse $status='' olur → o durumda bayat inceleme bildirimi GÖSTERME, aşağıdaki
+            // genel "yükleniyor" mesajına düş (biten/reddedilen siparişte bant asılı kalmasın).
             $held = ($order->get_meta('_jetlisans_held_for_review') === 'yes');
-            if ($held && ($status === 'pending' || $status === '')) {
+            if ($held && $status === 'pending') {
                 echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
                     esc_html__('Siparişiniz güvenlik incelemesindedir. Onaylandığında lisansınız burada görünecek ve e-posta ile bildirilecektir.', 'jetlisans') .
                     '</div>';
@@ -70,6 +77,8 @@ class Jetlisans_My_Account {
                 echo '<p>' . esc_html($this->status_message($status)) . '</p>';
             }
         } else {
+            // Teslimat geldi → inceleme sonuçlandı; bayat held işaretini temizle (idempotent).
+            self::clear_held($order);
             echo '<table class="woocommerce-table shop_table"><tbody>';
             foreach ($deliveries as $i => $d) {
                 echo '<tr><td>';
@@ -118,6 +127,18 @@ class Jetlisans_My_Account {
         $ts = strtotime((string) $iso);
         if (!$ts) return (string) $iso;
         return date_i18n(get_option('date_format') . ' H:i', $ts);
+    }
+
+    /**
+     * (§8 İnceleme Kuyruğu) held işaretini idempotent temizler — yalnız 'yes' iken yazar; hiç
+     * held olmamış sipariş no-op (gereksiz save yok). WC order meta API (HPOS + klasik postmeta
+     * uyumlu); silme in-memory'de de anında etkir → aynı istekte get_meta artık '' döner.
+     */
+    private static function clear_held($order) {
+        if ($order->get_meta('_jetlisans_held_for_review') === 'yes') {
+            $order->delete_meta_data('_jetlisans_held_for_review');
+            $order->save();
+        }
     }
 
     private function status_message($status) {

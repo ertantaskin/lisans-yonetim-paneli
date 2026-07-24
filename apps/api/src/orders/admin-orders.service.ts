@@ -557,14 +557,25 @@ export class AdminOrdersService {
       .limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
-    // Yalnız AKTİF atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor).
+    const actor = `site:${site.domain}`;
+
+    // #7 denetim (H1 tekrarı, YÜKSEK): held (İnceleme Kuyruğu) sipariş iade/iptal edilince
+    // kuyruktan ÇIKARILMALI — aksi halde admin sonradan 'Onayla' derse iade edilmiş siparişe
+    // BEDAVA lisans teslim edilir (§2 "iade edilen hak dönmez" ilkesinin tersi). rejectHeld
+    // idempotenttir + advisory-lock altında CAS yapar → held ise kapatır (satırlar canceled,
+    // status revoked), release ile yarışı kaybettiyse no-op. Ardından aktif atamalar da geri
+    // alınır (release yarışını kazanıp teslim edilmiş key varsa o da iade edilir).
+    if (order.heldForReview) {
+      await this.rejectHeld(order.id, reason, actor);
+    }
+
+    // AKTİF atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor).
     // Site scope order üzerinden zaten doğrulandı; atamalar bu siparişe bağlı.
     const active = await this.db
       .select({ id: assignments.id })
       .from(assignments)
       .where(and(eq(assignments.orderId, order.id), eq(assignments.status, 'active')));
 
-    const actor = `site:${site.domain}`;
     let revoked = 0;
     for (const a of active) {
       const res = await this.revokeAssignment(a.id, reason, actor);
@@ -608,15 +619,27 @@ export class AdminOrdersService {
    * partial/pending kalır (normal akış, autoComplete sonra tamamlar). fulfillment_events + audit izi.
    */
   async releaseHeld(orderId: string, actor: string) {
-    const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-    if (!order) throw new NotFoundException('Sipariş bulunamadı');
-    if (!order.heldForReview) throw new BadRequestException('Sipariş incelemede değil');
+    // #7 denetim (yarış): held bayrağını AYNI sipariş için advisory-lock altında CAS ile temizle
+    // → eşzamanlı rejectHeld/refund'ı DIŞLA (ikisi de kilit altında heldForReview'i yeniden okur;
+    // bayrak temizlendiyse ikinci geçiş no-op olur). Teslimat (completeLine) bayrak commit sonrası.
+    await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${orderId}))`);
+      const [order] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1)
+        .for('update');
+      if (!order) throw new NotFoundException('Sipariş bulunamadı');
+      if (!order.heldForReview) throw new BadRequestException('Sipariş incelemede değil');
+      await tx
+        .update(orders)
+        .set({ heldForReview: false, updatedAt: new Date() })
+        .where(eq(orders.id, orderId));
+    });
 
-    await this.db
-      .update(orders)
-      .set({ heldForReview: false, updatedAt: new Date() })
-      .where(eq(orders.id, orderId));
-
+    // Bayrak temizlendi → completeLine held-guard'a takılmaz. Her eşlemeli + iptal-edilmemiş satırı
+    // doldur; completeLine artık all-or-nothing'i onurlandırır (kısmi teslim etmez, #7 denetim D).
     const lines = await this.db
       .select({ id: orderLines.id, productId: orderLines.productId, canceled: orderLines.canceled })
       .from(orderLines)
@@ -639,7 +662,7 @@ export class AdminOrdersService {
     });
 
     const [fresh] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-    return { orderId, released: true, status: fresh?.status ?? order.status };
+    return { orderId, released: true, status: fresh?.status ?? 'pending' };
   }
 
   /**
@@ -649,16 +672,40 @@ export class AdminOrdersService {
    * gönderilmemişti). WP sipariş durumunu bulkStatus poll'unda 'revoked' görür. audit + event izi.
    */
   async rejectHeld(orderId: string, reason: string, actor: string) {
-    const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-    if (!order) throw new NotFoundException('Sipariş bulunamadı');
-    if (!order.heldForReview) throw new BadRequestException('Sipariş incelemede değil');
+    return this.db.transaction(async (tx) => {
+      // #7 denetim (yarış + H1 tekrarı): advisory-lock altında CAS. release/refund ile yarışı
+      // dışlar; İDEMPOTENT — kilit altında held DEĞİLSE (başka geçiş kazandı / zaten kapandı)
+      // no-op döner (revokeOrderForSite held siparişi güvenle kapatmak için bunu çağırır).
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${orderId}))`);
+      const [order] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1)
+        .for('update');
+      if (!order) throw new NotFoundException('Sipariş bulunamadı');
+      if (!order.heldForReview) {
+        return { orderId, rejected: false, status: order.status, alreadyClosed: true as const };
+      }
 
-    const status = await this.db.transaction(async (tx) => {
       await tx
         .update(orders)
         .set({ heldForReview: false, updatedAt: new Date() })
         .where(eq(orders.id, orderId));
-      // Held satırda atama yok → yalnız terminal 'canceled' işareti (yeniden-teslime uygun değil, §2).
+      // Held satırda normalde atama yoktur (createOrder held-dalı atama yapmaz); yine de bir yarış
+      // bıraktıysa savunma amaçlı revoke et (kapasite/karantina getDeliveries filtresiyle birlikte
+      // reddedilen siparişte canlı key kalmasını engeller).
+      const activeAsgs = await tx
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+      if (activeAsgs.length > 0) {
+        await tx
+          .update(assignments)
+          .set({ status: 'revoked' })
+          .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+      }
+      // Satırlar terminal 'canceled' (yeniden-teslime uygun değil, §2) → recompute 'revoked'.
       await tx.update(orderLines).set({ canceled: true }).where(eq(orderLines.orderId, orderId));
       const s = await recomputeOrderStatus(tx, orderId);
       await tx.insert(fulfillmentEvents).values({
@@ -673,9 +720,7 @@ export class AdminOrdersService {
         targetId: orderId,
         meta: { op: 'review_reject', reason },
       });
-      return s;
+      return { orderId, rejected: true, status: s };
     });
-
-    return { orderId, rejected: true, status };
   }
 }

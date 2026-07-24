@@ -171,6 +171,25 @@ export class SecurityService implements OnModuleInit {
   }
 
   /**
+   * Dinamik kota İNCELEME'ye alma (§8 "held_for_review + ALARM") — 'quota_review' güvenlik olayı
+   * (dedupe'lu). Sert-tavan reddi recordQuotaExceeded ile alarm üretirken dinamik HOLD yolu SESSİZDİ
+   * (#7 denetim B, YÜKSEK) → held olaylar artık /security akışında + daily-digest securityEvents24h
+   * alarmında görünür (operatör kuyruğu elle açmasa da fark eder). Eşiğin 2 katını geçen bugünkü hacim
+   * → severity='critical'. §15: yalnız KAYDEDER + yüzeye çıkarır; otomatik yaptırım YOK. Best-effort.
+   * @returns yazıldıysa true (dedupe atlaması false)
+   */
+  async recordQuotaHeld(siteId: string, todayCount: number, threshold: number): Promise<boolean> {
+    const severity = todayCount >= threshold * 2 ? 'critical' : 'warning';
+    return this.recordEvent({
+      type: 'quota_review',
+      severity,
+      siteId,
+      detail: `Dinamik kota incelemesi: bugün ${todayCount} sipariş (eşik ${threshold}) — sipariş İnceleme Kuyruğu'na alındı (held_for_review)`,
+      meta: { todayCount, threshold },
+    });
+  }
+
+  /**
    * Olay yazar — DEDUPE: aynı site+type için son DEDUPE_WINDOW içinde kayıt varsa yazmaz.
    * @returns yazıldıysa true, dedupe ile atlandıysa false
    */

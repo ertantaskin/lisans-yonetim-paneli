@@ -41,10 +41,24 @@ class Jetlisans_Admin_Metabox {
 
         echo '<p><strong>Durum:</strong> ' . esc_html($status ?: 'bilinmiyor') . '</p>';
 
-        // (§8 dinamik satış kotası) Sipariş güvenlik incelemesine alındıysa görsel işaret.
-        // Yalnız pending iken göster; onaylanınca (webhook durumu tazeler) rozet düşer.
-        if ($order->get_meta('_jetlisans_held_for_review') === 'yes' && ($status === 'pending' || $status === '')) {
-            echo '<p><strong style="color:#b45309">' . esc_html__('İnceleme bekliyor', 'jetlisans') . '</strong></p>';
+        // (§8 dinamik satış kotası / İnceleme Kuyruğu) "İnceleme bekliyor" rozeti YALNIZ sipariş
+        // gerçekten hâlâ incelemedeyken görünmeli. Panel'in rejectHeld akışı geri-kanal webhook
+        // YAYMAZ → _jetlisans_status 'pending'de takılır ve rozet sonsuza dek asılı kalırdı; oysa
+        // toplu-durum poll'u DAHA TAZE _jetlisans_panel_status'a 'revoked' yazar. Bu yüzden en taze
+        // bilinen panel durumunu esas al: varsa _jetlisans_panel_status, yoksa _jetlisans_status.
+        $fresh_status = $order->get_meta('_jetlisans_panel_status');
+        if ($fresh_status === '' || $fresh_status === null) {
+            $fresh_status = $status;
+        }
+        if ($order->get_meta('_jetlisans_held_for_review') === 'yes') {
+            if (in_array($fresh_status, ['revoked', 'fulfilled', 'partial'], true)) {
+                // Terminal/teslim durumu bilindi (onaylandı/reddedildi) → inceleme sonuçlandı;
+                // bayat held işaretini temizle (idempotent — rozet bir daha çıkmaz).
+                $order->delete_meta_data('_jetlisans_held_for_review');
+                $order->save();
+            } elseif ($fresh_status === 'pending' || $fresh_status === '' || $fresh_status === null) {
+                echo '<p><strong style="color:#b45309">' . esc_html__('İnceleme bekliyor', 'jetlisans') . '</strong></p>';
+            }
         }
 
         if (!$panel_order_id) {

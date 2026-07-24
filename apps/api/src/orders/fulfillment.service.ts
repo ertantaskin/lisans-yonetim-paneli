@@ -13,6 +13,7 @@ import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
+import { releaseAllocations } from '../assignment/assign';
 import { recomputeOrderStatus } from './order-status';
 
 export interface CompleteResult {
@@ -91,8 +92,19 @@ export class FulfillmentService {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
       }
 
+      // Efektif politika (satır override > ürün). all-or-nothing satırda kısmi teslim YASAK (§5).
+      const policy = line.policyOverride ?? product.fulfillmentPolicy;
       const allocations = await allocate(tx, product, toAssign);
-      const added = allocations.reduce((s, a) => s + a.units, 0);
+      let added = allocations.reduce((s, a) => s + a.units, 0);
+
+      // all-or-nothing: satır TÜMÜYLE karşılanamıyorsa hiçbir şey teslim etme — kapasiteyi geri
+      // ver (createOrder'daki aynı invaryant). Bu, releaseHeld (İnceleme onayı) ve reconcile gibi
+      // completeLine çağıranlarının da all-or-nothing garantisini korumasını sağlar (#7 denetim D).
+      if (policy === 'all-or-nothing' && line.fulfilledQty + added < line.qty) {
+        await releaseAllocations(tx, allocations);
+        allocations.length = 0;
+        added = 0;
+      }
 
       const validUntil = product.validityDays
         ? new Date(Date.now() + product.validityDays * 86_400_000)
