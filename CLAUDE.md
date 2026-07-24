@@ -415,6 +415,28 @@ paralel ekip (4 UX işçisi + 5 düzeltme işçisi + 26-ajanlı adversaryel dene
   kolonunu döndürür). Doğrulama: typecheck shared+api+admin temiz; VPS izole test DB entegrasyon 88/88 + yarış 2/2;
   api+admin rebuild → /v1/health 200, admin /stock 3xx (auth). WP eklentisi (thin-client) ayrı kurulum — commit'lendi.
 
+**RE-DOĞRULAMA + PANEL REHBERİ (commit 198b077, CANLI + entegrasyon 89/89 + yarış 2/2):** Kullanıcı
+"sistem tamamen çalışır halde mi, başka eksik var mı? tamam ise panele detaylı kullanım rehberi ekle"
+dedi → 7-ajanlı re-doğrulama workflow'u (bul→çekişmeli doğrula; 4 lens: orders-regresyon / WP / admin-form
+/ completeness) yukarıdaki partiyi (f27b4e7) denetledi ve **2 KENDİ-regresyonu** yakaladı (WP/admin-form/
+completeness lensleri TEMİZ çıktı). İkisi de orders backend'in en riskli değişikliklerinden:
+- **[ABBA deadlock]** `revokeOrderForSite` iade tx'i (F3) orders→order_lines sırasıyla kilitliyordu;
+  `completeLine`/`revokeAssignment` satır→sipariş sırasıyla → eşzamanlı iade + stok-import süpürmesi ABBA
+  deadlock (SQLSTATE 40P01→500; veri-güvenli ama aralıklı 500). Düzeltme: iade tx satır kilitlerini ÖNCE
+  alır + `orders FOR UPDATE` kaldırıldı (advisory-lock zaten refund/release'i serileştirir) → kilit edinim
+  sırası tüm yollarla aynı (satır→sipariş).
+- **[all-or-nothing kısmi teslim]** F1 hedef-farkında guard yalnız `maxUnits!=null`e bakıyordu; manuel
+  "N Adet Ata" ucu (`POST /admin/fulfillments/:lineId/complete?units=N`, revoke YOK) all-or-nothing satırı
+  kısmen teslim ediyordu (§5 ihlali). Düzeltme: rölaks YALNIZ `isReplacement=true` (3 değişim çağıranı:
+  replacements.approve / admin replaceAssignment / supply-ops bulkReplace); manuel/taze/releaseHeld yolu
+  hedef=qty korur. + regresyon testi (manuel N=3 < qty=5 → added=0). **DERS:** [[denetim-regresyon-dersleri]]
+  tekrar doğrulandı — kendi guard/kilit düzeltmen yeni yol açar; her davranış-değişikliğinden sonra re-doğrula.
+- **Panel rehberi:** `/guide` "Kullanım Rehberi" sayfası (14 bölüm — panel nasıl çalışır / site bağlama /
+  ürün-stok / eşleme / sipariş-teslimat / inceleme kuyruğu / değişim-garanti / tedarik / stok düzeltme /
+  müşteri / rapor / şablon-ayar / güvenlik / kısayol; hepsi gerçek rotalara bağlantılı) + sidebar
+  "Yapılandırma" altında. **Sistem durumu: tam çalışır** (typecheck 3/3, entegrasyon 89/89 + yarış 2/2,
+  deploy /health 200). Kodlanabilir mimari eksik yok; yalnız yapısal kapsam-dışı (fiyat senkronu/marketplace/abonelik).
+
 ## Geliştirme
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
