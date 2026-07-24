@@ -12,6 +12,8 @@ export interface CustomerListRow {
   replacementCount: number;
   replacementRate: number;
   tags: string[];
+  /** Müşterinin sipariş verdiği site alan adları (site süzgeci uygulandıysa tek eleman). */
+  sites: string[];
   firstOrderAt: string | null;
   lastOrderAt: string | null;
 }
@@ -48,10 +50,29 @@ function rate(replacementCount: number, assignmentCount: number): number {
 export class CustomersService {
   constructor(@Inject(DB) private readonly db: Database) {}
 
-  /** Müşteri listesi — e-posta bazlı toplulaştırma; search → e-posta ILIKE. */
-  async list(search?: string): Promise<{ items: CustomerListRow[] }> {
-    const term = search?.trim();
-    const filter = term ? sql`WHERE o.customer_email ILIKE ${'%' + term + '%'}` : sql``;
+  /**
+   * Müşteri listesi — e-posta bazlı toplulaştırma; search → e-posta ILIKE.
+   * `siteId` verilirse SADECE o siteden sipariş vermiş müşteriler döner ve sipariş/atama/
+   * değişim sayıları O SİTEYE göre kapsanır (site → müşteri hiyerarşisi, §13). Her satıra
+   * müşterinin sipariş verdiği site alan adları (`sites`) eklenir → global görünümde
+   * hangi site(ler) olduğu bir bakışta görünür.
+   */
+  async list(opts?: { search?: string; siteId?: string }): Promise<{ items: CustomerListRow[] }> {
+    const term = opts?.search?.trim();
+    const siteId = opts?.siteId?.trim();
+
+    // Ana WHERE (orders alias o) — search + opsiyonel site süzgeci.
+    const searchCond = term ? sql`o.customer_email ILIKE ${'%' + term + '%'}` : null;
+    const siteCond = siteId ? sql`o.site_id = ${siteId}` : null;
+    let whereClause = sql``;
+    if (searchCond && siteCond) whereClause = sql`WHERE ${searchCond} AND ${siteCond}`;
+    else if (searchCond) whereClause = sql`WHERE ${searchCond}`;
+    else if (siteCond) whereClause = sql`WHERE ${siteCond}`;
+
+    // Alt-sorgu site kapsamı — atama/değişim sayıları da site süzgecine uymalı.
+    const asgSiteFilter = siteId ? sql`WHERE ord.site_id = ${siteId}` : sql``;
+    const repSiteFilter = siteId ? sql`AND site_id = ${siteId}` : sql``;
+
     const rows = await rawRows<{
       email: string;
       order_count: number;
@@ -59,6 +80,7 @@ export class CustomersService {
       last_order_at: Date | string | null;
       assignment_count: number;
       replacement_count: number;
+      sites: string[] | null;
       tags: string[] | null;
     }>(this.db, sql`
       SELECT
@@ -66,24 +88,30 @@ export class CustomersService {
         COUNT(DISTINCT o.id)::int AS order_count,
         MIN(o.created_at) AS first_order_at,
         MAX(o.created_at) AS last_order_at,
+        COALESCE(
+          array_agg(DISTINCT st.domain) FILTER (WHERE st.domain IS NOT NULL),
+          '{}'
+        )::text[] AS sites,
         COALESCE(a.assignment_count, 0)::int AS assignment_count,
         COALESCE(r.replacement_count, 0)::int AS replacement_count,
         COALESCE(c.tags, '{}')::text[] AS tags
       FROM orders o
+      LEFT JOIN sites st ON st.id = o.site_id
       LEFT JOIN (
         SELECT lower(ord.customer_email) AS email, COUNT(asg.id) AS assignment_count
         FROM assignments asg
         JOIN orders ord ON ord.id = asg.order_id
+        ${asgSiteFilter}
         GROUP BY lower(ord.customer_email)
       ) a ON a.email = lower(o.customer_email)
       LEFT JOIN (
         SELECT lower(customer_email) AS email, COUNT(*) AS replacement_count
         FROM replacement_requests
-        WHERE status = 'approved'
+        WHERE status = 'approved' ${repSiteFilter}
         GROUP BY lower(customer_email)
       ) r ON r.email = lower(o.customer_email)
       LEFT JOIN customers c ON c.email = lower(o.customer_email)
-      ${filter}
+      ${whereClause}
       GROUP BY lower(o.customer_email), a.assignment_count, r.replacement_count, c.tags
       ORDER BY MAX(o.created_at) DESC
     `);
@@ -98,6 +126,7 @@ export class CustomersService {
         replacementCount,
         replacementRate: rate(replacementCount, assignmentCount),
         tags: row.tags ?? [],
+        sites: row.sites ?? [],
         firstOrderAt: row.first_order_at ? new Date(row.first_order_at).toISOString() : null,
         lastOrderAt: row.last_order_at ? new Date(row.last_order_at).toISOString() : null,
       };

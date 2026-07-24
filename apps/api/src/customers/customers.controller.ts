@@ -17,8 +17,8 @@ export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
 
   @Get()
-  list(@Query('search') search?: string) {
-    return this.customers.list(search);
+  list(@Query('search') search?: string, @Query('siteId') siteId?: string) {
+    return this.customers.list({ search, siteId });
   }
 
   @Get(':email')

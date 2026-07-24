@@ -10,6 +10,7 @@ import {
   Mail,
   Receipt,
   ShoppingCart,
+  Users,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
@@ -27,6 +28,7 @@ import {
 import { ApiError } from '../../../lib/api';
 import { siteTypeLabel } from '../../../lib/labels';
 import { getSite, type SiteDetail } from './queries';
+import { getCustomers, type CustomerRow } from '../../customers/queries';
 import { SiteConfigForm } from './site-config-form';
 import { SiteStatusToggle } from './site-status-toggle';
 
@@ -65,6 +67,14 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
   }
 
   const { site, mappingCount, orderCount, todayOrderCount, recentOrders } = data;
+
+  // Bu sitenin müşterileri (site → müşteri hiyerarşisi). Best-effort: hata site sayfasını bozmaz.
+  let siteCustomers: CustomerRow[] = [];
+  try {
+    siteCustomers = (await getCustomers({ siteId: site.id })).slice(0, 8);
+  } catch {
+    siteCustomers = [];
+  }
   // Kota tanımlıysa ve bugünkü sipariş kotaya ulaştıysa uyarı tonu.
   const quotaTone =
     site.salesDailyQuota != null && todayOrderCount >= site.salesDailyQuota ? 'warning' : 'neutral';
@@ -221,6 +231,60 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
                     <TableCell className="text-right">
                       <Button asChild variant="ghost" size="sm">
                         <Link href={`/orders/${o.id}`}>
+                          Aç <ArrowRight />
+                        </Link>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Bu sitenin müşterileri (site → müşteri hiyerarşisi) */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between gap-2">
+          <CardTitle icon={Users}>Müşteriler</CardTitle>
+          {siteCustomers.length > 0 && (
+            <Button asChild variant="ghost" size="sm">
+              <Link href={`/customers?site=${site.id}`}>
+                Tümünü gör <ArrowRight />
+              </Link>
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className={siteCustomers.length === 0 ? '' : 'p-0'}>
+          {siteCustomers.length === 0 ? (
+            <EmptyState icon={Users} title="Müşteri yok" description="Bu siteden henüz sipariş veren yok." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Müşteri</TableHead>
+                  <TableHead className="text-right">Sipariş</TableHead>
+                  <TableHead className="text-right">Atama</TableHead>
+                  <TableHead>Son Sipariş</TableHead>
+                  <TableHead className="text-right">Detay</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {siteCustomers.map((c) => (
+                  <TableRow key={c.email}>
+                    <TableCell className="font-medium text-foreground">{c.email}</TableCell>
+                    <TableCell className="text-right tabular-nums">{c.orderCount}</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {c.assignmentCount}
+                    </TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      {c.lastOrderAt
+                        ? new Date(c.lastOrderAt).toLocaleDateString('tr-TR', { dateStyle: 'short' })
+                        : '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button asChild variant="ghost" size="sm">
+                        <Link href={`/customers/${encodeURIComponent(c.email)}`}>
                           Aç <ArrowRight />
                         </Link>
                       </Button>

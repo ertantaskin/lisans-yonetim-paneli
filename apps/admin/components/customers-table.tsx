@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowRight, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Globe, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { CustomerRow } from '../app/customers/queries';
 import { Badge } from './ui/badge';
@@ -17,21 +17,45 @@ function ratePct(rate: number): string {
   return `%${Math.round(rate * 100)}`;
 }
 
-const columns: ColumnDef<CustomerRow>[] = [
-  {
-    accessorKey: 'email',
-    meta: { title: 'Müşteri' },
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Müşteri" />,
-    cell: ({ row }) => (
-      <Link
-        href={`/customers/${encodeURIComponent(row.original.email)}`}
-        className="font-medium text-foreground underline-offset-4 hover:underline"
-      >
-        {row.original.email}
-      </Link>
-    ),
-    filterFn: 'includesString',
+const emailColumn: ColumnDef<CustomerRow> = {
+  accessorKey: 'email',
+  meta: { title: 'Müşteri' },
+  header: ({ column }) => <DataTableColumnHeader column={column} title="Müşteri" />,
+  cell: ({ row }) => (
+    <Link
+      href={`/customers/${encodeURIComponent(row.original.email)}`}
+      className="font-medium text-foreground underline-offset-4 hover:underline"
+    >
+      {row.original.email}
+    </Link>
+  ),
+  filterFn: 'includesString',
+};
+
+/** Site kolonu — yalnız global (site-süzgeçsiz) görünümde gösterilir. */
+const sitesColumn: ColumnDef<CustomerRow> = {
+  id: 'sites',
+  accessorFn: (row) => (row.sites ?? []).join(' '),
+  meta: { title: 'Siteler' },
+  header: 'Siteler',
+  enableSorting: false,
+  cell: ({ row }) => {
+    const sites = row.original.sites ?? [];
+    if (!sites.length) return <span className="text-muted-foreground">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {sites.map((s) => (
+          <Badge key={s} variant="outline">
+            <Globe />
+            {s}
+          </Badge>
+        ))}
+      </div>
+    );
   },
+};
+
+const restColumns: ColumnDef<CustomerRow>[] = [
   {
     accessorKey: 'orderCount',
     meta: { title: 'Sipariş' },
@@ -118,7 +142,18 @@ const columns: ColumnDef<CustomerRow>[] = [
   },
 ];
 
-export function CustomersTable({ customers }: { customers: CustomerRow[] }) {
+export function CustomersTable({
+  customers,
+  siteScoped = false,
+}: {
+  customers: CustomerRow[];
+  /** Tek siteye süzülmüşse "Siteler" kolonu gereksiz → gizle. */
+  siteScoped?: boolean;
+}) {
+  const columns = React.useMemo<ColumnDef<CustomerRow>[]>(
+    () => [emailColumn, ...(siteScoped ? [] : [sitesColumn]), ...restColumns],
+    [siteScoped],
+  );
   return (
     <DataTable
       columns={columns}
@@ -126,7 +161,7 @@ export function CustomersTable({ customers }: { customers: CustomerRow[] }) {
       searchColumnId="email"
       searchPlaceholder="E-posta ara…"
       initialSorting={[{ id: 'lastOrderAt', desc: true }]}
-      emptyLabel="Henüz müşteri yok."
+      emptyLabel={siteScoped ? 'Bu sitenin müşterisi yok.' : 'Henüz müşteri yok.'}
     />
   );
 }

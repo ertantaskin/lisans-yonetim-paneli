@@ -17,8 +17,16 @@ export interface CustomerRow {
   /** replacementCount / max(assignmentCount, 1) — 0..1 arası oran. */
   replacementRate: number;
   tags: string[];
+  /** Sipariş verdiği site alan adları (site süzgeci uygulandıysa tek eleman). */
+  sites: string[];
   firstOrderAt: string | null;
   lastOrderAt: string | null;
+}
+
+/** Site süzgeci için hafif site seçeneği. */
+export interface SiteOption {
+  id: string;
+  domain: string;
 }
 
 export interface CustomerDetail {
@@ -35,11 +43,27 @@ export interface CustomerDetail {
   replacements: Array<{ id: string; status: string; reason: string; createdAt: string }>;
 }
 
-/** Müşteri listesi (opsiyonel e-posta araması). Sıralama/filtre istemcide DataTable'da. */
-export async function getCustomers(search?: string): Promise<CustomerRow[]> {
-  const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+/**
+ * Müşteri listesi. `siteId` verilirse SADECE o sitenin müşterileri + o siteye kapsanmış
+ * sayılar döner (site → müşteri hiyerarşisi). Sıralama/filtre istemcide DataTable'da.
+ */
+export async function getCustomers(opts?: { search?: string; siteId?: string }): Promise<CustomerRow[]> {
+  const params = new URLSearchParams();
+  if (opts?.search) params.set('search', opts.search);
+  if (opts?.siteId) params.set('siteId', opts.siteId);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const data = await apiGet<CustomerRow[] | { items: CustomerRow[] }>(`/v1/admin/customers${qs}`);
   return Array.isArray(data) ? data : (data?.items ?? []);
+}
+
+/** Site süzgeci için site listesi (id + domain). Dizi veya {items} şekline dayanıklı. */
+export async function getSitesForFilter(): Promise<SiteOption[]> {
+  const data = await apiGet<unknown>('/v1/admin/sites');
+  const arr = (Array.isArray(data) ? data : ((data as { items?: unknown })?.items ?? [])) as Array<{
+    id: string;
+    domain: string;
+  }>;
+  return arr.map((s) => ({ id: s.id, domain: s.domain }));
 }
 
 /** Tek müşteri 360 görünümü (stats + sipariş + değişim + etiket/not). */
