@@ -7,8 +7,14 @@ import { AiSummaryService, type DailyMetrics, type DailySummary } from './ai-sum
 export const DAILY_DIGEST_QUEUE = 'daily-digest';
 /** Günlük özetin gönderileceği zaman — cron: her gün 08:00 (sunucu saati). §16. */
 const DIGEST_CRON = '0 8 * * *';
-/** Tekrarlı işi tekilleştiren sabit anahtar — mükerrer kayıt olmaz. */
-const DIGEST_JOB_ID = 'daily-digest';
+/**
+ * Kararlı job-scheduler kimliği (§16). BullMQ v5 job scheduler'ı BUNUNLA anahtarlar; cron
+ * değişse bile eski zamanlama atomik olarak DEĞİŞTİRİLİR (repeat opsiyonlarıyla anahtarlanan
+ * eski `queue.add` yaklaşımının aksine — o, pattern değişince ORTADA yetim zamanlama bırakır
+ * ve İKİSİ birden tetiklenir; digest NON-idempotent olduğu için mükerrer Telegram özeti +
+ * çift kritik alarm demektir). schedulerId sabit kaldıkça mükerrer zamanlama oluşmaz.
+ */
+const DIGEST_SCHEDULER_ID = 'daily-digest';
 
 /**
  * Sabit-eşik alarm varsayılanları — DIGEST_*_THRESHOLD env ile geçersiz kılınır.
@@ -47,17 +53,16 @@ export class DailyDigestService implements OnModuleInit {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Boot'ta günlük tekrarlı işi kaydeder (sabit jobId + cron anahtarı → mükerrer eklenmez). */
+  /**
+   * Boot'ta günlük tekrarlı işi KARARLI job-scheduler kimliğiyle upsert eder. Cron ileride
+   * değişirse eski zamanlama atomik değiştirilir (yetim mükerrer schedule kalmaz) → çift
+   * digest/kritik alarm olmaz. NON-idempotent olduğu için bu servis en kritik olanı.
+   */
   async onModuleInit(): Promise<void> {
-    await this.queue.add(
-      'digest',
-      {},
-      {
-        repeat: { pattern: DIGEST_CRON },
-        jobId: DIGEST_JOB_ID,
-        removeOnComplete: 50,
-        removeOnFail: 50,
-      },
+    await this.queue.upsertJobScheduler(
+      DIGEST_SCHEDULER_ID,
+      { pattern: DIGEST_CRON },
+      { name: 'digest', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
     );
   }
 

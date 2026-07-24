@@ -14,11 +14,14 @@ import type { Database } from '../db/db.module';
  */
 
 /** replacement_requests satırının suggest()'in okuduğu alt kümesini taklit eder. */
-function fakeRow(customerEmail: string): Record<string, unknown> {
+function fakeRow(
+  customerEmail: string,
+  reason = 'Anahtar aktivasyonda hata veriyor',
+): Record<string, unknown> {
   return {
     id: 'rr-test',
     customerEmail,
-    reason: 'Anahtar aktivasyonda hata veriyor',
+    reason,
     status: 'open',
     withinWarranty: true,
     createdAt: new Date('2026-07-01T10:00:00.000Z'),
@@ -84,6 +87,24 @@ describe('AiSupportService.suggest — e-posta maskeleme', () => {
     // Maskeli bağlamın diğer (sır olmayan) alanları modele gider — bağlam kurulmuş.
     expect(calls[0]!.user).toContain('Anahtar aktivasyonda hata veriyor');
     expect(calls[0]!.user).toContain('open');
+  });
+
+  it("sebep içindeki anahtar-şeklindeki token / gömülü e-posta EN-İYİ-ÇABA redakte edilir", async () => {
+    const { ai, calls } = captureAi();
+    const rawKey = 'NKJFK-GPHP7-G8C3J-P6JXR-HQRJ4';
+    const embeddedEmail = 'gizli@ornek.com';
+    const reason = `Şu anahtar çalışmıyor: ${rawKey} ayrıca ${embeddedEmail} adresimden ulaşın`;
+    const service = new AiSupportService(fakeDb(fakeRow('aylin@xmail.com', reason)), ai);
+
+    await service.suggest('rr-test');
+
+    const sent = `${calls[0]!.system}\n${calls[0]!.user}`;
+    // Yapıştırılmış lisans anahtarı ve gömülü e-posta modele düz-metin GİTMEDİ.
+    expect(sent).not.toContain(rawKey);
+    expect(sent).not.toContain(embeddedEmail);
+    // Redakte işaretçisi konuldu; sebebin sır olmayan kısmı triyaj için korundu.
+    expect(calls[0]!.user).toContain('[GIZLENDI]');
+    expect(calls[0]!.user).toContain('çalışmıyor');
   });
 
   it('çok noktalı alan adı doğru maskelenir (bob@mail.co.uk → b***@m.uk)', async () => {

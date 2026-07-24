@@ -17,6 +17,14 @@ export const RECONCILE_QUEUE = 'reconcile';
 const SWEEP_EVERY_MS = 15 * 60 * 1000;
 
 /**
+ * Kritik bildirim (Telegram) dedupe penceresi (saat). Mutabakat İHLALLERİ DÜZELTİLMEZ (§16) →
+ * kalıcı bir ihlal her 15dk sweep'te aksi halde ~96 özdeş kritik alarm üretir. low-stock ile
+ * aynı desen: bu pencerede 'reconcile_violation' bildirimi varsa create/Telegram push atlanır.
+ * logger.error dedupe'a TABİ DEĞİL — her sweep'te çalışır (gözlemlenebilirlik korunur).
+ */
+const NOTIFY_DEDUPE_WINDOW_HOURS = 12;
+
+/**
  * "Ayakta" (canlı) atama statüleri — teslimatı hâlâ temsil edenler. fulfilled_qty ve
  * tek-kullanım işgali BUNLARI sayar. revoke fulfilled_qty'yi düşürür (§2 iade); replace
  * eskisini net'ler → ikisi de hariç. suspend/expire fulfilled_qty'ye DOKUNMAZ (§4 geri
@@ -73,12 +81,16 @@ export class ReconcileService implements OnModuleInit {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Boot'ta tekrarlı denetim işini kaydeder (aynı repeat anahtarı → mükerrer eklenmez). */
+  /**
+   * Boot'ta tekrarlı denetimi KARARLI job-scheduler kimliğiyle upsert eder (BullMQ v5).
+   * Periyot ileride değişirse eski zamanlama atomik değiştirilir — `queue.add` repeat'in
+   * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
+   */
   async onModuleInit(): Promise<void> {
-    await this.queue.add(
-      'sweep',
-      {},
-      { repeat: { every: SWEEP_EVERY_MS }, removeOnComplete: 50, removeOnFail: 50 },
+    await this.queue.upsertJobScheduler(
+      'reconcile-sweep',
+      { every: SWEEP_EVERY_MS },
+      { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
     );
   }
 
@@ -114,6 +126,11 @@ export class ReconcileService implements OnModuleInit {
    * SAYAÇ içerir; iç kayıt id'leri sır/PII değildir ve yalnız DB'de kalan meta'ya yazılır (Telegram
    * gövdesi meta'yı taşımaz). payload/e-posta/key ASLA konmaz. Best-effort: bildirim hatası yutulur
    * (mutabakat çıktısı zaten döndürülür + kritik loglandı).
+   *
+   * DEDUPE (low-stock deseni): sweep her 15dk çalışır ve ihlalleri DÜZELTMEZ → kalıcı bir ihlal
+   * dedupe olmadan ~96 özdeş kritik Telegram alarmı/gün üretir. Son NOTIFY_DEDUPE_WINDOW_HOURS
+   * saatte 'reconcile_violation' bildirimi VARSA create/Telegram push atlanır. logger.error yine
+   * her sweep'te çalışır (reconcile() içinde) — yalnız bildirim/Telegram kadansı kısılır.
    */
   private async notify(checked: number, violations: ReconcileViolation[]): Promise<void> {
     // Denetim başına kırılım (özet mesaj + meta için).
@@ -125,6 +142,22 @@ export class ReconcileService implements OnModuleInit {
     for (const v of violations) byCheck[v.check] += 1;
 
     try {
+      // Dedupe penceresi kontrolü: yakın zamanda aynı türde bildirim varsa Telegram spam'i önle.
+      const recent = await rawRows<{ exists: boolean }>(this.db, sql`
+        SELECT EXISTS (
+          SELECT 1 FROM notifications
+          WHERE type = 'reconcile_violation'
+            AND created_at > now() - (${NOTIFY_DEDUPE_WINDOW_HOURS} * interval '1 hour')
+        ) AS exists;
+      `);
+      if (recent[0]?.exists) {
+        this.logger.warn(
+          `Mutabakat bildirimi dedupe: son ${NOTIFY_DEDUPE_WINDOW_HOURS} saatte 'reconcile_violation' ` +
+            `bildirimi zaten var — kritik alarm/Telegram push atlandı (logger.error her sweep'te sürüyor)`,
+        );
+        return;
+      }
+
       await this.notifications.create({
         type: 'reconcile_violation',
         severity: 'critical',

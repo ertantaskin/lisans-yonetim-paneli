@@ -22,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import { Input, Textarea, Label } from '../../components/ui/input';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
+import { aiCategoryLabel, aiPriorityLabel } from '../../lib/labels';
 import { StatTile } from '../../components/ui/stat-tile';
 import {
   Table,
@@ -484,9 +485,9 @@ function TriageSection({ enabled }: { enabled: boolean }) {
         {suggestion && (
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{suggestion.category}</Badge>
+              <Badge variant="outline">{aiCategoryLabel(suggestion.category)}</Badge>
               <Badge variant={PRIORITY_VARIANT[suggestion.priority] ?? 'neutral'}>
-                öncelik: {suggestion.priority}
+                Öncelik: {aiPriorityLabel(suggestion.priority)}
               </Badge>
             </div>
             <div className="flex flex-col gap-1.5">

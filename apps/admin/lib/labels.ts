@@ -104,6 +104,31 @@ const ASSIGNMENT_STATUS: Record<string, string> = {
 };
 export const assignmentStatusLabel = (s: string) => lookup(ASSIGNMENT_STATUS, s);
 
+// ── Site tipi ────────────────────────────────────────────────────────────────
+const SITE_TYPE: Record<string, string> = {
+  woocommerce: 'WooCommerce',
+  marketplace: 'Pazar yeri',
+  reseller: 'Bayi',
+};
+export const siteTypeLabel = (t: string) => lookup(SITE_TYPE, t);
+
+// ── AI triyaj (kategori / öncelik) ───────────────────────────────────────────
+const AI_CATEGORY: Record<string, string> = {
+  garanti: 'Garanti',
+  calismyor: 'Çalışmıyor',
+  'yanlis-urun': 'Yanlış ürün',
+  iade: 'İade',
+  diger: 'Diğer',
+};
+export const aiCategoryLabel = (c: string) => lookup(AI_CATEGORY, c);
+
+const AI_PRIORITY: Record<string, string> = {
+  dusuk: 'Düşük',
+  orta: 'Orta',
+  yuksek: 'Yüksek',
+};
+export const aiPriorityLabel = (p: string) => lookup(AI_PRIORITY, p);
+
 // ── Zaman çizelgesi olay tipi ────────────────────────────────────────────────
 // Anahtarlar GERÇEK `fulfillment_events.type` değerleridir (kaynak: apps/api/src/orders/
 // {orders,admin-orders,fulfillment}.service.ts — sipariş detayı bu tabloyu ham döndürür).

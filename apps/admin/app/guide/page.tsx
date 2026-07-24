@@ -20,7 +20,7 @@ import {
   Lightbulb,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
+import { Card, CardContent, CardHeader, CardDescription } from '../../components/ui/card';
 
 export const dynamic = 'force-static';
 
@@ -64,9 +64,9 @@ function Section({
   return (
     <Card id={id} className="scroll-mt-24">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
           <Icon className="size-4 text-muted-foreground" /> {title}
-        </CardTitle>
+        </h2>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
       <CardContent className="space-y-3 text-sm leading-relaxed text-foreground/90">
@@ -120,7 +120,7 @@ export default function GuidePage() {
       {/* İçindekiler */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">İçindekiler</CardTitle>
+          <h2 className="text-sm font-semibold text-foreground">İçindekiler</h2>
           <CardDescription>Bir başlığa tıklayarak ilgili bölüme atlayın.</CardDescription>
         </CardHeader>
         <CardContent>

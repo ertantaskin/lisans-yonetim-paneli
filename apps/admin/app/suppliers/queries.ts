@@ -26,6 +26,12 @@ export interface ScorecardBatch {
   createdAt: string;
 }
 
+/** Tedarikçi teslim-maliyeti (para birimi başına AYRI; karışım tek toplama birleştirilmez). */
+export interface SupplierCostByCurrency {
+  currency: string;
+  cents: number;
+}
+
 /** Tedarikçi karnesi (§12) — PO/parti agregaları + lead süresi + geri-çekilme oranı. */
 export interface SupplierScorecard {
   supplier: SupplierRow;
@@ -36,7 +42,7 @@ export interface SupplierScorecard {
   openPoCount: number;
   batches: ScorecardBatch[];
   recallRate: number;
-  totalCostCents: number;
+  totalCostCents: SupplierCostByCurrency[];
 }
 
 /** GET /v1/admin/suppliers/:id/scorecard — tek tedarikçi performans karnesi. */

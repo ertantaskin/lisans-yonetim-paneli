@@ -34,9 +34,21 @@ function ratePct(rate: number): string {
   return `%${Math.round(rate * 100)}`;
 }
 
-/** Kuruş → yerelleştirilmiş TL tutarı. */
-function formatCost(cents: number): string {
-  return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(cents / 100);
+/**
+ * Kuruş → yerelleştirilmiş tutar. Para birimi PO'dan gelir (karışım BİRLEŞTİRİLMEZ —
+ * her para birimi ayrı gösterilir). Geçersiz/boş kod → sembolsüz sayı + ham kod.
+ */
+function formatCost(cents: number, currency: string): string {
+  const code = currency && currency.trim() !== '' ? currency : 'TRY';
+  try {
+    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: code }).format(cents / 100);
+  } catch {
+    const num = new Intl.NumberFormat('tr-TR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(cents / 100);
+    return `${num} ${currency}`.trim();
+  }
 }
 
 // Yüksek geri-çekilme oranı işareti (tedarikçi kalite sinyali).
@@ -160,10 +172,24 @@ export default async function SupplierScorecardPage({
         />
         <StatTile
           label="Toplam Maliyet"
-          value={formatCost(data.totalCostCents)}
+          value={
+            data.totalCostCents.length === 0 ? (
+              '—'
+            ) : (
+              <div className="space-y-0.5">
+                {data.totalCostCents.map((c) => (
+                  <div key={c.currency || 'unknown'}>{formatCost(c.cents, c.currency)}</div>
+                ))}
+              </div>
+            )
+          }
           icon={Wallet}
           tone="neutral"
-          hint="teslim alınan × birim"
+          hint={
+            data.totalCostCents.length > 1
+              ? 'para birimi başına ayrı'
+              : 'teslim alınan × birim'
+          }
         />
         <StatTile label="Parti" value={batches.length} icon={Layers} tone="neutral" />
       </div>

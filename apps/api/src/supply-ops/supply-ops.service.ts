@@ -143,9 +143,11 @@ export class SupplyOpsService {
    */
   async recallBatch(batchId: string, reason: string, actor: string): Promise<RecallResult> {
     return this.db.transaction(async (tx) => {
-      // Parti var mı + zaten çekilmiş mi? (RAW SQL — batches W1'in dosyası, import etme.)
+      // Parti var mı + zaten çekilmiş mi? FOR UPDATE ile satır KİLİDİ guard'dan ÖNCE alınır:
+      // eşzamanlı iki recall'da ikincisi bloklanır, kilit gelince 'recalled' okur ve idempotent
+      // BadRequestException atar (kilitsiz SELECT'te ikisi de geçip ikinci çift audit yazardı).
       const batchRows = await rawRows<{ id: string; status: string }>(tx, sql`
-        SELECT id, status FROM batches WHERE id = ${batchId} LIMIT 1;
+        SELECT id, status FROM batches WHERE id = ${batchId} LIMIT 1 FOR UPDATE;
       `);
       const batch = batchRows[0];
       if (!batch) throw new NotFoundException('Parti bulunamadı');
@@ -156,12 +158,14 @@ export class SupplyOpsService {
       // Parti durumu → recalled.
       await tx.execute(sql`UPDATE batches SET status = 'recalled' WHERE id = ${batchId};`);
 
-      // Satılmamış (available) lisanslar → voided; id + product_id geri al.
-      const voided = await rawRows<{ id: string; product_id: string }>(tx, sql`
+      // Satılmamış (available) lisanslar → voided; id + product_id + KALAN KAPASİTE geri al.
+      // remaining = max_uses - use_count: tek-kullanımda 1 (max_uses=1, use_count=0 → davranış
+      // korunur); multi/MAK'ta yok edilen gerçek kapasite (fire miktarı hardcoded 1 değil).
+      const voided = await rawRows<{ id: string; product_id: string; remaining: number }>(tx, sql`
         UPDATE license_items
         SET status = 'voided'
         WHERE batch_id = ${batchId} AND status = 'available'
-        RETURNING id, product_id;
+        RETURNING id, product_id, (max_uses - use_count) AS remaining;
       `);
 
       // Satılmış + hâlâ CANLI (aktif atamalı) kalemler — elle değiştirme gerektirenler.
@@ -178,13 +182,15 @@ export class SupplyOpsService {
       const soldNeedingReplacement = Number(soldRows[0]?.c ?? 0);
 
       // Her void edilen lisans için sebepli stok düzeltmesi (§12 — sebepsiz değişiklik yok).
+      // qty = kalan kapasite (tek-kullanım→1, multi/MAK→max_uses-use_count) → CostsService.wastage
+      // gerçek yok edilen birim(ler)i değerler, sabit 1 değil. Defansif: <=0 ise 1.
       if (voided.length > 0) {
         await tx.insert(stockAdjustments).values(
           voided.map((v) => ({
             productId: v.product_id,
             licenseItemId: v.id,
             action: 'recall' as const,
-            qty: 1,
+            qty: Number(v.remaining) > 0 ? Number(v.remaining) : 1,
             reason,
             actor,
           })),
@@ -335,22 +341,30 @@ export class SupplyOpsService {
       }
 
       // Lisans satırını iptal statüsüne çek (yalnız void/damage + item verildiyse).
+      // Kalem-kapsamlı yıkıcı düzeltmede fire miktarı FORM'dan DEĞİL, yok edilen kalemin
+      // KENDİSİNDEN türetilir (controller varsayılanı qty=0 → sıfır fire raporlanırdı). Diğer
+      // durumlarda (correct / kalem-kapsamsız) istekteki qty korunur.
       let affectedItem = false;
+      let qtyToStore = input.qty;
       if (input.licenseItemId && (input.action === 'void' || input.action === 'damage')) {
-        const upd = await rawRows<{ id: string }>(tx, sql`
+        const upd = await rawRows<{ id: string; max_uses: number; use_count: number }>(tx, sql`
           UPDATE license_items
           SET status = 'voided'
           WHERE id = ${input.licenseItemId}
             AND product_id = ${input.productId}
             AND status = 'available'
-          RETURNING id;
+          RETURNING id, max_uses, use_count;
         `);
-        if (upd.length === 0) {
+        const item = upd[0];
+        if (!item) {
           throw new BadRequestException(
             'Lisans satırı bulunamadı ya da satılabilir (available) durumda değil',
           );
         }
         affectedItem = true;
+        // Yok edilen gerçek birim(ler): tek-kullanım=1, multi/MAK=kalan kapasite. Defansif: <=0 ise 1.
+        const remaining = Number(item.max_uses) - Number(item.use_count);
+        qtyToStore = remaining > 0 ? remaining : 1;
       }
 
       const [row] = await tx
@@ -359,7 +373,7 @@ export class SupplyOpsService {
           productId: input.productId,
           licenseItemId: input.licenseItemId ?? null,
           action: input.action,
-          qty: input.qty,
+          qty: qtyToStore,
           reason: input.reason,
           actor,
         })
@@ -372,7 +386,7 @@ export class SupplyOpsService {
         targetId: input.licenseItemId ?? input.productId,
         meta: {
           action: input.action,
-          qty: input.qty,
+          qty: qtyToStore,
           reason: input.reason,
           affectedItem,
         },

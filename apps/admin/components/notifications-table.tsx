@@ -47,7 +47,8 @@ function SeverityBadge({ severity }: { severity: string }) {
 // Bildirim türü → okunur etiket (bilinmeyen tür ham gösterilir).
 const TYPE_LABEL: Record<string, string> = {
   low_stock: 'Düşük stok',
-  daily_summary: 'Günlük özet',
+  digest_alert: 'Günlük özet uyarısı',
+  reconcile_violation: 'Mutabakat ihlali',
 };
 
 const baseColumns: ColumnDef<NotificationRow>[] = [
@@ -130,7 +131,8 @@ const facets: FacetConfig[] = [
     title: 'Tür',
     options: [
       { label: 'Düşük stok', value: 'low_stock', icon: PackageX },
-      { label: 'Günlük özet', value: 'daily_summary', icon: Bell },
+      { label: 'Günlük özet uyarısı', value: 'digest_alert', icon: Bell },
+      { label: 'Mutabakat ihlali', value: 'reconcile_violation', icon: ShieldAlert },
     ],
   },
 ];

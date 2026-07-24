@@ -29,8 +29,18 @@ export interface SupplierScorecard {
   batches: ScorecardBatchRow[];
   /** Geri çekilen parti / toplam parti (0..1); parti yoksa 0. */
   recallRate: number;
-  /** Teslim alınan miktarın toplam maliyeti (kuruş); unit_cost_cents × qty_received. */
-  totalCostCents: number;
+  /**
+   * Teslim alınan miktarın maliyeti (kuruş) — PARA BİRİMİ BAŞINA AYRI satır
+   * (purchase_orders.currency PO başına değişebilir; karışım tek toplama BİRLEŞTİRİLMEZ,
+   * sibling CostsService.bySupplier deseni). Maliyeti olan para birimi yoksa boş dizi.
+   */
+  totalCostCents: SupplierCostByCurrency[];
+}
+
+/** Tedarikçi teslim-maliyeti (para birimi başına AYRI; panel invaryantı: karışım birleştirilmez). */
+export interface SupplierCostByCurrency {
+  currency: string;
+  cents: number;
 }
 
 /**
@@ -71,16 +81,16 @@ export class SuppliersService {
   async scorecard(id: string): Promise<SupplierScorecard> {
     const supplier = await this.getById(id);
 
-    // PO agregaları: adet, teslim alınan, açık PO, ort. lead süresi (gün), toplam maliyet.
+    // PO agregaları: adet, teslim alınan, açık PO, ort. lead süresi (gün).
     // avgLeadDays: yalnız hem ordered_at hem received_at dolu PO'lardan (teslim alınanlar).
-    // totalCostCents: teslim alınan miktar × birim maliyet (gerçekleşen harcama).
+    // Para birimi-bağımsız (adet/lead) tek satır; MALİYET para birimine göre AYRI sorguda
+    // (aşağıdaki costRows) — currency GROUP BY bunları çok satıra bölerdi.
     const poAgg = await this.db.execute<{
       po_count: number;
       total_ordered: number;
       total_received: number;
       open_po_count: number;
       avg_lead_days: number | null;
-      total_cost_cents: number;
     }>(sql`
       SELECT
         count(*)::int AS po_count,
@@ -88,12 +98,23 @@ export class SuppliersService {
         coalesce(sum(qty_received), 0)::int AS total_received,
         count(*) FILTER (WHERE status IN ('draft', 'ordered', 'partial'))::int AS open_po_count,
         avg(extract(epoch FROM (received_at - ordered_at)) / 86400.0)
-          FILTER (WHERE received_at IS NOT NULL AND ordered_at IS NOT NULL) AS avg_lead_days,
-        coalesce(sum(qty_received * coalesce(unit_cost_cents, 0)), 0)::bigint AS total_cost_cents
+          FILTER (WHERE received_at IS NOT NULL AND ordered_at IS NOT NULL) AS avg_lead_days
       FROM purchase_orders
       WHERE supplier_id = ${id};
     `);
     const agg = (poAgg as unknown as Array<Record<string, unknown>>)[0] ?? {};
+
+    // Teslim-maliyeti PARA BİRİMİ BAŞINA (purchase_orders.currency PO başına değişebilir).
+    // totalCostCents = teslim alınan miktar × birim maliyet; karışım tek toplama BİRLEŞTİRİLMEZ.
+    const costRows = await rawRows<{ currency: string; cents: number }>(this.db, sql`
+      SELECT
+        currency AS currency,
+        coalesce(sum(qty_received * coalesce(unit_cost_cents, 0)), 0)::bigint AS cents
+      FROM purchase_orders
+      WHERE supplier_id = ${id}
+      GROUP BY currency
+      ORDER BY cents DESC, currency ASC;
+    `);
 
     // Parti agregası: geri-çekilme oranı (recalled / toplam).
     const batchAgg = await rawRows<{ total: number; recalled: number }>(this.db, sql`
@@ -150,7 +171,10 @@ export class SuppliersService {
       openPoCount: Number(agg['open_po_count'] ?? 0),
       batches,
       recallRate: batchTotal > 0 ? recalled / batchTotal : 0,
-      totalCostCents: Number(agg['total_cost_cents'] ?? 0),
+      totalCostCents: costRows.map((r) => ({
+        currency: r.currency,
+        cents: Number(r.cents),
+      })),
     };
   }
 

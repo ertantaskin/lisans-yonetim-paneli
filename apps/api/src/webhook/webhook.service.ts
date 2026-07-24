@@ -44,6 +44,9 @@ export class WebhookService {
       attempts: 8,
       backoff: { type: 'exponential', delay: 10_000 },
       removeOnComplete: 1000,
+      // Başarısız işleri sınırla (mail ile ayna): webhook_url uzun süre erişilemezse
+      // başarısız 'deliver' işleri Redis'te sınırsız birikmesin (§16 kuyruk hijyeni).
+      removeOnFail: 5000,
     });
   }
 }

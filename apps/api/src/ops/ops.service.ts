@@ -148,6 +148,9 @@ export class OpsService {
       attempts: 8,
       backoff: { type: 'exponential', delay: 10_000 },
       removeOnComplete: 1000,
+      // Başarısız işleri sınırla (emit ile ayna) — replay edilen webhook de erişilemeyen
+      // hedefte sınırsız birikmesin (§16 kuyruk hijyeni).
+      removeOnFail: 5000,
     });
   }
 

@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { ApiError } from '../../../lib/api';
+import { siteTypeLabel } from '../../../lib/labels';
 import { getSite, type SiteDetail } from './queries';
 import { SiteConfigForm } from './site-config-form';
 import { SiteStatusToggle } from './site-status-toggle';
@@ -80,7 +81,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">{site.domain}</h1>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Badge variant="outline">{site.type}</Badge>
+              <Badge variant="outline">{siteTypeLabel(site.type)}</Badge>
               <StatusBadge status={site.status} />
               {site.sandbox && (
                 <Badge variant="warning">
@@ -129,7 +130,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
             </div>
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Tip</dt>
-              <dd className="font-medium text-foreground">{site.type}</dd>
+              <dd className="font-medium text-foreground">{siteTypeLabel(site.type)}</dd>
             </div>
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Gönderen E-posta</dt>

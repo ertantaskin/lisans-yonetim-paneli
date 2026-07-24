@@ -45,12 +45,16 @@ export class SecurityService implements OnModuleInit {
     @InjectQueue(SECURITY_QUEUE) private readonly queue: Queue,
   ) {}
 
-  /** Boot'ta tekrarlı tarama işini kaydeder (aynı repeat anahtarı → mükerrer eklenmez). */
+  /**
+   * Boot'ta tekrarlı taramayı KARARLI job-scheduler kimliğiyle upsert eder (BullMQ v5).
+   * Periyot ileride değişirse eski zamanlama atomik değiştirilir — `queue.add` repeat'in
+   * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
+   */
   async onModuleInit(): Promise<void> {
-    await this.queue.add(
-      'scan',
-      {},
-      { repeat: { every: SCAN_EVERY_MS }, removeOnComplete: 50, removeOnFail: 50 },
+    await this.queue.upsertJobScheduler(
+      'security-scan',
+      { every: SCAN_EVERY_MS },
+      { name: 'scan', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
     );
   }
 

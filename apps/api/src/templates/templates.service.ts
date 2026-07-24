@@ -1,9 +1,10 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { desc, eq } from 'drizzle-orm';
-import nodemailer, { type Transporter } from 'nodemailer';
+import { type Transporter } from 'nodemailer';
 import { DB, type Database } from '../db/db.module';
 import { deliveryTemplates, emailLog, products, sites } from '../db/schema';
+import { createMailTransport } from '../mail/mail.transport';
 
 /**
  * {{degisken}} token değişimi (§6). mail/templates.service.ts'teki render ile birebir
@@ -168,16 +169,10 @@ export class DeliveryTemplatesService {
   }
 
   private mailer(): Transporter {
+    // Tek doğruluk kaynağı kurucu (MailService/MailProcessor ile aynı) — üretim TLS/auth
+    // düzeltmeleri bu test-mail yoluna da ulaşsın (#10 konsolidasyonu).
     if (!this.transporter) {
-      const user = this.config.get<string>('SMTP_USER');
-      const pass = this.config.get<string>('SMTP_PASS');
-      this.transporter = nodemailer.createTransport({
-        host: this.config.getOrThrow<string>('SMTP_HOST'),
-        port: this.config.getOrThrow<number>('SMTP_PORT'),
-        secure: this.config.get<boolean>('SMTP_SECURE') ?? false,
-        // Kimlik verildiyse auth ekle (gerçek relay); yoksa kimliksiz (dev Mailpit).
-        ...(user ? { auth: { user, pass: pass ?? '' } } : {}),
-      });
+      this.transporter = createMailTransport(this.config);
     }
     return this.transporter;
   }

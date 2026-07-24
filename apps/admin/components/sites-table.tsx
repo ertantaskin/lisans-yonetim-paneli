@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Ban, CircleCheck, KeyRound, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
 import type { SiteRow } from '../lib/api';
+import { siteTypeLabel } from '../lib/labels';
 import { rotateSecretAction, setSiteStatusAction } from '../app/sites/actions';
 import { StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
@@ -37,7 +38,7 @@ const baseColumns: ColumnDef<SiteRow>[] = [
     accessorKey: 'type',
     meta: { title: 'Tip' },
     header: 'Tip',
-    cell: ({ row }) => <span className="text-muted-foreground">{row.original.type}</span>,
+    cell: ({ row }) => <span className="text-muted-foreground">{siteTypeLabel(row.original.type)}</span>,
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
   {
@@ -158,7 +159,7 @@ export function SitesTable({ sites }: { sites: SiteRow[] }) {
   const facets: FacetConfig[] = React.useMemo(() => {
     const types = Array.from(new Set(sites.map((s) => s.type))).sort();
     return types.length > 1
-      ? [{ columnId: 'type', title: 'Tip', options: types.map((t) => ({ label: t, value: t })) }]
+      ? [{ columnId: 'type', title: 'Tip', options: types.map((t) => ({ label: siteTypeLabel(t), value: t })) }]
       : [];
   }, [sites]);
 

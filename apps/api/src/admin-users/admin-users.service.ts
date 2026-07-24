@@ -120,10 +120,12 @@ export class AdminUsersService implements OnModuleInit {
   async verifyCredentials(identifier: string, password: string): Promise<PublicAdminUser | null> {
     const raw = identifier.trim();
     const isEmail = raw.includes('@');
-    const rlKey = `authfail:${raw.toLowerCase()}`;
+    // Kimlik-dizesi kovası: BİLİNMEYEN kimlikler (not-found/enumeration yolu) için hız-limiti —
+    // hesap varlığını timing ile sızdırmadan tanımadığımız identifier'ları da sınırlar.
+    const idKey = `authfail:${raw.toLowerCase()}`;
 
-    const fails = Number(await this.redis.get(rlKey)) || 0;
-    if (fails >= MAX_FAILS) {
+    // Bilinmeyen-kimlik kovası kilitliyse hemen reddet.
+    if ((Number(await this.redis.get(idKey)) || 0) >= MAX_FAILS) {
       throw new HttpException(
         'Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.',
         HttpStatus.TOO_MANY_REQUESTS,
@@ -136,14 +138,29 @@ export class AdminUsersService implements OnModuleInit {
       .where(isEmail ? eq(adminUsers.email, raw.toLowerCase()) : eq(adminUsers.username, raw))
       .limit(1);
 
+    // Hesap çözüldüyse HESAP-KİMLİĞİ kovası YETKİLİdir: e-posta ve kullanıcı adı yolları tek
+    // kovada birleşir (aksi hâlde iki ayrı kova = 2×MAX_FAILS brute-force bütçesi). Kilitliyse reddet.
+    const acctKey = user ? `authfail:id:${user.id}` : null;
+    if (acctKey && (Number(await this.redis.get(acctKey)) || 0) >= MAX_FAILS) {
+      throw new HttpException(
+        'Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     const ok = user && !user.disabled && verifyPassword(password, user.passwordHash);
     if (!ok) {
       if (!user || user.disabled) verifyPassword(password, DUMMY_HASH); // sabit-zaman
-      await this.redis.multi().incr(rlKey).expire(rlKey, FAIL_WINDOW_SEC).exec();
+      // Bilinen hesapta YANLIŞ parola → hesap-kimliği kovası (e-posta+kullanıcı adı tek kovada).
+      // Bilinmeyen kimlik → kimlik-dizesi kovası (varlık sızdırmadan yine de hız-limitli).
+      const failKey = acctKey ?? idKey;
+      await this.redis.multi().incr(failKey).expire(failKey, FAIL_WINDOW_SEC).exec();
       return null;
     }
 
-    await this.redis.del(rlKey);
+    // Başarı: her iki kovayı da temizle.
+    await this.redis.del(idKey);
+    if (acctKey) await this.redis.del(acctKey);
     await this.db
       .update(adminUsers)
       .set({ lastLoginAt: sql`now()` })

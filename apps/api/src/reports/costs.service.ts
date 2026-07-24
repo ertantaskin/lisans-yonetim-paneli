@@ -145,8 +145,10 @@ export class CostsService {
   }
 
   /**
-   * Ay (created_at → "YYYY-MM") × para birimi bazında harcama. spentCents = teslim
-   * alınan miktar × birim maliyet. En eski ay önce.
+   * Ay (TESLİM ALMA anı → "YYYY-MM") × para birimi bazında gerçekleşen harcama.
+   * Kova PO oluşturma ayına DEĞİL, parti teslim-alma ayına göredir (M1'de açılıp M2/M3'te
+   * teslim alınan PO'nun harcaması teslim ayına düşer). Parti başına toplanır:
+   * batches.qty_received × PO.unit_cost_cents, batches → purchase_orders join. En eski ay önce.
    */
   private async byMonth(): Promise<CostByMonth[]> {
     const list = await rawRows<{
@@ -155,11 +157,13 @@ export class CostsService {
       spent_cents: number;
     }>(this.db, sql`
       SELECT
-        to_char(created_at, 'YYYY-MM') AS month,
-        currency AS currency,
-        coalesce(sum(qty_received * coalesce(unit_cost_cents, 0)), 0)::bigint AS spent_cents
-      FROM purchase_orders
-      GROUP BY to_char(created_at, 'YYYY-MM'), currency
+        to_char(b.received_at, 'YYYY-MM') AS month,
+        po.currency AS currency,
+        coalesce(sum(b.qty_received * coalesce(po.unit_cost_cents, 0)), 0)::bigint AS spent_cents
+      FROM batches b
+      JOIN purchase_orders po ON po.id = b.purchase_order_id
+      WHERE b.received_at IS NOT NULL
+      GROUP BY to_char(b.received_at, 'YYYY-MM'), po.currency
       ORDER BY month ASC, currency ASC;
     `);
     return list.map((r) => ({

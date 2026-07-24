@@ -26,12 +26,18 @@ const MAX_ROWS = 200;
 const SECRET_COLUMN_DENYLIST = [
   'payload_enc',
   'payload_hash',
+  // license_items keyed son-5 hash (payload_suffix_hash) — düz-metin son-5 sızıntısına karşı.
+  'payload_suffix_hash',
   'hmac_secret_enc',
   'hmac_secret_prev_enc',
   'api_key_hash',
   // 0017 ile eklenen rekey-grace aynası; 'api_key_hash' regex'i \b sınırı nedeniyle bunu
   // YAKALAMAZ (hash ile _prev arasında word-char '_' var) → ayrıca listelenir.
   'api_key_hash_prev',
+  // site_connect_tokens: şifreli kimlik (api_key_enc — hmac_secret_enc'in kardeşi) ve
+  // bağlan-kodunun anahtarsız sha256'sı (code_hash) — ikisi de dönebilir, reddet.
+  'api_key_enc',
+  'code_hash',
   'password_hash',
   'scrypt',
 ] as const;

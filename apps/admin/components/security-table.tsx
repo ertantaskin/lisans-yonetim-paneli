@@ -33,6 +33,7 @@ const TYPE_META: Record<
 > = {
   velocity: { label: 'hız (velocity)', icon: RadioTower },
   quota_exceeded: { label: 'kota aşımı', icon: Gauge },
+  quota_review: { label: 'Kota incelemesi', icon: Gauge },
   anomaly: { label: 'anomali', icon: Activity },
   blocklist: { label: 'kara liste', icon: Ban },
 };
@@ -139,6 +140,7 @@ const facets: FacetConfig[] = [
     options: [
       { label: 'Hız (velocity)', value: 'velocity', icon: RadioTower },
       { label: 'Kota aşımı', value: 'quota_exceeded', icon: Gauge },
+      { label: 'Kota incelemesi', value: 'quota_review', icon: Gauge },
       { label: 'Anomali', value: 'anomaly', icon: Activity },
       { label: 'Kara liste', value: 'blocklist', icon: Ban },
     ],
