@@ -52,7 +52,15 @@ base atlanırsa Tailwind v4 o `bg-*` utility'sini HİÇ üretmez (sessiz kırıl
 **UI TAMAMLANDI (canlı):** Siparişler/Stok/Siteler shadcn-admin **DataTable** (TanStack: arama,
 faceted filtre, sıralama, sayfalama, kolon görünürlüğü); sipariş detayı Card/Table/StatTile/timeline;
 formlar shadcn Input/Label/Textarea/Button/Alert; loading/error/404 state'leri. Ekranlar 2. adversaryel
-audit'ten (a11y/kontrast) geçti. **ÇOKLU-ADMIN AUTH (§8, 4 faz, canlı, adversaryel-denetimli):**
+audit'ten (a11y/kontrast) geçti. **STOK YÖNETİMİ ÜRÜN-MERKEZLİ HUB'A TAŞINDI (commit 3613262, CANLI):**
+kullanıcı "/stock çok karışık, çok üründe yönetilemez" dedi → `/stock` 4 ağır bölümü (liste+import+
+oluştur+global eşleme) üst üste yığmaktan **sadeleşti** (yalnız ürün DataTable + "Yeni Ürün" Sheet;
+7.23→1.93 kB; STOK kolonuna düşük-stok göstergesi). Ürün-özel işler `/products/[id]` DETAY sayfasında
+toplandı (bağlamsal): **Key/Stok İçe Aktar** (ürün SABİT→dropdown yok), **Site Eşlemeleri** (yalnız o
+ürünün eşlemeleri), başlıkta **Düzenle**. Backend: `products/:id/detail` eşlemeleri de döndürür
+(detailMappings, migration YOK); global "tüm eşlemeler" tablosu kaldırıldı (ürün+site bazına). Bileşenler
+parametreleştirildi (import-stock-form `fixedProductId`, mappings-manager `productId`, edit/create Sheet
+ayrıştırıldı); batches "stok gir" derin bağlantısı `/products/{id}?batchId=`. typecheck+build temiz, deploy. **ÇOKLU-ADMIN AUTH (§8, 4 faz, canlı, adversaryel-denetimli):**
 API `admin_users` (scrypt/role/token_version, migration 0007-0008) + `auth/login|validate` + CRUD;
 Next imzalı oturum (HMAC, role+ver, TTL 12s) + middleware her-istek `validate` (revocation) +
 `/admins` owner-only RBAC + open-redirect/rate-limit/atomik-lockout korumaları. **env-gated
