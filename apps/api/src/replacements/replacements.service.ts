@@ -205,7 +205,7 @@ export class ReplacementsService {
     const revoked = await this.adminOrders.revokeAssignment(req.assignmentId, 'replacement', actor, false);
 
     // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi).
-    const res = await this.fulfillment.completeLine(req.lineId, 1);
+    const res = await this.fulfillment.completeLine(req.lineId, 1, true);
     if (res.added <= 0) {
       // Stok yok: talep açık kalır (approved yapılmaz), 409.
       throw new ConflictException('Değişim için stok yok');

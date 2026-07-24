@@ -292,7 +292,7 @@ export class SupplyOpsService {
       // 2) Yenisini ata — açılan yere 1 birim (atomik atama makinesi). Stok araya girip
       // tükendiyse added=0 dönebilir → o kalemi atlanmış say (eski zaten revoke edildi;
       // completeLine sonraki stok girişinde partial-auto ile tamamlanabilir).
-      const res = await this.fulfillment.completeLine(c.line_id, 1);
+      const res = await this.fulfillment.completeLine(c.line_id, 1, true);
       if (res.added > 0) {
         replaced++;
         // Soyağacı (§3): eski→yeni assignment_history (recall-toplu-değiştir yolu da izlenir).

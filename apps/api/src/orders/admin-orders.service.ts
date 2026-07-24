@@ -192,7 +192,7 @@ export class AdminOrdersService {
     // 1) Eskiyi geri al — markLineCanceled=false (iade DEĞİL; satır yeniden atanabilir kalır).
     await this.revokeAssignment(assignmentId, reason, actor, false);
     // 2) Taze key ata (atomik atama makinesi).
-    const res = await this.fulfillment.completeLine(row.lineId, 1);
+    const res = await this.fulfillment.completeLine(row.lineId, 1, true);
     if (res.added <= 0) {
       throw new ConflictException('Değişim için stok yok');
     }
@@ -585,12 +585,23 @@ export class AdminOrdersService {
     //       row-lock'u iki yolu serileştirir: ya cancel-önce=noop, ya insert-önce=görülür) onu YAKALAR.
     await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${order.id}))`);
+      // 2. denetim (ABBA deadlock düzeltmesi): satır kilitlerini SİPARİŞ satırından ÖNCE al.
+      // completeLine (satır FOR UPDATE → recompute'ta orders UPDATE) ve revokeAssignment de
+      // satır→sipariş sırasıyla kilitler; bu tx eskiden orders'ı FOR UPDATE ile ÖNCE kilitliyordu
+      // → ters sıra, eşzamanlı completeLine (stok import süpürmesi) ile ABBA deadlock (40P01 → 500).
+      // advisory-lock zaten eşzamanlı refund/release'i serileştirir; held kararı için orders'ı ayrıca
+      // FOR UPDATE kilitlemeye gerek yok (completeLine heldForReview'i değiştirmez). Böylece kilit
+      // edinim sırası tüm yollarla aynı olur: satır → sipariş.
+      await tx
+        .select({ id: orderLines.id })
+        .from(orderLines)
+        .where(eq(orderLines.orderId, order.id))
+        .for('update');
       const [fresh] = await tx
         .select()
         .from(orders)
         .where(eq(orders.id, order.id))
-        .limit(1)
-        .for('update');
+        .limit(1);
       if (!fresh) return;
       // Savunma: rejectHeld yarışı kaybettiyse (held hâlâ true) bayrağı burada da kapat.
       if (fresh.heldForReview) {

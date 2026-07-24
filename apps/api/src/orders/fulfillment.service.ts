@@ -41,7 +41,11 @@ export class FulfillmentService {
    * Bir sipariş satırının kalanını (veya N adedini) atar (§5, §13 "Kalanları/N Adet Ata").
    * Turlar idempotent değil ama stok kadar atar; stok yoksa added=0.
    */
-  async completeLine(lineId: string, maxUnits?: number): Promise<CompleteResult> {
+  async completeLine(
+    lineId: string,
+    maxUnits?: number,
+    isReplacement = false,
+  ): Promise<CompleteResult> {
     const result = await this.db.transaction(async (tx) => {
       // Satırı kilitle — eşzamanlı tamamlamalar (admin çift-tık, iki stok import'u,
       // çoğaltılmış API replica'ları) serileşir; aşırı teslimat (fazla key) önlenir.
@@ -101,15 +105,19 @@ export class FulfillmentService {
       // ver (createOrder'daki aynı invaryant). Bu, releaseHeld (İnceleme onayı) ve reconcile gibi
       // completeLine çağıranlarının da all-or-nothing garantisini korumasını sağlar (#7 denetim D).
       //
-      // F1 (regresyon düzeltmesi): "tümüyle" hedefi ÇAĞRI TİPİNE göre belirlenir. maxUnits verilen
-      // SINIRLI top-up (değişim akışları: revoke + completeLine(lineId, 1)) tüm satırı değil, zaten
-      // teslim edilmiş `toAssign` birimi tazeler → hedef = min(qty, fulfilled+toAssign). Aksi halde
-      // kısmen teslim edilmiş (ör. 3/6, #16 re-push adet artışıyla erişilebilir) all-or-nothing
-      // satırda tek-birim değişim "stok yok" sanılır: taze key serbest bırakılır + eski key zaten
-      // karantinada → müşteri parasını ödediği lisansı KALICI kaybeder. maxUnits YOKKEN (taze
-      // teslim / releaseHeld tam teslim) hedef = qty kalır (özgün "hepsi birlikte" invaryantı korunur).
+      // F1 (regresyon düzeltmesi): "tümüyle" hedefi ÇAĞRI TİPİNE göre belirlenir. YALNIZ değişim
+      // (isReplacement) akışları — revoke + completeLine(lineId, 1, true) — tüm satırı değil, zaten
+      // teslim edilmiş `toAssign` birimi tazeler → hedef = min(qty, fulfilled+toAssign); aksi halde
+      // kısmen teslim edilmiş (ör. 3/6, #16 re-push) all-or-nothing satırda tek-birim değişim "stok
+      // yok" sanılır (taze key serbest, eski key karantinada → müşteri lisansı KALICI kaybeder).
+      // NOT (2. denetim düzeltmesi): rölaks YALNIZ isReplacement'te; manuel "N Adet Ata" ucu
+      // (POST /admin/fulfillments/:lineId/complete?units=N — revoke YOK) isReplacement=false ile gelir,
+      // hedef = qty kalır → all-or-nothing satır kısmen teslim EDİLMEZ (§5 "kısmi teslim yasak" korunur).
+      // Taze teslim / releaseHeld (maxUnits yok) da hedef = qty.
       const target =
-        maxUnits != null ? Math.min(line.qty, line.fulfilledQty + toAssign) : line.qty;
+        isReplacement && maxUnits != null
+          ? Math.min(line.qty, line.fulfilledQty + toAssign)
+          : line.qty;
       if (policy === 'all-or-nothing' && line.fulfilledQty + added < target) {
         await releaseAllocations(tx, allocations);
         allocations.length = 0;

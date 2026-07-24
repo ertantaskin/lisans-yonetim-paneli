@@ -36,6 +36,7 @@ let db: Db;
 let end: () => Promise<void>;
 let crypto: CryptoService;
 let admin: AdminOrdersService;
+let fulfillment: FulfillmentService;
 let site: CreatedSite;
 const ACTOR = 'it-replace-actor';
 
@@ -69,7 +70,7 @@ describe('AdminOrdersService.replaceAssignment (proaktif değişim + soyağacı)
     const products = new ProductsService(db as never);
     const mail = new MailService(db as never, fakeQueue, fakeConfig);
     const webhook = new WebhookService(db as never, fakeQueue);
-    const fulfillment = new FulfillmentService(db as never, products, mail, webhook);
+    fulfillment = new FulfillmentService(db as never, products, mail, webhook);
     admin = new AdminOrdersService(db as never, fakeRedis, crypto, mail, fulfillment);
     site = await createSite(db, crypto, { tag });
   });
@@ -252,5 +253,53 @@ describe('AdminOrdersService.replaceAssignment (proaktif değişim + soyağacı)
     expect(line!.canceled).toBe(false);
     expect(line!.fulfilledQty).toBe(3);
     expect(line!.status).toBe('partial');
+  });
+
+  it('2. DENETİM REGRESYONU: manuel "N Adet Ata" all-or-nothing satırı KISMEN teslim ETMEZ (§5)', async () => {
+    // F1 hedef-farkında rölaks YALNIZ değişim (isReplacement) top-up'ında geçerli olmalı. Manuel
+    // POST /admin/fulfillments/:lineId/complete?units=N ucu revoke YAPMADAN (isReplacement=false)
+    // completeLine(lineId, N) çağırır; bir all-or-nothing satırda N < kalan ise HİÇBİR ŞEY atanmamalı
+    // (§5 "all-or-nothing satırda kısmi teslim YASAK"). Regresyondan önce 3/5 kısmen teslim ediyordu.
+    const product = await createProduct(db, {
+      tag,
+      kind: 'key',
+      usageMode: 'single',
+      fulfillmentPolicy: 'all-or-nothing',
+    });
+    await insertLicenseItems(db, crypto, { productId: product.id, count: 3, tag }); // yalnız 3 stok
+    // qty=5, fulfilledQty=0 → boş all-or-nothing satır (kalan 5 > eldeki 3).
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: 5,
+      tag,
+      status: 'pending',
+    });
+
+    // Manuel N=3 ata (isReplacement=false): 3 < 5 → all-or-nothing → hiçbir şey atanmaz, kapasite iade.
+    const res = await fulfillment.completeLine(order.lineId, 3);
+    expect(res.added).toBe(0);
+    expect(res.status).toBe('pending');
+
+    // Satırda aktif atama YOK.
+    const active = await db
+      .select({ id: schema.assignments.id })
+      .from(schema.assignments)
+      .where(
+        and(eq(schema.assignments.lineId, order.lineId), eq(schema.assignments.status, 'active')),
+      );
+    expect(active.length).toBe(0);
+
+    // Stok tüketilmedi — 3 key hâlâ 'available' (kısmi ayırma geri bırakıldı).
+    const avail = await db
+      .select({ id: schema.licenseItems.id })
+      .from(schema.licenseItems)
+      .where(
+        and(
+          eq(schema.licenseItems.productId, product.id),
+          eq(schema.licenseItems.status, 'available'),
+        ),
+      );
+    expect(avail.length).toBe(3);
   });
 });

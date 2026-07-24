@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Sparkles,
+  BookOpen,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -88,6 +89,7 @@ export const NAV: NavSection[] = [
     items: [
       { label: 'Şablonlar', href: '/templates', icon: FileText },
       { label: 'Ayarlar', href: '/settings', icon: Settings },
+      { label: 'Kullanım Rehberi', href: '/guide', icon: BookOpen },
     ],
   },
 ];
