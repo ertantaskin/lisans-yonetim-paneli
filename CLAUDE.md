@@ -437,6 +437,33 @@ completeness lensleri TEMİZ çıktı). İkisi de orders backend'in en riskli de
   "Yapılandırma" altında. **Sistem durumu: tam çalışır** (typecheck 3/3, entegrasyon 89/89 + yarış 2/2,
   deploy /health 200). Kodlanabilir mimari eksik yok; yalnız yapısal kapsam-dışı (fiyat senkronu/marketplace/abonelik).
 
+**3. KAPSAMLI DENETİM (ROUND-3) → 19 BULGU DÜZELTİLDİ (commit bed499d, CANLI):** Kullanıcı "başka eksik
+kaldı mı? tespit ettiğin gibi agent'larınla düzelt" dedi → daha önce DERİN denetlenmemiş alanlara odaklı
+5-lensli workflow (27 ajan, bul→çekişmeli doğrula): queue/cron-işler · güvenlik/crypto/public-uç · mail/
+notif/AI · tedarik/müşteri/rapor · kalan-UX-tutarlılık. **19 doğrulanmış / 3 çürütülen.** 5 paralel işçiyle
+(hepsi disjoint dosya) düzeltildi. **Migration YOK.**
+- **Queue/işler:** webhook başarısız işleri `removeOnFail`'siz → Redis sınırsız büyürdü; +removeOnFail 5000
+  (webhook.emit + ops.replayOutbox + global defaultJobOptions) · 5 tekrarlı sweep `queue.add(repeat)` →
+  `upsertJobScheduler` (stable schedulerId: daily-digest/expiry/low-stock/reconcile/security-scan) → interval/
+  cron değişince orphan çift-zamanlama yok (daily-digest çift Telegram/alarm düzeldi) · reconcile kritik alarm
+  12s dedupe (15dk spam → tek uyarı; logger.error her sweep korunur — low-stock deseni).
+- **Güvenlik/AI:** readonly-sql denylist +api_key_enc/code_hash/payload_suffix_hash · admin login lockout
+  per-account (`authfail:id:<user.id>`) → e-posta+kullanıcı adı 2× deneme bütçesi kapandı (bilinmeyen kimlik
+  identifier-key'de, enumeration sızmaz) · AI triyaj müşteri `reason`'ını `scrubSecrets` ile maskeler
+  (key/e-posta/telefon/uzun-alfnum → [GIZLENDI]) + birim testi.
+- **Mail/şablon:** `resolve()` deterministik ORDER BY (createdAt desc) + `product_id IS NULL` (site-geneli +
+  global varsayılan) tier'leri onurlandırır (dead-config düzeldi) · DeliveryTemplatesService paylaşılan
+  `createMailTransport`'a geçti (SMTP drift kapandı).
+- **Tedarik/rapor:** tedarikçi karnesi maliyeti para-birimi başına dizi (karışım yok; admin per-currency
+  render) · stok düzeltme zayi qty voidlenen item'dan türetilir (void/damage: tek→1, MAK→kalan kapasite) ·
+  recall MAK kapasiteyi sayar (sabit 1 değil) · `recallBatch` FOR UPDATE (TOCTOU idempotent, çift audit yok) ·
+  aylık maliyet `batches.received_at` (teslim ayı) ile bucketlanır.
+- **UX (kalan ham enum):** /security `quota_review` · /notifications `digest_alert`+`reconcile_violation`
+  (ölü `daily_summary` kaldırıldı) · /sites tip enum · /ai kategori/öncelik Türkçeleşti (labels.ts
+  +siteTypeLabel/aiCategoryLabel/aiPriorityLabel; security/notifications yerel map+facet) · /guide h1→h2 (a11y).
+- **Doğrulama:** typecheck shared+api+admin temiz · AI birim 11/11 · VPS entegrasyon+yarış · deploy /health 200.
+  Çürütülen 3 (yanlış-pozitif/bilinçli): webhook seq ms-çakışması · security dedupe TOCTOU · updates Host-header.
+
 ## Geliştirme
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
