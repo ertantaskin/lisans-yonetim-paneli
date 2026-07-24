@@ -1,5 +1,5 @@
 import type { ProductRow, SiteRow } from '../../../lib/api';
-import { PageHeader } from '../../../components/ui';
+import { PageHeader } from '../../../components/ui/page-header';
 import { Card } from '../../../components/ui/card';
 import { TemplateEditor } from '../template-editor';
 import { listProducts, listSites } from '../queries';
@@ -18,7 +18,7 @@ export default async function NewTemplatePage() {
 
   return (
     <div>
-      <PageHeader title="Yeni Şablon" desc="Kapsamı boş bırakırsanız genel varsayılan olur." />
+      <PageHeader title="Yeni Şablon" description="Kapsamı boş bırakırsanız genel varsayılan olur." />
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>

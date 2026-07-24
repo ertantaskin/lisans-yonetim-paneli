@@ -39,7 +39,19 @@ class Jetlisans_My_Account {
         if (!$panel_order_id) return;
 
         $res = Jetlisans_Panel_Client::get('/v1/orders/' . rawurlencode($panel_order_id) . '/deliveries');
-        $deliveries = isset($res['body']['deliveries']) ? $res['body']['deliveries'] : [];
+        $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
+        $deliveries = (isset($body['deliveries']) && is_array($body['deliveries'])) ? $body['deliveries'] : [];
+
+        // (§8 held staleness) Panel artık YETKİLİ `held` bayrağını /deliveries yanıtında döndürür.
+        // Fetch başarılı (2xx) VE bayrak mevcutsa authoritative (bool); aksi halde $panel_held=null
+        // ("bilinmiyor" → graceful fallback, aşağıda temizleme/banner kararlarında). Panel held=false
+        // dediyse (teslimat durumu ne olursa olsun) bayat _jetlisans_held_for_review işaretini kalıcı
+        // temizle — stoksuz onaylanan held sipariş 'pending'+held=false'ta kalıp banner'ı asılı bırakmasın.
+        $fetch_ok = isset($res['code']) && $res['code'] >= 200 && $res['code'] < 300;
+        $panel_held = ($fetch_ok && array_key_exists('held', $body)) ? (bool) $body['held'] : null;
+        if ($panel_held === false) {
+            self::clear_held($order);
+        }
 
         echo '<section class="jetlisans-deliveries" style="margin-top:24px">';
         echo '<h2>' . esc_html__('Lisans Teslimatınız', 'jetlisans') . '</h2>';
@@ -48,7 +60,7 @@ class Jetlisans_My_Account {
 
         // (#32) Teslimat e-postası ulaşmadıysa (failed/bounced) bilgilendirici bant. Sır/sızıntı
         // içermez — müşteriye lisansın bu sayfada görünür olduğunu ve destek yolunu söyler.
-        $mail_status = isset($res['body']['mailStatus']) ? (string) $res['body']['mailStatus'] : '';
+        $mail_status = isset($body['mailStatus']) ? (string) $body['mailStatus'] : '';
         if (in_array($mail_status, ['failed', 'bounced'], true)) {
             echo '<div class="woocommerce-info" role="alert" style="margin-bottom:12px">' .
                 esc_html__('Teslimat e-postanız size ulaşmamış olabilir. Lisans bilgilerinizi bu sayfadan görüntüleyebilirsiniz; sorun yaşarsanız destek ekibimizle iletişime geçin.', 'jetlisans') .
@@ -56,20 +68,25 @@ class Jetlisans_My_Account {
         }
 
         if (empty($deliveries)) {
-            $status = isset($res['body']['status']) ? $res['body']['status'] : '';
+            $status = isset($body['status']) ? $body['status'] : '';
             // (§8 dinamik satış kotası / İnceleme Kuyruğu) Panel TERMİNAL/teslim durumu bildirdiyse
             // (fulfilled/partial/revoked) inceleme sonuçlanmıştır → bayat _jetlisans_held_for_review
-            // işaretini kalıcı temizle; "güvenlik incelemesinde" bildirimi bir daha çıkmaz.
+            // işaretini kalıcı temizle (held=false sinyali gelmese bile). "güvenlik incelemesinde"
+            // bildirimi bir daha çıkmaz.
             if (in_array($status, ['fulfilled', 'partial', 'revoked'], true)) {
                 self::clear_held($order);
             }
-            // (§8) Sipariş güvenlik incelemesine alındıysa (panele push anında held işaretlendi)
-            // genel "hazırlanıyor" yerine incelemeye özel bilgi kutusu göster. Bildirimi YALNIZ
-            // durum GERÇEKTEN 'pending' iken göster: /deliveries çağrısı başarısız/boş gövde
-            // dönerse $status='' olur → o durumda bayat inceleme bildirimi GÖSTERME, aşağıdaki
-            // genel "yükleniyor" mesajına düş (biten/reddedilen siparişte bant asılı kalmasın).
-            $held = ($order->get_meta('_jetlisans_held_for_review') === 'yes');
-            if ($held && $status === 'pending') {
+            // (§8) İnceleme bandını YALNIZ: yerel held işareti VAR + panel HÂLÂ held=true DİYOR,
+            // VEYA (held sinyali yok ama durum 'pending' — eski panel / graceful fallback) göster.
+            // Panel held=false dediyse yukarıda temizlendi → $held_local zaten false → banner çıkmaz.
+            // Fetch başarısızsa ($panel_held=null, $status='') banner çıkmaz, temizlik de yapılmaz
+            // (aşağıdaki genel "yükleniyor" mesajına düşer — biten/reddedilen siparişte asılı kalmaz).
+            $held_local = ($order->get_meta('_jetlisans_held_for_review') === 'yes');
+            $show_review = $held_local && (
+                $panel_held === true ||
+                ($panel_held === null && $status === 'pending')
+            );
+            if ($show_review) {
                 echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
                     esc_html__('Siparişiniz güvenlik incelemesindedir. Onaylandığında lisansınız burada görünecek ve e-posta ile bildirilecektir.', 'jetlisans') .
                     '</div>';

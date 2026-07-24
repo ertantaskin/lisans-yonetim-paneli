@@ -11,6 +11,7 @@ import { assignments, licenseItems, orderLines, orders, products, type Site } fr
 // Bu modül henüz index.ts barrel'ına eklenmedi (orkestratör ekler) → doğrudan dosyadan al.
 import {
   replacementRequests,
+  replacementStatusEnum,
   type ReplacementRequest,
 } from '../db/schema/replacementRequests';
 import { MailService } from '../mail/mail.service';
@@ -118,6 +119,11 @@ export class ReplacementsService {
 
   /** Admin liste: siparişin remote_order_id'si JOIN ile; status opsiyonel filtre. */
   async list(status?: string): Promise<{ items: AdminReplacementRow[] }> {
+    // F5: doğrulanmamış ?status= (`as never` cast'iyle) pg-enum karşılaştırmasına ulaşıp
+    // "invalid input value for enum" → 500 üretiyordu. Üyeliği sorgudan ÖNCE doğrula: verilmiş
+    // ama geçersizse boş liste; 'find' ile daraltıldığından eq'de cast gerekmez (tip zorlanır).
+    const match = status ? replacementStatusEnum.enumValues.find((v) => v === status) : undefined;
+    if (status && !match) return { items: [] };
     const rows = await this.db
       .select({
         id: replacementRequests.id,
@@ -135,7 +141,7 @@ export class ReplacementsService {
       })
       .from(replacementRequests)
       .leftJoin(orders, eq(replacementRequests.orderId, orders.id))
-      .where(status ? eq(replacementRequests.status, status as never) : undefined)
+      .where(match ? eq(replacementRequests.status, match) : undefined)
       .orderBy(desc(replacementRequests.createdAt))
       .limit(200);
 

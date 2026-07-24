@@ -159,8 +159,7 @@ class Jetlisans_Settings {
             <p><em>Güvenlik önerisi (§8):</em> sırları <code>wp-config.php</code>'ye sabit olarak ekleyin:</p>
             <pre style="background:#f6f7f7;padding:12px;border-radius:6px">define('JETLISANS_PANEL_URL', 'https://api.panel.example');
 define('JETLISANS_API_KEY', 'jl_...');
-define('JETLISANS_HMAC_SECRET', '...');
-define('JETLISANS_WEBHOOK_SECRET', '...'); // opsiyonel, yoksa HMAC_SECRET kullanılır</pre>
+define('JETLISANS_HMAC_SECRET', '...');</pre>
             <form method="post" action="options.php">
                 <?php settings_fields('jetlisans'); ?>
                 <table class="form-table">

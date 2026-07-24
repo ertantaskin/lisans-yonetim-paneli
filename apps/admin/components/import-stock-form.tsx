@@ -8,8 +8,9 @@ import {
   type PreviewState,
 } from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
-import { Input, Label, Textarea, selectClass } from './ui/input';
+import { Input, Textarea, selectClass } from './ui/input';
 import { Button } from './ui/button';
+import { Field } from './ui/field';
 
 const initial: ImportState = { ok: false };
 const previewInitial: PreviewState = { ok: false };
@@ -62,8 +63,7 @@ export function ImportStockForm({
           // Ürün-merkezli: ürün zaten belli → dropdown yok, yalnız gizli alan.
           <input type="hidden" name="productId" value={fixedProductId} />
         ) : (
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="is-product">Ürün</Label>
+          <Field label="Ürün" htmlFor="is-product">
             <select
               id="is-product"
               name="productId"
@@ -79,19 +79,21 @@ export function ImportStockForm({
                 </option>
               ))}
             </select>
-          </div>
+          </Field>
         )}
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="is-keys">
-            {isAccount ? 'Hesaplar (her satır bir JSON nesne)' : "Key'ler (her satır bir key)"}
-          </Label>
-          {isAccount && (
-            <span className="text-xs text-muted-foreground">
-              Alanlar: {schemaKeys.join(', ') || '(şema tanımsız)'} — örn:{' '}
-              <code className="text-foreground">{accountExample}</code>
-            </span>
-          )}
+        <Field
+          label={isAccount ? 'Hesaplar (her satır bir JSON nesne)' : "Key'ler (her satır bir key)"}
+          htmlFor="is-keys"
+          hint={
+            isAccount ? (
+              <>
+                Alanlar: {schemaKeys.join(', ') || '(şema tanımsız)'} — örn:{' '}
+                <code className="text-foreground">{accountExample}</code>
+              </>
+            ) : undefined
+          }
+        >
           <Textarea
             id="is-keys"
             name="keys"
@@ -105,23 +107,26 @@ export function ImportStockForm({
                 : 'XXXXX-XXXXX-XXXXX-XXXXX-11111\nXXXXX-XXXXX-XXXXX-XXXXX-22222'
             }
           />
-        </div>
+        </Field>
 
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="is-batch">Parti (batch) ID — opsiyonel</Label>
+        <Field
+          label="Parti (batch)"
+          htmlFor="is-batch"
+          hint="Opsiyonel — geri çekme / toplu değişim için. Normalde boş bırakın."
+        >
           <Input
             id="is-batch"
             name="batchId"
             defaultValue={defaultBatchId}
             className="max-w-md font-mono text-xs"
-            placeholder="recall/toplu-değiştir için parti UUID (boş bırakılabilir)"
+            placeholder="ör. parti kimliği (boş bırakılabilir)"
           />
-          {defaultBatchId && (
-            <span className="text-xs text-muted-foreground">
-              Bu giriş <code className="text-foreground">{defaultBatchId}</code> partisine bağlanacak.
-            </span>
-          )}
-        </div>
+        </Field>
+        {defaultBatchId && (
+          <p className="text-xs text-muted-foreground">
+            Bu giriş <code className="text-foreground">{defaultBatchId}</code> partisine bağlanacak.
+          </p>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           {/* Gerçek import: name=dryRun value=false → server action commit eder. */}
@@ -134,6 +139,10 @@ export function ImportStockForm({
             Kuru Çalıştır (Önizleme)
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          <strong className="font-medium text-foreground">Kuru Çalıştır (Önizleme):</strong>{' '}
+          Hiçbir şey kaydetmeden doğrular.
+        </p>
 
         {state.error && <p className="text-sm text-destructive">{state.error}</p>}
         {state.ok && state.result && state.result.dryRun && (
@@ -194,8 +203,7 @@ export function ImportStockForm({
       >
         <input type="hidden" name="productId" value={productId} />
         <div className="flex flex-wrap items-end gap-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="is-count">Giriş adedi (tahmini)</Label>
+          <Field label="Tahmini giriş adedi" htmlFor="is-count">
             <Input
               id="is-count"
               name="count"
@@ -209,7 +217,7 @@ export function ImportStockForm({
               className="w-32"
               placeholder="0"
             />
-          </div>
+          </Field>
           <Button type="submit" variant="outline" disabled={previewPending || !productId}>
             <Eye className="size-4" />
             {previewPending ? 'Hesaplanıyor…' : 'Bekleyen talebi önizle'}

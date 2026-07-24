@@ -8,9 +8,10 @@ import {
   type TestConnectionState,
   type UpdateSiteState,
 } from '../actions';
-import { Input, Label } from '../../../components/ui/input';
+import { Input } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
+import { Field, FormSection, FieldRow } from '../../../components/ui/field';
 
 const initial: UpdateSiteState = { ok: false };
 
@@ -51,88 +52,129 @@ export function SiteConfigForm({
 
   return (
     <div className="space-y-4">
-      <form action={action} className="flex flex-wrap items-end gap-3">
+      <form action={action} className="space-y-6">
         <input type="hidden" name="siteId" value={siteId} />
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sc-sender">Gönderen e-posta</Label>
-          <Input
-            id="sc-sender"
-            name="senderEmail"
-            type="email"
-            defaultValue={senderEmail ?? ''}
-            placeholder="varsayılan gönderen"
-            className="w-56"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sc-webhook">Geri kanal webhook URL</Label>
-          <Input
-            id="sc-webhook"
-            name="webhookUrl"
-            type="url"
-            defaultValue={webhookUrl ?? ''}
-            placeholder="webhook devre dışı"
-            className="w-72"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sc-quota">Günlük satış kotası</Label>
-          <Input
-            id="sc-quota"
-            name="salesDailyQuota"
-            type="number"
-            min={1}
-            step={1}
-            defaultValue={salesDailyQuota ?? ''}
-            placeholder="limitsiz"
-            className="w-40"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sc-review-multiplier">Eşik çarpanı (30g-ort × N)</Label>
-          <Input
-            id="sc-review-multiplier"
-            name="reviewMultiplier"
-            type="number"
-            min={1}
-            step={1}
-            defaultValue={reviewMultiplier}
-            className="w-44"
-          />
-        </div>
-        <label
-          htmlFor="sc-dynamic-quota"
-          className="flex h-9 items-center gap-2 text-sm text-foreground/80"
+
+        <FormSection
+          title="Satış kotası"
+          description="Günlük teslimat limiti. Dinamik kotada eşik aşılırsa sipariş reddedilmez; İnceleme Kuyruğu'na alınır (taban 20)."
         >
-          <input
-            id="sc-dynamic-quota"
-            name="dynamicQuotaEnabled"
-            type="checkbox"
-            defaultChecked={dynamicQuotaEnabled}
-            className="size-4 rounded border-border accent-primary"
-          />
-          Dinamik satış kotası
-        </label>
-        <label
-          htmlFor="sc-sandbox"
-          className="flex h-9 items-center gap-2 text-sm text-foreground/80"
+          <FieldRow>
+            <Field
+              label="Günlük satış kotası"
+              htmlFor="sc-quota"
+              hint="Bir günde teslim edilebilecek en fazla sipariş. Boş = limitsiz."
+            >
+              <Input
+                id="sc-quota"
+                name="salesDailyQuota"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={salesDailyQuota ?? ''}
+                placeholder="limitsiz"
+                className="w-full"
+              />
+            </Field>
+            <Field
+              label="İnceleme eşiği çarpanı"
+              htmlFor="sc-review-multiplier"
+              hint="Dinamik kota: son 30 günün günlük ortalamasının kaç katına kadar otomatik teslim edilsin (üstü incelemeye alınır)."
+            >
+              <Input
+                id="sc-review-multiplier"
+                name="reviewMultiplier"
+                type="number"
+                min={1}
+                step={1}
+                defaultValue={reviewMultiplier}
+                className="w-full"
+              />
+            </Field>
+          </FieldRow>
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="sc-dynamic-quota"
+              className="flex items-center gap-2 text-sm font-medium text-foreground"
+            >
+              <input
+                id="sc-dynamic-quota"
+                name="dynamicQuotaEnabled"
+                type="checkbox"
+                defaultChecked={dynamicQuotaEnabled}
+                className="size-4 rounded border-border accent-primary"
+              />
+              Dinamik satış kotası
+            </label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Açıkken sabit kota yerine 30 günlük ortalamaya göre eşik uygulanır.
+            </p>
+          </div>
+        </FormSection>
+
+        <FormSection
+          title="Entegrasyon"
+          description="Teslimat e-postası ve WooCommerce eklentisine geri bildirim ayarları."
         >
-          <input
-            id="sc-sandbox"
-            name="sandbox"
-            type="checkbox"
-            defaultChecked={sandbox}
-            className="size-4 rounded border-border accent-primary"
-          />
-          Sandbox (test modu)
-        </label>
+          <FieldRow>
+            <Field
+              label="Gönderen e-posta"
+              htmlFor="sc-sender"
+              hint="Teslimat maillerinde görünen gönderen. Boş = varsayılan gönderen."
+            >
+              <Input
+                id="sc-sender"
+                name="senderEmail"
+                type="email"
+                defaultValue={senderEmail ?? ''}
+                placeholder="varsayılan gönderen"
+                className="w-full"
+              />
+            </Field>
+            <Field
+              label="Geri kanal webhook URL"
+              htmlFor="sc-webhook"
+              hint="Panel sipariş durumunu bu adrese bildirir (WooCommerce eklentisi)."
+            >
+              <Input
+                id="sc-webhook"
+                name="webhookUrl"
+                type="url"
+                defaultValue={webhookUrl ?? ''}
+                placeholder="webhook devre dışı"
+                className="w-full"
+              />
+            </Field>
+          </FieldRow>
+        </FormSection>
+
+        <FormSection
+          title="Test modu"
+          description="Sandbox açıkken bu siteden gelen siparişler gerçek teslimat üretmez."
+        >
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="sc-sandbox"
+              className="flex items-center gap-2 text-sm font-medium text-foreground"
+            >
+              <input
+                id="sc-sandbox"
+                name="sandbox"
+                type="checkbox"
+                defaultChecked={sandbox}
+                className="size-4 rounded border-border accent-primary"
+              />
+              Sandbox (test modu)
+            </label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Açıkken teslimat mailleri gerçek müşteriye gitmez; entegrasyon testleri için.
+            </p>
+          </div>
+        </FormSection>
+
         <Button type="submit" disabled={pending}>
           {pending ? 'Kaydediliyor…' : 'Kaydet'}
         </Button>
-        <p className="w-full text-xs text-muted-foreground">
-          Açıksa günlük eşik = son 30 günün ortalama günlük siparişi × çarpan (taban 20); eşik
-          aşılırsa sipariş reddedilmez, İnceleme Kuyruğu&apos;na alınır.
-        </p>
       </form>
 
       {state.error && (

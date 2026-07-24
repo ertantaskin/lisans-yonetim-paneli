@@ -15,7 +15,6 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
    define('JETLISANS_PANEL_URL', 'https://api.panel.example');
    define('JETLISANS_API_KEY', 'jl_...');       // panelde site oluşturunca döner
    define('JETLISANS_HMAC_SECRET', '...');       // panelde site oluşturunca döner
-   define('JETLISANS_WEBHOOK_SECRET', '...');    // opsiyonel; yoksa HMAC_SECRET kullanılır
 
 3. Panelde bu site için webhook_url'i şuna ayarlayın:
    https://SITENIZ/wp-json/jetlisans/v1/webhook

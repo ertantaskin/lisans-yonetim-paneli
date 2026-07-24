@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { ReviewTable } from '../../components/review-table';
 import { getReviewQueue, type ReviewRow } from './queries';
@@ -18,7 +18,7 @@ export default async function ReviewPage() {
     <div>
       <PageHeader
         title="İnceleme Kuyruğu"
-        desc="Dinamik satış kotası eşiğini aşan siparişler reddedilmez, manuel onay bekler — Onayla teslimatı başlatır, Reddet siparişi kapatır (müşteriye key gitmez)."
+        description="Dinamik satış kotası eşiğini aşan siparişler reddedilmez, manuel onay bekler — Onayla teslimatı başlatır, Reddet siparişi kapatır (müşteriye key gitmez)."
       />
       {error ? (
         <Card className="p-6">

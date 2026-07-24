@@ -149,6 +149,12 @@ class Jetlisans_Order_Sync {
      */
     public function revoke($order_id) {
         if (!Jetlisans_Settings::is_configured()) return;
+        // Kopya/staging koruması (§7): klon ortamda CANLI panele revoke GÖNDERME. Klon aynı
+        // api_key+hmac_secret VE `_jetlisans_pushed` meta'sını miras alır → is_clone() true olsa
+        // bile revoke aksi halde CANLI panele giderdi; staging'de iade/iptal edilen sipariş GERÇEK
+        // müşterinin prod lisanslarını geri alırdı. push/resync ile aynı guard; retry hook
+        // (jetlisans_retry_revoke) da bu metottan geçtiği için otomatik kapsanır.
+        if (Jetlisans_Settings::is_clone()) return;
         $order = wc_get_order($order_id);
         if (!$order) return;
 
@@ -168,6 +174,14 @@ class Jetlisans_Order_Sync {
         // 200 → geri alındı; 404 → panelde sipariş yok (zaten temiz). İkisi de idempotent tamam.
         if (in_array($res['code'], [200, 404], true)) {
             $order->update_meta_data('_jetlisans_revoked', 'yes');
+            // (§8 held staleness) Terminal durumu yerel meta'ya yansıt (manuel poll beklemeden):
+            // iade/iptal edilen sipariş 'revoked'dır ve varsa "İnceleme bekliyor" işareti artık
+            // geçersizdir → idempotent temizle. Aksi halde refund edilen bir held siparişin bayat
+            // held meta'sı my-account/metabox'ta asılı kalırdı.
+            $order->update_meta_data('_jetlisans_status', 'revoked');
+            if ($order->get_meta('_jetlisans_held_for_review') === 'yes') {
+                $order->delete_meta_data('_jetlisans_held_for_review');
+            }
             $count = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
             $order->add_order_note(sprintf('Jetlisans: %d lisans geri alındı (%s).', $count, $reason));
             $order->save();

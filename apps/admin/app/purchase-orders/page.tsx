@@ -1,4 +1,5 @@
-import { PageHeader, Card } from '@/components/ui';
+import { PageHeader } from '@/components/ui/page-header';
+import { Card, CardContent } from '@/components/ui/card';
 import { CreatePOForm } from '@/components/create-po-form';
 import { PurchaseOrdersTable } from '@/components/purchase-orders-table';
 import { getPurchaseOrders, getPurchaseOrderFormData, type PurchaseOrderRow } from './queries';
@@ -21,16 +22,20 @@ export default async function PurchaseOrdersPage() {
 
   return (
     <div>
-      <PageHeader title="Satın Alma Emirleri" desc="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur (§12)." />
+      <PageHeader title="Satın Alma Emirleri" description="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur (§12)." />
 
       <Card className="mb-5 max-w-3xl">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Emir</h2>
-        <CreatePOForm suppliers={suppliers} products={products} />
+        <CardContent className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Emir</h2>
+          <CreatePOForm suppliers={suppliers} products={products} />
+        </CardContent>
       </Card>
 
       {error ? (
         <Card>
-          <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
+          <CardContent className="p-5">
+            <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
+          </CardContent>
         </Card>
       ) : (
         <PurchaseOrdersTable orders={orders} />

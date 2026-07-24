@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Receipt } from 'lucide-react';
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { ReportsView } from '../../components/reports-view';
 import { getReportsOverview, type ReportsOverview } from './queries';
@@ -20,7 +20,7 @@ export default async function ReportsPage() {
     <div>
       <PageHeader
         title="Raporlar"
-        desc="Sipariş, teslimat, stok ve satış hızı — salt-okunur özet."
+        description="Sipariş, teslimat, stok ve satış hızı — salt-okunur özet."
       />
       <div className="mb-4 -mt-2">
         <Link

@@ -1,8 +1,8 @@
 import { ShieldAlert } from 'lucide-react';
 import { apiGet, type AdminUser } from '../../lib/api';
 import { isOwner } from '../../lib/session';
-import { Card, PageHeader } from '../../components/ui';
-import { EmptyState } from '../../components/ui/page-header';
+import { PageHeader, EmptyState } from '../../components/ui/page-header';
+import { Card, CardContent } from '../../components/ui/card';
 import { CreateAdminForm } from '../../components/create-admin-form';
 import { AdminsTable } from '../../components/admins-table';
 
@@ -14,12 +14,14 @@ export default async function AdminsPage() {
     return (
       <div>
         <PageHeader title="Yöneticiler" />
-        <Card className="py-10">
-          <EmptyState
-            icon={ShieldAlert}
-            title="Yetkiniz yok"
-            description="Admin yönetimi yalnız 'owner' rolündeki yöneticiler içindir."
-          />
+        <Card>
+          <CardContent className="px-5 py-10">
+            <EmptyState
+              icon={ShieldAlert}
+              title="Yetkiniz yok"
+              description="Admin yönetimi yalnız 'owner' rolündeki yöneticiler içindir."
+            />
+          </CardContent>
         </Card>
       </div>
     );
@@ -37,17 +39,21 @@ export default async function AdminsPage() {
     <div>
       <PageHeader
         title="Yöneticiler"
-        desc="Panele erişimi olan adminler. Kullanıcı adı veya e-posta + parola ile giriş yaparlar (§8)."
+        description="Panele erişimi olan adminler. Kullanıcı adı veya e-posta + parola ile giriş yaparlar (§8)."
       />
 
       <Card className="mb-5">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Admin</h2>
-        <CreateAdminForm />
+        <CardContent className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Admin</h2>
+          <CreateAdminForm />
+        </CardContent>
       </Card>
 
       {error ? (
         <Card>
-          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
+          <CardContent className="p-5">
+            <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
+          </CardContent>
         </Card>
       ) : (
         <AdminsTable admins={admins} />

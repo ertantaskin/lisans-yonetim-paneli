@@ -52,6 +52,8 @@ function secondsUntilLocalMidnight(): number {
 export interface BulkStatusItem {
   remoteOrderId: string;
   status: string;
+  /** F4: İnceleme Kuyruğu (held_for_review) bayrağı — WP poll'da terminal/held ayrımı için. */
+  held: boolean;
   fulfilled: number;
   total: number;
 }
@@ -69,6 +71,13 @@ export interface CreateOrderOutcome {
   httpStatus: number;
   body: CreateOrderResponse;
 }
+
+/**
+ * F2 iç sinyali: advisory-lock altında idempotent ikiz bulundu → (henüz yazım yapmamış) tx'i boş
+ * roll-back etmek için fırlatılır; catch bloğu önceden kurulmuş buildOutcome'u DOĞRUDAN döndürür
+ * (kota/hold kararına ulaşılmadan). Diğer hatalardan ayırt edilebilmesi için ayrı sınıf.
+ */
+class DuplicateOrderSignal extends Error {}
 
 @Injectable()
 export class OrdersService {
@@ -164,7 +173,9 @@ export class OrdersService {
     // Kayıt yoksa null. Savunma-filtresi/expired mantığı yukarıda korunur.
     const mailStatus = await this.latestMailStatus(order.id);
 
-    return { orderId: order.id, status: order.status, mailStatus, deliveries };
+    // F4: `held` (heldForReview) alanı — WP eklentisi İnceleme Kuyruğu durumunu (my-account bildirimi/
+    // metabox rozeti) bu bayraktan okur. Eklemeli; mevcut alanlar (status/mailStatus/deliveries) değişmez.
+    return { orderId: order.id, status: order.status, held: order.heldForReview, mailStatus, deliveries };
   }
 
   /** Siparişin en güncel teslimat maili durumu (#32) — yoksa null. */
@@ -202,6 +213,7 @@ export class OrdersService {
     // #7 denetim B: held-dalı bilgisini tx dışına taşı → commit SONRASI 'quota_review' alarmı
     // (security_event) yazılır (reject yoluyla simetri; held artık sessiz değil).
     let heldMeta: { todayCount: number; threshold: number } | null = null;
+    let duplicateOutcome: CreateOrderOutcome | null = null;
     let result: CreateOrderResponse;
     try {
       result = await this.db.transaction(async (tx) => {
@@ -213,6 +225,22 @@ export class OrdersService {
         // retry buraya HİÇ ulaşmaz; yalnız GERÇEKTEN yeni sipariş kotaya sayılır).
         if (site.salesDailyQuota != null || site.dynamicQuotaEnabled) {
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${site.id}))`);
+
+          // F2: kilit ALTINDA idempotency YENİDEN-kontrolü — kota/hold kararından ÖNCE. İki eşzamanlı
+          // aynı-remoteOrderId push'unda 2. istek advisory-lock'u 1.'nin commit+SAYIM'ından SONRA alır;
+          // burada mevcut siparişi görürse kotaya/hold'a BAKMADAN idempotent döner → kabul edilmiş bir
+          // siparişin ikizine kota sınırında SAHTE 429 verilmez (aksi halde evaluateQuota 1. sipariş
+          // sayıldığından reddederdi). Yukarıdaki L212-213 yorumunu ("idempotent retry buraya HİÇ
+          // ulaşmaz") gerçekten sağlar; henüz hiçbir yazım yapılmadığından tx boş roll-back edilir.
+          const [dup] = await tx
+            .select()
+            .from(orders)
+            .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, dto.remoteOrderId)))
+            .limit(1);
+          if (dup) {
+            duplicateOutcome = this.buildOutcome(await this.loadOrderResult(dup));
+            throw new DuplicateOrderSignal();
+          }
         }
 
         // Kota kararı (§5 sert tavan REDDET / §8 dinamik eşik HOLD). Advisory-lock altında.
@@ -451,6 +479,11 @@ export class OrdersService {
         } satisfies CreateOrderResponse;
       });
     } catch (e) {
+      // F2: advisory-lock altında idempotent ikiz bulundu → önceden kurulan yanıtı doğrudan döndür
+      // (tx boş roll-back edildi; kota/hold değerlendirilmedi). (Cast: duplicateOutcome closure içinde
+      // atandığından TS akış-analizi burada null'a sabitliyor — heldMeta ile aynı desen.)
+      const dupOutcome = duplicateOutcome as CreateOrderOutcome | null;
+      if (e instanceof DuplicateOrderSignal && dupOutcome) return dupOutcome;
       // Sert kota aşımı → best-effort security_event (dedupe'lu) + 429'u aynen fırlat.
       // Retry-After başlığını controller (reply erişimi orada) set eder.
       if (e instanceof SalesQuotaExceededException) {
@@ -652,6 +685,8 @@ export class OrdersService {
       .select({
         remoteOrderId: orders.remoteOrderId,
         status: orders.status,
+        // F4: heldForReview groupBy(orders.id) PK'ye fonksiyonel bağımlı → aggregatesiz seçilebilir.
+        held: orders.heldForReview,
         fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)::int`,
         total: sql<number>`coalesce(sum(${orderLines.qty}), 0)::int`,
       })
@@ -663,6 +698,7 @@ export class OrdersService {
     return rows.map((r) => ({
       remoteOrderId: r.remoteOrderId,
       status: r.status,
+      held: r.held,
       fulfilled: Number(r.fulfilled),
       total: Number(r.total),
     }));

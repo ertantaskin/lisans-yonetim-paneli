@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, eq, gte, or, sql } from 'drizzle-orm';
 import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@jetlisans/shared';
 import { DB, type Database } from '../db/db.module';
@@ -91,6 +91,8 @@ export function toPublicSite(row: Site): PublicSite {
 
 @Injectable()
 export class SitesService {
+  private readonly logger = new Logger(SitesService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly crypto: CryptoService,
@@ -195,9 +197,8 @@ export class SitesService {
 
   /**
    * Site operasyon değişikliğini audit_log'a yazar (§9). En iyi çaba: audit yazımı
-   * başarısız olsa bile ana akış (site create/update) BOZULMAZ.
-   * NOT: 'site_update' audit_action enum değeri orkestratörce eklenecek (enums + migration);
-   * eklenene dek yazım sessizce yutulur (aşağıdaki try/catch).
+   * başarısız olsa bile ana akış (site create/update) BOZULMAZ. 'site_update' değeri
+   * audit_action enum'unda mevcut (enums.ts, migration 0010) → doğrudan kullanılır.
    */
   private async writeAudit(
     op: 'create' | 'update',
@@ -206,14 +207,19 @@ export class SitesService {
   ): Promise<void> {
     try {
       await this.db.insert(auditLog).values({
-        action: 'site_update' as unknown as (typeof auditLog.$inferInsert)['action'],
+        action: 'site_update',
         actor: 'panel:admin',
         targetType: 'site',
         targetId: siteId,
         meta: { op, ...meta },
       });
-    } catch {
-      // Audit best-effort — enum değeri henüz yoksa ana akışı bozma (orkestratör tamamlar).
+    } catch (err) {
+      // Audit best-effort: başarısızlık ana akışı (create/update) BOZMAZ, ama artık
+      // sessizce yutulmaz — teşhis için WARN loglanır.
+      this.logger.warn(
+        `Site audit yazılamadı (op=${op}, site=${siteId}): ` +
+          (err instanceof Error ? err.message : String(err)),
+      );
     }
   }
 

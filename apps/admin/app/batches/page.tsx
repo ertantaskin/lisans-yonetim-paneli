@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { BatchesTable } from '../../components/batches-table';
 import { getBatches, type BatchRow } from './queries';
@@ -18,7 +18,7 @@ export default async function BatchesPage() {
     <div>
       <PageHeader
         title="Partiler"
-        desc="Tedarik partileri — satılmamış/satılmış adet ve geri çekme (recall)."
+        description="Tedarik partileri — satılmamış/satılmış adet ve geri çekme (recall)."
       />
       {error ? (
         <Card className="p-6">

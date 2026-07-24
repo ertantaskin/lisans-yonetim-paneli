@@ -161,4 +161,96 @@ describe('AdminOrdersService.replaceAssignment (proaktif değişim + soyağacı)
       BadRequestException,
     );
   });
+
+  it('F1 REGRESYON: all-or-nothing 3/6 satırda tek-birim değişim TAZE key verir (409 DEĞİL)', async () => {
+    // #7 ile eklenen "completeLine all-or-nothing'i onurlandırır" guard'ı, maxUnits verilen SINIRLI
+    // değişim top-up'ını da bloke ediyordu: kısmen teslim (3/6, #16 re-push adet artışıyla erişilebilir)
+    // all-or-nothing satırda tek birim değiştirilince `fulfilled+1 < qty` → taze key serbest bırakılıp
+    // "Değişim için stok yok" 409 atılıyordu; eski key zaten karantinada → müşteri parasını ödediği
+    // lisansı KAYBEDERDİ. F1: hedef sınırlı top-up'ta min(qty, fulfilled+toAssign) → guard artık tetiklenmez.
+    const product = await createProduct(db, {
+      tag,
+      kind: 'key',
+      usageMode: 'single',
+      fulfillmentPolicy: 'all-or-nothing',
+    });
+    // 3 teslim edilmiş ('assigned') + 3 yedek ('available') key — değişim yedek havuzundan seçer.
+    const delivered = await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 3,
+      tag,
+      status: 'assigned',
+      payloadPrefix: 'DELIVERED',
+    });
+    await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 3,
+      tag,
+      payloadPrefix: 'SPARE',
+    });
+
+    // qty=6, fulfilledQty=3 → kısmen dolmuş all-or-nothing satır (3 aktif atama).
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: 6,
+      tag,
+      status: 'partial',
+    });
+    const asgRows = await db
+      .insert(schema.assignments)
+      .values(
+        delivered.map((liId) => ({
+          orderId: order.orderId,
+          lineId: order.lineId,
+          licenseItemId: liId,
+          units: 1,
+          status: 'active' as const,
+          deliveredAt: new Date(),
+        })),
+      )
+      .returning({ id: schema.assignments.id });
+    await db
+      .update(schema.orderLines)
+      .set({ fulfilledQty: 3, status: 'partial' })
+      .where(eq(schema.orderLines.id, order.lineId));
+
+    // Teslim edilmiş bir birimi değiştir → TAZE key atanmalı (regresyondan önce 409 atardı).
+    const targetAsg = asgRows[0]!.id;
+    const res = await admin.replaceAssignment(targetAsg, 'kusurlu key', ACTOR);
+    expect(res.status).toBe('replaced');
+    expect(res.newAssignmentId).toBeTruthy();
+
+    // Eski atama revoked.
+    const [oldAsg] = await db
+      .select({ status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.id, targetAsg))
+      .limit(1);
+    expect(oldAsg!.status).toBe('revoked');
+
+    // Satırda 3 aktif atama (2 kalan + 1 taze), yenisi res.newAssignmentId.
+    const active = await db
+      .select({ id: schema.assignments.id })
+      .from(schema.assignments)
+      .where(
+        and(eq(schema.assignments.lineId, order.lineId), eq(schema.assignments.status, 'active')),
+      );
+    expect(active.length).toBe(3);
+    expect(active.some((a) => a.id === res.newAssignmentId)).toBe(true);
+
+    // Satır canceled DEĞİL (değişim, iade değil), fulfilledQty 3'e döndü, hâlâ partial.
+    const [line] = await db
+      .select({
+        canceled: schema.orderLines.canceled,
+        fulfilledQty: schema.orderLines.fulfilledQty,
+        status: schema.orderLines.status,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.id, order.lineId))
+      .limit(1);
+    expect(line!.canceled).toBe(false);
+    expect(line!.fulfilledQty).toBe(3);
+    expect(line!.status).toBe('partial');
+  });
 });

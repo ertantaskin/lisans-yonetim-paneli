@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { TemplatesTable } from '../../components/templates-table';
@@ -22,7 +22,7 @@ export default async function TemplatesPage() {
       <div className="mb-5 flex items-start justify-between gap-4">
         <PageHeader
           title="Teslimat Şablonları"
-          desc="Mail konusu + gövdesi. Öncelik: site override > ürün > genel varsayılan."
+          description="Mail konusu + gövdesi. Öncelik: site override > ürün > genel varsayılan."
         />
         <Button asChild>
           <Link href="/templates/new">

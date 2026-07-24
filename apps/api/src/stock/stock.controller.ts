@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { StockService } from './stock.service';
 
@@ -39,11 +40,13 @@ export class StockController {
   @Post('import')
   import(
     @Body(new ZodBody(ImportBody)) body: ImportBody,
+    @AdminActor() actor: string,
     @Query('dryRun') dryRunQuery?: string,
   ) {
     // Kuru çalıştırma (§7): body.dryRun VEYA ?dryRun=true|1 → yalnız doğrula, commit etme.
     const dryRun = body.dryRun === true || dryRunQuery === 'true' || dryRunQuery === '1';
-    return this.stock.import(body.productId, body.items, body.batchId, dryRun);
+    // Eylemi yapan admin (x-admin-actor) audit'e düşürülür — 'panel:admin' sabiti yerine gerçek aktör.
+    return this.stock.import(body.productId, body.items, body.batchId, dryRun, actor);
   }
 
   /** "Onayla ve Dağıt" önizleme (§13): bu giriş bekleyen talebi ne kadar karşılar. */

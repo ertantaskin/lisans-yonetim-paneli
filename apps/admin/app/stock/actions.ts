@@ -22,9 +22,13 @@ export interface ImportState {
 
 /**
  * Ürün formundaki alanları API body'sine dönüştürür (create + update ortak).
- * Boş kalan opsiyonel alanlar body'ye HİÇ eklenmez → update'te "değişmedi" anlamına gelir.
+ *
+ * `isUpdate=false` (create): boş kalan opsiyonel alanlar body'ye HİÇ eklenmez → DB default null.
+ * `isUpdate=true`  (update): opsiyonel alanlar HER ZAMAN gönderilir — değer varsa değer, boşsa
+ *   açık `null` → API alanı temizler ("Boş = kapalı" sözü düzenlemede de tutulur; aksi halde eski
+ *   değer inatla kalırdı). Nullable alanlar: validityDays/warrantyDays/lowStockThreshold/keyFormat/releaseAt.
  */
-function buildProductBody(formData: FormData): Record<string, unknown> {
+function buildProductBody(formData: FormData, isUpdate = false): Record<string, unknown> {
   const kind = String(formData.get('kind') || 'key');
   const usageMode = String(formData.get('usageMode') || 'single');
   const num = (k: string): number | undefined => {
@@ -43,21 +47,35 @@ function buildProductBody(formData: FormData): Record<string, unknown> {
     stockless: formData.get('stockless') != null,
   };
   if (usageMode === 'multi') body.maxUses = num('maxUses');
+
   const validityDays = num('validityDays');
-  if (validityDays) body.validityDays = validityDays;
   const warrantyDays = num('warrantyDays');
-  if (warrantyDays !== undefined) body.warrantyDays = warrantyDays;
-  // lowStockThreshold: boş = uyarı KAPALI (body'ye ekleme); 0 dahil geçerli değerdir.
   const lowStockThreshold = num('lowStockThreshold');
-  if (lowStockThreshold !== undefined) body.lowStockThreshold = lowStockThreshold;
   // releaseAt: <input type="datetime-local"> → ISO'ya çevir (API .datetime() ister).
-  const releaseAt = String(formData.get('releaseAt') || '').trim();
-  if (releaseAt) {
-    const d = new Date(releaseAt);
-    if (!Number.isNaN(d.getTime())) body.releaseAt = d.toISOString();
+  const releaseAtRaw = String(formData.get('releaseAt') || '').trim();
+  let releaseAtIso: string | undefined;
+  if (releaseAtRaw) {
+    const d = new Date(releaseAtRaw);
+    if (!Number.isNaN(d.getTime())) releaseAtIso = d.toISOString();
   }
   const keyFormat = String(formData.get('keyFormat') || '').trim();
-  if (keyFormat) body.keyFormat = keyFormat;
+
+  if (isUpdate) {
+    // Update: boş = açık null (temizle); değer varsa gönder. lowStock 0 geçerli değerdir.
+    body.validityDays = validityDays ?? null;
+    body.warrantyDays = warrantyDays ?? null;
+    body.lowStockThreshold = lowStockThreshold ?? null;
+    body.releaseAt = releaseAtIso ?? null;
+    body.keyFormat = keyFormat || null;
+  } else {
+    // Create: boş = atla (DB default null). Davranış create'te değişmedi.
+    if (validityDays) body.validityDays = validityDays;
+    if (warrantyDays !== undefined) body.warrantyDays = warrantyDays;
+    // lowStockThreshold: boş = uyarı KAPALI (body'ye ekleme); 0 dahil geçerli değerdir.
+    if (lowStockThreshold !== undefined) body.lowStockThreshold = lowStockThreshold;
+    if (releaseAtIso) body.releaseAt = releaseAtIso;
+    if (keyFormat) body.keyFormat = keyFormat;
+  }
   // account: payloadSchema client'ta JSON'a serialize edilmiş — parse edip iletiriz.
   if (kind === 'account') {
     const raw = String(formData.get('payloadSchema') || '');
@@ -100,7 +118,12 @@ export async function updateProductAction(
   const id = String(formData.get('id') || '');
   if (!id) return { ok: false, error: 'Ürün ID eksik' };
   try {
-    await apiSend('PATCH', `/v1/admin/products/${id}`, buildProductBody(formData), await getActor());
+    await apiSend(
+      'PATCH',
+      `/v1/admin/products/${id}`,
+      buildProductBody(formData, true),
+      await getActor(),
+    );
     // Düzenleme sheet'i hem /stock listesinde hem ürün detayında açılabilir → ikisini de tazele.
     revalidatePath('/stock');
     revalidatePath(`/products/${id}`);

@@ -74,6 +74,7 @@ export class StockService {
     items: ImportItem[],
     batchId?: string,
     dryRun = false,
+    actor = 'panel:admin',
   ): Promise<ImportResult> {
     const product = await this.products.getById(productId);
 
@@ -181,10 +182,10 @@ export class StockService {
     // duplicates = doğrulamayı geçip DB'de mükerrer (payload_hash) çıkanlar.
     const duplicates = values.length - inserted.length;
 
-    // Sebepli stok değişikliği audit'e düşer (§12).
+    // Sebepli stok değişikliği audit'e düşer (§12). Aktör çağırandan gelir (x-admin-actor).
     await this.db.insert(auditLog).values({
       action: 'import',
-      actor: 'panel:admin',
+      actor,
       targetType: 'product',
       targetId: productId,
       meta: { imported: inserted.length, duplicates, rejected: rejections.length },

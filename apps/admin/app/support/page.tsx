@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SupportTable } from '../../components/support-table';
 import { getReplacements, type ReplacementRow } from './queries';
@@ -18,7 +18,7 @@ export default async function SupportPage() {
     <div>
       <PageHeader
         title="Destek"
-        desc="Değişim/garanti talepleri — onayla (değiştir), reddet veya bilgi iste."
+        description="Değişim/garanti talepleri — onayla (değiştir), reddet veya bilgi iste."
       />
       {error ? (
         <Card className="p-6">

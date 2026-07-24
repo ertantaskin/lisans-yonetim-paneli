@@ -7,9 +7,10 @@ import {
   type FormState,
 } from '../app/stock/actions';
 import type { ProductRow, SiteRow } from '../lib/api';
-import { Input, Label, selectClass } from './ui/input';
+import { Input, selectClass } from './ui/input';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { Field } from './ui/field';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 
 /** GET /v1/admin/mappings yanıt satırı (site domain + ürün adıyla zenginleştirilmiş). */
@@ -52,8 +53,7 @@ export function MappingsManager({
     <div className="space-y-4 text-sm">
       <form action={action} className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="map-site">Site</Label>
+          <Field label="Site" htmlFor="map-site">
             <select id="map-site" name="siteId" required className={`w-full ${selectClass}`}>
               <option value="">— site —</option>
               {sites.map((s) => (
@@ -62,12 +62,11 @@ export function MappingsManager({
                 </option>
               ))}
             </select>
-          </div>
+          </Field>
           {productId ? (
             <input type="hidden" name="productId" value={productId} />
           ) : (
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="map-product">Panel ürünü</Label>
+            <Field label="Panel ürünü" htmlFor="map-product">
               <select id="map-product" name="productId" required className={`w-full ${selectClass}`}>
                 <option value="">— ürün —</option>
                 {(products ?? []).map((p) => (
@@ -76,18 +75,27 @@ export function MappingsManager({
                   </option>
                 ))}
               </select>
-            </div>
+            </Field>
           )}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="map-remote">Woo ürün ID</Label>
+          <Field
+            label="WooCommerce ürün ID"
+            htmlFor="map-remote"
+            hint="Woo'daki ürünün ID'si."
+          >
             <Input id="map-remote" name="remoteProductId" placeholder="ör. 555" required />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="map-variation">Woo varyasyon ID (opsiyonel)</Label>
+          </Field>
+          <Field
+            label="Woo varyasyon ID"
+            htmlFor="map-variation"
+            hint="Yalnız varyasyonlu üründe; yoksa boş."
+          >
             <Input id="map-variation" name="remoteVariationId" placeholder="ör. 556 (yoksa boş)" />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="map-bundle">Paket adedi (1 Woo = N key)</Label>
+          </Field>
+          <Field
+            label="Paket adedi"
+            htmlFor="map-bundle"
+            hint="1 Woo siparişi kaç key teslim etsin (varsayılan 1)."
+          >
             <Input
               id="map-bundle"
               name="bundleQty"
@@ -96,7 +104,7 @@ export function MappingsManager({
               placeholder="varsayılan 1"
               className="w-40"
             />
-          </div>
+          </Field>
         </div>
 
         <Button type="submit" disabled={pending}>
@@ -120,7 +128,7 @@ export function MappingsManager({
               <TableHeader>
                 <TableRow>
                   <TableHead>Site</TableHead>
-                  <TableHead>Remote (ürün · varyasyon)</TableHead>
+                  <TableHead>Woo (ürün · varyasyon)</TableHead>
                   {!productId && <TableHead>Panel ürünü</TableHead>}
                   <TableHead className="text-right">Paket</TableHead>
                   <TableHead>Durum</TableHead>

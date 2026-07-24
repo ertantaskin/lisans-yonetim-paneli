@@ -77,9 +77,14 @@ class Jetlisans_Panel_Client {
         return ['code' => $code, 'body' => is_array($decoded) ? $decoded : []];
     }
 
-    /** Gelen webhook imzasını doğrular (§2). */
+    /**
+     * Gelen webhook imzasını doğrular (§2). Panel geri-kanal webhook'ları YALNIZ sitenin
+     * HMAC secret'iyle imzalar — ayrı bir "webhook secret" API'de YOKTUR. Bu yüzden doğrulama
+     * her zaman `Jetlisans_Settings::hmac_secret()` kullanır (ayrı knob kaldırıldı; tanımlansa
+     * panelin imzasıyla eşleşmez ve tüm gelen webhook'lar 401 olurdu).
+     */
     public static function verify_webhook($method, $path, $ts, $nonce, $body_str, $signature) {
-        $secret = defined('JETLISANS_WEBHOOK_SECRET') ? JETLISANS_WEBHOOK_SECRET : Jetlisans_Settings::hmac_secret();
+        $secret = Jetlisans_Settings::hmac_secret();
         // Zaman penceresi ±300sn (replay).
         if (abs(time() - (int) $ts) > 300) return false;
         $payload = strtoupper($method) . "\n" . self::canonical_path($path) . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $body_str);

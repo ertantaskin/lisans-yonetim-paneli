@@ -16,7 +16,7 @@ import {
   Link2,
   Pencil,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -30,6 +30,13 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { ApiError, apiGet, type SiteRow } from '../../../lib/api';
+import {
+  productTypeSummary,
+  fulfillmentPolicyLabel,
+  stockStateLabel,
+  supplyStatusLabel,
+  adjustmentActionLabel,
+} from '../../../lib/labels';
 import { getProductDetail, type ProductDetail } from './queries';
 import { StockAdjustForm } from './stock-adjust-form';
 import { ProductEditSheet } from '../../../components/product-edit-sheet';
@@ -37,14 +44,6 @@ import { ImportStockForm } from '../../../components/import-stock-form';
 import { MappingsManager } from '../../../components/mappings-manager';
 
 export const dynamic = 'force-dynamic';
-
-/** Ürün tip etiketi: kind + (multi ise) kapasite + geçerlilik (products-table ile aynı dil). */
-function typeLabel(p: ProductDetail['product']): string {
-  const parts: string[] = [p.kind];
-  if (p.usageMode === 'multi') parts.push(`MAK×${p.maxUses ?? '?'}`);
-  if (p.validityDays) parts.push(`${p.validityDays}g`);
-  return parts.join(' · ');
-}
 
 /** Parti/PO durumu → rozet varyantı (StatusBadge bu statüleri bilmez → yerel eşleme). */
 const STATUS_VARIANT: Record<string, 'neutral' | 'warning' | 'success' | 'danger' | 'outline'> = {
@@ -59,7 +58,7 @@ const STATUS_VARIANT: Record<string, 'neutral' | 'warning' | 'success' | 'danger
 };
 
 function StateBadge({ status }: { status: string }) {
-  return <Badge variant={STATUS_VARIANT[status] ?? 'neutral'}>{status}</Badge>;
+  return <Badge variant={STATUS_VARIANT[status] ?? 'neutral'}>{supplyStatusLabel(status)}</Badge>;
 }
 
 const dtFmt = (iso: string) =>
@@ -126,9 +125,9 @@ export default async function ProductDetailPage({
             <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span className="font-mono text-xs">{product.sku}</span>
               <span aria-hidden>·</span>
-              <span>{typeLabel(product)}</span>
+              <span>{productTypeSummary(product)}</span>
               <span aria-hidden>·</span>
-              <span>{product.fulfillmentPolicy}</span>
+              <span>{fulfillmentPolicyLabel(product.fulfillmentPolicy)}</span>
             </div>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -152,40 +151,46 @@ export default async function ProductDetailPage({
       </div>
 
       {/* Stok kırılımı */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatTile
-          label="Available"
-          value={stock.available}
-          icon={Boxes}
-          tone={stock.available > 0 ? 'success' : 'danger'}
-          hint="kalan kapasite"
-        />
-        <StatTile label="Assigned" value={stock.assigned} icon={KeyRound} tone="accent" />
-        <StatTile label="Revoked" value={stock.revoked} icon={Ban} tone="neutral" />
-        <StatTile label="Expired" value={stock.expired} icon={Clock} tone="neutral" />
-        <StatTile label="Voided" value={stock.voided} icon={ShieldAlert} tone="neutral" />
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground">Stok durumu</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <StatTile
+            label={stockStateLabel('available')}
+            value={stock.available}
+            icon={Boxes}
+            tone={stock.available > 0 ? 'success' : 'danger'}
+            hint="kalan kapasite"
+          />
+          <StatTile label={stockStateLabel('assigned')} value={stock.assigned} icon={KeyRound} tone="accent" />
+          <StatTile label={stockStateLabel('revoked')} value={stock.revoked} icon={Ban} tone="neutral" />
+          <StatTile label={stockStateLabel('expired')} value={stock.expired} icon={Clock} tone="neutral" />
+          <StatTile label={stockStateLabel('voided')} value={stock.voided} icon={ShieldAlert} tone="neutral" />
+        </div>
       </div>
 
       {/* Satış hızı */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="7 Gün Satış" value={velocity.sold7d} icon={TrendingUp} tone="neutral" />
-        <StatTile label="30 Gün Satış" value={velocity.sold30d} icon={TrendingUp} tone="neutral" />
-        <StatTile
-          label="Günlük Ort."
-          value={velocity.dailyRate}
-          icon={TrendingUp}
-          tone="neutral"
-          hint="son 30 gün / 30"
-        />
-        <StatTile
-          label="Tükenme"
-          value={velocity.daysRemaining != null ? `${velocity.daysRemaining} gün` : '—'}
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-foreground">Satış & tükenme</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatTile label="7 günlük satış" value={velocity.sold7d} icon={TrendingUp} tone="neutral" />
+          <StatTile label="30 günlük satış" value={velocity.sold30d} icon={TrendingUp} tone="neutral" />
+          <StatTile
+            label="Günlük ortalama"
+            value={velocity.dailyRate}
+            icon={TrendingUp}
+            tone="neutral"
+            hint="son 30 gün / 30"
+          />
+          <StatTile
+            label="Tahmini tükenme"
+            value={velocity.daysRemaining != null ? `${velocity.daysRemaining} gün` : '—'}
           icon={Clock}
           tone={
             velocity.daysRemaining != null && velocity.daysRemaining <= 7 ? 'warning' : 'neutral'
           }
           hint={velocity.daysRemaining == null ? 'tahmin edilemez' : undefined}
         />
+        </div>
       </div>
 
       {/* Key/Stok import — ürün-merkezli (ürün SABİT, dropdown yok). ?batchId= ön-doldurur. */}
@@ -194,6 +199,9 @@ export default async function ProductDetailPage({
           <CardTitle className="flex items-center gap-2">
             <Upload className="size-4 text-muted-foreground" /> Key / Stok İçe Aktar
           </CardTitle>
+          <CardDescription>
+            Bu ürüne yeni key/hesap ekleyin. &apos;Kuru Çalıştır&apos; ile önce güvenle doğrulayın.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <ImportStockForm
@@ -210,6 +218,9 @@ export default async function ProductDetailPage({
           <CardTitle className="flex items-center gap-2">
             <Link2 className="size-4 text-muted-foreground" /> Site Eşlemeleri
           </CardTitle>
+          <CardDescription>
+            Bu ürünü WooCommerce ürün/varyasyonlarına bağlayın. Sipariş bu eşleme ile teslim edilir.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <MappingsManager productId={product.id} sites={sites} mappings={data.mappings} />
@@ -223,10 +234,17 @@ export default async function ProductDetailPage({
             <CardTitle className="flex items-center gap-2">
               <Package className="size-4 text-muted-foreground" /> Partiler
             </CardTitle>
+            <CardDescription>
+              Tedarikçiden gelen stok partileri (geri çekme bu partiler üzerinden yapılır).
+            </CardDescription>
           </CardHeader>
           <CardContent className={batches.length === 0 ? '' : 'p-0'}>
             {batches.length === 0 ? (
-              <EmptyState icon={Package} title="Parti yok" />
+              <EmptyState
+                icon={Package}
+                title="Parti yok"
+                description="Bu ürün için henüz tedarik partisi kaydı yok."
+              />
             ) : (
               <Table>
                 <TableHeader>
@@ -260,10 +278,15 @@ export default async function ProductDetailPage({
             <CardTitle className="flex items-center gap-2">
               <Truck className="size-4 text-muted-foreground" /> Satın Alma Emirleri
             </CardTitle>
+            <CardDescription>Bu ürün için açık/kapalı tedarik siparişleri.</CardDescription>
           </CardHeader>
           <CardContent className={purchaseOrders.length === 0 ? '' : 'p-0'}>
             {purchaseOrders.length === 0 ? (
-              <EmptyState icon={Truck} title="Satın alma emri yok" />
+              <EmptyState
+                icon={Truck}
+                title="Satın alma emri yok"
+                description="Açık satın alma emri yok."
+              />
             ) : (
               <Table>
                 <TableHeader>
@@ -306,6 +329,9 @@ export default async function ProductDetailPage({
           <CardTitle className="flex items-center gap-2">
             <Wrench className="size-4 text-muted-foreground" /> Stok Düzeltme Ekle
           </CardTitle>
+          <CardDescription>
+            Manuel stok düzeltmesi (void/hasar/geri çekme) — sebep zorunlu, denetime yazılır.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <StockAdjustForm productId={product.id} />
@@ -318,10 +344,15 @@ export default async function ProductDetailPage({
           <CardTitle className="flex items-center gap-2">
             <Wrench className="size-4 text-muted-foreground" /> Stok Düzeltmeleri
           </CardTitle>
+          <CardDescription>Geçmiş manuel düzeltme kayıtları.</CardDescription>
         </CardHeader>
         <CardContent className={adjustments.length === 0 ? '' : 'p-0'}>
           {adjustments.length === 0 ? (
-            <EmptyState icon={ClipboardList} title="Düzeltme kaydı yok" />
+            <EmptyState
+              icon={ClipboardList}
+              title="Düzeltme kaydı yok"
+              description="Henüz manuel düzeltme yapılmadı."
+            />
           ) : (
             <Table>
               <TableHeader>
@@ -336,7 +367,7 @@ export default async function ProductDetailPage({
                 {adjustments.map((a) => (
                   <TableRow key={a.id} className="align-top">
                     <TableCell>
-                      <Badge variant="outline">{a.action}</Badge>
+                      <Badge variant="outline">{adjustmentActionLabel(a.action)}</Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {a.qty}

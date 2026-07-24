@@ -103,6 +103,14 @@ class Jetlisans_Report_Issue {
             self::redirect_back($back, 'short');
         }
 
+        // Kopya/staging koruması (§7): klon ortamda CANLI panele değişim talebi
+        // (POST /v1/replacements) GÖNDERME. Klon aynı api_key+hmac_secret'i miras aldığından
+        // istek gerçek panelde geçerli bir talep açardı — push/resync/revoke ile aynı guard.
+        // Talep iletilmediği için dürüstçe 'error' bildirimiyle geri dön.
+        if (Jetlisans_Settings::is_clone()) {
+            self::redirect_back($back, 'error');
+        }
+
         $body = [
             'remoteOrderId' => (string) $order_id,
             'reason'        => $reason,

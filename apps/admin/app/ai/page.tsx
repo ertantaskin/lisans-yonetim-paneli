@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { AiPanel } from './ai-panel';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,7 @@ export default function AiPage() {
     <div>
       <PageHeader
         title="AI Operasyon"
-        desc="Doğal dilde rapor, günlük anomali özeti ve destek triyajı — AI önerir, insan onaylar (§15)."
+        description="Doğal dilde rapor, günlük anomali özeti ve destek triyajı — AI önerir, insan onaylar (§15)."
       />
       <AiPanel />
     </div>

@@ -16,6 +16,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
+import { eventTypeLabel } from '../../../lib/labels';
 import { CompleteLineButton, AssignmentActions, ResendButton } from './order-actions';
 
 /** ISO tarihi tr-TR biçimler; süresi geçmişse amber vurgu bilgisi döner. */
@@ -220,7 +221,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 {events.map((e) => (
                   <li key={e.id} className="relative">
                     <span className="absolute -left-[1.6rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
-                    <div className="text-sm font-medium text-foreground">{e.type}</div>
+                    <div className="text-sm font-medium text-foreground">{eventTypeLabel(e.type)}</div>
                     {e.message && <div className="text-sm text-muted-foreground">{e.message}</div>}
                     <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
                       {new Date(e.createdAt).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}

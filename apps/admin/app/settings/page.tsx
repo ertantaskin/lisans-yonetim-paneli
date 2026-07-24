@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SettingsView } from '../../components/settings-view';
 import { getSystemStatus, type SystemStatus } from './queries';
@@ -22,7 +22,7 @@ export default async function SettingsPage() {
     <div>
       <PageHeader
         title="Ayarlar"
-        desc="Sistem durumu ve ortam yapılandırması — salt-okunur (sır gösterilmez)."
+        description="Sistem durumu ve ortam yapılandırması — salt-okunur (sır gösterilmez)."
       />
       {error || !data ? (
         <Card className="p-6">

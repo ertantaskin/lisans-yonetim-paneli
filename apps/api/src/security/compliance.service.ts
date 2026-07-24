@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 
 export interface AnonymizeResult {
   anonymizedOrders: number;
@@ -41,40 +42,40 @@ export class ComplianceService {
 
     return this.db.transaction(async (tx) => {
       // orders.customer_email maskele (lowercase eşleştir; zaten maskeliyse etkilenmez).
-      const orderRows = await tx.execute<{ id: string }>(sql`
+      const orderRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE orders
         SET customer_email = ${redacted}, updated_at = now()
         WHERE lower(customer_email) = ${normalized}
         RETURNING id;
       `);
-      const anonymizedOrders = (orderRows as unknown as Array<{ id: string }>).length;
+      const anonymizedOrders = orderRows.length;
 
       // replacement_requests.customer_email maskele.
-      const replRows = await tx.execute<{ id: string }>(sql`
+      const replRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE replacement_requests
         SET customer_email = ${redacted}, updated_at = now()
         WHERE lower(customer_email) = ${normalized}
         RETURNING id;
       `);
-      const anonymizedReplacements = (replRows as unknown as Array<{ id: string }>).length;
+      const anonymizedReplacements = replRows.length;
 
       // email_log.to_email de PII taşır (§9): teslimat mailleri gerçek müşteri e-postasını
       // saklar → anonimleştirmede ATLANIRSA unutulma hakkı eksik kalır (audit bulgusu).
       // to_email maskele + konuda geçen e-postayı best-effort değiştir (email_log gövde kolonu yok).
-      const emailRows = await tx.execute<{ id: string }>(sql`
+      const emailRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE email_log
         SET to_email = ${redacted},
             subject = replace(replace(subject, ${original}, ${redacted}), ${normalized}, ${redacted})
         WHERE lower(to_email) = ${normalized}
         RETURNING id;
       `);
-      const anonymizedEmails = (emailRows as unknown as Array<{ id: string }>).length;
+      const anonymizedEmails = emailRows.length;
 
       // customers profil satırını sil (kalıcı meta — etiket/not — PII taşır).
       await tx.execute(sql`DELETE FROM customers WHERE lower(email) = ${normalized};`);
 
       // KVKK silme isteği kritik aksiyon → audit'e düş (§9). Ham e-posta LOGLANMAZ; yalnız maske.
-      // NOT: audit_action enum'una 'anonymize' değeri EKLENMELİ (orkestratör: shared + enums.ts + migration).
+      // 'anonymize' değeri audit_action enum'unda mevcut (enums.ts, migration 0010).
       const auditMeta = JSON.stringify({ anonymizedOrders, anonymizedReplacements, anonymizedEmails });
       await tx.execute(sql`
         INSERT INTO audit_log (action, actor, target_type, target_id, meta)

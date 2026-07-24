@@ -5,8 +5,10 @@ import {
   createStockAdjustmentAction,
   initialStockAdjustState,
 } from './actions';
-import { Input, Label, Textarea, selectClass } from '../../../components/ui/input';
+import { Input, Textarea, selectClass } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
+import { Field } from '../../../components/ui/field';
+import { adjustmentActionLabel } from '../../../lib/labels';
 
 /**
  * Manuel stok düzeltme formu (§12). Aksiyon + adet + (ops.) lisans satırı id + ZORUNLU sebep.
@@ -23,17 +25,15 @@ export function StockAdjustForm({ productId }: { productId: string }) {
       <input type="hidden" name="productId" value={productId} />
 
       <div className="flex flex-wrap gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="adj-action">Aksiyon</Label>
+        <Field label="İşlem türü" htmlFor="adj-action">
           <select id="adj-action" name="action" defaultValue="correct" className={`${selectClass} w-44`}>
-            <option value="correct">düzeltme</option>
-            <option value="void">iptal (void)</option>
-            <option value="damage">hasar</option>
-            <option value="recall">geri çekme</option>
+            <option value="correct">{adjustmentActionLabel('correct')}</option>
+            <option value="void">{adjustmentActionLabel('void')} (void)</option>
+            <option value="damage">{adjustmentActionLabel('damage')}</option>
+            <option value="recall">{adjustmentActionLabel('recall')}</option>
           </select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="adj-qty">Adet</Label>
+        </Field>
+        <Field label="Adet" htmlFor="adj-qty">
           <Input
             id="adj-qty"
             name="qty"
@@ -43,21 +43,28 @@ export function StockAdjustForm({ productId }: { productId: string }) {
             defaultValue={0}
             className="w-32"
           />
-        </div>
+        </Field>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="adj-item">Lisans satırı id (ops. — void/hasar için)</Label>
+      <Field
+        label="Lisans satırı (opsiyonel)"
+        htmlFor="adj-item"
+        hint="Void/hasar için ilgili key satırının kimliği. Genel düzeltmede boş bırakın."
+      >
         <Input
           id="adj-item"
           name="licenseItemId"
-          placeholder="satılabilir lisans satırının UUID'i"
+          placeholder="ör. lisans satırı kimliği"
           className="max-w-md font-mono text-xs"
         />
-      </div>
+      </Field>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="adj-reason">Sebep (zorunlu)</Label>
+      <Field
+        label="Sebep"
+        htmlFor="adj-reason"
+        required
+        hint="Denetim (audit) kaydına yazılır."
+      >
         <Textarea
           id="adj-reason"
           name="reason"
@@ -66,7 +73,7 @@ export function StockAdjustForm({ productId }: { productId: string }) {
           placeholder="ör. tedarikçi partisi bozuk — 3 key kullanılamaz"
           className="max-w-md"
         />
-      </div>
+      </Field>
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pending}>

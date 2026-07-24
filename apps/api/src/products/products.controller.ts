@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AccountPayloadSchema } from '@jetlisans/shared';
 import { AdminGuard } from '../auth/admin.guard';
@@ -45,7 +45,16 @@ const CreateProductBody = ProductObject
 type CreateProductBody = z.infer<typeof CreateProductBody>;
 
 // Kısmi güncelleme: tüm alanlar opsiyonel; verilmeyen alan değişmez (default TETİKLENMEZ).
-const UpdateProductBody = ProductObject.partial();
+// Opsiyonel alanlar ayrıca .nullable(): admin bir alanı boşaltıp kaydedince (explicit null)
+// kolon TEMİZLENİR (unset); alan hiç yoksa değişmez. CREATE (CreateProductBody) etkilenmez —
+// yalnız güncelleme yolu null'ı "temizle" olarak kabul eder.
+const UpdateProductBody = ProductObject.partial().extend({
+  validityDays: z.number().int().positive().nullable().optional(),
+  warrantyDays: z.number().int().nonnegative().nullable().optional(),
+  lowStockThreshold: z.number().int().nonnegative().nullable().optional(),
+  keyFormat: z.string().nullable().optional(),
+  releaseAt: z.string().datetime().nullable().optional(),
+});
 type UpdateProductBody = z.infer<typeof UpdateProductBody>;
 
 const CreateMappingBody = z.object({
@@ -90,11 +99,6 @@ export class ProductsController {
     return this.products.getDetail(id);
   }
 
-  @Get('mappings')
-  listMappings(@Query('siteId') siteId?: string) {
-    return this.products.listMappings(siteId);
-  }
-
   @Post('mappings')
   createMapping(@Body(new ZodBody(CreateMappingBody)) body: CreateMappingBody) {
     return this.products.createMapping(body);
@@ -111,12 +115,16 @@ export class ProductsController {
   /**
    * ISO tarih string alanlarını (releaseAt) Date'e çevirir — Drizzle timestamp
    * kolonu Date bekler. Diğer alanlar aynen geçer; verilmeyen alan yok olur.
+   * Explicit null (güncellemede "temizle") null olarak geçirilir — new Date(null)
+   * epoch üretirdi, o yüzden null ayrı ele alınır.
    */
-  private toDbInput<T extends { releaseAt?: string }>(body: T) {
+  private toDbInput<T extends { releaseAt?: string | null }>(body: T) {
     const { releaseAt, ...rest } = body;
     return {
       ...rest,
-      ...(releaseAt !== undefined ? { releaseAt: new Date(releaseAt) } : {}),
+      ...(releaseAt !== undefined
+        ? { releaseAt: releaseAt === null ? null : new Date(releaseAt) }
+        : {}),
     };
   }
 }

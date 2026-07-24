@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { CustomersTable } from '../../components/customers-table';
 import { getCustomers, type CustomerRow } from './queries';
@@ -18,7 +18,7 @@ export default async function CustomersPage() {
     <div>
       <PageHeader
         title="Müşteriler"
-        desc="Sipariş/atama geçmişi, değişim oranı ve etiketler — ara, filtrele, sırala."
+        description="Sipariş/atama geçmişi, değişim oranı ve etiketler — ara, filtrele, sırala."
       />
       {error ? (
         <Card className="p-6">

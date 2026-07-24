@@ -20,6 +20,7 @@ import {
   licenseItems,
   orderLines,
   orders,
+  orderStatusEnum,
   products,
   sites,
   type Site,
@@ -231,16 +232,20 @@ export class AdminOrdersService {
   }
 
   async list(status?: string) {
-    const base = this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(200);
-    const rows = status
-      ? await this.db
-          .select()
-          .from(orders)
-          .where(eq(orders.status, status as never))
-          .orderBy(desc(orders.createdAt))
-          .limit(200)
-      : await base;
-    return rows;
+    if (!status) {
+      return this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(200);
+    }
+    // F5: doğrulanmamış ?status= değeri (`as never` cast'iyle) pg-enum karşılaştırmasına ulaşıp
+    // "invalid input value for enum" → 500 üretiyordu. Enum üyeliğini SORGUDAN ÖNCE doğrula: geçerli
+    // değilse boş sonuç (tip 'find' ile daraltılır → eq'de cast gerekmez, üyelik tip düzeyinde zorlanır).
+    const match = orderStatusEnum.enumValues.find((v) => v === status);
+    if (!match) return [];
+    return this.db
+      .select()
+      .from(orders)
+      .where(eq(orders.status, match))
+      .orderBy(desc(orders.createdAt))
+      .limit(200);
   }
 
   /** Bekleyen Teslimatlar ana ekranı (§13): pending/partial siparişler. */
@@ -563,14 +568,44 @@ export class AdminOrdersService {
     // kuyruktan ÇIKARILMALI — aksi halde admin sonradan 'Onayla' derse iade edilmiş siparişe
     // BEDAVA lisans teslim edilir (§2 "iade edilen hak dönmez" ilkesinin tersi). rejectHeld
     // idempotenttir + advisory-lock altında CAS yapar → held ise kapatır (satırlar canceled,
-    // status revoked), release ile yarışı kaybettiyse no-op. Ardından aktif atamalar da geri
-    // alınır (release yarışını kazanıp teslim edilmiş key varsa o da iade edilir).
+    // status revoked), release ile yarışı kaybettiyse no-op. rejectHeld'i AŞAĞIDAKİ advisory-tx'in
+    // DIŞINDA çağırırız: rejectHeld aynı advisory kilidini AYRI bir tx/bağlantıda alır; iç içe alım
+    // aynı-anahtar deadlock'u yaratır (dış tx kilidi tutar, iç tx onu bekler → kilitlenme).
     if (order.heldForReview) {
       await this.rejectHeld(order.id, reason, actor);
     }
 
-    // AKTİF atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor).
-    // Site scope order üzerinden zaten doğrulandı; atamalar bu siparişe bağlı.
+    // F3 (§2 iade ↔ releaseHeld yarışı): releaseHeld held bayrağını (advisory-lock'lu) tx'te temizler
+    // ama teslimatı (completeLine) kilit DIŞINDA yapar. İade tam bu pencerede gelirse held=false görüp
+    // hiç aktif atama bulamaz (henüz yazılmadı) → NO-OP → ardından completeLine iade edilmiş siparişe
+    // CANLI atama yazar. Kapatma: advisory-lock + order FOR UPDATE altında held'i YENİDEN oku ve TÜM
+    // satırları terminal 'canceled' işaretle ("durable refund marker" + status→revoked). Bu işaret
+    //   (a) eşzamanlı completeLine'ı DURDURUR: o da satırı FOR UPDATE ile okur → canceled → NOOP;
+    //   (b) commit-SONRASI aktif-atama taraması, completeLine bu satırı iade'den ÖNCE yazmışsa (satır
+    //       row-lock'u iki yolu serileştirir: ya cancel-önce=noop, ya insert-önce=görülür) onu YAKALAR.
+    await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${order.id}))`);
+      const [fresh] = await tx
+        .select()
+        .from(orders)
+        .where(eq(orders.id, order.id))
+        .limit(1)
+        .for('update');
+      if (!fresh) return;
+      // Savunma: rejectHeld yarışı kaybettiyse (held hâlâ true) bayrağı burada da kapat.
+      if (fresh.heldForReview) {
+        await tx
+          .update(orders)
+          .set({ heldForReview: false, updatedAt: new Date() })
+          .where(eq(orders.id, order.id));
+      }
+      await tx.update(orderLines).set({ canceled: true }).where(eq(orderLines.orderId, order.id));
+      await recomputeOrderStatus(tx, order.id);
+    });
+
+    // AKTİF atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor). Tarama advisory-tx
+    // COMMIT'inden SONRA → completeLine'ın (row-lock nedeniyle iade'den önce commit'lediği) atamaları
+    // da bu kümede görünür. revokeAssignment tek→karantina, multi→kapasite geri (idempotent 'already').
     const active = await this.db
       .select({ id: assignments.id })
       .from(assignments)
@@ -646,6 +681,30 @@ export class AdminOrdersService {
       .where(eq(orderLines.orderId, orderId));
     for (const l of lines) {
       if (l.productId && !l.canceled) await this.fulfillment.completeLine(l.id);
+    }
+
+    // F3 (defense-in-depth): teslimat penceresinde sipariş iade/iptal edilmiş olabilir —
+    // revokeOrderForSite advisory-lock altında TÜM satırları canceled + status='revoked' yapar.
+    // Ana güvence revokeOrderForSite tarafında (satır row-lock'u completeLine ile serileşir); bu ek
+    // kat: sipariş bu arada 'revoked' olduysa BU teslimatta açılmış aktif atamaları geri al → iade
+    // edilmiş siparişte canlı key kalmaz (§2). Normal (iade yok) akışta status fulfilled/partial → no-op.
+    const [afterState] = await this.db
+      .select({ status: orders.status })
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .limit(1);
+    if (afterState?.status === 'revoked') {
+      const stray = await this.db
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+      for (const a of stray) {
+        await this.revokeAssignment(
+          a.id,
+          'İade/iptal ile yarış — teslimat geri alındı',
+          actor,
+        ).catch(() => undefined);
+      }
     }
 
     await this.db.insert(fulfillmentEvents).values({

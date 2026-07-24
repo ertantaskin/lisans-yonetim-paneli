@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SecurityTable } from '../../components/security-table';
 import { getSecurityEvents, type SecurityEventRow } from './queries';
@@ -18,7 +18,7 @@ export default async function SecurityPage() {
     <div>
       <PageHeader
         title="Güvenlik"
-        desc="Velocity/kota/anomali olayları — insan onaylar (§15). Otomatik askıya alma yok."
+        description="Velocity/kota/anomali olayları — insan onaylar (§15). Otomatik askıya alma yok."
       />
       {error ? (
         <Card className="p-6">

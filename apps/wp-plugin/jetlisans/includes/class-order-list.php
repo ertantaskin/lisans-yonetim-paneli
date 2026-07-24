@@ -66,20 +66,29 @@ class Jetlisans_Order_List {
     /** Hücre içeriği — yalnız durum + teslim sayacı (payload YOK). */
     private function render_cell($order) {
         if (!is_a($order, 'WC_Order')) return;
-        $status = $order->get_meta('_jetlisans_panel_status');
+        // Panel-poll meta'sı (`_jetlisans_panel_status`) YALNIZ manuel toplu-poll ile yazılır ve
+        // teslim sayaçlarını (fulfilled/total) taşır. Ancak gerçek-zamanlı geri-kanal webhook'lar
+        // `_jetlisans_status`'a yazar → poll'suz kolon bayat kalırdı. Poll verisini TERCİH et,
+        // yoksa webhook-güdümlü `_jetlisans_status`'a düş (metabox uzlaştırmasını aynalar).
+        $panel_status = $order->get_meta('_jetlisans_panel_status');
+        $has_poll = !($panel_status === '' || $panel_status === null);
+        $status = $has_poll ? $panel_status : $order->get_meta('_jetlisans_status');
         if ($status === '' || $status === null) {
-            // Henüz sorgulanmadı; panele iletilip iletilmediğini göster.
+            // Henüz sorgulanmadı ve webhook durumu da yok; panele iletilip iletilmediğini göster.
             $pushed = $order->get_meta('_jetlisans_pushed') === 'yes';
             echo $pushed
                 ? '<span style="color:#888">' . esc_html__('sorgulanmadı', 'jetlisans') . '</span>'
                 : '<span style="color:#bbb">&mdash;</span>';
             return;
         }
-        $fulfilled = (int) $order->get_meta('_jetlisans_panel_fulfilled');
-        $total     = (int) $order->get_meta('_jetlisans_panel_total');
         echo '<span>' . esc_html(self::status_label($status)) . '</span>';
-        if ($total > 0) {
-            echo ' <small>(' . intval($fulfilled) . '/' . intval($total) . ')</small>';
+        // Teslim sayacı YALNIZ panel-poll verisi varken anlamlı (webhook durumu sayaç taşımaz).
+        if ($has_poll) {
+            $fulfilled = (int) $order->get_meta('_jetlisans_panel_fulfilled');
+            $total     = (int) $order->get_meta('_jetlisans_panel_total');
+            if ($total > 0) {
+                echo ' <small>(' . intval($fulfilled) . '/' . intval($total) . ')</small>';
+            }
         }
     }
 

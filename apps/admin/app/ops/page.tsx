@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { DeadLetterTable } from '../../components/dead-letter-table';
 import { MaintenanceCard } from './maintenance-card';
@@ -19,7 +19,7 @@ export default async function OpsPage() {
     <div>
       <PageHeader
         title="Dead-letter"
-        desc="Başarısız geri-kanal webhook olayları ve mail teslimleri — tek tıkla yeniden kuyruğa al."
+        description="Başarısız geri-kanal webhook olayları ve mail teslimleri — tek tıkla yeniden kuyruğa al."
       />
       <MaintenanceCard />
       {error ? (

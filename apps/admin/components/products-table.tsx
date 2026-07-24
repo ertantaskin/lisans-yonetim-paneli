@@ -5,19 +5,12 @@ import { ArrowRight, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn } from '../lib/utils';
 import type { ProductRow } from '../lib/api';
+import { productKindLabel, productTypeSummary, fulfillmentPolicyLabel } from '../lib/labels';
 import { Button } from './ui/button';
 import { ProductEditSheet } from './product-edit-sheet';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
-
-/** Ürün tip etiketi: kind + (multi ise) kapasite + geçerlilik. */
-function typeLabel(p: ProductRow): string {
-  const parts = [p.kind];
-  if (p.usageMode === 'multi') parts.push(`MAK×${p.maxUses ?? '?'}`);
-  if (p.validityDays) parts.push(`${p.validityDays}g`);
-  return parts.join(' · ');
-}
 
 const columns: ColumnDef<ProductRow>[] = [
   {
@@ -49,14 +42,18 @@ const columns: ColumnDef<ProductRow>[] = [
     accessorKey: 'kind',
     meta: { title: 'Tip' },
     header: 'Tip',
-    cell: ({ row }) => <span className="text-xs text-muted-foreground">{typeLabel(row.original)}</span>,
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">{productTypeSummary(row.original)}</span>
+    ),
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
   {
     accessorKey: 'fulfillmentPolicy',
     meta: { title: 'Politika' },
     header: 'Politika',
-    cell: ({ row }) => <span className="text-muted-foreground">{row.original.fulfillmentPolicy}</span>,
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{fulfillmentPolicyLabel(row.original.fulfillmentPolicy)}</span>
+    ),
   },
   {
     accessorKey: 'availableStock',
@@ -72,8 +69,8 @@ const columns: ColumnDef<ProductRow>[] = [
             className={cn('font-medium tabular-nums', s > 0 ? 'text-success' : 'text-destructive')}
             title={
               row.original.usageMode === 'multi'
-                ? 'kalan kapasite (Σ max-kullanım − kullanılan)'
-                : 'available satır'
+                ? 'Kalan kapasite (Σ maksimum kullanım − kullanılan)'
+                : 'Satılabilir stok'
             }
           >
             {s}
@@ -113,7 +110,13 @@ export function ProductsTable({ products }: { products: ProductRow[] }) {
   const facets: FacetConfig[] = React.useMemo(() => {
     const kinds = Array.from(new Set(products.map((p) => p.kind))).sort();
     return kinds.length > 1
-      ? [{ columnId: 'kind', title: 'Tip', options: kinds.map((k) => ({ label: k, value: k })) }]
+      ? [
+          {
+            columnId: 'kind',
+            title: 'Tip',
+            options: kinds.map((k) => ({ label: productKindLabel(k), value: k })),
+          },
+        ]
       : [];
   }, [products]);
 

@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
@@ -73,6 +73,9 @@ export class ProductsService {
    * Kısmi ürün güncellemesi (§11). Yalnız verilen alanlar değişir; updatedAt her
    * güncellemede now() olur. Boş patch (hiç alan yok) reddedilir — yanlışlıkla
    * yalnız updatedAt dokunmasını engeller. Ürün yoksa 404.
+   * Null semantiği: patch'te ANAHTAR YOK → kolon değişmez; anahtar VAR ama değer null
+   * → kolon TEMİZLENİR (Drizzle .set() null'ı SET col = null'a çevirir) → opsiyonel
+   * alan (validityDays/warrantyDays/lowStockThreshold/keyFormat/releaseAt) boşaltılabilir.
    */
   async update(id: string, patch: Partial<NewProduct>): Promise<Product> {
     if (Object.keys(patch).length === 0) {
@@ -156,8 +159,8 @@ export class ProductsService {
   }
 
   /**
-   * Bu ürüne bağlı site eşlemeleri (§3) — listMappings ile aynı zenginleştirme, tek ürüne
-   * daraltılmış (ürün-merkezli yönetim: eşleme oluşturma/aç-kapa artık ürün detayında).
+   * Bu ürüne bağlı site eşlemeleri (§3) — site domain + ürün adıyla zenginleştirilmiş,
+   * tek ürüne daraltılmış (ürün-merkezli yönetim: eşleme oluşturma/aç-kapa ürün detayında).
    */
   private async detailMappings(id: string): Promise<ProductDetail['mappings']> {
     const rows = await this.db
@@ -346,61 +349,36 @@ export class ProductsService {
     remoteVariationId?: string;
     bundleQty?: number;
   }) {
-    const [row] = await this.db
-      .insert(siteProductMappings)
-      .values({
-        siteId: input.siteId,
-        productId: input.productId,
-        remoteProductId: input.remoteProductId,
-        remoteVariationId: input.remoteVariationId ?? null,
-        bundleQty: input.bundleQty ?? 1,
-      })
-      .returning();
-    return row!;
-  }
+    // Biçimi geçerli ama VAR OLMAYAN site/ürün id'si → ham Postgres FK ihlali (23503) →
+    // opak 500. stock.import/sites.update deseni gibi önce varlığı çöz, yoksa anlamlı 404.
+    await this.getById(input.productId); // ürün yoksa 404
+    const [site] = await this.db
+      .select({ id: sites.id })
+      .from(sites)
+      .where(eq(sites.id, input.siteId))
+      .limit(1);
+    if (!site) throw new NotFoundException('Site bulunamadı');
 
-  /**
-   * Eşleme listesi (§3) — remote ürün → panel ürünü, site domain + ürün adıyla
-   * zenginleştirilmiş. siteId verilirse yalnız o site; yoksa tümü. En yeni önce.
-   */
-  async listMappings(siteId?: string): Promise<
-    Array<{
-      id: string;
-      siteId: string;
-      siteDomain: string;
-      productId: string;
-      productName: string;
-      remoteProductId: string;
-      remoteVariationId: string | null;
-      bundleQty: number;
-      active: boolean;
-      createdAt: string;
-    }>
-  > {
-    const rows = await this.db
-      .select({
-        id: siteProductMappings.id,
-        siteId: siteProductMappings.siteId,
-        siteDomain: sites.domain,
-        productId: siteProductMappings.productId,
-        productName: products.name,
-        remoteProductId: siteProductMappings.remoteProductId,
-        remoteVariationId: siteProductMappings.remoteVariationId,
-        bundleQty: siteProductMappings.bundleQty,
-        active: siteProductMappings.active,
-        createdAt: siteProductMappings.createdAt,
-      })
-      .from(siteProductMappings)
-      .innerJoin(sites, eq(sites.id, siteProductMappings.siteId))
-      .innerJoin(products, eq(products.id, siteProductMappings.productId))
-      .where(siteId ? eq(siteProductMappings.siteId, siteId) : undefined)
-      .orderBy(desc(siteProductMappings.createdAt));
-
-    return rows.map((r) => ({
-      ...r,
-      bundleQty: Number(r.bundleQty),
-      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
-    }));
+    try {
+      const [row] = await this.db
+        .insert(siteProductMappings)
+        .values({
+          siteId: input.siteId,
+          productId: input.productId,
+          remoteProductId: input.remoteProductId,
+          remoteVariationId: input.remoteVariationId ?? null,
+          bundleQty: input.bundleQty ?? 1,
+        })
+        .returning();
+      return row!;
+    } catch (err) {
+      // Aynı (site, remote ürün, varyasyon) tekilliği (mappings_site_remote_uniq) →
+      // ham unique-violation (23505) 500 yerine anlamlı 409.
+      if (String(err).toLowerCase().includes('unique') || String(err).includes('23505')) {
+        throw new ConflictException('Bu site + remote ürün/varyasyon eşlemesi zaten kayıtlı');
+      }
+      throw err;
+    }
   }
 
   /** Eşlemeyi pasifleştir/etkinleştir (§3). Yoksa 404. */

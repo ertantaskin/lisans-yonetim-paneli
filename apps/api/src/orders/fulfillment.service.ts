@@ -100,7 +100,17 @@ export class FulfillmentService {
       // all-or-nothing: satır TÜMÜYLE karşılanamıyorsa hiçbir şey teslim etme — kapasiteyi geri
       // ver (createOrder'daki aynı invaryant). Bu, releaseHeld (İnceleme onayı) ve reconcile gibi
       // completeLine çağıranlarının da all-or-nothing garantisini korumasını sağlar (#7 denetim D).
-      if (policy === 'all-or-nothing' && line.fulfilledQty + added < line.qty) {
+      //
+      // F1 (regresyon düzeltmesi): "tümüyle" hedefi ÇAĞRI TİPİNE göre belirlenir. maxUnits verilen
+      // SINIRLI top-up (değişim akışları: revoke + completeLine(lineId, 1)) tüm satırı değil, zaten
+      // teslim edilmiş `toAssign` birimi tazeler → hedef = min(qty, fulfilled+toAssign). Aksi halde
+      // kısmen teslim edilmiş (ör. 3/6, #16 re-push adet artışıyla erişilebilir) all-or-nothing
+      // satırda tek-birim değişim "stok yok" sanılır: taze key serbest bırakılır + eski key zaten
+      // karantinada → müşteri parasını ödediği lisansı KALICI kaybeder. maxUnits YOKKEN (taze
+      // teslim / releaseHeld tam teslim) hedef = qty kalır (özgün "hepsi birlikte" invaryantı korunur).
+      const target =
+        maxUnits != null ? Math.min(line.qty, line.fulfilledQty + toAssign) : line.qty;
+      if (policy === 'all-or-nothing' && line.fulfilledQty + added < target) {
         await releaseAllocations(tx, allocations);
         allocations.length = 0;
         added = 0;

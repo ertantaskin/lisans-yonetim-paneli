@@ -1,4 +1,5 @@
-import { PageHeader, Card } from '@/components/ui';
+import { PageHeader } from '@/components/ui/page-header';
+import { Card, CardContent } from '@/components/ui/card';
 import { CreateSupplierForm } from '@/components/create-supplier-form';
 import { SuppliersTable } from '@/components/suppliers-table';
 import { getSuppliers, type SupplierRow } from './queries';
@@ -16,16 +17,20 @@ export default async function SuppliersPage() {
 
   return (
     <div>
-      <PageHeader title="Tedarikçiler" desc="Lisans/key tedarikçileri — satın alma emirleri ve partiler buraya bağlanır." />
+      <PageHeader title="Tedarikçiler" description="Lisans/key tedarikçileri — satın alma emirleri ve partiler buraya bağlanır." />
 
       <Card className="mb-5 max-w-2xl">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Tedarikçi</h2>
-        <CreateSupplierForm />
+        <CardContent className="p-5">
+          <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Tedarikçi</h2>
+          <CreateSupplierForm />
+        </CardContent>
       </Card>
 
       {error ? (
         <Card>
-          <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
+          <CardContent className="p-5">
+            <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
+          </CardContent>
         </Card>
       ) : (
         <SuppliersTable suppliers={suppliers} />

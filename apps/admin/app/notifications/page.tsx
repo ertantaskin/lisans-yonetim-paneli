@@ -1,4 +1,4 @@
-import { PageHeader } from '../../components/ui';
+import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { NotificationsTable } from '../../components/notifications-table';
 import { getNotifications, type NotificationRow } from './queries';
@@ -18,7 +18,7 @@ export default async function NotificationsPage() {
     <div>
       <PageHeader
         title="Bildirimler"
-        desc="Düşük stok ve sistem bildirimleri — kritik/uyarı/bilgi seviyeleri."
+        description="Düşük stok ve sistem bildirimleri — kritik/uyarı/bilgi seviyeleri."
       />
       {error ? (
         <Card className="p-6">
