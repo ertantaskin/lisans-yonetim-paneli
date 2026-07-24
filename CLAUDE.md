@@ -381,6 +381,40 @@ yollarını + spec'in yan-şartlarını ("+ alarm") gözden geçir.
   regresyonu/all-or-nothing/held-sızıntı/TOCTOU-race/DB-kalıcılık dahil) · prod migration 0020 (tracking 20→21,
   `orders_email_lower_idx` CANLI) · api rebuild → boot hatasız, /health 200 (db+redis). migration 0000-0020.
 
+**UX NETLEŞTİRME + PROJE-GENELİ DENETİM PARTİSİ (commit f27b4e7, CANLI + deploy + entegrasyon 88/88 + yarış 2/2):**
+Kullanıcı "düzenleme ekranları çok karışık, ne işe yaradığı anlaşılmıyor; daha çok ürünmüş gibi davranan bir
+tasarım gerek; ayrıca proje genelindeki eksikleri tespit edip düzelt — birden fazla işçi çalıştır" dedi →
+paralel ekip (4 UX işçisi + 5 düzeltme işçisi + 26-ajanlı adversaryel denetim workflow'u; bul→çekişmeli doğrula).
+- **UX (admin SUNUM — backend `name=`/kontrat DOKUNULMADI):** yeni primitifler `components/ui/field.tsx`
+  (**Field** = görünür etiket + tek-satır yardım metni; **FormSection**; **FieldRow**) + `lib/labels.ts` (**TEK
+  KAYNAK** Türkçe enum sözlüğü — ham `partial-auto`/`voided`/`MAK`/UUID/`payloadSchema`/regex kullanıcıya ÇIKMAZ,
+  bilinmeyen anahtar→ham geri düşüş). Uygulandı: ürün oluştur/düzenle formu **4 bölüme** ayrıldı (Temel bilgiler
+  / Hesap alanları / Süre & garanti / Stok & gelişmiş), her alan etiket+açıklama, Türkçe seçenekler; ürün detay
+  hub İngilizce StatTile'lar Türkçe (Kullanılabilir/Teslim edilen/…) + "Stok durumu"/"Satış & tükenme" başlıkları
+  + her karta amaç açıklaması; key-import/eşleme/stok-düzeltme/site-config/satın-alma-emri formları etiketlendi;
+  sipariş zaman çizelgesi ham event tipi (`assignment_created`) → Türkçe; /stock tablosu ham enum temizlendi.
+  `components/ui.tsx` ÇİFT (legacy) PageHeader/Card/StatusPill/Empty kaldırıldı → 17 sayfa tek canonical primitife
+  (dosya silindi; `desc`→`description`, legacy Card→CardContent p-5 korunarak).
+- **Denetim düzeltmeleri (backend/wiring/WP/tip; 21 doğrulanmış / 1 çürütülen; 20 düzeltildi):**
+  **[YÜKSEK]** WP staging-clone guard `revoke()`+`Report_Issue::handle()`'de EKSİKTİ → klon/staging site
+  iade/iptalde CANLI müşteri lisansını geri alabiliyordu; `is_clone()` guard TÜM panel-yazma yollarına eklendi
+  (push/resync/revoke/report-issue; retry hook revoke'tan geçtiği için kapsanır). **[ORTA]** all-or-nothing
+  `completeLine` regresyonu (#7'nin kendi guard'ından): kısmi satırda tek-birim değişim stok VARKEN "stok yok"
+  verip eski key'i karantinaya atıyordu (bedava lisans kaybı) → hedef-farkında guard (`maxUnits` set ise
+  `min(qty, fulfilled+toAssign)`) + regresyon testi (3/6 satır → taze key, 409 değil). **[ORTA]** `payloadSchema`
+  `required` round-trip: form 4. alanı düşürüyordu → "Zorunlu" onay kutusu (opsiyonel hesap alanı mümkün, düzenlemede
+  sessizce zorunlulaşmıyor). **[ORTA]** `JETLISANS_WEBHOOK_SECRET` panelde karşılığı yok; ayarlanırsa TÜM webhook'lar
+  401 → hayalet ayar kaldırıldı (verify hep site HMAC secret'ıyla). **Düşük (16):** kota↔idempotency yarışı (spurious
+  429 → advisory-lock altında re-check), iade↔releaseHeld yarışı (§2 canlı key → per-order advisory-lock + tüm satır
+  canceled + teslim-sonrası savunma), createMapping FK→404/409, stok import `@AdminActor`, opsiyonel ürün alanı
+  temizleme (edit→`null`, DTO `.nullable()`), yetim `GET /mappings` kaldırıldı, `?status=` enum→500 doğrulaması
+  (orders+replacements), `site_update`/`anonymize` gereksiz cast+bayat yorum, compliance `rawRows`, WP held/durum
+  meta bayatlığı (metabox/liste/revoke → panel `held` bayrağı YETKİLİ, `getDeliveries`+`bulkStatus`'a eklendi).
+  Atlanan: #9 (import-stock/mappings ölü dal — zararsız, yeni refaktör). Çürütülen: dinamik kota `todayCount`
+  asimetrisi (bilinçli anti-suistimal tasarımı, §8). **Migration YOK** (`held` mevcut `orders.held_for_review`
+  kolonunu döndürür). Doğrulama: typecheck shared+api+admin temiz; VPS izole test DB entegrasyon 88/88 + yarış 2/2;
+  api+admin rebuild → /v1/health 200, admin /stock 3xx (auth). WP eklentisi (thin-client) ayrı kurulum — commit'lendi.
+
 ## Geliştirme
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
