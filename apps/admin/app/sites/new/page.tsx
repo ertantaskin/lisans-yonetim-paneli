@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Globe } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { PageHeader } from '../../../components/ui/page-header';
 import { Wizard } from './wizard';
@@ -17,6 +17,7 @@ export default function NewSitePage() {
         </Button>
         <div className="mt-2">
           <PageHeader
+            icon={Globe}
             title="Yeni Site (Sihirbaz)"
             description="Yeni bir WooCommerce/pazar yeri sitesini 3 adımda panele bağlayın (§14)."
           />

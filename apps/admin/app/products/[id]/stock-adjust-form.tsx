@@ -1,6 +1,6 @@
 'use client';
 import { useActionState } from 'react';
-import { CheckCircle2, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Plus, TriangleAlert } from 'lucide-react';
 import {
   createStockAdjustmentAction,
   initialStockAdjustState,
@@ -77,7 +77,7 @@ export function StockAdjustForm({ productId }: { productId: string }) {
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={pending}>
-          {pending ? 'Kaydediliyor…' : 'Düzeltme Ekle'}
+          <Plus /> {pending ? 'Kaydediliyor…' : 'Düzeltme Ekle'}
         </Button>
         {state.saved && (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success">

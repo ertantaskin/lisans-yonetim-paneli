@@ -1,3 +1,4 @@
+import { Sparkles } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { AiPanel } from './ai-panel';
 
@@ -13,6 +14,7 @@ export default function AiPage() {
   return (
     <div>
       <PageHeader
+        icon={Sparkles}
         title="AI Operasyon"
         description="Doğal dilde rapor, günlük anomali özeti ve destek triyajı — AI önerir, insan onaylar (§15)."
       />

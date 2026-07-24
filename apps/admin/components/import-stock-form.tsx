@@ -1,6 +1,6 @@
 'use client';
 import { useActionState, useMemo, useState } from 'react';
-import { CheckCircle2, Eye, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Eye, TriangleAlert, Upload } from 'lucide-react';
 import {
   importStockAction,
   previewStockAction,
@@ -131,6 +131,7 @@ export function ImportStockForm({
         <div className="flex flex-wrap items-center gap-2">
           {/* Gerçek import: name=dryRun value=false → server action commit eder. */}
           <Button type="submit" name="dryRun" value="false" disabled={pending}>
+            <Upload className="size-4" />
             {pending ? 'İşleniyor…' : 'Onayla ve Dağıt'}
           </Button>
           {/* Kuru çalıştırma (§7): name=dryRun value=true → yalnız doğrula, hiçbir şey kaydetme. */}

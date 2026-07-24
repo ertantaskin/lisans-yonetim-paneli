@@ -172,8 +172,8 @@ export function SuppliersTable({ suppliers }: { suppliers: SupplierRow[] }) {
 
       {editing && (
         <Card className="max-w-2xl p-5">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">
-            Tedarikçi Düzenle · {editing.name}
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Pencil className="size-4 text-muted-foreground" /> Tedarikçi Düzenle · {editing.name}
           </h2>
           <CreateSupplierForm
             key={editing.id}

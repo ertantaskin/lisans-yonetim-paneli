@@ -309,7 +309,7 @@ function RecallDialog({
             Vazgeç
           </Button>
           <Button variant="danger" size="sm" onClick={submit} disabled={pending}>
-            {pending ? 'İşleniyor…' : 'Geri Çek'}
+            <PackageX /> {pending ? 'İşleniyor…' : 'Geri Çek'}
           </Button>
         </div>
       </div>
@@ -398,7 +398,7 @@ function BulkReplaceDialog({
             Vazgeç
           </Button>
           <Button variant="default" size="sm" onClick={submit} disabled={pending}>
-            {pending ? 'İşleniyor…' : 'Toplu Değiştir'}
+            <Replace /> {pending ? 'İşleniyor…' : 'Toplu Değiştir'}
           </Button>
         </div>
       </div>

@@ -1,3 +1,4 @@
+import { FileText } from 'lucide-react';
 import type { ProductRow, SiteRow } from '../../../lib/api';
 import { PageHeader } from '../../../components/ui/page-header';
 import { Card } from '../../../components/ui/card';
@@ -18,7 +19,7 @@ export default async function NewTemplatePage() {
 
   return (
     <div>
-      <PageHeader title="Yeni Şablon" description="Kapsamı boş bırakırsanız genel varsayılan olur." />
+      <PageHeader icon={FileText} title="Yeni Şablon" description="Kapsamı boş bırakırsanız genel varsayılan olur." />
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>

@@ -1,6 +1,6 @@
 'use client';
 import * as React from 'react';
-import { Pencil } from 'lucide-react';
+import { Pencil, Save } from 'lucide-react';
 import type { ProductRow } from '../lib/api';
 import { updateProductAction, type FormState } from '../app/stock/actions';
 import { Button } from './ui/button';
@@ -60,7 +60,7 @@ export function ProductEditSheet({
           <ProductFormFields defaults={product} />
           {state.error && <p className="text-sm text-destructive">{state.error}</p>}
           <Button type="submit" disabled={pending}>
-            {pending ? 'Kaydediliyor…' : 'Kaydet'}
+            <Save /> {pending ? 'Kaydediliyor…' : 'Kaydet'}
           </Button>
         </form>
       </SheetContent>

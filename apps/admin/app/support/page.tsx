@@ -1,3 +1,4 @@
+import { LifeBuoy } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SupportTable } from '../../components/support-table';
@@ -17,6 +18,7 @@ export default async function SupportPage() {
   return (
     <div>
       <PageHeader
+        icon={LifeBuoy}
         title="Destek"
         description="Değişim/garanti talepleri — onayla (değiştir), reddet veya bilgi iste."
       />

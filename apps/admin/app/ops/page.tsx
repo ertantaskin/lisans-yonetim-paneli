@@ -1,3 +1,4 @@
+import { MailWarning } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { DeadLetterTable } from '../../components/dead-letter-table';
@@ -18,6 +19,7 @@ export default async function OpsPage() {
   return (
     <div>
       <PageHeader
+        icon={MailWarning}
         title="Dead-letter"
         description="Başarısız geri-kanal webhook olayları ve mail teslimleri — tek tıkla yeniden kuyruğa al."
       />

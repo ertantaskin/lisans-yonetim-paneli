@@ -2,6 +2,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
 import {
+  BookOpen,
   Rocket,
   Workflow,
   Plug,
@@ -113,6 +114,7 @@ export default function GuidePage() {
   return (
     <div className="space-y-5">
       <PageHeader
+        icon={BookOpen}
         title="Kullanım Rehberi"
         description="Panelin uçtan uca nasıl kullanılacağı: site bağlamadan sipariş teslimatına, değişimden raporlara kadar tüm akış."
       />

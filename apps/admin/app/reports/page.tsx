@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Receipt } from 'lucide-react';
+import { BarChart3, Coins } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { ReportsView } from '../../components/reports-view';
@@ -19,6 +19,7 @@ export default async function ReportsPage() {
   return (
     <div>
       <PageHeader
+        icon={BarChart3}
         title="Raporlar"
         description="Sipariş, teslimat, stok ve satış hızı — salt-okunur özet."
       />
@@ -27,7 +28,7 @@ export default async function ReportsPage() {
           href="/reports/costs"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
         >
-          <Receipt className="size-4 text-muted-foreground" />
+          <Coins className="size-4 text-muted-foreground" />
           Maliyet Raporu (tedarik maliyeti — gelir hariç) →
         </Link>
       </div>

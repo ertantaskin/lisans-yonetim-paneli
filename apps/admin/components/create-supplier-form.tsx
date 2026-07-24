@@ -1,5 +1,6 @@
 'use client';
 import { useActionState, useEffect } from 'react';
+import { Save, Plus, X } from 'lucide-react';
 import {
   createSupplierAction,
   updateSupplierAction,
@@ -76,11 +77,12 @@ export function CreateSupplierForm({
 
       <div className="flex items-center gap-2">
         <Button type="submit" disabled={pending}>
+          {editing ? <Save /> : <Plus />}
           {pending ? 'Kaydediliyor…' : editing ? 'Kaydet' : 'Tedarikçi Ekle'}
         </Button>
         {editing && onCancel && (
           <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>
-            Vazgeç
+            <X /> Vazgeç
           </Button>
         )}
       </div>

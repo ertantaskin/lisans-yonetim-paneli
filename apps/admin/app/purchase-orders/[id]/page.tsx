@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, Boxes, PackageCheck, CalendarClock, Building2, Coins } from 'lucide-react';
+import { ArrowLeft, ClipboardList, Boxes, PackageCheck, CalendarClock, Building2, Coins } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
@@ -67,9 +67,12 @@ export default async function PurchaseOrderDetailPage({
         </Button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              {po.supplierName}
-            </h1>
+            <div className="flex items-center gap-2">
+              <ClipboardList className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                {po.supplierName}
+              </h1>
+            </div>
             <p className="mt-1 text-sm text-muted-foreground">
               <span className="font-mono text-xs text-foreground/70">{po.productSku}</span>{' '}
               {po.productName}

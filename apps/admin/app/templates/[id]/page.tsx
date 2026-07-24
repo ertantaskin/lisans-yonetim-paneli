@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, FileText } from 'lucide-react';
 import { ApiError, type ProductRow, type SiteRow } from '../../../lib/api';
 import { PageHeader } from '../../../components/ui/page-header';
 import { Card } from '../../../components/ui/card';
@@ -40,7 +40,7 @@ export default async function EditTemplatePage({
             <ArrowLeft className="size-4" />
           </Link>
         </Button>
-        <PageHeader title="Şablonu Düzenle" description="Değişiklikleri kaydedin veya test maili gönderin." />
+        <PageHeader icon={FileText} title="Şablonu Düzenle" description="Değişiklikleri kaydedin veya test maili gönderin." />
       </div>
 
       {error || !template ? (

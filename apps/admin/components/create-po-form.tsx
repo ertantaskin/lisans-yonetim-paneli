@@ -1,6 +1,7 @@
 'use client';
 import { useActionState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { Plus } from 'lucide-react';
 import { createPurchaseOrderAction, initialPOFormState } from '@/app/purchase-orders/actions';
 import type { SupplierOption } from '@/app/purchase-orders/queries';
 import type { ProductRow } from '@/lib/api';
@@ -108,7 +109,7 @@ export function CreatePOForm({
       </FormSection>
 
       <Button type="submit" disabled={pending}>
-        {pending ? 'Oluşturuluyor…' : 'Emir Oluştur'}
+        <Plus /> {pending ? 'Oluşturuluyor…' : 'Emir Oluştur'}
       </Button>
 
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}

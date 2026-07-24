@@ -1,3 +1,4 @@
+import { Boxes } from 'lucide-react';
 import { apiGet, type ProductRow } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
@@ -23,6 +24,7 @@ export default async function StockPage() {
   return (
     <div className="space-y-5">
       <PageHeader
+        icon={Boxes}
         title="Stok & Ürünler"
         description="Ürünleri yönetin. Key import, site eşlemeleri ve düzenleme her ürünün detay sayfasında."
       >

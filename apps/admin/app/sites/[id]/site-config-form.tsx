@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useActionState } from 'react';
-import { CheckCircle2, CircleCheck, CircleX, Plug, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, CircleCheck, CircleX, Plug, Save, TriangleAlert } from 'lucide-react';
 import {
   testConnectionAction,
   updateSiteAction,
@@ -173,7 +173,7 @@ export function SiteConfigForm({
         </FormSection>
 
         <Button type="submit" disabled={pending}>
-          {pending ? 'Kaydediliyor…' : 'Kaydet'}
+          <Save /> {pending ? 'Kaydediliyor…' : 'Kaydet'}
         </Button>
       </form>
 

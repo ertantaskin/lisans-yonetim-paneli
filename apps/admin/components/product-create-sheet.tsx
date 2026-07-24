@@ -51,7 +51,7 @@ export function ProductCreateSheet() {
             </p>
           )}
           <Button type="submit" disabled={pending}>
-            {pending ? 'Oluşturuluyor…' : 'Oluştur'}
+            <Plus /> {pending ? 'Oluşturuluyor…' : 'Oluştur'}
           </Button>
         </form>
       </SheetContent>

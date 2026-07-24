@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
+  Truck,
   Package,
   PackageCheck,
   Boxes,
@@ -115,6 +116,7 @@ export default async function SupplierScorecardPage({
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
+              <Truck className="size-5 shrink-0 text-muted-foreground" aria-hidden />
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                 {supplier.name}
               </h1>

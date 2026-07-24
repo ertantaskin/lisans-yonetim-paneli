@@ -1,3 +1,4 @@
+import { PackageCheck } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { BatchesTable } from '../../components/batches-table';
@@ -17,6 +18,7 @@ export default async function BatchesPage() {
   return (
     <div>
       <PageHeader
+        icon={PackageCheck}
         title="Partiler"
         description="Tedarik partileri — satılmamış/satılmış adet ve geri çekme (recall)."
       />

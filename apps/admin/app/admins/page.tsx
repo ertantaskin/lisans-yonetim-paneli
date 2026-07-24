@@ -1,4 +1,4 @@
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, UserPlus } from 'lucide-react';
 import { apiGet, type AdminUser } from '../../lib/api';
 import { isOwner } from '../../lib/session';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
@@ -13,7 +13,7 @@ export default async function AdminsPage() {
   if (!(await isOwner())) {
     return (
       <div>
-        <PageHeader title="Yöneticiler" />
+        <PageHeader icon={ShieldCheck} title="Yöneticiler" />
         <Card>
           <CardContent className="px-5 py-10">
             <EmptyState
@@ -38,13 +38,16 @@ export default async function AdminsPage() {
   return (
     <div>
       <PageHeader
+        icon={ShieldCheck}
         title="Yöneticiler"
         description="Panele erişimi olan adminler. Kullanıcı adı veya e-posta + parola ile giriş yaparlar (§8)."
       />
 
       <Card className="mb-5">
         <CardContent className="p-5">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Admin</h2>
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+            <UserPlus className="size-4 text-muted-foreground" /> Yeni Admin
+          </h2>
           <CreateAdminForm />
         </CardContent>
       </Card>

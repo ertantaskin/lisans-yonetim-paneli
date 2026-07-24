@@ -1,3 +1,4 @@
+import { Bell } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { NotificationsTable } from '../../components/notifications-table';
@@ -17,6 +18,7 @@ export default async function NotificationsPage() {
   return (
     <div>
       <PageHeader
+        icon={Bell}
         title="Bildirimler"
         description="Düşük stok ve sistem bildirimleri — kritik/uyarı/bilgi seviyeleri."
       />

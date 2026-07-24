@@ -215,6 +215,7 @@ function RejectDialog({
             Vazgeç
           </Button>
           <Button variant="danger" size="sm" onClick={submit} disabled={pending}>
+            <Ban />
             {pending ? 'İşleniyor…' : 'Reddet'}
           </Button>
         </div>

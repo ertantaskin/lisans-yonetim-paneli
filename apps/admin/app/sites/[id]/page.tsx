@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
+  ArrowRight,
   Boxes,
   FlaskConical,
   Gauge,
@@ -78,17 +79,25 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
           </Link>
         </Button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{site.domain}</h1>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <Badge variant="outline">{siteTypeLabel(site.type)}</Badge>
-              <StatusBadge status={site.status} />
-              {site.sandbox && (
-                <Badge variant="warning">
-                  <FlaskConical />
-                  sandbox
-                </Badge>
-              )}
+          <div className="flex items-start gap-3">
+            <span
+              className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground shadow-sm sm:flex"
+              aria-hidden
+            >
+              <Globe className="size-5" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{site.domain}</h1>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <Badge variant="outline">{siteTypeLabel(site.type)}</Badge>
+                <StatusBadge status={site.status} />
+                {site.sandbox && (
+                  <Badge variant="warning">
+                    <FlaskConical />
+                    sandbox
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
           <SiteStatusToggle siteId={site.id} status={site.status} />
@@ -118,9 +127,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
       {/* Yapılandırma */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="size-4 text-muted-foreground" /> Yapılandırma
-          </CardTitle>
+          <CardTitle icon={Globe}>Yapılandırma</CardTitle>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
@@ -181,9 +188,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
       {/* Son siparişler */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Receipt className="size-4 text-muted-foreground" /> Son Siparişler
-          </CardTitle>
+          <CardTitle icon={Receipt}>Son Siparişler</CardTitle>
         </CardHeader>
         <CardContent className={recentOrders.length === 0 ? '' : 'p-0'}>
           {recentOrders.length === 0 ? (
@@ -215,7 +220,9 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
                     </TableCell>
                     <TableCell className="text-right">
                       <Button asChild variant="ghost" size="sm">
-                        <Link href={`/orders/${o.id}`}>Aç</Link>
+                        <Link href={`/orders/${o.id}`}>
+                          Aç <ArrowRight />
+                        </Link>
                       </Button>
                     </TableCell>
                   </TableRow>

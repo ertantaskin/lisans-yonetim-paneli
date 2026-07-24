@@ -1,3 +1,4 @@
+import { ClipboardCheck } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { ReviewTable } from '../../components/review-table';
@@ -17,6 +18,7 @@ export default async function ReviewPage() {
   return (
     <div>
       <PageHeader
+        icon={ClipboardCheck}
         title="İnceleme Kuyruğu"
         description="Dinamik satış kotası eşiğini aşan siparişler reddedilmez, manuel onay bekler — Onayla teslimatı başlatır, Reddet siparişi kapatır (müşteriye key gitmez)."
       />

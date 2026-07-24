@@ -1,6 +1,6 @@
 'use client';
 import { useActionState } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import { Plus, TriangleAlert } from 'lucide-react';
 import { createSiteAction, type CreateSiteState } from '../app/sites/actions';
 import { Input, Label } from './ui/input';
 import { Button } from './ui/button';
@@ -53,7 +53,7 @@ export function CreateSiteForm() {
           Sandbox (test modu)
         </label>
         <Button type="submit" disabled={pending}>
-          {pending ? 'Oluşturuluyor…' : 'Site Oluştur'}
+          <Plus /> {pending ? 'Oluşturuluyor…' : 'Site Oluştur'}
         </Button>
       </form>
 

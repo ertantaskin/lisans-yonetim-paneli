@@ -1,3 +1,4 @@
+import { Settings } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SettingsView } from '../../components/settings-view';
@@ -21,6 +22,7 @@ export default async function SettingsPage() {
   return (
     <div>
       <PageHeader
+        icon={Settings}
         title="Ayarlar"
         description="Sistem durumu ve ortam yapılandırması — salt-okunur (sır gösterilmez)."
       />

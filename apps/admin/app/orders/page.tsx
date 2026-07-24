@@ -1,3 +1,4 @@
+import { ShoppingCart } from 'lucide-react';
 import { apiGet, type OrderRow } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
@@ -17,7 +18,7 @@ export default async function OrdersPage() {
 
   return (
     <div>
-      <PageHeader title="Siparişler" description="Tüm siparişler — ara, filtrele, sırala.">
+      <PageHeader icon={ShoppingCart} title="Siparişler" description="Tüm siparişler — ara, filtrele, sırala.">
         <SavedViewsMenu page="orders" />
       </PageHeader>
       {error ? (

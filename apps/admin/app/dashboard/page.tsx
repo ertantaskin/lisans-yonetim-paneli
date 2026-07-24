@@ -10,6 +10,7 @@ import {
   Inbox,
   Globe,
   Truck,
+  LayoutDashboard,
 } from 'lucide-react';
 import { getDashboard, type DashboardSummary } from './queries';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
@@ -49,7 +50,7 @@ export default async function DashboardOverviewPage() {
   if (error || !data) {
     return (
       <div>
-        <PageHeader title="Genel Bakış" description="Panel özeti ve günün operasyonel durumu." />
+        <PageHeader icon={LayoutDashboard} title="Genel Bakış" description="Panel özeti ve günün operasyonel durumu." />
         <Card className="p-6">
           <p className="text-sm text-destructive">Genel bakış yüklenemedi: {error}</p>
         </Card>
@@ -69,7 +70,7 @@ export default async function DashboardOverviewPage() {
 
   return (
     <div>
-      <PageHeader title="Genel Bakış" description="Panel özeti ve günün operasyonel durumu.">
+      <PageHeader icon={LayoutDashboard} title="Genel Bakış" description="Panel özeti ve günün operasyonel durumu.">
         <Button asChild variant="outline" size="sm">
           <Link href="/pending">
             <Inbox className="size-4" /> Bekleyenler

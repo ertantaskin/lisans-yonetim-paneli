@@ -2,12 +2,12 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
+  Users,
   ShoppingCart,
   KeyRound,
   RefreshCw,
   ShieldAlert,
   Tags,
-  Receipt,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
@@ -102,7 +102,10 @@ export default async function CustomerDetailPage({
         </Button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{data.email}</h1>
+            <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
+              <Users className="size-5 shrink-0 text-muted-foreground" />
+              {data.email}
+            </h1>
             {tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
                 {tags.map((t) => (
@@ -156,12 +159,12 @@ export default async function CustomerDetailPage({
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Receipt className="size-4 text-muted-foreground" /> Siparişler
+              <ShoppingCart className="size-4 text-muted-foreground" /> Siparişler
             </CardTitle>
           </CardHeader>
           <CardContent className={orders.length === 0 ? '' : 'p-0'}>
             {orders.length === 0 ? (
-              <EmptyState icon={Receipt} title="Sipariş yok" />
+              <EmptyState icon={ShoppingCart} title="Sipariş yok" />
             ) : (
               <Table>
                 <TableHeader>

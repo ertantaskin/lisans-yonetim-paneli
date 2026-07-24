@@ -9,6 +9,7 @@ import {
   Clock,
   Boxes,
   TrendingUp,
+  TrendingDown,
   Truck,
   ClipboardList,
   Wrench,
@@ -120,14 +121,22 @@ export default async function ProductDetailPage({
           </Link>
         </Button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">{product.name}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span className="font-mono text-xs">{product.sku}</span>
-              <span aria-hidden>·</span>
-              <span>{productTypeSummary(product)}</span>
-              <span aria-hidden>·</span>
-              <span>{fulfillmentPolicyLabel(product.fulfillmentPolicy)}</span>
+          <div className="flex items-start gap-3">
+            <span
+              className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground shadow-sm sm:flex"
+              aria-hidden
+            >
+              <Package className="size-5" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{product.name}</h1>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span className="font-mono text-xs">{product.sku}</span>
+                <span aria-hidden>·</span>
+                <span>{productTypeSummary(product)}</span>
+                <span aria-hidden>·</span>
+                <span>{fulfillmentPolicyLabel(product.fulfillmentPolicy)}</span>
+              </div>
             </div>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -152,7 +161,9 @@ export default async function ProductDetailPage({
 
       {/* Stok kırılımı */}
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Stok durumu</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Boxes className="size-4 text-muted-foreground" aria-hidden /> Stok durumu
+        </h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <StatTile
             label={stockStateLabel('available')}
@@ -170,7 +181,9 @@ export default async function ProductDetailPage({
 
       {/* Satış hızı */}
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Satış & tükenme</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <TrendingDown className="size-4 text-muted-foreground" aria-hidden /> Satış & tükenme
+        </h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile label="7 günlük satış" value={velocity.sold7d} icon={TrendingUp} tone="neutral" />
           <StatTile label="30 günlük satış" value={velocity.sold30d} icon={TrendingUp} tone="neutral" />
@@ -196,9 +209,7 @@ export default async function ProductDetailPage({
       {/* Key/Stok import — ürün-merkezli (ürün SABİT, dropdown yok). ?batchId= ön-doldurur. */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Upload className="size-4 text-muted-foreground" /> Key / Stok İçe Aktar
-          </CardTitle>
+          <CardTitle icon={Upload}>Key / Stok İçe Aktar</CardTitle>
           <CardDescription>
             Bu ürüne yeni key/hesap ekleyin. &apos;Kuru Çalıştır&apos; ile önce güvenle doğrulayın.
           </CardDescription>
@@ -215,9 +226,7 @@ export default async function ProductDetailPage({
       {/* Site eşlemeleri — yalnız bu ürünün eşlemeleri (Woo → panel), oluştur + aç-kapa */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Link2 className="size-4 text-muted-foreground" /> Site Eşlemeleri
-          </CardTitle>
+          <CardTitle icon={Link2}>Site Eşlemeleri</CardTitle>
           <CardDescription>
             Bu ürünü WooCommerce ürün/varyasyonlarına bağlayın. Sipariş bu eşleme ile teslim edilir.
           </CardDescription>
@@ -231,9 +240,7 @@ export default async function ProductDetailPage({
         {/* Partiler */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Package className="size-4 text-muted-foreground" /> Partiler
-            </CardTitle>
+            <CardTitle icon={Package}>Partiler</CardTitle>
             <CardDescription>
               Tedarikçiden gelen stok partileri (geri çekme bu partiler üzerinden yapılır).
             </CardDescription>
@@ -275,9 +282,7 @@ export default async function ProductDetailPage({
         {/* Satın alma emirleri */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Truck className="size-4 text-muted-foreground" /> Satın Alma Emirleri
-            </CardTitle>
+            <CardTitle icon={Truck}>Satın Alma Emirleri</CardTitle>
             <CardDescription>Bu ürün için açık/kapalı tedarik siparişleri.</CardDescription>
           </CardHeader>
           <CardContent className={purchaseOrders.length === 0 ? '' : 'p-0'}>
@@ -326,9 +331,7 @@ export default async function ProductDetailPage({
       {/* Stok düzeltme ekle (manuel, sebepli — audit'e düşer) */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wrench className="size-4 text-muted-foreground" /> Stok Düzeltme Ekle
-          </CardTitle>
+          <CardTitle icon={Wrench}>Stok Düzeltme Ekle</CardTitle>
           <CardDescription>
             Manuel stok düzeltmesi (void/hasar/geri çekme) — sebep zorunlu, denetime yazılır.
           </CardDescription>
@@ -341,9 +344,7 @@ export default async function ProductDetailPage({
       {/* Stok düzeltmeleri */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Wrench className="size-4 text-muted-foreground" /> Stok Düzeltmeleri
-          </CardTitle>
+          <CardTitle icon={Wrench}>Stok Düzeltmeleri</CardTitle>
           <CardDescription>Geçmiş manuel düzeltme kayıtları.</CardDescription>
         </CardHeader>
         <CardContent className={adjustments.length === 0 ? '' : 'p-0'}>

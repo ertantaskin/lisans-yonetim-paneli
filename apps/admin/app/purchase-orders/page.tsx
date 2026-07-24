@@ -1,3 +1,4 @@
+import { ClipboardList, Plus } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { CreatePOForm } from '@/components/create-po-form';
@@ -22,11 +23,13 @@ export default async function PurchaseOrdersPage() {
 
   return (
     <div>
-      <PageHeader title="Satın Alma Emirleri" description="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur (§12)." />
+      <PageHeader icon={ClipboardList} title="Satın Alma Emirleri" description="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur (§12)." />
 
       <Card className="mb-5 max-w-3xl">
         <CardContent className="p-5">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Emir</h2>
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Plus className="size-4 text-muted-foreground" /> Yeni Emir
+          </h2>
           <CreatePOForm suppliers={suppliers} products={products} />
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ListChecks, KeyRound, PackageCheck, CalendarClock, Mail, History, RefreshCw } from 'lucide-react';
+import { ArrowLeft, ShoppingCart, ListChecks, KeyRound, PackageCheck, CalendarClock, Mail, History, RefreshCw } from 'lucide-react';
 import { apiGet, ApiError, type OrderDetail } from '../../../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatTile } from '../../../components/ui/stat-tile';
@@ -75,11 +75,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </Link>
         </Button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              Sipariş {order.remoteOrderId}
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">{order.customerEmail}</p>
+          <div className="flex items-start gap-3">
+            <span
+              className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground shadow-sm sm:flex"
+              aria-hidden
+            >
+              <ShoppingCart className="size-5" />
+            </span>
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                Sipariş {order.remoteOrderId}
+              </h1>
+              <p className="mt-1 text-sm text-muted-foreground">{order.customerEmail}</p>
+            </div>
           </div>
           <StatusBadge status={order.status} className="mt-1" />
         </div>
@@ -102,9 +110,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       {/* Satırlar */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ListChecks className="size-4 text-muted-foreground" /> Satırlar
-          </CardTitle>
+          <CardTitle icon={ListChecks}>Satırlar</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
@@ -143,9 +149,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       {/* Atamalar */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <KeyRound className="size-4 text-muted-foreground" /> Atamalar (lisanslar)
-          </CardTitle>
+          <CardTitle icon={KeyRound}>Atamalar (lisanslar)</CardTitle>
         </CardHeader>
         <CardContent className={assignments.length === 0 ? '' : 'p-0'}>
           {assignments.length === 0 ? (
@@ -209,13 +213,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         {/* Timeline */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <History className="size-4 text-muted-foreground" /> Zaman Çizelgesi
-            </CardTitle>
+            <CardTitle icon={History}>Zaman Çizelgesi</CardTitle>
           </CardHeader>
           <CardContent>
             {events.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Kayıt yok.</p>
+              <EmptyState icon={History} title="Kayıt yok" description="Sipariş olayları burada listelenir." />
             ) : (
               <ol className="relative space-y-4 border-l border-border pl-5">
                 {events.map((e) => (
@@ -236,14 +238,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         {/* Mailler */}
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-            <CardTitle className="flex items-center gap-2">
-              <Mail className="size-4 text-muted-foreground" /> Teslimat Mailleri
-            </CardTitle>
+            <CardTitle icon={Mail}>Teslimat Mailleri</CardTitle>
             <ResendButton orderId={order.id} />
           </CardHeader>
           <CardContent>
             {emails.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Mail yok.</p>
+              <EmptyState icon={Mail} title="Mail yok" description="Teslimat mailleri burada görünür." />
             ) : (
               <ul className="space-y-2.5 text-sm">
                 {emails.map((m) => (
@@ -262,9 +262,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       {history.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <RefreshCw className="size-4 text-muted-foreground" /> Değişim Geçmişi (eski anahtarlar)
-            </CardTitle>
+            <CardTitle icon={RefreshCw}>Değişim Geçmişi (eski anahtarlar)</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>

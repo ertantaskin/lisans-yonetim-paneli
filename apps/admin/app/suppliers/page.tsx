@@ -1,3 +1,4 @@
+import { Truck, Plus } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { CreateSupplierForm } from '@/components/create-supplier-form';
@@ -17,11 +18,13 @@ export default async function SuppliersPage() {
 
   return (
     <div>
-      <PageHeader title="Tedarikçiler" description="Lisans/key tedarikçileri — satın alma emirleri ve partiler buraya bağlanır." />
+      <PageHeader icon={Truck} title="Tedarikçiler" description="Lisans/key tedarikçileri — satın alma emirleri ve partiler buraya bağlanır." />
 
       <Card className="mb-5 max-w-2xl">
         <CardContent className="p-5">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Yeni Tedarikçi</h2>
+          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Plus className="size-4 text-muted-foreground" /> Yeni Tedarikçi
+          </h2>
           <CreateSupplierForm />
         </CardContent>
       </Card>

@@ -1,6 +1,6 @@
 'use client';
 import { useActionState } from 'react';
-import { ArrowRight, Power } from 'lucide-react';
+import { ArrowRight, Link2, Power } from 'lucide-react';
 import {
   createMappingAction,
   updateMappingAction,
@@ -108,7 +108,7 @@ export function MappingsManager({
         </div>
 
         <Button type="submit" disabled={pending}>
-          {pending ? 'Eşleniyor…' : 'Eşle'}
+          <Link2 /> {pending ? 'Eşleniyor…' : 'Eşle'}
         </Button>
 
         {state.error && <p className="text-sm text-destructive">{state.error}</p>}

@@ -1,3 +1,4 @@
+import { Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { CustomersTable } from '../../components/customers-table';
@@ -17,6 +18,7 @@ export default async function CustomersPage() {
   return (
     <div>
       <PageHeader
+        icon={Users}
         title="Müşteriler"
         description="Sipariş/atama geçmişi, değişim oranı ve etiketler — ara, filtrele, sırala."
       />

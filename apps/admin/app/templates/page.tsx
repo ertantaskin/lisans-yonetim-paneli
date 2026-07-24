@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Plus } from 'lucide-react';
+import { FileText, Plus } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -21,6 +21,7 @@ export default async function TemplatesPage() {
     <div>
       <div className="mb-5 flex items-start justify-between gap-4">
         <PageHeader
+          icon={FileText}
           title="Teslimat Şablonları"
           description="Mail konusu + gövdesi. Öncelik: site override > ürün > genel varsayılan."
         />

@@ -1,3 +1,4 @@
+import { ShieldAlert } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SecurityTable } from '../../components/security-table';
@@ -17,6 +18,7 @@ export default async function SecurityPage() {
   return (
     <div>
       <PageHeader
+        icon={ShieldAlert}
         title="Güvenlik"
         description="Velocity/kota/anomali olayları — insan onaylar (§15). Otomatik askıya alma yok."
       />
