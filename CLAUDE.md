@@ -249,7 +249,7 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
 - **A11y (WCAG):** skip-to-content + aria-live duyurucu. **TZ:** compose postgres+api Europe/Istanbul (gün sınırı yerel).
 - **Test:** HmacGuard + findForAuth api_key grace(0017) + RiskScore + getDeliveries expiry filtresi (integration).
 
-migration 0000-0019. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
+migration 0000-0020. **Yapısal kapsam-DIŞI (uydurulamaz):** fiyat senkronu/kâr-marj (panelde satış fiyatı
 YOK — §2/§6/§10), marketplace dış-API adaptörü, Faz-3 WP-migrasyon (greenfield), abonelik/EFT/3DS (YAGNI).
 (db.execute tipli-helper + Sentry + zip depolama kararı → aşağıdaki "Eksik-giderme partisi"nde kapandı.)
 Yol haritası §18.
@@ -345,6 +345,33 @@ artık `unknownVars` döner (şablonda kullanılan ama SAMPLE_VARS dışı token
 uyarı-yaklaşımı bilinçli.) [#R] reconcile testine `NotificationsService.create` stub'ı → "reading 'create'" best-effort
 WARN'i kalktı (prod'da DI'dan gelir, etkisizdi). **Kalan:** yok — #7/#19/#20 de tamamlandı (yukarı: #7+#19+#20 TAMAM).
 Kodlanabilir mimari eksik kalmadı; yalnızca yapısal kapsam-DIŞI maddeler (fiyat senkronu/marketplace/abonelik — §2/§6/§10) dışarıda.
+
+**#7 SONRASI ADVERSARYEL DENETİM → 17 BULGU DÜZELTİLDİ (commit 89b9003, CANLI + deploy + migration 0020):**
+Kullanıcı "gerçekten tamam mı?" diye sordu → #7/#19/#20 partisi 6-boyutlu denetim workflow'undan (25 ajan, bul→çürüt)
+geçirildi: **17 doğrulanmış bulgu** (2 yüksek, 6 orta, 9 düşük; 0 belirsiz). Hepsi düzeltildi. **DERS:** #7 held_for_review
+yeni bir terminal-durum ekledi ve H1'in ("iade edilen satır taze key ile yeniden teslim = bedava lisans") held için
+TEKRARINI + all-or-nothing/eşzamanlılık/alarm boşluklarını doğurdu — yeni durum eklerken TÜM revoke/refund/deliver
+yollarını + spec'in yan-şartlarını ("+ alarm") gözden geçir.
+- **[YÜKSEK] Held-iade → bedava lisans:** `revokeOrderForSite` yalnız aktif atama geri alıyordu; held siparişte atama
+  yok → no-op, held kalıyordu → admin sonradan "Onayla"→bedava lisans. Artık held ise `rejectHeld` (idempotent +
+  `pg_advisory_xact_lock(order.id)`) ile kapatır + aktif atamaları da geri alır.
+- **[YÜKSEK] §8 eksik alarm:** hold sessizdi. `SecurityService.recordQuotaHeld` → `quota_review` güvenlik olayı
+  (dedupe'lu, createOrder held-dalında commit sonrası best-effort) → /security + daily-digest (reject yoluyla simetri).
+- **[ORTA] release/reject yarışı:** her ikisi advisory-lock + FOR UPDATE altında CAS (held bayrağı temizleme kazananı
+  belirler); `getDeliveries` artık iptal-satır (`canceled`) atamasını ASLA döndürmez (savunma derinliği).
+- **[ORTA] all-or-nothing ihlali:** `completeLine` politikayı onurlandırır (tam karşılanamıyorsa `releaseAllocations`
+  ile kapasiteyi geri verir, kısmi teslim etmez) → releaseHeld dahil tüm çağıranlar korunur.
+- **[ORTA] eşik tabanı suistimali:** dinamik 30g taban yalnız meşru-teslim (fulfilled/partial), held-olmayan,
+  bugün-öncesi siparişleri sayar → held/reddedilmiş yükseliş gelecekteki eşiği şişiremez.
+- **[ORTA] held-sızıntı testi + CI Redis:** autoComplete/completeLine held-skip testleri; CI `race` job'una redis:7 +
+  REDIS_URL (rate-limit beforeAll artık patlamıyor → yeni testler gerçek gate'li).
+- **[DÜŞÜK] ×9:** advisory-lock koşullu (kota-kapalı sitede paralel) · idempotent re-push `held` taşır (`loadOrderResult`) ·
+  `DYNAMIC_MIN_FLOOR` yalnız yetersiz-geçmişli siteye · migration drift: `orders_email_lower_idx` şemaya + **0020** (IF NOT
+  EXISTS) → schema tekrar tek doğruluk kaynağı · WP held meta terminal-durumda temizlenir (my-account/webhook/metabox
+  bayat notice/rozet düzeldi) · TOCTOU gerçek-eşzamanlılık race testi · dinamik-kota update()+DB-load kalıcılık testi.
+- **Doğrulama:** typecheck 3/3 + build 3/3 · VPS izole test DB **entegrasyon 87/87 + yarış 2/2** (yeni held-iade
+  regresyonu/all-or-nothing/held-sızıntı/TOCTOU-race/DB-kalıcılık dahil) · prod migration 0020 (tracking 20→21,
+  `orders_email_lower_idx` CANLI) · api rebuild → boot hatasız, /health 200 (db+redis). migration 0000-0020.
 
 ## Geliştirme
 
