@@ -1,6 +1,18 @@
-# WordPress + WooCommerce test ortamı — WP eklentisini panele karşı doğrulamak için.
-# Panel stack'i ayaktayken: docker compose -f docker-compose.wp.yml up -d
-# Panel ağına (external) bağlanır; WP → http://api:3001, panel → http://wordpress.
+# ─────────────────────────────────────────────────────────────────────────────
+# WordPress + WooCommerce YEREL GELİŞTİRME sitesi — WP eklentisini gerçek bir
+# WordPress/WooCommerce kurulumuna karşı geliştirmek/doğrulamak için.
+#
+# TEK KOMUTLA KUR:  bash scripts/wp-dev.sh
+#   (panel yığınını + bu WP yığınını ayağa kaldırır, WP+Woo kurar, eklentiyi aktive
+#    eder, panelde site oluşturup api_key/hmac_secret'ı WP'ye bağlar.)
+#
+# Elle:  docker compose up -d            # önce panel (ağı bu yaratır)
+#        docker compose -f docker-compose.wp.yml up -d
+#
+# Erişim:  WP sitesi → http://localhost:8090   (yönetici: /wp-admin)
+# Ağ: panel ağına (external) bağlanır → WP eklentisi paneli `http://api:3001`
+#     olarak görür; panel webhook'u WP'yi `http://wordpress` olarak görür.
+# ─────────────────────────────────────────────────────────────────────────────
 
 services:
   wp-mysql:
@@ -30,16 +42,34 @@ services:
       WORDPRESS_DB_USER: wp
       WORDPRESS_DB_PASSWORD: wp
       WORDPRESS_DB_NAME: wordpress
+      # wp-config.php'ye enjekte edilen ek tanımlar (geliştirme kolaylığı):
+      #  - WP_HOME/WP_SITEURL: site 8090 portunda; WP kendi adresini bilsin.
+      #  - WP_DEBUG*: hata ayıklama logu (wp-content/debug.log).
+      #  - JETLISANS_PANEL_URL: eklentinin paneli gördüğü sabit adres (SIR DEĞİL).
+      #    api_key/hmac_secret SIRLARı burada DURMAZ — scripts/wp-dev.sh panelde site
+      #    oluşturup `wp config set` ile enjekte eder (site-özel, güvenli).
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'http://localhost:8090');
+        define('WP_SITEURL', 'http://localhost:8090');
+        define('WP_DEBUG', true);
+        define('WP_DEBUG_LOG', true);
+        define('WP_DEBUG_DISPLAY', false);
+        define('FS_METHOD', 'direct');
+        define('JETLISANS_PANEL_URL', 'http://api:3001');
     volumes:
       - wp_data:/var/www/html
+      # Eklenti KAYNAKTAN bind-mount (salt-okunur): host'ta düzenle → WP'de anında
+      # yansır; WP eklenti dosyalarını DEĞİŞTİREMEZ (kaynak tek doğruluk).
       - ./apps/wp-plugin/jetlisans:/var/www/html/wp-content/plugins/jetlisans:ro
     ports:
       - '127.0.0.1:8090:80'
 
+  # WP-CLI — provizyon/otomasyon (scripts/wp-dev.sh bunu kullanır). Boşta bekler.
   wpcli:
     image: wordpress:cli-php8.2
     depends_on:
-      - wordpress
+      wordpress:
+        condition: service_started
     user: '33:33'
     environment:
       WORDPRESS_DB_HOST: wp-mysql

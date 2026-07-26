@@ -49,3 +49,6 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
+
+# Sunucu-yerel ham dağıtım geçmişi (deploy.sh yazar) — repoda docs/DEPLOY-LOG.md görünür geçmiştir
+.deploy-history.log
