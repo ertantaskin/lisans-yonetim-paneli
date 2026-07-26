@@ -494,6 +494,18 @@ kontrol edip eksikleri düzelt" dedi → (a) hiyerarşi + (b) 5-lensli genel den
   "haftalık limit" ile düştü (admin-shape lensi + 2 doğrulama); kalan 9 bulgu tam doğrulandı, admin-shape lensi bir sonraki
   turda tekrar koşulabilir.
 
+**MARKA SADELEŞTİRME (commit 49cf534, CANLI, migration YOK):** Kullanıcı "sabit 'jetlisans' adı kullanma;
+WP / wp-teslimat eklentisi gibi generic olsun" dedi → **YALNIZ kullanıcıya görünen metinler** değişti.
+WP eklentisi görünen adı → **"WP Teslimat Eklentisi"** (menü "Teslimat Eklentisi", sipariş-notu öneki "Teslimat:");
+panel tarafı: update-info plugin adı, mail fallback site adı ('Jetlisans'→'Mağaza'), şablon örnek site_name
+('jetlisans.com'→'ornek-site.com'), /guide + /sites/new WP menü yolu metni ("Ayarlar › Teslimat Eklentisi"),
+boot log. **İç kod tanımlayıcıları DEĞİŞMEDİ (bilinçli):** `Jetlisans_*` sınıf, `jetlisans_*` fonksiyon,
+`JETLISANS_*` sabit (wp-config: PANEL_URL/API_KEY/HMAC_SECRET/BOUND_HOME), `_jetlisans_*` meta, `jetlisans_*`
+option/cron, text-domain `jetlisans`, REST namespace `jetlisans/v1`, klasör `apps/wp-plugin/jetlisans`, updater
+slug `jetlisans` → hepsi AYNI kaldı ki mevcut kurulumdaki kayıtlı veri kopmasın + updater/webhook çalışmaya devam
+etsin. typecheck+build temiz, api+admin deploy, /health 200. (Not: kod içi `jetlisans` görünce şaşırma — kayıtlı
+anahtar; kullanıcıya görünen ad "WP Teslimat Eklentisi".)
+
 ## Geliştirme
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
