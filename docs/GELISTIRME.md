@@ -38,6 +38,23 @@ ADMIN_TOKEN=<openssl rand -hex 24>
 (WP kurulur, bağlantıyı elle yaparsın). Diğer tüm env'ler opsiyonel (env-gated,
 varsayılan kapalı: auth, AI, Sentry, Telegram — bkz. `.env.example`).
 
+## İzole dev/staging (VPS) — alt alan adlarıyla CANLI
+
+Prod'a **hiç dokunmadan** VPS'te ayrı proje (`-p lisansdev`, ayrı DB/ağ/volume) olarak çalışır,
+prod Caddy (443/TLS) üzerinden alt alan adlarıyla erişilir:
+
+| Ortam | URL | Giriş |
+|---|---|---|
+| Dev panel (admin) | https://dev-admin.167-233-108-12.sslip.io | auth kapalı |
+| Dev panel API | https://dev-api.167-233-108-12.sslip.io/v1/health | — |
+| Dev WordPress | https://dev-wp.167-233-108-12.sslip.io | `admin` / `admin12345` |
+
+Yönetim (VPS'te): `./scripts/dev-stack.sh up|wp|down|status|subdomains`.
+
+> **Not:** Alt alan adları prod Caddy'nin `lisansdev_default` ağına bağlı olmasına dayanır.
+> Prod Caddy `deploy.sh` ile yeniden yaratılırsa bu bağ kopar → `./scripts/dev-stack.sh subdomains`
+> ile yeniden bağla (dev rotaları 502 verirse sebep budur; prod ETKİLENMEZ).
+
 ## Komutlar
 
 | Komut | İş |
