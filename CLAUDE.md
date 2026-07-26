@@ -464,6 +464,36 @@ notif/AI · tedarik/müşteri/rapor · kalan-UX-tutarlılık. **19 doğrulanmı�
 - **Doğrulama:** typecheck shared+api+admin temiz · AI birim 11/11 · VPS entegrasyon+yarış · deploy /health 200.
   Çürütülen 3 (yanlış-pozitif/bilinçli): webhook seq ms-çakışması · security dedupe TOCTOU · updates Host-header.
 
+**MÜŞTERİ HİYERARŞİSİ + 5-LENS DENETİM (commit 04f8f5f + 712e328, CANLI + deploy + entegrasyon 89/89 + yarış 2/2):**
+Kullanıcı "müşteriler bölümünü site → müşteri hiyerarşisine göre düzenle (çok site = karışıklık); ayrıca tüm sistemi
+kontrol edip eksikleri düzelt" dedi → (a) hiyerarşi + (b) 5-lensli genel denetim (bul→çekişmeli doğrula).
+- **(a) Site → müşteri hiyerarşisi (04f8f5f, migration YOK):** müşteriler global e-posta bazlı kalır (etiket/not per-email);
+  YENİ site boyutu SUNUM katmanında. `customers.list({search?, siteId?})` — siteId verilince YALNIZ o sitenin müşterileri +
+  o siteye kapsanmış sipariş/atama/değişim sayıları (koşullu WHERE + kapsam alt-sorgu süzgeçleri); global görünüm
+  `array_agg(DISTINCT st.domain)` ile "Siteler" kolonu döner. `/customers` üstünde aranabilir **site süzgeci** (Combobox,
+  `?site=<id>`) — daralınca "Siteler" kolonu gizlenir + açıklama siteye özelleşir; **site detayında** "Müşteriler" kartı
+  (o sitenin ilk 8 müşterisi + "Tümünü gör"→`/customers?site=`). Tümü `?? []` savunmalı (api/admin deploy sapmasına dayanıklı).
+- **(b) 5-lens denetim → 9 doğrulanmış bulgu (1 medium + 8 low), hepsi düzeltildi (712e328, migration YOK):**
+  **[medium]** `completeLine` yan-etki bloğunda mail + webhook.emit TEK try/catch'te, mail ÖNCE → mail enqueue patlarsa
+  webhook HİÇ çalışmaz → `order.fulfilled` outbox'a yazılmaz (kalıcı kayıp, /ops replay edilemez); İKİ AYRI try/catch'e
+  bölündü (createOrder deseni). **[low×2]** `reports.velocity`+`products.detailVelocity` statü filtresiz `sum(a.units)` →
+  iade (revoked) + değişimde geri alınan atama satış sayılıyordu (çift-sayım/şişik tükenme tahmini); FILTER'a
+  `status IN ('active','suspended','expired')` (reconcile ile tutarlı). **[low]** `stock.preview` iptal (canceled) satır +
+  incelemedeki (held) siparişi 'karşılanacak talep' sayıyordu ama autoComplete doldurmaz → orders join + canceled=false +
+  heldForReview=false. **[low]** `security.scanReplacementAnomaly` zaman-filtresiz tam-tablo group-by + assignments×talep
+  çapraz çarpımı (15dk'da bir) → iki ayrı per-site CTE alt-sorgu (çarpım yok, approved 24s pencereli). **[low]**
+  SentryExceptionFilter degraded /health 503'ünü her poll'da capture ediyordu (kesinti=Sentry sel) → sağlık probu hariç.
+  **WP eklentisi: [high]** klon/staging guard sabit-tabanlı/el-ile kurulumda (ÖNERİLEN güvenli kurulum) KALICI no-op'ti
+  (`jetlisans_bound_home` yalnız "Panele Bağlan" akışında yazılıyordu, const install o akışa girmez → is_clone() hep false
+  → klon canlı lisansı revoke/tüketebilir); taban çizgisi artık **aktivasyonda** yazılır + `JETLISANS_BOUND_HOME` sabiti de
+  onurlandırılır. **[low]** My Account okuma yolu klon guard'sızdı (klon GERÇEK maskesiz key gösterebilir) → render() başında
+  is_clone() kısa devre. **[low]** `handle_bulk` panel YETKİLİ `held` bayrağını yok sayıyordu → toplu yenileme bayat rozeti
+  temizlemiyordu; held=false ise meta silinir. **[low]** kuyruk-log budama cron'u yalnız aktivasyonda (WP güncelleme
+  aktivasyonu tetiklemez) → `jetlisans_init`'te yeniden kur. **Doğrulama:** typecheck+build temiz, api birim 31/31, VPS izole
+  test DB **entegrasyon 89/89 + yarış 2/2**, api rebuild → /health 200 (db+redis). **NOT:** denetim workflow'unda 3 ajan
+  "haftalık limit" ile düştü (admin-shape lensi + 2 doğrulama); kalan 9 bulgu tam doğrulandı, admin-shape lensi bir sonraki
+  turda tekrar koşulabilir.
+
 ## Geliştirme
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
