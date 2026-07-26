@@ -51,6 +51,8 @@ services:
       # WP_SITE_URL / PANEL_NETWORK / WP_BIND ortam değişkenleriyle override edilebilir
       # (yerel varsayılan = localhost:8090; VPS izole dev'de farklı URL/ağ/port).
       WORDPRESS_CONFIG_EXTRA: |
+        // TLS-sonlandıran reverse proxy (Caddy) arkasında https'i tanı — yönlendirme döngüsü olmasın.
+        if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') { $$_SERVER['HTTPS'] = 'on'; }
         define('WP_HOME', '${WP_SITE_URL:-http://localhost:8090}');
         define('WP_SITEURL', '${WP_SITE_URL:-http://localhost:8090}');
         define('WP_DEBUG', true);
