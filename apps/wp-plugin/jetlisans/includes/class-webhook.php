@@ -84,7 +84,7 @@ class Jetlisans_Webhook {
                 $order->save();
             }
             $event = isset($body['event']) ? sanitize_text_field($body['event']) : 'update';
-            $order->add_order_note(sprintf('Jetlisans: %s (durum: %s)', $event, $status));
+            $order->add_order_note(sprintf('Teslimat: %s (durum: %s)', $event, $status));
         }
 
         return new WP_REST_Response(['ok' => true], 200);

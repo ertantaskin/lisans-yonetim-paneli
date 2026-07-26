@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) exit;
 
 /**
  * Eklenti güncelleme denetçisi (§16). Güncelleme kaynağı WordPress.org DEĞİL,
- * merkezi Jetlisans panelidir: eklenti panelin `/v1/updates/plugin/info`
+ * merkezi lisans teslimat panelidir: eklenti panelin `/v1/updates/plugin/info`
  * ucundan sürüm bilgisini çeker ve WP'nin standart güncelleme akışına
  * (Kontrol Paneli → Güncellemeler, eklenti listesi "güncelle" bağlantısı) enjekte eder.
  *
@@ -129,7 +129,7 @@ class Jetlisans_Updater {
         $changelog = isset($info['changelog']) ? (string) $info['changelog'] : '';
 
         return (object) [
-            'name'          => isset($info['name']) ? (string) $info['name'] : 'Jetlisans — Lisans Teslimat İstemcisi',
+            'name'          => isset($info['name']) ? (string) $info['name'] : 'WP Teslimat Eklentisi',
             'slug'          => 'jetlisans',
             'version'       => (string) $info['version'],
             'download_link' => $download,

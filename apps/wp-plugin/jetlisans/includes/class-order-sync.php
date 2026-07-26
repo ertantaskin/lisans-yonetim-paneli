@@ -68,7 +68,7 @@ class Jetlisans_Order_Sync {
             // false ise bugünküyle birebir aynı davranış (geriye dönük uyumlu).
             if (!empty($res['body']['held']) && $order->get_meta('_jetlisans_held_for_review') !== 'yes') {
                 $order->update_meta_data('_jetlisans_held_for_review', 'yes');
-                $order->add_order_note('Jetlisans: Sipariş güvenlik incelemesine alındı — teslimat yönetici onayından sonra tamamlanacak.');
+                $order->add_order_note('Teslimat: Sipariş güvenlik incelemesine alındı — teslimat yönetici onayından sonra tamamlanacak.');
             }
             $order->save();
         } else {
@@ -183,7 +183,7 @@ class Jetlisans_Order_Sync {
                 $order->delete_meta_data('_jetlisans_held_for_review');
             }
             $count = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
-            $order->add_order_note(sprintf('Jetlisans: %d lisans geri alındı (%s).', $count, $reason));
+            $order->add_order_note(sprintf('Teslimat: %d lisans geri alındı (%s).', $count, $reason));
             $order->save();
         } else {
             // Başarısız → retry planla.

@@ -293,7 +293,7 @@ export function Wizard() {
                 <AlertDescription>
                   WordPress yönetici panelinizde{' '}
                   <span className="font-medium text-foreground">
-                    Jetlisans &rsaquo; Panele Bağlan
+                    Ayarlar &rsaquo; Teslimat Eklentisi &rsaquo; Panele Bağlan
                   </span>{' '}
                   ekranını açın ve yukarıdaki kodu yapıştırın. Eklenti, kodu kullanarak siteyi
                   panele kalıcı olarak bağlar (HMAC secret güvenli şekilde WP tarafına aktarılır).

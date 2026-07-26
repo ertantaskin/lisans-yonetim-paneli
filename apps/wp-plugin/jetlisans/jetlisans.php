@@ -1,11 +1,11 @@
 <?php
 /**
- * Plugin Name: Jetlisans — Lisans Teslimat İstemcisi
- * Description: WooCommerce siparişlerini merkezi Jetlisans paneline iletir; teslimatları
+ * Plugin Name: WP Teslimat Eklentisi
+ * Description: WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatları
  *              müşteriye gösterir. Lisans verisi WP'de TUTULMAZ — panel tek doğruluk kaynağı.
  * Version: 0.1.0
  * Requires PHP: 7.4
- * Author: Jetlisans
+ * Author: Lisans Paneli
  * Text Domain: jetlisans
  *
  * İnce istemci (MIMARI.md §7): yalnız istek kuyruğu + assignment_id referansı.

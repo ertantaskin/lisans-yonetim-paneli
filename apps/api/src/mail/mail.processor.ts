@@ -120,7 +120,7 @@ export class MailProcessor extends WorkerHost {
       const tpl = await this.templates.resolve(rows[0]!.productId, order.siteId);
       const vars = {
         order_no: order.remoteOrderId,
-        site_name: site?.domain ?? 'Jetlisans',
+        site_name: site?.domain ?? 'Mağaza',
         product_name: rows[0]!.productName ?? '',
         units: String(rows.reduce((s, r) => s + r.units, 0)),
         customer_email: order.customerEmail,

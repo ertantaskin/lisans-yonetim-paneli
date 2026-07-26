@@ -71,7 +71,7 @@ export class MailService {
       .limit(1);
 
     let sandbox = false;
-    let siteName = 'Jetlisans';
+    let siteName = 'Mağaza';
     if (order?.siteId) {
       const [site] = await this.db
         .select({ sandbox: sites.sandbox, domain: sites.domain })

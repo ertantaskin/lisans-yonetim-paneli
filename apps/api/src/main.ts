@@ -63,7 +63,7 @@ async function bootstrap(): Promise<void> {
   const port = Number(process.env.API_PORT ?? 3001);
   await app.listen({ port, host: '0.0.0.0' });
 
-  app.get(Logger).log(`Jetlisans API :${port} üzerinde ayakta (prefix /v1)`);
+  app.get(Logger).log(`Lisans Paneli API :${port} üzerinde ayakta (prefix /v1)`);
 }
 
 void bootstrap();

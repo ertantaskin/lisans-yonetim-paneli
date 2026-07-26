@@ -67,7 +67,7 @@ class Jetlisans_Settings {
         if (!current_user_can('manage_options')) return;
         $bound = (string) get_option('jetlisans_bound_home', '');
         echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
-            'Jetlisans: Site adresi (%s) bağlanma anındaki adresten (%s) farklı. Kopya/staging koruması etkin: ' .
+            'Teslimat eklentisi: Site adresi (%s) bağlanma anındaki adresten (%s) farklı. Kopya/staging koruması etkin: ' .
             'siparişler panele İLETİLMİYOR (canlı stok korunur). Bu kasıtlı bir taşımaysa panele yeniden bağlanın.',
             home_url(),
             $bound
@@ -101,7 +101,7 @@ class Jetlisans_Settings {
     }
 
     public function menu() {
-        add_options_page('Jetlisans', 'Jetlisans', 'manage_options', 'jetlisans', [$this, 'page']);
+        add_options_page('WP Teslimat Eklentisi', 'Teslimat Eklentisi', 'manage_options', 'jetlisans', [$this, 'page']);
     }
 
     public function register() {
@@ -115,7 +115,7 @@ class Jetlisans_Settings {
         $has_const  = self::has_const();
         ?>
         <div class="wrap">
-            <h1>Jetlisans — Lisans Teslimat İstemcisi</h1>
+            <h1>WP Teslimat Eklentisi</h1>
             <?php self::render_connect_notice(); ?>
             <p>Durum:
                 <?php if ($configured): ?>

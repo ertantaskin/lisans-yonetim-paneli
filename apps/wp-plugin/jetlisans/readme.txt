@@ -1,10 +1,10 @@
-=== Jetlisans — Lisans Teslimat İstemcisi ===
+=== WP Teslimat Eklentisi ===
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
 Stable tag: 0.1.0
 
-WooCommerce siparişlerini merkezi Jetlisans paneline iletir; teslimatı müşteriye gösterir.
+WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
 
 == Kurulum ==
@@ -19,7 +19,7 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 3. Panelde bu site için webhook_url'i şuna ayarlayın:
    https://SITENIZ/wp-json/jetlisans/v1/webhook
 4. Panelde ürünleri eşleyin: remoteProductId = WooCommerce ürün ID'si.
-5. "Ayarlar → Jetlisans" ekranından durumu doğrulayın (kalıcı bağlantılar/permalink açık olmalı).
+5. "Ayarlar → Teslimat Eklentisi" ekranından durumu doğrulayın (kalıcı bağlantılar/permalink açık olmalı).
 
 == Nasıl çalışır ==
 

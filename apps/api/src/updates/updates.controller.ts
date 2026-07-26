@@ -92,7 +92,7 @@ export class UpdatesController {
     const downloadUrl = `${base}/v1/updates/plugin/download/${encodeURIComponent(release.version)}`;
 
     return {
-      name: 'Jetlisans — Lisans Teslimat İstemcisi',
+      name: 'WP Teslimat Eklentisi',
       slug: 'jetlisans',
       version: release.version,
       download_url: downloadUrl,

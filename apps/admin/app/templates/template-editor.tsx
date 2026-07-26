@@ -22,7 +22,7 @@ import { Card } from '../../components/ui/card';
 /** Önizleme için örnek değişkenler — API SAMPLE_VARS ile aynı (§6). */
 const SAMPLE_VARS: Record<string, string> = {
   order_no: '10042',
-  site_name: 'jetlisans.com',
+  site_name: 'ornek-site.com',
   product_name: 'Windows 11 Pro',
   units: '1',
   customer_email: 'musteri@ornek.com',

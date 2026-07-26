@@ -23,7 +23,7 @@ class Jetlisans_Admin_Metabox {
             && function_exists('wc_get_page_screen_id')
             ? wc_get_page_screen_id('shop-order')
             : 'shop_order';
-        add_meta_box('jetlisans_deliveries', 'Jetlisans — Lisans Teslimatı', [$this, 'render'], $screen, 'side', 'high');
+        add_meta_box('jetlisans_deliveries', 'Lisans Teslimatı', [$this, 'render'], $screen, 'side', 'high');
     }
 
     /** Panel mask formatıyla hizalı: sabit gövde + son 4 hane (uzunluk/yapı sızmaz). */

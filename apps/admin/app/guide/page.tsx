@@ -177,7 +177,7 @@ export default function GuidePage() {
             site bilgileri → tek kullanımlık <strong>bağlan kodu</strong> → bağlantı testi.
           </li>
           <li>
-            WordPress&apos;te Jetlisans eklentisini kurup ayarlarda <strong>&quot;Panele Bağlan&quot;</strong>{' '}
+            WordPress&apos;te teslimat eklentisini kurup <strong>Ayarlar &rsaquo; Teslimat Eklentisi</strong>{' '}altında <strong>&quot;Panele Bağlan&quot;</strong>{' '}
             alanına bu kodu girin. Kod 15 dakika geçerlidir ve tek kullanımlıktır.
           </li>
           <li>

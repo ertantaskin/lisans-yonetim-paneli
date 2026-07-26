@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) exit;
  * (#33) Sipariş listesi (shop_order) panel-durum kolonu + toplu-aksiyon.
  *
  * Kolon: order meta `_jetlisans_panel_status` (+ fulfilled/total) okunup gösterilir.
- * Toplu-aksiyon "Jetlisans: panel durumunu güncelle": seçili siparişler için
+ * Toplu-aksiyon "Panel durumunu güncelle": seçili siparişler için
  *   POST /v1/orders/bulk-status { remoteOrderIds: [...] }  (HMAC imzalı)
  * çağrılır; dönen [{ remoteOrderId, status, fulfilled, total }] her siparişin
  * meta'sına yazılır (kolon bunu okur). Payload/sır GÖSTERİLMEZ — yalnız durum sayaçları.
@@ -106,7 +106,7 @@ class Jetlisans_Order_List {
 
     /** Toplu-aksiyon menüsüne "panel durumunu güncelle" ekle. */
     public function add_bulk_action($actions) {
-        $actions['jetlisans_refresh_status'] = __('Jetlisans: panel durumunu güncelle', 'jetlisans');
+        $actions['jetlisans_refresh_status'] = __('Panel durumunu güncelle', 'jetlisans');
         return $actions;
     }
 
@@ -184,7 +184,7 @@ class Jetlisans_Order_List {
                 '</p></div>';
         } elseif ($flag === 'notconfigured') {
             echo '<div class="notice notice-warning is-dismissible"><p>' .
-                esc_html__('Jetlisans paneli yapılandırılmadığı için panel durumu güncellenemedi.', 'jetlisans') .
+                esc_html__('Teslimat paneli yapılandırılmadığı için panel durumu güncellenemedi.', 'jetlisans') .
                 '</p></div>';
         } elseif ($flag === 'error') {
             echo '<div class="notice notice-error is-dismissible"><p>' .
