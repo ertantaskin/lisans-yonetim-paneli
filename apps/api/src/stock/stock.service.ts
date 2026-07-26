@@ -13,6 +13,7 @@ import {
   batches,
   licenseItems,
   orderLines,
+  orders,
   purchaseOrders,
   type NewLicenseItem,
   type Product,
@@ -304,10 +305,16 @@ export class StockService {
         units: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.fulfilledQty}, 0)), 0)`,
       })
       .from(orderLines)
+      // autoCompleteProduct ("Onayla ve Dağıt" import) ile AYNI filtreler: iptal/iade
+      // satırları (canceled) ve incelemedeki (held_for_review) siparişleri oto-tamamlamaz →
+      // önizleme de bunları 'karşılanacak talep' saymamalı (yanıltıcı wouldFill düzelir).
+      .innerJoin(orders, eq(orderLines.orderId, orders.id))
       .where(
         and(
           eq(orderLines.productId, productId),
           inArray(orderLines.status, ['pending', 'partial']),
+          eq(orderLines.canceled, false),
+          eq(orders.heldForReview, false),
         ),
       );
 

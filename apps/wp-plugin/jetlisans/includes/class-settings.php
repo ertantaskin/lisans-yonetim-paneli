@@ -42,17 +42,21 @@ class Jetlisans_Settings {
     }
 
     /**
-     * Staging/klon koruması (§7 "URL değişince pasif mod"). "Panele Bağlan" anında sitenin
-     * home_url'i `jetlisans_bound_home`'a yazılır. Site başka bir alan adına klonlanırsa
-     * (prod → staging, aynı wp-config → aynı api_key/hmac_secret) home_url DEĞİŞİR ve klon
-     * gerçek panele push edip CANLI stoğu tüketebilir. Bu kontrol o durumu yakalar.
+     * Staging/klon koruması (§7 "URL değişince pasif mod"). Taban çizgisi (beklenen home_url) üç
+     * kaynaktan gelebilir, öncelik sırasıyla: (1) wp-config.php'de JETLISANS_BOUND_HOME sabiti
+     * (sabit-tabanlı kurulumların operatörü beklenen adresi açıkça sabitleyebilir); (2) aktivasyonda
+     * yazılan `jetlisans_bound_home` option'ı (prod'da kurulumda sabitlenir, klon DB bunu devralır);
+     * (3) "Panele Bağlan" akışının yazdığı aynı option. Site başka bir alan adına klonlanırsa (prod →
+     * staging, aynı wp-config → aynı api_key/hmac_secret) home_url DEĞİŞİR ve klon gerçek panele push
+     * edip CANLI stoğu tüketebilir / gerçek müşterinin lisansını geri alabilir. Bu kontrol o durumu yakalar.
      *
-     * Baseline YOKSA (sabit-tabanlı kurulum veya bu sürümden önce bağlanmış eski site)
-     * false döner — kontrol atlanır (mevcut kurulumları kırmamak için güvenli varsayılan);
-     * korumayı etkinleştirmek için panele bir kez yeniden bağlanmak yeterlidir.
+     * Baseline HİÇ yoksa (aktivasyon çalışmamış + sabit yok) false döner — kontrol atlanır (güvenli
+     * varsayılan); korumayı etkinleştirmek için yeniden aktivasyon veya sabit tanımı yeterlidir.
      */
     public static function is_clone() {
-        $bound = (string) get_option('jetlisans_bound_home', '');
+        $bound = (defined('JETLISANS_BOUND_HOME') && JETLISANS_BOUND_HOME)
+            ? (string) JETLISANS_BOUND_HOME
+            : (string) get_option('jetlisans_bound_home', '');
         if ($bound === '') return false;
         return untrailingslashit(home_url()) !== untrailingslashit($bound);
     }

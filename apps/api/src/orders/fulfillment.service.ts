@@ -176,34 +176,56 @@ export class FulfillmentService {
     });
 
     // Yeni atama yapıldıysa teslimat/güncelleme mailini kuyruğa al (§6). Atama zaten commit
-    // edildi; enqueue best-effort — kuyruk/DB hatası teslimatı DÜŞÜRMEZ (createOrder deseni).
+    // edildi; yan-etkiler best-effort — kuyruk/DB hatası teslimatı DÜŞÜRMEZ.
+    // KRİTİK: mail ve webhook AYRI try/catch (createOrder deseni). webhook.emit outbox_events
+    // satırını queue.add'den ÖNCE yazar → mail enqueue hatası webhook'u ENGELLEMEMELİ; aksi halde
+    // 'order.fulfilled' olayı ne WP'ye gider ne /ops dead-letter'dan replay edilebilir (kalıcı kayıp).
     if (result.added > 0) {
+      let order: typeof orders.$inferSelect | undefined;
       try {
-        const [order] = await this.db
+        [order] = await this.db
           .select()
           .from(orders)
           .where(eq(orders.id, result.orderId))
           .limit(1);
-        if (order) {
+      } catch (err) {
+        this.logger.warn(
+          `completeLine sonrası sipariş yüklenemedi (order ${result.orderId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      if (order) {
+        // 1) Teslimat/güncelleme maili — hatası webhook'u ETKİLEMEZ (ayrı blok).
+        try {
           await this.mail.enqueueDelivery(
             order.id,
             order.customerEmail,
             `Siparişiniz güncellendi — ${order.remoteOrderId}`,
           );
-          // Geri kanal webhook — tamamlanma sonrası güncel durum (§2).
+        } catch (err) {
+          this.logger.warn(
+            `completeLine sonrası teslimat maili kuyruğa alınamadı (order ${result.orderId}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        // 2) Geri kanal webhook — tamamlanma sonrası güncel durum (§2). Bağımsız blok:
+        // outbox satırı burada yazılır → mail patlasa bile olay replay edilebilir kalır.
+        try {
           const evt =
             order.status === 'fulfilled' ? 'order.fulfilled' : 'order.partially_fulfilled';
           await this.webhook.emit(order.siteId, order.id, evt, {
             status: order.status,
             remoteOrderId: order.remoteOrderId,
           });
+        } catch (err) {
+          this.logger.warn(
+            `completeLine sonrası geri-kanal webhook yazılamadı (order ${result.orderId}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
         }
-      } catch (err) {
-        this.logger.warn(
-          `completeLine sonrası mail/webhook kuyruğa alınamadı (order ${result.orderId}): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
       }
     }
 

@@ -153,6 +153,14 @@ class Jetlisans_Order_List {
                         isset($row['fulfilled']) ? (int) $row['fulfilled'] : 0);
                     $order->update_meta_data('_jetlisans_panel_total',
                         isset($row['total']) ? (int) $row['total'] : 0);
+                    // (§8 held staleness) Panel YETKİLİ `held` bayrağını bulk-status'ta da döndürür.
+                    // Sipariş artık incelemede değilse bayat _jetlisans_held_for_review işaretini temizle
+                    // — toplu yenileme, incelemeden çıkmış (release/reject) siparişin rozetini de düşürsün
+                    // (aksi halde meta, sipariş tek tek açılana dek 'yes' kalırdı; rejectHeld webhook atmaz).
+                    if (array_key_exists('held', $row) && !$row['held']
+                        && $order->get_meta('_jetlisans_held_for_review') === 'yes') {
+                        $order->delete_meta_data('_jetlisans_held_for_review');
+                    }
                     $order->save();
                     $updated++;
                 }

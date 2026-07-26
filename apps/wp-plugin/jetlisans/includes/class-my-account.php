@@ -38,6 +38,19 @@ class Jetlisans_My_Account {
         $panel_order_id = $order->get_meta('_jetlisans_order_id');
         if (!$panel_order_id) return;
 
+        // (§7 klon/staging koruması) Klon, aynı api_key/hmac_secret'i devralır → canlı panelden
+        // GERÇEK (maskesiz) lisans anahtarlarını çekip gösterebilir. Yazma yolları (push/resync/
+        // revoke/report-issue) zaten is_clone() ile korunuyor; bu OKUMA yolu da klonda kısa devre
+        // yapmalı (staging ortamları çoğu zaman zayıf erişim kontrolüne sahiptir → düz-metin sızıntısı).
+        if (Jetlisans_Settings::is_clone()) {
+            echo '<section class="jetlisans-deliveries" style="margin-top:24px">';
+            echo '<h2>' . esc_html__('Lisans Teslimatınız', 'jetlisans') . '</h2>';
+            echo '<div class="woocommerce-info">' .
+                esc_html__('Lisans bilgileri bu ortamda görüntülenemez.', 'jetlisans') . '</div>';
+            echo '</section>';
+            return;
+        }
+
         $res = Jetlisans_Panel_Client::get('/v1/orders/' . rawurlencode($panel_order_id) . '/deliveries');
         $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
         $deliveries = (isset($body['deliveries']) && is_array($body['deliveries'])) ? $body['deliveries'] : [];

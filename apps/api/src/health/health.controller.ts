@@ -11,7 +11,8 @@ export class HealthController {
    * db+redis ping geçerse 200 + {status:'ok'}; herhangi biri düşerse 503 + {status:'degraded'}
    * (BULGU 2). Eskiden degraded'da bile 200 dönüyordu → monitor paneli sağlıklı sanıyordu.
    * Gövde KORUNUR: HttpException(gövde, kod) — obje aynen JSON yanıt gövdesi olur, yalnız HTTP
-   * durumu 503'e çıkar (global exception filter yok → NestJS varsayılanı objeyi olduğu gibi döner).
+   * durumu 503'e çıkar. Global SentryExceptionFilter BaseExceptionFilter'a devreder → yanıt biçimi
+   * değişmez; ayrıca bu bilinçli degraded 503 Sentry capture'dan HARİÇ (sağlık probu istisnası).
    */
   @Get()
   async check(): Promise<HealthResponse> {

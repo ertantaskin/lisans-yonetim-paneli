@@ -129,6 +129,9 @@ export class ReportsService {
    * toplamı ürün bazında. dailyRate=sold30d/30; daysRemaining=available/dailyRate
    * (rate 0 → null). available, stock() ile AYNI 'available' kapasite mantığı.
    * Yalnız satış geçmişi olan (en az bir atama) ürünler listelenir.
+   * NOT: yalnız AYAKTA atamalar sayılır (reconcile ile aynı: active/suspended/expired) —
+   * iade (revoked) ve değişimde geri alınan eski atama satış SAYILMAZ (değişimde çift-sayım
+   * + iade sonrası şişkin hız düzelir).
    */
   private async velocity(): Promise<VelocityRow[]> {
     const list = await rawRows<{
@@ -141,8 +144,8 @@ export class ReportsService {
       SELECT
         p.id AS product_id,
         p.sku AS sku,
-        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days'), 0)::int AS sold7d,
-        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days'), 0)::int AS sold30d,
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold7d,
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold30d,
         coalesce((
           SELECT sum(li.max_uses - li.use_count)
           FROM license_items li

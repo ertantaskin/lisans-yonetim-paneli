@@ -260,12 +260,14 @@ export class ProductsService {
   /**
    * Satış hızı: bu ürünün atamalarında (assignments→order_lines) 7/30 gün penceresinde
    * tüketilen units toplamı. reports.velocity ile AYNI mantık, tek ürüne daraltılmış.
+   * Yalnız AYAKTA atamalar (active/suspended/expired) — iade/değişimde geri alınan eski
+   * atama satış SAYILMAZ (reports.velocity ile tutarlı).
    */
   private async detailVelocity(id: string): Promise<{ sold7d: number; sold30d: number }> {
     const list = await rawRows<{ sold7d: number; sold30d: number }>(this.db, sql`
       SELECT
-        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days'), 0)::int AS sold7d,
-        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days'), 0)::int AS sold30d
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold7d,
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold30d
       FROM assignments a
       JOIN order_lines ol ON ol.id = a.line_id
       WHERE ol.product_id = ${id};

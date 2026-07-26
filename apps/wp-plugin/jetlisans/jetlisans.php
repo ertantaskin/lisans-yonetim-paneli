@@ -41,6 +41,14 @@ function jetlisans_init() {
     Jetlisans_Admin_Metabox::instance();
     Jetlisans_Report_Issue::instance();
     Jetlisans_Updater::instance();
+
+    // Budama cron'u YALNIZ aktivasyonda kuruluyordu; WP güncellemede aktivasyon hook'u ÇALIŞMAZ
+    // (bu eklenti kendi güncelleyicisini taşır) ve temizlenen bir cron olayı da yeniden kurulmaz.
+    // Eksikse normal yükleme yolunda yeniden kur → kuyruk logu sınırsız büyümesin (§7). Action zaten
+    // dosya düzeyinde kayıtlı (aşağıda), bu yüzden cron tetiklendiğinde çalışır.
+    if (Jetlisans_Settings::is_configured() && !wp_next_scheduled('jetlisans_prune_queue')) {
+        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'jetlisans_prune_queue');
+    }
 }
 add_action('plugins_loaded', 'jetlisans_init');
 
@@ -89,6 +97,16 @@ function jetlisans_activate() {
     // Günlük budama cron'u — DB şişmesini gerçekten önleyen kısım (§7). Yalnız yoksa kur.
     if (!wp_next_scheduled('jetlisans_prune_queue')) {
         wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'jetlisans_prune_queue');
+    }
+
+    // Klon/staging koruması TABAN ÇİZGİSİ (§7): bu sitenin home_url'ini bir kez sabitle.
+    // Aktivasyon PROD'da kurulumda çalışır; DB staging'e klonlandığında (aynı wp-config → aynı
+    // api_key/hmac_secret) klon bu PROD URL'ini devralır → is_clone() staging'de doğru şekilde true
+    // döner. Böylece "Panele Bağlan" akışına GİRMEYEN sabit-tabanlı/el ile kurulumlarda da koruma
+    // etkin olur (önceden yalnız connect akışı bound_home yazıyordu → önerilen güvenli kurulumda
+    // korumanın kalıcı no-op olması giderildi). Yalnız yoksa yaz — mevcut bağlanmayı EZME.
+    if (get_option('jetlisans_bound_home', '') === '') {
+        update_option('jetlisans_bound_home', home_url());
     }
 }
 register_activation_hook(__FILE__, 'jetlisans_activate');

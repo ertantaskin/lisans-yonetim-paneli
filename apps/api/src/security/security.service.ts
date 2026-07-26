@@ -117,22 +117,36 @@ export class SecurityService implements OnModuleInit {
    * @returns yazılan olay sayısı
    */
   private async scanReplacementAnomaly(): Promise<number> {
+    // İki agregat AYRI alt-sorgu olarak site başına toplanır: tek sorguda orders→assignments ve
+    // orders→replacement_requests'i birlikte join etmek sipariş başına assignments×talep ÇAPRAZ
+    // ÇARPIMI üretip ara sonucu şişirirdi. Ayrıca 'approved' penceresi 24s'e sınırlı (dar tarama).
+    // 'assignments' aktif atama denominatörü (oran paydası) — status='active' üzerinde kısmi index'li.
     const rows = await rawRows<{
       site_id: string;
       approved: number;
       assignments: number;
     }>(this.db, sql`
+      WITH appr AS (
+        SELECT o.site_id AS site_id, count(*)::int AS approved
+        FROM replacement_requests rr
+        JOIN orders o ON o.id = rr.order_id
+        WHERE rr.status = 'approved' AND rr.updated_at >= now() - interval '24 hours'
+        GROUP BY o.site_id
+      ),
+      asg AS (
+        SELECT o.site_id AS site_id, count(*)::int AS assignments
+        FROM assignments a
+        JOIN order_lines ol ON ol.id = a.line_id
+        JOIN orders o ON o.id = ol.order_id
+        WHERE a.status = 'active'
+        GROUP BY o.site_id
+      )
       SELECT
-        o.site_id AS site_id,
-        count(DISTINCT rr.id) FILTER (
-          WHERE rr.status = 'approved' AND rr.updated_at >= now() - interval '24 hours'
-        )::int AS approved,
-        count(DISTINCT a.id) FILTER (WHERE a.status = 'active')::int AS assignments
-      FROM orders o
-      LEFT JOIN order_lines ol ON ol.order_id = o.id
-      LEFT JOIN assignments a ON a.line_id = ol.id
-      LEFT JOIN replacement_requests rr ON rr.order_id = o.id
-      GROUP BY o.site_id;
+        asg.site_id AS site_id,
+        coalesce(appr.approved, 0)::int AS approved,
+        asg.assignments AS assignments
+      FROM asg
+      LEFT JOIN appr ON appr.site_id = asg.site_id;
     `);
     let n = 0;
     for (const r of rows) {
