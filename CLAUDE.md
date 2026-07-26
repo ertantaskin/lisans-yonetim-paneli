@@ -506,7 +506,39 @@ slug `jetlisans` → hepsi AYNI kaldı ki mevcut kurulumdaki kayıtlı veri kopm
 etsin. typecheck+build temiz, api+admin deploy, /health 200. (Not: kod içi `jetlisans` görünce şaşırma — kayıtlı
 anahtar; kullanıcıya görünen ad "WP Teslimat Eklentisi".)
 
+**YAYIN YÖNETİM SİSTEMİ + DEV ORTAMLARI (commit 8f2dee1→60d46bf, CANLI):** Kullanıcı "gerçek yazılım
+şirketi gibi, sürüm-bazlı, güncelleme geçmişi görünür, sohbet hafızasından bağımsız sistematik bir
+yayın/dağıtım sistemi + izole dev" istedi. Kuruldu (4 parça). **SÜRECİN TEK KAYNAĞI: [[release-deploy-sistemi]]
++ `docs/RUNBOOK-RELEASE.md`.**
+- **(A) Repoda kalıcı geçmiş:** `CHANGELOG.md` (SemVer, root paket 0.0.0→**1.0.0**) · `docs/DEPLOY-LOG.md`
+  (prod dağıtım geçmişi — ne/ne zaman/hangi sha) · `docs/RUNBOOK-RELEASE.md` (adım adım yayın rehberi).
+- **(B) Tek-komut araçlar (hepsi `scripts/`, exec bit 100755):** `deploy.sh` (panel→prod: git pull+build+
+  up+/health+**otomatik rollback**+ham log; VPS'te çalışır, **sahada doğrulandı** — admin dağıtımı /health 200) ·
+  `release-plugin.sh` (eklenti: sürüm artır+`git archive` zip+panele publish) · `wp-dev.sh` (yerel WP dev) ·
+  `dev-stack.sh` (VPS izole dev: up|wp|down|status).
+- **(C) Panelde görünür sürüm yönetimi:** admin **`/releases` (Sürümler)** — eklenti sürüm geçmişi tablosu +
+  yeni sürüm yayınlama formu (zip→base64→`POST /v1/admin/updates/plugin`). Backend zaten vardı; UI + sidebar eklendi.
+- **(D) İZOLE DEV/STAGING (VPS, prod'a DOKUNMAZ, CANLI+doğrulandı):** ayrı proje `-p lisansdev` → ayrı
+  container/ağ (`lisansdev_default`)/volume; ayrı `/opt/lisans-dev` klonu + `.env.dev` (dev sırları, auth KAPALI) →
+  ayrı DB (`lisansdev`). `docker-compose.dev.yml` (localhost 3002/3006, Caddy'siz) + `docker-compose.wp.yml`
+  parametreleştirildi (PANEL_NETWORK/WP_SITE_URL/WP_BIND). Dev API :3002 /health OK, prod :443 /health 200 (etkilenmedi).
+  Dış erişim: SSH tüneli veya prod Caddy'ye dev alt-alan adı (henüz eklenmedi — istenirse).
+- **İki dağıtım hedefi:** panel (git→prod, `deploy.sh`) vs WP eklentisi (git→müşteri siteleri, `release-plugin.sh`+updater).
+  Dev'in VERİSİ prod'a GİTMEZ — sadece KOD git ile terfi eder.
+
 ## Geliştirme
+
+**Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
+`./scripts/deploy.sh api admin` (rollback'li). WP eklentisi: `./scripts/release-plugin.sh <sürüm>` veya panel
+`/releases`. İzole dev (VPS): `./scripts/dev-stack.sh up`. Yerel WP dev: `pnpm wp:dev`. Geçmiş: `CHANGELOG.md`
++ `docs/DEPLOY-LOG.md`. Kısayollar: `pnpm stack:up|down|logs`, `wp:dev|down|cli`.
+
+`pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
+(PG+Redis+API+admin+Caddy). Migration: `pnpm db:generate` (şema→SQL) / `pnpm db:migrate`.
+Yarış testi (gerçek PG ister): `pnpm --filter @jetlisans/api test:race`. Lokal Node 22
+önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
+DB dışa kapalıdır; lokalde host'tan PG/Redis'e erişmek için `docker-compose.override.yml`
+(gitignore'da) 127.0.0.1'e port açar — yarış testi bunu kullanır.
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
 (PG+Redis+API+admin+Caddy). Migration: `pnpm db:generate` (şema→SQL) / `pnpm db:migrate`.
