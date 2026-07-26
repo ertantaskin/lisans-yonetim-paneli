@@ -1,0 +1,20 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# İZOLE DEV/STAGING override — prod'a HİÇ dokunmaz. Ayrı proje adı (-p lisansdev) →
+# ayrı container/ağ/volume; ayrı .env.dev → ayrı DB + dev sırları. Caddy BAŞLATILMAZ
+# (80/443'ü prod Caddy tutar); erişim: localhost portları (VPS'te SSH tüneli) veya
+# prod Caddy'ye eklenen dev alt-alan adı (bkz. docs/GELISTIRME.md).
+#
+# Kullanım (VPS'te, scripts/dev-stack.sh bunu sarar):
+#   docker compose -p lisansdev --env-file .env.dev \
+#     -f docker-compose.yml -f docker-compose.dev.yml up -d postgres redis mailpit api admin
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  api:
+    ports:
+      - '127.0.0.1:3002:3001' # dev API (prod: yalnız iç ağ)
+  admin:
+    ports:
+      - '127.0.0.1:3006:3000' # dev Admin
+  mailpit:
+    ports:
+      - '127.0.0.1:8026:8025' # dev mail kutusu

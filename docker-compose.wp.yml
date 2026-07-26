@@ -48,9 +48,11 @@ services:
       #  - JETLISANS_PANEL_URL: eklentinin paneli gördüğü sabit adres (SIR DEĞİL).
       #    api_key/hmac_secret SIRLARı burada DURMAZ — scripts/wp-dev.sh panelde site
       #    oluşturup `wp config set` ile enjekte eder (site-özel, güvenli).
+      # WP_SITE_URL / PANEL_NETWORK / WP_BIND ortam değişkenleriyle override edilebilir
+      # (yerel varsayılan = localhost:8090; VPS izole dev'de farklı URL/ağ/port).
       WORDPRESS_CONFIG_EXTRA: |
-        define('WP_HOME', 'http://localhost:8090');
-        define('WP_SITEURL', 'http://localhost:8090');
+        define('WP_HOME', '${WP_SITE_URL:-http://localhost:8090}');
+        define('WP_SITEURL', '${WP_SITE_URL:-http://localhost:8090}');
         define('WP_DEBUG', true);
         define('WP_DEBUG_LOG', true);
         define('WP_DEBUG_DISPLAY', false);
@@ -62,7 +64,7 @@ services:
       # yansır; WP eklenti dosyalarını DEĞİŞTİREMEZ (kaynak tek doğruluk).
       - ./apps/wp-plugin/jetlisans:/var/www/html/wp-content/plugins/jetlisans:ro
     ports:
-      - '127.0.0.1:8090:80'
+      - '${WP_BIND:-127.0.0.1:8090}:80'
 
   # WP-CLI — provizyon/otomasyon (scripts/wp-dev.sh bunu kullanır). Boşta bekler.
   wpcli:
@@ -88,4 +90,5 @@ volumes:
 networks:
   default:
     external: true
-    name: lisans-yonetim-paneli_default
+    # Panel yığınının ağı. Yerel: lisans-yonetim-paneli_default. İzole dev (VPS): lisansdev_default.
+    name: ${PANEL_NETWORK:-lisans-yonetim-paneli_default}
