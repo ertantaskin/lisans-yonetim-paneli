@@ -82,8 +82,18 @@ case "${1:-up}" in
     ( cd "$DEV_DIR" && PANEL_NETWORK="${PROJECT}_default" docker compose -p "$PROJECT" -f "$DEV_DIR/docker-compose.wp.yml" down 2>/dev/null || true )
     ok "İzole dev yığını durduruldu (volume'ler korunur)."
     ;;
+  subdomains)
+    # Prod Caddy'yi dev ağına bağla → dev alt alan adları prod Caddy'den (443, TLS) çözülür.
+    # Prod .env'de DEV_*_DOMAIN ayarlanmış + prod caddy o env ile yeniden yaratılmış olmalı
+    # (bkz. docs/RUNBOOK-RELEASE.md / GELISTIRME.md). Bu komut yalnız AĞ bağlantısını kurar.
+    if docker network connect "${PROJECT}_default" lisans-yonetim-paneli-caddy-1 2>/dev/null; then
+      ok "Prod Caddy '${PROJECT}_default' ağına bağlandı — dev subdomain upstream'leri çözülür."
+    else
+      say "(Prod Caddy zaten bağlı ya da bağlanamadı — 'docker network inspect ${PROJECT}_default' ile kontrol et.)"
+    fi
+    ;;
   status)
     docker compose -p "$PROJECT" ps || true
     ;;
-  *) echo "Kullanım: dev-stack.sh [up|wp|down|status]"; exit 1 ;;
+  *) echo "Kullanım: dev-stack.sh [up|wp|down|status|subdomains]"; exit 1 ;;
 esac

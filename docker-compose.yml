@@ -138,6 +138,11 @@ services:
       # Varsayılanlar bile ayrık olmalı — aynı olursa Caddy crash-loop'a girer.
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-localhost}
       API_DOMAIN: ${API_DOMAIN:-api.localhost}
+      # İzole dev/staging alt alan adları (env-gated). Prod .env'de ayarlanmazsa
+      # *.localhost'a düşer → dış etki yok. Ayrıksı olmalı (Caddy çakışmasın).
+      DEV_ADMIN_DOMAIN: ${DEV_ADMIN_DOMAIN:-dev-admin.localhost}
+      DEV_API_DOMAIN: ${DEV_API_DOMAIN:-dev-api.localhost}
+      DEV_WP_DOMAIN: ${DEV_WP_DOMAIN:-dev-wp.localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

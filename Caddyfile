@@ -20,3 +20,27 @@
 
 	reverse_proxy api:3001
 }
+
+# ── İZOLE DEV/STAGING alt alan adları (env-gated) ────────────────────────────
+# DEV_*_DOMAIN prod .env'de gerçek subdomain'e ayarlanırsa aktif; ayarlanmazsa
+# *.localhost'a düşer (iç sertifika, dış etki YOK). Upstream'ler lisansdev projesinin
+# container'larıdır — prod Caddy'nin `lisansdev_default` ağına bağlı olması gerekir
+# (dev-stack.sh 'up' bunu yapar). Bağlı değilse yalnız bu rotalar 502 verir; PROD ETKİLENMEZ.
+{$DEV_ADMIN_DOMAIN:dev-admin.localhost} {
+	encode gzip zstd
+	reverse_proxy lisansdev-admin-1:3000
+}
+
+{$DEV_API_DOMAIN:dev-api.localhost} {
+	encode gzip zstd
+	header {
+		Cache-Control "no-store"
+		-Server
+	}
+	reverse_proxy lisansdev-api-1:3001
+}
+
+{$DEV_WP_DOMAIN:dev-wp.localhost} {
+	encode gzip zstd
+	reverse_proxy lisansdev-wordpress-1:80
+}
