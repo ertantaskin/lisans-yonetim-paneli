@@ -23,6 +23,12 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
   yayınla + changelog).
 - Admin **/releases (Sürümler)** — eklenti sürüm geçmişi + yeni sürüm yayınlama arayüzü
   (backend `GET/POST /v1/admin/updates/plugin` zaten vardı).
+- **Panelden dağıtım yönetimi — /deployments (Dağıtımlar):** canlı sürüm + sağlık +
+  dağıtım geçmişi (salt-okunur) ve owner'a özel "Prod'a dağıt" tetikleyici. `deployments`
+  tablosu (migration 0021) + API (`POST/GET /v1/admin/deployments`, runner için
+  `claim`/`finish`) + host runner `scripts/deploy-runner.sh` (cron → `deploy.sh`). Panel
+  konteynerine Docker soketi VERİLMEZ — istek/runner ayrımı güvenlik gereği. Aynı anda tek
+  aktif dağıtım; 30dk'dan eski takılı "running" otomatik "failed" (self-heal).
 - **Yerel geliştirme ortamı:** `scripts/wp-dev.sh` (tek-komut WordPress+WooCommerce dev
   sitesi, panele otomatik bağlanır), iyileştirilmiş `docker-compose.wp.yml`,
   [docs/GELISTIRME.md](docs/GELISTIRME.md), kök `package.json` kısayolları (`wp:dev`, `stack:up` …).

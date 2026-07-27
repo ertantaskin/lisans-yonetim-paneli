@@ -20,6 +20,7 @@ import {
   Sparkles,
   BookOpen,
   Rocket,
+  Ship,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -90,6 +91,7 @@ export const NAV: NavSection[] = [
     items: [
       { label: 'Şablonlar', href: '/templates', icon: FileText },
       { label: 'Sürümler', href: '/releases', icon: Rocket },
+      { label: 'Dağıtımlar', href: '/deployments', icon: Ship },
       { label: 'Ayarlar', href: '/settings', icon: Settings },
       { label: 'Kullanım Rehberi', href: '/guide', icon: BookOpen },
     ],

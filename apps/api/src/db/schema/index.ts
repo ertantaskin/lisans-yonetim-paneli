@@ -17,6 +17,7 @@ export * from './stockAdjustments';
 export * from './securityEvents';
 export * from './savedViews';
 export * from './pluginReleases';
+export * from './deployments';
 export * from './mappings';
 export * from './events';
 export * from './mail';

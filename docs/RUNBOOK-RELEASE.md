@@ -57,6 +57,25 @@ ssh ... 'cd /opt/lisans-yonetim-paneli && git checkout <önceki-sha> && ./script
 Migration geri alma: migration'lar ileri-uyumlu additive'dir; şema geri almak GEREKMEZ
 (eski kod yeni şemayla çalışır). Gerekirse DB yedeğinden dön (bkz. RUNBOOK-DR).
 
+### A2. Panelden dağıtım (SSH'siz — runner ile)
+Adım 5'in SSH gerektirmeyen alternatifi: `git push` sonrası panelde **Dağıtımlar
+(/deployments)** → owner "Prod'a dağıt" (API / Admin / ikisi). Panel yalnız bir **istek**
+kaydeder; VPS host'undaki cron runner bunu görüp `deploy.sh`'ı çalıştırır ve sonucu (başarılı/
+başarısız + SHA + log) panele yazar. **Panel konteynerine Docker soketi VERİLMEZ** — güvenlik
+gereği istek (panel) ile çalıştırma (host) ayrıdır. Sayfada canlı sürüm + sağlık + geçmiş görünür.
+
+**Runner kurulumu (VPS'te, bir kez):**
+```bash
+apt-get install -y jq                      # gerekli (JSON)
+crontab -e
+# şu satırı ekle (dakikada bir bekleyen isteği kontrol eder, flock ile tek örnek):
+* * * * * flock -n /tmp/wpteslimat-deploy-runner.lock /opt/lisans-yonetim-paneli/scripts/deploy-runner.sh >> /var/log/deploy-runner.log 2>&1
+```
+Runner `ADMIN_TOKEN`'ı repo kökündeki `.env`'den okur; API'ye `X-Admin-Token` ile bağlanır.
+Aynı anda yalnız bir aktif dağıtım olur; runner çökerse 30dk'dan eski "running" kaydı otomatik
+"failed" olur (kilit açılır). İlk kez bu özelliği yayına almak için A adımını (SSH+deploy.sh) bir
+kez kullan; sonraki dağıtımlar panelden tetiklenebilir.
+
 ---
 
 ## B. WP eklentisi sürümü çıkarma (kod → müşteri siteleri)

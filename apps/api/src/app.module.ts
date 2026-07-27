@@ -30,6 +30,7 @@ import { OnboardingModule } from './onboarding/onboarding.module';
 import { PresenceModule } from './presence/presence.module';
 import { SavedViewsModule } from './saved-views/saved-views.module';
 import { UpdatesModule } from './updates/updates.module';
+import { DeploymentsModule } from './deployments/deployments.module';
 import { AiModule } from './ai/ai.module';
 import { AiSupportModule } from './ai/ai-support.module';
 import { AiSummaryModule } from './ai/ai-summary.module';
@@ -94,6 +95,7 @@ import { RateLimitModule } from './common/rate-limit.module';
     PresenceModule,
     SavedViewsModule,
     UpdatesModule,
+    DeploymentsModule,
     AiModule,
     AiSupportModule,
     AiSummaryModule,

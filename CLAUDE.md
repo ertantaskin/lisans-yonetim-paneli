@@ -534,6 +534,17 @@ yayın/dağıtım sistemi + izole dev" istedi. Kuruldu (4 parça). **SÜRECİN T
 - **İki dağıtım hedefi:** panel (git→prod, `deploy.sh`) vs WP eklentisi (git→müşteri siteleri, `release-plugin.sh`+updater).
   Dev'in VERİSİ prod'a GİTMEZ — sadece KOD git ile terfi eder.
 
+**PANELDEN DAĞITIM YÖNETİMİ (CANLI, migration 0021):** Kullanıcı "sh ile elle değil, panelden görüp
+yönetmek" istedi → admin **/deployments (Dağıtımlar)**: canlı sürüm + sağlık + dağıtım geçmişi (salt-okunur)
++ owner'a özel "Prod'a dağıt" (API/Admin/ikisi). **Mimari (güvenli):** panel yalnız `deployments` tablosuna
+bir **istek** yazar (`POST /v1/admin/deployments`); VPS host'undaki `scripts/deploy-runner.sh` (cron, flock,
+jq) bekleyeni **atomik claim** eder (`POST .../claim`, FOR UPDATE SKIP LOCKED), `deploy.sh <target>`'ı çalıştırır,
+sonucu (success/failed + SHA + log) `PATCH .../:id/finish` ile yazar. **Panel konteynerine Docker soketi
+VERİLMEZ** (konteyner→host tam erişim riski) — istek/çalıştırma ayrımı bu yüzden. Aynı anda TEK aktif dağıtım
+(request 409'lar); runner çökerse 30dk'dan eski "running" server-side otomatik "failed" (kilit açılır, self-heal).
+Owner-only Next katmanında (`isOwner()`); auth kapalıyken panel zaten açık. İlk yayın SSH+deploy.sh ile; sonrası
+panelden. `DeploymentsModule` app.module'e eklendi. Kurulum: `docs/RUNBOOK-RELEASE.md` §A2.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

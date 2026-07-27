@@ -148,6 +148,13 @@
       "when": 1784854394684,
       "tag": "0020_easy_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785600000000,
+      "tag": "0021_deployments",
+      "breakpoints": true
     }
   ]
 }
