@@ -10,6 +10,7 @@ Hedef: `root@167.233.108.12:/opt/lisans-yonetim-paneli` · URL'ler:
 
 | Tarih | Commit | Servis(ler) | Not | Sonuç |
 |---|---|---|---|---|
+| 2026-07-27 | 2c6be72 | api + eklenti v0.3.0 | §7 WP-parite D1: kısmi-iade satır-revoke (bedava-lisans kapandı) + tanılama sekmesi + admin bar + müşteri cila (parola göster/gizle, ilerleme, toplu .txt, canlı yoklama) | /health 200 · PHP-lint 3/3 · entegrasyon 94/94 · dev kısmi-iade e2e (3→2, karantina) |
 | 2026-07-27 | ada9e12 | api + admin | Teslimat-hazırlık denetimi (5-lens, 16 bulgu): deploy detached-HEAD + runner log cap + WP async/read-timeout + connect→webhookUrl + sürüm 1.0.0 | /health 200 **v1.0.0** · PHP-lint 9/9 · entegrasyon 94/94 + yarış 2/2 · yeni deploy.sh (admin probe) sahada |
 | 2026-07-27 | 9d050a9 | api + admin | Tam rename (jetlisans→@lisans/wpteslimat) + panelden dağıtım yönetimi (/deployments, migration 0021) | /health 200 · entegrasyon 92/92 + yarış 2/2 |
 | 2026-07-27 | ecbc51b | admin | Panelden-dağıtım E2E kanıtı (runner claim→deploy→success) | /health 200 |
