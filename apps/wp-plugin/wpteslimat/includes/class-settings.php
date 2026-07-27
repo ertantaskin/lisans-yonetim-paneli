@@ -519,6 +519,10 @@ define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
         // Staging/klon koruması baseline'ı (§7): bağlanma anındaki site adresi. Site başka
         // alana klonlanırsa is_clone() bunu yakalar ve push'u pasifleştirir.
         update_option('wpteslimat_bound_home', home_url());
+        // Katalog hash'ini SIFIRLA: yeni/farklı panele bağlanınca panel kataloğu BOŞ'tur; hash
+        // kalırsa (ürün değişmediği sürece) hash-skip yeniden push'u engeller → panel kalıcı boş
+        // kalırdı (§3 denetim bulgusu). Silince sonraki senkron zorla full snapshot iter.
+        delete_option('wpteslimat_catalog_hash');
 
         $domain = isset($data['siteDomain']) ? (string) $data['siteDomain'] : '';
         self::redirect_settings('ok', $domain);
