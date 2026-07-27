@@ -576,6 +576,46 @@ araçlarındaydı. **Migration YOK** (advisory-lock mevcut tablo; webhookUrl mev
   **DERS [[denetim-regresyon-dersleri]]:** yeni terminal-durum/araç eklerken (deploy rollback git-state, async
   offload) TÜM yolların ardışık davranışını gözden geçir; test DB'sini de prod migration seviyesine getir.
 
+**§7 WP-PARİTE D2+D3 + PERF/GÜVENLİK/UX DALGASI → 5-LENS DENETİM (commit 74a53e6, CANLI + eklenti v0.4.0):**
+Kullanıcı "kalan tüm dalgalar/eksikler için planla, takıma böl, hem panel hem eklenti UI/UX+perf+güvenlik en iyi
+hale getir, testi+güvenliği denetle" (uyurken sürece başla) dedi → 5-lensli gap-analizi (WP-§7/admin-UX/perf/
+güvenlik/test) + paralel ekip (P1-P4 işçi + W5 WP-D3) + 5-lensli çekişmeli denetim (bul→doğrula). **migration YOK.**
+- **D2 meta box operasyon katmanı (§7):** yeni SITE-SCOPED HMAC uçları (mevcut reveal/replace/suspend/resend
+  ADMIN_TOKEN'lı, WP çağıramıyordu) — `/v1/orders/:remoteOrderId/assignments/:aid/{reveal,replace,suspend,bonus}`
+  + `:remoteOrderId/resend` + `:remoteOrderId/admin-view`; her uç ÖNCE hedefin çağıran siteye ait olduğunu
+  doğrular (assertAssignmentInSite: remoteOrderId+siteId birlikte → çapraz-site 404); actor `wp:kullanıcı@site`
+  (WpActor decorator, x-wp-actor yalnız audit, yetki site-HMAC'te). WP metabox TAM yeniden yazıldı: key-bazında
+  Göster (loglu, **yalnız manage_options** → shop_manager açamaz, §7 rol→scope) / Değiştir (sebepli) / Askıya
+  al-Geri aç / +1 Bonus / Tekrar Mail (60sn) + **değişim geçmişi**; nonce + capability + is_clone her AJAX'ta.
+  bonusAssign: **AYRI sentetik order_line** (remoteLineId `bonus:<uuid>` → Woo asla göndermez) → reconcile/
+  syncRefunds bonusu görmez (qty şişirme YOK). "Farklı ürünle değişim" bilinçli panelde (Woo kalemi senkron kalsın).
+- **D3 eşleme kutusu + filtre + bundle:** site-scoped `/v1/site-mappings` (katalog/liste/upsert/sil; upsert
+  advisory-lock → null-varyasyon çift-satır kapandı, fiyat/sır DÖNMEZ). WP ürün-düzenleme "Panel Eşlemesi" kutusu
+  + sipariş listesi panel-durum filtresi (klasik restrict_manage_posts + HPOS; webhook durumu artık
+  `_wpteslimat_panel_status`'a da yazılır → filtre webhook-teslimatını da bulur). **Bundle/Composite: TÜM kalemler
+  push edilir** — teslimat kararı panel eşlemesine bırakıldı (konteyneri koşulsuz atlamak, konteyner lisans
+  taşıyorsa SESSİZ EKSİK-TESLİMAT üretiyordu → denetimde yakalandı, kaldırıldı).
+- **P1 admin UX:** ham enum sızıntıları (Ctrl+K/import-stock/pending), (ops.)→(opsiyonel), PO/stok-adjust label
+  tek-kaynak (supplyStatusLabel), /sites çift site-oluşturma akışı birleştirildi (sihirbaz kanonik), Field/
+  FormSection uygulandı (create-site/po-forms/wizard), 9 segmente loading/error, deployments savunmalı.
+- **P2 perf (migration-free query-rewrite):** getDeliveries Promise.all (WP render 4→1 round-trip), customers.list
+  CTE (korele olmayan tam-tablo agg kapandı; **LIMIT denetimde kaldırıldı** — istemci-arama 200+ müşteride eskiyi
+  "yok" gösteriyordu), reports.velocity 30g WHERE, dashboard.lowStockCount tek-geçiş.
+- **P3 güvenlik:** readonly-sql (§15, AI varsayılan-KAPALI) — **tablo denylist** (admin_users/site_connect_tokens)
+  + **dönen-tip guard** (composite/json/jsonb/xml/record OID reddi; enum typtype='e' MEŞRU geçer) + genişletilmiş
+  fonksiyon denylist → çıplak-composite `SELECT t`/`*_to_xml`/`array_agg` bypass kapandı; replacements.create
+  yabancı assignmentId order-scope'a bağlandı (latent siteler-arası revoke kapandı).
+- **5-lens çekişmeli denetim → 3 CONFIRMED HIGH + 2 MED (hepsi düzeltildi):** **[H1-sınıfı]** suspend() koşulsuz
+  'active' yapıyordu → revoked/replaced key YENİDEN teslim (bedava lisans/over-deliver); artık YALNIZ active↔
+  suspended (atomik UPDATE WHERE) + siteReveal terminal-durum kapalı. **[H]** bundle sessiz eksik-teslimat
+  (yukarıda). **[H]** readonly-sql bare-composite bypass (yukarıda). **[M]** bonus qty şişirme→reconcile revoke
+  (ayrı satır). **[M]** customers LIMIT (kaldırıldı). **DERS [[denetim-regresyon-dersleri]]:** yeni durum-geçiş
+  ucu (suspend) eklerken TÜM terminal durumları guard'la — H1 sınıfı 3. kez tekrar etti (deploy-öncesi denetim yakaladı).
+- **Testler:** +6 dosya (sync-refunds/stock-import/admin-users.auth/held-refund.race/reports.velocity + metabox-ops
+  scope+bonus-invaryant). **Doğrulama:** typecheck+build (shared+api+admin) temiz · VPS izole test DB
+  **entegrasyon 114/114 + yarış 3/3** · PHP-lint 11/11 · deploy /health 200 v1.0.0 (tüm yeni rota map'lendi) ·
+  eklenti v0.4.0 panele publish (201). **migration YOK** (şemaya dokunulmadı; mevcut tablolar kullanıldı).
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
