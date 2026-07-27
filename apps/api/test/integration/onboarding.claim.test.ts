@@ -82,4 +82,39 @@ describe('OnboardingService.claim (tek-seferlik bağlan kodu — atomik)', () =>
       NotFoundException,
     );
   });
+
+  it('claim webhookUrl host site domain ile eşleşince sites.webhookUrl yazılır', async () => {
+    const { code } = await onboarding.issueConnectCode(siteId);
+    const webhookUrl = `https://${siteDomain}/wp-json/wpteslimat/v1/webhook`;
+    const creds = await onboarding.claim(code, '203.0.113.9', webhookUrl);
+    expect(creds.siteDomain).toBe(siteDomain);
+
+    const [row] = await db
+      .select({ webhookUrl: schema.sites.webhookUrl })
+      .from(schema.sites)
+      .where(eq(schema.sites.id, siteId));
+    // Bağlan-kod akışı artık geri-kanal webhook'u GERÇEKTEN bağlar (eskiden NULL kalıyordu).
+    expect(row?.webhookUrl).toBe(webhookUrl);
+  });
+
+  it('claim webhookUrl host eşleşmezse sites.webhookUrl YAZILMAZ (claim yine başarılı)', async () => {
+    // Önce bilinen bir değere set et ki "yazılmadı"yı kesin ayırt edelim.
+    const prior = 'https://bilinen.example.test/wp-json/wpteslimat/v1/webhook';
+    await db.update(schema.sites).set({ webhookUrl: prior }).where(eq(schema.sites.id, siteId));
+
+    const { code } = await onboarding.issueConnectCode(siteId);
+    // Host sitenin domain'iyle uyuşmuyor → host-doğrulama reddeder, ama claim BOZULMAZ (creds gelir).
+    const creds = await onboarding.claim(
+      code,
+      '203.0.113.10',
+      'https://saldirgan.evil/wp-json/wpteslimat/v1/webhook',
+    );
+    expect(creds.apiKey).toMatch(/^jl_/);
+
+    const [row] = await db
+      .select({ webhookUrl: schema.sites.webhookUrl })
+      .from(schema.sites)
+      .where(eq(schema.sites.id, siteId));
+    expect(row?.webhookUrl).toBe(prior); // eşleşmeyen host yazılmadı, önceki değer korundu
+  });
 });

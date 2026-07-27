@@ -8,11 +8,13 @@ import { DEPLOY_TARGETS, DeploymentsService } from './deployments.service';
 const RequestSchema = z.object({ target: z.enum(DEPLOY_TARGETS) });
 type RequestInput = z.infer<typeof RequestSchema>;
 
+// log/error üst sınırları servisin .slice değerleriyle HİZALI (MAX_LOG_CHARS=20000 / 4000).
+// Runner de göndermeden jq içinde bu sınırlara kısaltır → tutarsız cap yüzünden 400 olmaz.
 const FinishSchema = z.object({
   status: z.enum(['success', 'failed']),
   gitSha: z.string().max(80).optional(),
-  log: z.string().max(200000).optional(),
-  error: z.string().max(8000).optional(),
+  log: z.string().max(20000).optional(),
+  error: z.string().max(4000).optional(),
 });
 type FinishInput = z.infer<typeof FinishSchema>;
 

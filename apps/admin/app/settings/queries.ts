@@ -1,4 +1,5 @@
 import 'server-only';
+import { version as APP_VERSION } from '../../package.json';
 import { apiGet } from '../../lib/api';
 import { authEnabled } from '../../lib/auth';
 

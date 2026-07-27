@@ -6,6 +6,10 @@ import { OnboardingService } from './onboarding.service';
 
 const ClaimBody = z.object({
   code: z.string().min(4),
+  // WP eklentisinin kendi geri-kanal webhook adresi (§2/§14). Panel bunu, host'u sitenin
+  // domain'iyle eşleşiyorsa sites.webhookUrl'e yazar → connect-kod akışıyla kurulan sitede
+  // order.fulfilled/partial webhook'ları GERÇEKTEN gönderilir (eskiden NULL kalıp sessizce atlanıyordu).
+  webhookUrl: z.string().url().optional(),
 });
 type ClaimBody = z.infer<typeof ClaimBody>;
 
@@ -39,6 +43,6 @@ export class ConnectController {
 
   @Post('claim')
   claim(@Body(new ZodBody(ClaimBody)) body: ClaimBody, @Ip() ip: string) {
-    return this.onboarding.claim(body.code, ip);
+    return this.onboarding.claim(body.code, ip, body.webhookUrl);
   }
 }

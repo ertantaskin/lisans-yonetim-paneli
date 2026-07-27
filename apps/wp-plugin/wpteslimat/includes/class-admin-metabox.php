@@ -49,7 +49,9 @@ class Wpteslimat_Admin_Metabox {
         // Canlı /deliveries — YETKİLİ durum + `held` bayrağı buradan gelir. held-clear/rozet kararını
         // ve "Durum:" satırını bu FETCH SONRASI, canlı veriden sür (bayat manuel-poll _wpteslimat_panel_status
         // DEĞİL). Panel rejectHeld akışı webhook YAYMAZ ama canlı /deliveries durumu+held'i doğru bildirir.
-        $res = Wpteslimat_Panel_Client::get('/v1/orders/' . rawurlencode($panel_order_id) . '/deliveries');
+        // wp-admin sipariş ekranı render'ı içinde senkron: kısa timeout (5sn) — panel yavaşsa
+        // yönetici sipariş ekranı 15sn asılmasın (fetch başarısızsa yerel meta'ya düşülür).
+        $res = Wpteslimat_Panel_Client::get('/v1/orders/' . rawurlencode($panel_order_id) . '/deliveries', 5);
         $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
         $deliveries = (isset($body['deliveries']) && is_array($body['deliveries'])) ? $body['deliveries'] : [];
         $fetch_ok = isset($res['code']) && $res['code'] >= 200 && $res['code'] < 300;

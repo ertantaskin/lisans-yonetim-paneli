@@ -126,7 +126,11 @@ class Wpteslimat_Updater {
         }
 
         $download  = isset($info['download_url']) ? (string) $info['download_url'] : '';
-        $changelog = isset($info['changelog']) ? (string) $info['changelog'] : '';
+        // Panel changelog'u sections:{changelog} altında NEST'ler → önce nest'li yoldan oku (eskiden
+        // yalnız üst-düzey okunuyordu → detay penceresi Değişiklik Günlüğü hep boştu). Üst-düzey uyum fallback.
+        $changelog = isset($info['sections']['changelog'])
+            ? (string) $info['sections']['changelog']
+            : (isset($info['changelog']) ? (string) $info['changelog'] : '');
 
         return (object) [
             'name'          => isset($info['name']) ? (string) $info['name'] : 'WP Teslimat Eklentisi',

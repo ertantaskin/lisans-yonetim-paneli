@@ -100,6 +100,7 @@ class Wpteslimat_Order_List {
             case 'pending':   return __('Bekliyor', 'wpteslimat');
             case 'revoked':   return __('İptal', 'wpteslimat');
             case 'expired':   return __('Süresi doldu', 'wpteslimat');
+            case 'unmapped':  return __('Eşlemesiz', 'wpteslimat');
             default:          return (string) $status;
         }
     }

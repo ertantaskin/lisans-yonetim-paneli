@@ -53,19 +53,31 @@ class Wpteslimat_Settings {
      * Baseline HİÇ yoksa (aktivasyon çalışmamış + sabit yok) false döner — kontrol atlanır (güvenli
      * varsayılan); korumayı etkinleştirmek için yeniden aktivasyon veya sabit tanımı yeterlidir.
      */
-    public static function is_clone() {
-        $bound = (defined('WPTESLIMAT_BOUND_HOME') && WPTESLIMAT_BOUND_HOME)
+    /** Klon-koruma taban çizgisi: sabit → aktivasyon/connect option (is_clone + clone_notice ORTAK kaynak). */
+    private static function bound_home() {
+        return (defined('WPTESLIMAT_BOUND_HOME') && WPTESLIMAT_BOUND_HOME)
             ? (string) WPTESLIMAT_BOUND_HOME
             : (string) get_option('wpteslimat_bound_home', '');
+    }
+
+    public static function is_clone() {
+        $bound = self::bound_home();
         if ($bound === '') return false;
-        return untrailingslashit(home_url()) !== untrailingslashit($bound);
+        // Şema-BAĞIMSIZ karşılaştır: HTTP→HTTPS geçişi (SSL kurulumu — çok yaygın) siteyi yanlışlıkla
+        // 'klon' sanıp siparişleri sessizce durdurmasın. Gerçek klon (prod→staging) HOST'u değiştirdiği
+        // için yine yakalanır; yalnız aynı-host / farklı-şema yanlış-pozitifi giderilir.
+        $strip = static function ($u) {
+            return untrailingslashit(strtolower(preg_replace('#^https?://#i', '', (string) $u)));
+        };
+        return $strip(home_url()) !== $strip($bound);
     }
 
     /** Kopya/staging tespit edilirse yönetici panelinde kalıcı uyarı gösterir. */
     public function clone_notice() {
         if (!self::is_clone()) return;
         if (!current_user_can('manage_options')) return;
-        $bound = (string) get_option('wpteslimat_bound_home', '');
+        // Beklenen adresi is_clone() ile AYNI kaynaktan al (sabit-tabanlı kurulumda boş '()' göstermesin).
+        $bound = self::bound_home();
         echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
             'Teslimat eklentisi: Site adresi (%s) bağlanma anındaki adresten (%s) farklı. Kopya/staging koruması etkin: ' .
             'siparişler panele İLETİLMİYOR (canlı stok korunur). Bu kasıtlı bir taşımaysa panele yeniden bağlanın.',
@@ -242,10 +254,16 @@ define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
             self::redirect_settings('insecure');
         }
 
+        // Kendi geri-kanal webhook adresini de gönder → panel (host doğrulamalı) sites.webhookUrl'e
+        // yazar; böylece bağlan-kod akışıyla kurulan sitede order.fulfilled/partial webhook'ları
+        // GERÇEKTEN gönderilir (eskiden yalnız {code} gidiyordu → webhookUrl NULL kalıp sessizce atlanırdı).
         $res = wp_remote_post($panel . '/v1/connect/claim', [
             'timeout' => 15,
             'headers' => ['Content-Type' => 'application/json'],
-            'body'    => wp_json_encode(['code' => $code]),
+            'body'    => wp_json_encode([
+                'code'       => $code,
+                'webhookUrl' => rest_url('wpteslimat/v1/webhook'),
+            ]),
         ]);
 
         if (is_wp_error($res)) {

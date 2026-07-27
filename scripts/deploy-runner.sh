@@ -50,6 +50,8 @@ echo "[$(date '+%F %T')] deploy-runner: claim $id → deploy.sh $target"
 
 # 2) deploy.sh'ı çalıştır (çıktıyı yakala; deploy.sh kendi rollback'ini yapar).
 out="$(./scripts/deploy.sh $target 2>&1)"; code=$?
+# Kalan ANSI escape kodlarını soy (deploy.sh TTY'siz zaten renk basmaz — çift savunma).
+out="$(printf '%s' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')"
 sha="$(git rev-parse --short HEAD 2>/dev/null || echo '')"
 status="success"; err=""
 if [ "$code" -ne 0 ]; then
@@ -58,9 +60,13 @@ if [ "$code" -ne 0 ]; then
   [ -z "$err" ] && err="deploy.sh çıkış kodu $code"
 fi
 
-# 3) Sonucu panele geri yaz (jq ile JSON-safe; ağ takılırsa 3 kez dene).
+# 3) Sonucu panele geri yaz (jq ile JSON-safe; ağ takılırsa 3 kez dene). log/error jq İÇİNDE
+# codepoint bazlı kısaltılır (controller z.string().max + servis .slice ile hizalı; tail -c
+# multibyte-ortasından keserse jq'yu bozacak geçersiz UTF-8 riskini de önler) → >200KB build
+# çıktısı artık finish'i 400'lemez (başarılı deploy 'stuck/failed' kalmaz).
 body="$(jq -n --arg s "$status" --arg sha "$sha" --arg log "$out" --arg e "$err" \
-  '{status:$s, gitSha:$sha, log:$log} + (if $e=="" then {} else {error:$e} end)')"
+  '{status:$s, gitSha:$sha, log:($log | if length > 20000 then .[-20000:] else . end)}
+   + (if $e=="" then {} else {error:($e | if length > 4000 then .[-4000:] else . end)} end)')"
 for attempt in 1 2 3; do
   if api PATCH "/v1/admin/deployments/$id/finish" "$body" >/dev/null; then
     echo "[$(date '+%F %T')] deploy-runner: $id → $status (bildirildi)"

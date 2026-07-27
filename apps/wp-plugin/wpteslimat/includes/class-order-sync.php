@@ -16,17 +16,69 @@ class Wpteslimat_Order_Sync {
     }
 
     private function __construct() {
-        add_action('woocommerce_order_status_processing', [$this, 'push'], 10, 1);
-        add_action('woocommerce_order_status_completed', [$this, 'push'], 10, 1);
+        // PERFORMANS (denetim bulgusu): panel HTTP çağrıları checkout/status-geçişi/admin isteğini
+        // 15sn'ye kadar BLOKLAMASIN → status hook'ları işi doğrudan çalıştırmak yerine ARKA PLANA
+        // (Action Scheduler) alır; asıl push/revoke/resync arka plan işinde koşar. AS yoksa (nadir —
+        // WooCommerce AS taşır) senkron fallback ile eski davranış korunur. Idempotency
+        // (_wpteslimat_pushed/_revoked) + klon guard'ı iş işleyicilerinde aynen geçerli.
+        add_action('woocommerce_order_status_processing', [$this, 'enqueue_push'], 10, 1);
+        add_action('woocommerce_order_status_completed', [$this, 'enqueue_push'], 10, 1);
         // İade/iptal → panelde lisansı geri al (§2: iade edilen key satışta CANLI kalmaz).
-        add_action('woocommerce_order_status_refunded', [$this, 'revoke'], 10, 1);
-        add_action('woocommerce_order_status_cancelled', [$this, 'revoke'], 10, 1);
+        add_action('woocommerce_order_status_refunded', [$this, 'enqueue_revoke'], 10, 1);
+        add_action('woocommerce_order_status_cancelled', [$this, 'enqueue_revoke'], 10, 1);
         // (#16) Sipariş kalemleri düzenlenip kaydedilince (yalnız item değişimi) — daha önce
         // panele iletilmiş siparişi güncel adetlerle yeniden uzlaştır. Guard sonsuz döngüyü keser.
-        add_action('woocommerce_saved_order_items', [$this, 'resync_items'], 20, 2);
-        // Retry (Action Scheduler yoksa wp-cron).
+        add_action('woocommerce_saved_order_items', [$this, 'enqueue_resync'], 20, 2);
+
+        // Arka plan iş işleyicileri (Action Scheduler async) — asıl panel çağrısı burada koşar.
+        add_action('wpteslimat_async_push', [$this, 'push'], 10, 1);
+        add_action('wpteslimat_async_revoke', [$this, 'revoke'], 10, 1);
+        add_action('wpteslimat_async_resync', [$this, 'resync_items'], 10, 1);
+
+        // Retry (başarısız işlerin tekrarı; Action Scheduler yoksa wp-cron).
         add_action('wpteslimat_retry_push', [$this, 'push'], 10, 1);
         add_action('wpteslimat_retry_revoke', [$this, 'revoke'], 10, 1);
+    }
+
+    /**
+     * Push'u arka plana al (checkout thank-you / status-geçişini bloklamaz). enqueue_or_run
+     * çift-zamanlamayı ve gereksiz (yapılandırılmamış/klon) işleri eler.
+     */
+    public function enqueue_push($order_id) {
+        $this->enqueue_or_run('wpteslimat_async_push', 'push', $order_id);
+    }
+
+    /** Revoke'u arka plana al (refund/cancel admin isteğini bloklamaz). */
+    public function enqueue_revoke($order_id) {
+        $this->enqueue_or_run('wpteslimat_async_revoke', 'revoke', $order_id);
+    }
+
+    /** Resync'i arka plana al. $syncing iken kısa devre → async resync'in save'i döngü açmaz. */
+    public function enqueue_resync($order_id, $items = null) {
+        if (self::$syncing) return;
+        $this->enqueue_or_run('wpteslimat_async_resync', 'resync_items', $order_id);
+    }
+
+    /**
+     * İşi Action Scheduler ile ASYNC kuyruğa alır; AS yoksa SENKRON çalıştırır (geriye dönük
+     * davranış). Yapılandırılmamış veya klon ortamda hiç iş üretmez (kuyruk şişmesin; iş
+     * işleyicileri de aynı guard'ları taşır → çift savunma). Aynı iş zaten beklemedeyse tekrar
+     * eklemez (çift async çalıştırmayı önler; idempotency zaten çift çalışmayı zararsız kılar).
+     */
+    private function enqueue_or_run($hook, $method, $order_id) {
+        if (!Wpteslimat_Settings::is_configured()) return;
+        if (Wpteslimat_Settings::is_clone()) return;
+
+        if (function_exists('as_enqueue_async_action')) {
+            if (function_exists('as_has_scheduled_action')
+                && as_has_scheduled_action($hook, [$order_id], 'wpteslimat')) {
+                return;
+            }
+            as_enqueue_async_action($hook, [$order_id], 'wpteslimat');
+        } else {
+            // Action Scheduler yok (nadir) → senkron fallback: eski, bloklayan ama çalışan davranış.
+            $this->$method($order_id);
+        }
     }
 
     public function push($order_id) {

@@ -5,7 +5,7 @@ import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import { RateLimitService } from '../common/rate-limit.service';
 import { SitesService } from '../sites/sites.service';
-import { auditLog, siteConnectTokens } from '../db/schema';
+import { auditLog, siteConnectTokens, sites } from '../db/schema';
 
 /** Bağlan kodu geçerlilik süresi (§14 "tek seferlik 15dk kod"). */
 const CONNECT_CODE_TTL_MS = 15 * 60 * 1000;
@@ -85,6 +85,7 @@ export class OnboardingService {
   async claim(
     code: string,
     ip: string,
+    webhookUrl?: string,
   ): Promise<{ siteDomain: string; apiKey: string; hmacSecret: string }> {
     // IP başına kısa pencere rate-limit (brute-force önleme) — Redis sabit-pencere sayaç.
     if (!(await this.rateLimit.hit(`connect_claim:${ip}`, CLAIM_RL_MAX, CLAIM_RL_WINDOW_SEC))) {
@@ -129,6 +130,18 @@ export class OnboardingService {
         .returning({ id: siteConnectTokens.id });
 
       if (consumed.length === 0) throw new NotFoundException('Kod geçersiz veya süresi dolmuş');
+
+      // Geri-kanal webhook adresini (WP eklentisi kendi rest_url'ini gönderir) siteye yaz →
+      // connect-kod akışıyla kurulan sitede webhook GERÇEKTEN bağlanır. HOST DOĞRULAMA: yalnız
+      // webhook host'u sitenin domain'iyle eşleşiyorsa yazılır (yanlış-yönlendirme/SSRF koruması).
+      // Eşleşmezse claim BOZULMAZ — creds yine teslim edilir, yalnız webhook otomatik bağlanmaz
+      // (admin panelden elle set edebilir). Kod tek-kullanımlık+kısa ömürlü+rate-limitli.
+      if (webhookUrl && hostMatchesSite(webhookUrl, site.domain)) {
+        await tx
+          .update(sites)
+          .set({ webhookUrl, updatedAt: new Date() })
+          .where(eq(sites.id, token.siteId));
+      }
       return { apiKey, hmacSecret };
     });
 
@@ -178,4 +191,27 @@ function hashCode(code: string): string {
     .filter((c) => CONNECT_CODE_ALPHABET.includes(c))
     .join('');
   return createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
+
+/**
+ * Webhook URL host'u sitenin kayıtlı domain'iyle uyumlu mu (connect claim otomatik-webhook
+ * güvenlik kapısı). Karşılaştırma şema/yol/www-bağımsız; alt-alan adları da kabul edilir
+ * (site prod.example.com iken webhook example.com veya tersinde). Geçersiz URL → false.
+ */
+function hostMatchesSite(webhookUrl: string, siteDomain: string): boolean {
+  const norm = (h: string) =>
+    h
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/[/?#].*$/, '')
+      .replace(/:\d+$/, '')
+      .replace(/^www\./, '');
+  try {
+    const host = norm(new URL(webhookUrl).hostname);
+    const dom = norm(siteDomain);
+    if (!host || !dom) return false;
+    return host === dom || host.endsWith(`.${dom}`) || dom.endsWith(`.${host}`);
+  } catch {
+    return false;
+  }
 }

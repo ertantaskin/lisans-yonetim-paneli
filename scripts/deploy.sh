@@ -3,8 +3,9 @@
 # deploy.sh — Panel'i (API + Admin) prod'a dağıtır. VPS'te repo kökünde çalışır:
 #   ssh ... 'cd /opt/lisans-yonetim-paneli && ./scripts/deploy.sh [servis...]'
 #
-# Yapar: temiz-ağaç kontrolü → git pull → build → up -d → /health 200 bekle →
-#        BAŞARISIZSA otomatik geri alma (önceki commit) → ham deploy geçmişine kayıt.
+# Yapar: temiz-ağaç kontrolü → git pull → build → up -d → sağlık bekle (dağıtılan
+#        HER hedef) → BAŞARISIZSA otomatik geri alma (önceki commit) → ham deploy
+#        geçmişine kayıt.
 #
 # Not: repo'daki görünür geçmiş docs/DEPLOY-LOG.md'dir (yayın commit'inde elle güncellenir);
 # bu script ise .deploy-history.log'a (gitignore, sunucu-yerel) ham denetim satırı ekler →
@@ -15,15 +16,48 @@ cd "$(dirname "$0")/.."
 
 SERVICES="${*:-api admin}"
 HEALTH_URL="${HEALTH_URL:-https://api.167-233-108-12.sslip.io/v1/health}"
+# Admin runtime probu: admin kök URL'i (auth AÇIKKEN 3xx döner — yine de "runtime ayakta"
+# demektir; yalnız gateway hatası/erişilemezlik sağlıksız sayılır). Yalnız SERVICES'te
+# 'admin' varsa kontrol edilir (admin-only deploy'un runtime çöküşü de yakalanır).
+ADMIN_HEALTH_URL="${ADMIN_HEALTH_URL:-https://admin.167-233-108-12.sslip.io/}"
 LOG=".deploy-history.log"
 
-say(){ printf '\n\033[1;36m▸ %s\033[0m\n' "$*"; }
-ok(){  printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
-err(){ printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; }
+# Renkler YALNIZ gerçek TTY'de. Runner çıktıyı $(...) ile yakaladığında stdout TTY değildir →
+# ham \033[..m escape kodları DB log/error alanına (ve /deployments UI'sine) sızmaz.
+if [ -t 1 ]; then
+  C_SAY=$'\033[1;36m'; C_OK=$'\033[1;32m'; C_ERR=$'\033[1;31m'; C_RST=$'\033[0m'
+else
+  C_SAY=''; C_OK=''; C_ERR=''; C_RST=''
+fi
+say(){ printf '\n%s▸ %s%s\n' "$C_SAY" "$*" "$C_RST"; }
+ok(){  printf '%s✓ %s%s\n' "$C_OK" "$*" "$C_RST"; }
+err(){ printf '%s✗ %s%s\n' "$C_ERR" "$*" "$C_RST" >&2; }
+
 health(){ curl -fsS --max-time 10 "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; }
+# Admin runtime: HTTP yanıtı var + gateway hatası değil (2xx/3xx/4xx ok; 5xx / bağlantı yok = sağlıksız).
+admin_health(){
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$ADMIN_HEALTH_URL" 2>/dev/null)" || code=000
+  [ -n "$code" ] && [ "$code" -ge 200 ] && [ "$code" -lt 500 ]
+}
+# Dağıtılan TÜM hedefler sağlıklı mı: API her zaman; admin yalnız SERVICES'te varsa.
+all_healthy(){
+  health || return 1
+  case " $SERVICES " in *" admin "*) admin_health || return 1;; esac
+  return 0
+}
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+# Bir önceki başarısız rollback (eski sürüm) repoyu detached HEAD'de bırakmış olabilir →
+# 'git pull --ff-only' orada fatal verirdi. Dala dön (self-heal), böylece ff-pull çalışır.
+if [ "$BRANCH" = "HEAD" ]; then
+  err "Repo detached HEAD'de — 'main' dalına dönülüyor (self-heal)."
+  git checkout main
+  BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+fi
 
 OLD="$(git rev-parse --short HEAD)"
-say "Dağıtım başlıyor (servis: $SERVICES) — mevcut sürüm: $OLD"
+say "Dağıtım başlıyor (servis: $SERVICES, dal: $BRANCH) — mevcut sürüm: $OLD"
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   err "Çalışma ağacında commit'lenmemiş değişiklik var — 'git pull --ff-only' yapılamaz. Önce temizle."
@@ -35,28 +69,37 @@ git pull --ff-only
 NEW="$(git rev-parse --short HEAD)"
 [ "$OLD" = "$NEW" ] && ok "Yeni commit yok ($NEW) — yine de rebuild ediliyor." || ok "$OLD → $NEW"
 
-say "Build: $SERVICES"; docker compose build $SERVICES
-say "Başlat: $SERVICES"; docker compose up -d $SERVICES
-
-say "Sağlık bekleniyor ($HEALTH_URL)…"
-OKH=0; for i in $(seq 1 30); do if health; then OKH=1; break; fi; sleep 2; done
-
 STAMP="$(date '+%Y-%m-%d %H:%M')"
+
+# Geri alma: dala BAĞLI kalarak eski commit'e sar. 'git checkout <sha>' DETACHED HEAD üretir
+# ve sonraki tüm deploy'ları kilitlerdi → 'git reset --hard' ile HEAD dala bağlı kalır (ff-pull
+# ileride yine ileri sarar). Build/up hatası da (yalnız sağlık değil) buraya düşer.
+rollback(){
+  err "Geri alınıyor: $NEW → $OLD (dal: $BRANCH)"
+  git reset --hard "$OLD"
+  if docker compose build $SERVICES && docker compose up -d $SERVICES && all_healthy; then
+    err "Geri alındı ve sağlıklı ($OLD). Yeni sürüm ($NEW) İPTAL edildi."
+    printf '%s\t%s\t%s\t%s\tROLLBACK-OK\n' "$STAMP" "$NEW" "$SERVICES" "deploy-FAILED" >> "$LOG"
+  else
+    err "GERİ ALMA SONRASI DA SAĞLIKSIZ — ELLE MÜDAHALE GEREK ('docker compose logs')."
+    printf '%s\t%s\t%s\t%s\tROLLBACK-FAIL\n' "$STAMP" "$NEW" "$SERVICES" "deploy-FAILED" >> "$LOG"
+  fi
+  exit 1
+}
+
+# Build/up başarısızsa set -e sessizce öldürmesin → açıkça rollback tetikle.
+say "Build: $SERVICES"; docker compose build $SERVICES || rollback
+say "Başlat: $SERVICES"; docker compose up -d $SERVICES || rollback
+
+case " $SERVICES " in *" admin "*) PROBE="API + admin";; *) PROBE="API";; esac
+say "Sağlık bekleniyor ($PROBE)…"
+OKH=0; for i in $(seq 1 30); do if all_healthy; then OKH=1; break; fi; sleep 2; done
+
 if [ "$OKH" = 1 ]; then
   ok "Sağlıklı. Dağıtım tamam: $NEW ($SERVICES)"
   printf '%s\t%s\t%s\t%s\tOK\n' "$STAMP" "$NEW" "$SERVICES" "deploy" >> "$LOG"
   say "docs/DEPLOY-LOG.md'ye satır eklemeyi unutma (görünür geçmiş)."
 else
-  err "SAĞLIK BAŞARISIZ ($NEW) — otomatik geri alınıyor: $NEW → $OLD"
-  git checkout "$OLD"
-  docker compose build $SERVICES
-  docker compose up -d $SERVICES
-  if health; then
-    err "Geri alındı ve sağlıklı ($OLD). Yeni sürüm ($NEW) İPTAL edildi."
-    printf '%s\t%s\t%s\t%s\tROLLBACK-OK\n' "$STAMP" "$NEW" "$SERVICES" "deploy-FAILED" >> "$LOG"
-  else
-    err "GERİ ALMA SONRASI DA SAĞLIKSIZ — ELLE MÜDAHALE GEREK ('docker compose logs api')."
-    printf '%s\t%s\t%s\t%s\tROLLBACK-FAIL\n' "$STAMP" "$NEW" "$SERVICES" "deploy-FAILED" >> "$LOG"
-  fi
-  exit 1
+  err "SAĞLIK BAŞARISIZ ($NEW)."
+  rollback
 fi

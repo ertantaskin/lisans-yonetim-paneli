@@ -451,10 +451,13 @@ export class SitesService {
     if (site.webhookUrl) {
       checks.push(await this.probeWebhook(site.webhookUrl));
     } else {
+      // webhookUrl henüz yok: bağlan-kod akışıyla eklenti bağlanınca panel otomatik yazar
+      // (onboarding.claim, host doğrulamalı). "Yanlış-yeşil" olmasın diye 'beklemede' bilgisi ver
+      // — hata değildir (opsiyonel + otomatik bağlanır) ama "tam yapılandırıldı" da demez.
       checks.push({
         name: 'Geri kanal webhook',
         ok: true,
-        detail: 'yapılandırılmamış (webhook devre dışı)',
+        detail: 'beklemede — eklenti panele bağlanınca otomatik ayarlanır',
       });
     }
 

@@ -51,7 +51,9 @@ class Wpteslimat_My_Account {
             return;
         }
 
-        $res = Wpteslimat_Panel_Client::get('/v1/orders/' . rawurlencode($panel_order_id) . '/deliveries');
+        // Sayfa render'ı İÇİNDE senkron: kısa timeout (5sn) — panel yavaşsa müşteri sipariş sayfası
+        // 15sn asılmasın; 5sn'de yanıt gelmezse aşağıdaki graceful fallback ("hazırlanıyor") devreye girer.
+        $res = Wpteslimat_Panel_Client::get('/v1/orders/' . rawurlencode($panel_order_id) . '/deliveries', 5);
         $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
         $deliveries = (isset($body['deliveries']) && is_array($body['deliveries'])) ? $body['deliveries'] : [];
 
@@ -176,6 +178,8 @@ class Wpteslimat_My_Account {
             case 'pending':   return __('Siparişiniz hazırlanıyor, stok bekleniyor.', 'wpteslimat');
             case 'partial':   return __('Siparişinizin bir kısmı teslim edildi, kalanı hazırlanıyor.', 'wpteslimat');
             case 'revoked':   return __('Bu sipariş iade/iptal edildi.', 'wpteslimat');
+            // 'unmapped' = panelde ürün eşlemesi eksik → sonsuza dek 'yükleniyor' demek yanıltıcı.
+            case 'unmapped':  return __('Siparişiniz inceleniyor; kısa süre içinde hazırlanacak.', 'wpteslimat');
             default:          return __('Teslimat bilgisi yükleniyor.', 'wpteslimat');
         }
     }

@@ -27,19 +27,28 @@ export class DeploymentsService {
     if (!DEPLOY_TARGETS.includes(target as DeployTarget)) {
       throw new BadRequestException(`Geçersiz hedef. İzinli: ${DEPLOY_TARGETS.join(', ')}`);
     }
-    const active = await this.db
-      .select({ id: deployments.id })
-      .from(deployments)
-      .where(inArray(deployments.status, ['pending', 'running']))
-      .limit(1);
-    if (active.length > 0) {
-      throw new ConflictException('Zaten bekleyen veya çalışan bir dağıtım var. Bitmesini bekleyin.');
-    }
-    const [row] = await this.db
-      .insert(deployments)
-      .values({ target, requestedBy: requestedBy || 'panel:admin' })
-      .returning();
-    return row!;
+    // SELECT-sonra-INSERT arası yarış (form çift-tık / eşzamanlı iki POST) iki 'pending' üretip
+    // aynı kodun ardışık iki redeploy'una yol açardı. Tüm istek yolunu tek transaction'da
+    // pg_advisory_xact_lock ile serileştir → "aynı anda tek aktif dağıtım" gerçekten garanti
+    // (migration YOK; global tek-kaynak kilidi yeterli, dağıtım nadir bir owner işlemi).
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('deployments_request'))`);
+      const active = await tx
+        .select({ id: deployments.id })
+        .from(deployments)
+        .where(inArray(deployments.status, ['pending', 'running']))
+        .limit(1);
+      if (active.length > 0) {
+        throw new ConflictException(
+          'Zaten bekleyen veya çalışan bir dağıtım var. Bitmesini bekleyin.',
+        );
+      }
+      const [row] = await tx
+        .insert(deployments)
+        .values({ target, requestedBy: requestedBy || 'panel:admin' })
+        .returning();
+      return row!;
+    });
   }
 
   /** Dağıtım geçmişi (en yeni önce). */

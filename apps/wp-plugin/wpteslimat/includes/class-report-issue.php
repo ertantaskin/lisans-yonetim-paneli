@@ -40,6 +40,8 @@ class Wpteslimat_Report_Issue {
                 <input type="hidden" name="action" value="wpteslimat_report">
                 <input type="hidden" name="order_id" value="<?php echo esc_attr($order_id); ?>">
                 <input type="hidden" name="assignment_id" value="<?php echo esc_attr((string) $assignment_id); ?>">
+                <?php // Misafir (guest checkout) sahiplik kanıtı — handle() order_key ile doğrular. ?>
+                <input type="hidden" name="order_key" value="<?php echo esc_attr($order->get_order_key()); ?>">
                 <?php wp_nonce_field('wpteslimat_report_' . $order_id); ?>
                 <label for="<?php echo esc_attr($fid); ?>" style="display:block;font-size:.85em;color:#555;margin-bottom:4px">
                     <?php echo esc_html__('Sorununuzu kısaca açıklayın (ör. lisans çalışmıyor):', 'wpteslimat'); ?>
@@ -87,8 +89,24 @@ class Wpteslimat_Report_Issue {
         }
 
         $order = wc_get_order($order_id);
-        // Sahiplik: müşteri yalnız kendi siparişi için sorun bildirebilir.
-        if (!$order || !current_user_can('view_order', $order_id)) {
+        if (!$order) {
+            wp_die(esc_html__('Bu sipariş için yetkiniz yok.', 'wpteslimat'), '', ['response' => 403]);
+        }
+        // Sahiplik: giriş yapmış müşteri → view_order meta-yetki; MİSAFİR (guest checkout) → sipariş
+        // anahtarı (order_key). current_user_can('view_order') misafirde (uid 0) HER ZAMAN false
+        // döndüğünden guest checkout'ta destek akışı tümüyle 403 yiyordu — order_key ile giderildi
+        // (WooCommerce'in misafir sipariş erişiminde kullandığı standart sahiplik kanıtı). Nonce ayrıca
+        // CSRF'i order-id'ye bağlı kapatır.
+        $authorized = false;
+        if (is_user_logged_in()) {
+            $authorized = current_user_can('view_order', $order_id);
+        } else {
+            $submitted_key = isset($_POST['order_key'])
+                ? sanitize_text_field(wp_unslash($_POST['order_key'])) : '';
+            $authorized = $submitted_key !== ''
+                && hash_equals((string) $order->get_order_key(), $submitted_key);
+        }
+        if (!$authorized) {
             wp_die(esc_html__('Bu sipariş için yetkiniz yok.', 'wpteslimat'), '', ['response' => 403]);
         }
 

@@ -32,8 +32,11 @@ dağıtım yapacaksa bu adımları izler. Amaç: her seferinde aynı, güvenli, 
    # davranış değiştiyse VPS izole test DB'sinde entegrasyon+yarış (bkz. RUNBOOK-DR / CLAUDE.md)
    ```
 2. **CHANGELOG.md** → `[Yayınlanmamış]` altına ne değiştiğini yaz.
-3. **Sürüm** (kullanıcı-görünür değişiklik veya birikmiş iş varsa): `package.json` version'ı
-   SemVer'e göre artır (yama=fix, minör=özellik, majör=kırıcı). `[Yayınlanmamış]` → `[X.Y.Z] - TARİH`.
+3. **Sürüm** (kullanıcı-görünür değişiklik veya birikmiş iş varsa): version'ı SemVer'e göre artır
+   (yama=fix, minör=özellik, majör=kırıcı). `[Yayınlanmamış]` → `[X.Y.Z] - TARİH`.
+   **ÜÇ package.json birlikte:** kök + `apps/api/package.json` + `apps/admin/package.json` — API
+   `/health`+`/deployments` sürümü `apps/api`'den, admin `/settings` sürümü `apps/admin`'den okur;
+   yalnız kökü artırırsan panel eski sürümü gösterir.
 4. **Commit + push:**
    ```bash
    git add -A && git commit -m "..."   # sonunda Co-Authored-By trailer

@@ -27,18 +27,22 @@ class Wpteslimat_Panel_Client {
         return $pathname . '?' . implode('&', $parts);
     }
 
-    public static function post($path, array $body) {
-        return self::request('POST', $path, $body);
+    public static function post($path, array $body, $timeout = 15) {
+        return self::request('POST', $path, $body, $timeout);
     }
 
-    public static function get($path) {
-        return self::request('GET', $path, null);
+    public static function get($path, $timeout = 15) {
+        return self::request('GET', $path, null, $timeout);
     }
 
     /**
+     * @param int $timeout Saniye. Yazma/async yolları için 15 (varsayılan) uygun; SAYFA RENDER'ı
+     *                     içinde senkron çalışan OKUMA yolları (my-account, admin metabox) daha kısa
+     *                     (5sn) geçmeli ki panel yavaş/erişilemezken sipariş sayfaları 15sn asılmasın
+     *                     (mevcut graceful fallback devreye girer). Cache YOK — sır (§7).
      * @return array{code:int, body:array} — HTTP kodu + çözümlenmiş JSON.
      */
-    private static function request($method, $path, $body) {
+    private static function request($method, $path, $body, $timeout = 15) {
         $url = Wpteslimat_Settings::panel_url() . $path;
         $body_str = $body === null ? '' : wp_json_encode($body);
         $ts = (string) time();
@@ -61,7 +65,7 @@ class Wpteslimat_Panel_Client {
         $args = [
             'method'  => $method,
             'headers' => $headers,
-            'timeout' => 15,
+            'timeout' => $timeout,
         ];
         if ($body !== null) {
             $args['headers']['Content-Type'] = 'application/json';

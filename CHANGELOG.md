@@ -14,6 +14,28 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Düzeltildi — teslimat-hazırlık denetimi (5-lens workflow, 16 doğrulanmış bulgu)
+- **Dağıtım [yüksek]:** `deploy.sh` rollback artık dala BAĞLI kalır (`git reset --hard`; eskiden
+  `git checkout <sha>` → detached HEAD sonraki TÜM deploy'ları kilitliyordu); build/up hatası da
+  (yalnız sağlık değil) rollback tetikler; admin hedefi deploy'da runtime probu ile doğrulanır;
+  renk kodları yalnız TTY'de (runner logunu/paneli kirletmez).
+- **Dağıtım [yüksek]:** `deploy-runner.sh` deploy çıktısını göndermeden jq içinde 20000 karaktere
+  kısaltır (>200KB build logu artık `finish`'i 400'lemez → başarılı deploy 'stuck/failed' kalmaz);
+  controller Zod cap'leri servis `.slice` ile hizalı; `deployments.request()` advisory-lock ile
+  serileştirildi (çift-tık iki 'pending' üretmez).
+- **Sürüm raporlama:** `apps/api` + `apps/admin` sürümü 1.0.0'a çekildi → /health + /deployments +
+  /settings artık doğru sürümü gösterir (eskiden kalıcı 0.0.0).
+- **Eklenti bağlantısı:** "Panele Bağlan" kod akışı artık siteye geri-kanal `webhookUrl`'ini (host
+  doğrulamalı) yazar → bağlan-kodla kurulan sitede order.fulfilled/partial webhook'ları GERÇEKTEN
+  gönderilir (eskiden NULL kalıp sessizce atlanıyordu); bağlantı testi yanlış-yeşil yerine 'beklemede'.
+- **WP performans:** sipariş push/revoke/resync artık Action Scheduler ile ARKA PLANDA çalışır
+  (checkout/admin isteği 15sn bloklanmaz; AS yoksa senkron fallback, idempotency+klon guard'ı korunur);
+  render okuma yolları (my-account + metabox) 5sn timeout ile asılmaz.
+- **WP doğruluk:** `is_clone()` şema-bağımsız (HTTP→HTTPS geçişi artık klon sanılmaz); misafir
+  'Sorun Bildir' `order_key` ile yetkilendirilir (eskiden guest checkout'ta hep 403); güncelleyici
+  changelog'u `sections`'tan okunur; 'unmapped' durumu için Türkçe etiketler.
+- **.env.example:** ölü `NEXT_PUBLIC_API_URL` yerine gerçek `API_URL` belgelenir; `PUBLIC_API_URL` eklendi.
+
 ### Eklendi
 - **Yayın yönetim sistemi:** CHANGELOG + semantik sürüm + `docs/DEPLOY-LOG.md` (dağıtım
   geçmişi) + `docs/RUNBOOK-RELEASE.md` (adım adım yayın rehberi).
