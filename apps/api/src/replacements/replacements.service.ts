@@ -158,84 +158,111 @@ export class ReplacementsService {
    * Stok yoksa (added=0) 409 döner ve talep 'approved' YAPILMAZ.
    */
   async approve(id: string, actor: string): Promise<ReplacementRequest> {
-    const req = await this.getOrThrow(id);
-    // Idempotent koruma: yalnız açık/bilgi-istenen talep işlenir. Terminal (approved/rejected)
-    // durumda tekrar çağrı taze stok tüketmez — çifte değişim imkânsız.
-    if (req.status !== 'open' && req.status !== 'info_requested') {
-      throw new ConflictException('Talep zaten çözülmüş');
-    }
-    if (!req.assignmentId || !req.lineId) {
-      throw new BadRequestException('Talep bir atama/satıra bağlı değil');
-    }
+    // TOCTOU koruması: çift-tık/eşzamanlı onayda ikinci çağrı talebi kilitsiz okuyup revoke'u
+    // no-op görüyor → completeLine added=0 → SAHTE "Değişim için stok yok" 409. Talep id'sine bağlı
+    // pg_advisory_xact_lock + FOR UPDATE re-read ile serileştir (orders.service held-release deseni):
+    // ikinci çağrı kilidi bekler, terminal durumu görüp 'Talep zaten çözülmüş' ile erken çıkar.
+    // revoke/completeLine mevcut imzalarıyla this.db kullanıyor (tx almıyor); advisory-lock zaten
+    // eşzamanlı approve()'ları dışladığı için bu güvenli — kilit statü kararını serileştirir.
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'replacement:' + id}))`);
+      // Kilit altında YENİDEN oku (FOR UPDATE) → statü kararı serileşir.
+      const [req] = await tx
+        .select()
+        .from(replacementRequests)
+        .where(eq(replacementRequests.id, id))
+        .limit(1)
+        .for('update');
+      if (!req) throw new NotFoundException('Değişim talebi bulunamadı');
+      // Idempotent koruma: yalnız açık/bilgi-istenen talep işlenir. Terminal (approved/rejected)
+      // durumda tekrar çağrı taze stok tüketmez — çifte değişim imkânsız.
+      if (req.status !== 'open' && req.status !== 'info_requested') {
+        throw new ConflictException('Talep zaten çözülmüş');
+      }
+      if (!req.assignmentId || !req.lineId) {
+        throw new BadRequestException('Talep bir atama/satıra bağlı değil');
+      }
 
-    // Çok-kullanımlı (MAK) ürünlerde otomatik değişim ANLAMLI DEĞİL: revoke kapasiteyi aynı
-    // paylaşımlı anahtara iade eder → completeLine onu tekrar seçer (no-op, aynı kusurlu key).
-    // Sessizce "onaylandı" demek yerine açıkça reddet; MAK sorunları elle işlenir (audit bulgusu).
-    const [prod] = await this.db
-      .select({ usageMode: products.usageMode })
-      .from(orderLines)
-      .innerJoin(products, eq(products.id, orderLines.productId))
-      .where(eq(orderLines.id, req.lineId))
-      .limit(1);
-    if (prod?.usageMode === 'multi') {
-      throw new BadRequestException(
-        'Çok-kullanımlı (MAK) üründe otomatik değişim desteklenmez — elle işleyin.',
+      // Çok-kullanımlı (MAK) ürünlerde otomatik değişim ANLAMLI DEĞİL: revoke kapasiteyi aynı
+      // paylaşımlı anahtara iade eder → completeLine onu tekrar seçer (no-op, aynı kusurlu key).
+      // Sessizce "onaylandı" demek yerine açıkça reddet; MAK sorunları elle işlenir (audit bulgusu).
+      const [prod] = await tx
+        .select({ usageMode: products.usageMode })
+        .from(orderLines)
+        .innerJoin(products, eq(products.id, orderLines.productId))
+        .where(eq(orderLines.id, req.lineId))
+        .limit(1);
+      if (prod?.usageMode === 'multi') {
+        throw new BadRequestException(
+          'Çok-kullanımlı (MAK) üründe otomatik değişim desteklenmez — elle işleyin.',
+        );
+      }
+
+      // 0) Stok ön-kontrolü: satırın ürününde uygun stok YOKSA eskiyi REVOKE ETMEDEN 409 dön.
+      // (revoke→completeLine sırası zorunlu; ama stok baştan yoksa müşteriyi boşta bırakmayalım —
+      // bu kontrol tamamen izin-verici; completeLine daha katı olsa bile mevcut revoke-sonrası-409
+      // davranışına düşeriz, asla daha kötü değil.)
+      const [avail] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(licenseItems)
+        .innerJoin(orderLines, eq(orderLines.id, req.lineId))
+        .where(
+          and(
+            eq(licenseItems.productId, orderLines.productId),
+            eq(licenseItems.status, 'available'),
+            sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
+          ),
+        );
+      if (!avail || Number(avail.n) <= 0) {
+        throw new ConflictException('Değişim için stok yok');
+      }
+
+      // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
+      // markLineCanceled=false: hemen ardından completeLine ile MEŞRU yeniden-atama yapılacak;
+      // satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok". (Iade DEĞİL, değişim.)
+      // Revoke sonucundan eski key id'sini al (soyağacı için).
+      const revoked = await this.adminOrders.revokeAssignment(
+        req.assignmentId,
+        'replacement',
+        actor,
+        false,
       );
-    }
 
-    // 0) Stok ön-kontrolü: satırın ürününde uygun stok YOKSA eskiyi REVOKE ETMEDEN 409 dön.
-    // (revoke→completeLine sırası zorunlu; ama stok baştan yoksa müşteriyi boşta bırakmayalım —
-    // bu kontrol tamamen izin-verici; completeLine daha katı olsa bile mevcut revoke-sonrası-409
-    // davranışına düşeriz, asla daha kötü değil.)
-    const [avail] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(licenseItems)
-      .innerJoin(orderLines, eq(orderLines.id, req.lineId))
-      .where(
-        and(
-          eq(licenseItems.productId, orderLines.productId),
-          eq(licenseItems.status, 'available'),
-          sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
-        ),
-      );
-    if (!avail || Number(avail.n) <= 0) {
-      throw new ConflictException('Değişim için stok yok');
-    }
+      // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi).
+      const res = await this.fulfillment.completeLine(req.lineId, 1, true);
+      if (res.added <= 0) {
+        // Stok yok: talep açık kalır (approved yapılmaz), 409.
+        throw new ConflictException('Değişim için stok yok');
+      }
 
-    // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
-    // markLineCanceled=false: hemen ardından completeLine ile MEŞRU yeniden-atama yapılacak;
-    // satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok". (Iade DEĞİL, değişim.)
-    // Revoke sonucundan eski key id'sini al (soyağacı için).
-    const revoked = await this.adminOrders.revokeAssignment(req.assignmentId, 'replacement', actor, false);
+      // Soyağacı (§3 "eski anahtarlar"): eski→yeni assignment_history + yeni atama id'si (tek yerde).
+      const newAssignmentId = await recordReplacementLineage(this.db, {
+        lineId: req.lineId,
+        oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
+        reason: 'replacement',
+        actor,
+      });
 
-    // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi).
-    const res = await this.fulfillment.completeLine(req.lineId, 1, true);
-    if (res.added <= 0) {
-      // Stok yok: talep açık kalır (approved yapılmaz), 409.
-      throw new ConflictException('Değişim için stok yok');
-    }
+      const [updated] = await tx
+        .update(replacementRequests)
+        .set({
+          status: 'approved',
+          newAssignmentId: newAssignmentId ?? null,
+          resolvedBy: actor,
+          resolvedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(replacementRequests.id, id))
+        .returning();
 
-    // Soyağacı (§3 "eski anahtarlar"): eski→yeni assignment_history + yeni atama id'si (tek yerde).
-    const newAssignmentId = await recordReplacementLineage(this.db, {
-      lineId: req.lineId,
-      oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
-      reason: 'replacement',
-      actor,
+      // Müşteriye "değişim onaylandı" bildirimi (reject/requestInfo ile simetri). Best-effort +
+      // SIRSIZ (yalnız durum) — SMTP hatası onayı BOZMAZ (teslimat maili ayrıca completeLine'da gider).
+      await this.mail
+        .enqueueReplacementNotice(updated!.orderId, updated!.customerEmail, 'approved', '')
+        .catch(() => {});
+
+      return updated!;
     });
-
-    const [updated] = await this.db
-      .update(replacementRequests)
-      .set({
-        status: 'approved',
-        newAssignmentId: newAssignmentId ?? null,
-        resolvedBy: actor,
-        resolvedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(replacementRequests.id, id))
-      .returning();
-
-    return updated!;
   }
 
   /** Reddet — çözüm notuyla kapat + müşteriye durum bildirimi (yalnız durum+not, sırsız). */
@@ -267,8 +294,14 @@ export class ReplacementsService {
     return updated!;
   }
 
-  /** Ek bilgi iste — müşteriye dönülür, talep açık kalır + durum bildirimi (sırsız). */
-  async requestInfo(id: string, note: string): Promise<ReplacementRequest> {
+  /**
+   * Ek bilgi iste — müşteriye dönülür, talep açık kalır + durum bildirimi (sırsız).
+   * `actor` reject/approve ile tutarlı olsun diye @AdminActor'dan alınır; talep ÇÖZÜLMEDİĞİ için
+   * `resolvedBy`'a YAZILMAZ ve şemada "bilgi-istendi-eden" için ayrı kolon yok (migration eklenmedi) →
+   * izlenebilirlik/imza tutarlılığı için ileri taşınır (opsiyonel, mevcut çağıranları kırmaz).
+   */
+  async requestInfo(id: string, note: string, actor?: string): Promise<ReplacementRequest> {
+    void actor;
     const req = await this.getOrThrow(id);
     // Idempotent koruma: terminal (approved/rejected) durumdaki talepten bilgi istenemez.
     if (req.status !== 'open' && req.status !== 'info_requested') {

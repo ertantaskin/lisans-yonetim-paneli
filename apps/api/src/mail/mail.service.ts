@@ -16,7 +16,7 @@ export interface DeliveryJob {
 }
 
 /** Değişim/garanti talebi durum bildiriminde kullanılan durum kodları. */
-export type ReplacementNoticeStatus = 'rejected' | 'info_requested' | string;
+export type ReplacementNoticeStatus = 'approved' | 'rejected' | 'info_requested' | string;
 
 @Injectable()
 export class MailService {
@@ -124,6 +124,8 @@ export class MailService {
 
   private replacementHeadline(status: ReplacementNoticeStatus): string {
     switch (status) {
+      case 'approved':
+        return 'Değişim talebiniz onaylandı, yeni lisansınız hazır.';
       case 'rejected':
         return 'Talebiniz incelendi ve bu kez onaylanmadı.';
       case 'info_requested':

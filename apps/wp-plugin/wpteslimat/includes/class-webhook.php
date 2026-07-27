@@ -113,9 +113,37 @@ class Wpteslimat_Webhook {
                 $order->save();
             }
             $event = isset($body['event']) ? sanitize_text_field($body['event']) : 'update';
-            $order->add_order_note(sprintf('Teslimat: %s (durum: %s)', $event, $status));
+            $order->add_order_note(self::human_note($event, $status));
         }
 
         return new WP_REST_Response(['ok' => true], 200);
+    }
+
+    /**
+     * Panel geri-kanal olayını müşteri/operatör dostu Türkçe sipariş notuna çevirir.
+     * Ham event adı (`order.fulfilled`) veya durum enum'u (`fulfilled`) NOTA SIZMAZ — operatör
+     * ne olduğunu düz Türkçeyle görür. Durum önceliklidir (daha güvenilir); yoksa event'e düşer.
+     */
+    private static function human_note($event, $status) {
+        switch ($status) {
+            case 'fulfilled':
+                return __('Teslimat tamamlandı — tüm lisanslar müşteriye iletildi.', 'wpteslimat');
+            case 'partial':
+                return __('Kısmi teslimat — bazı lisanslar henüz beklemede; stok geldiğinde otomatik tamamlanır.', 'wpteslimat');
+            case 'revoked':
+                return __('Lisanslar iptal/iade edildi — teslim edilen anahtarlar geri alındı.', 'wpteslimat');
+            case 'held':
+                return __('Sipariş güvenlik incelemesine alındı — teslimat yönetici onayından sonra tamamlanacak.', 'wpteslimat');
+            case 'pending':
+                return __('Teslimat bekliyor — lisanslar hazırlanıyor.', 'wpteslimat');
+        }
+        // Bilinmeyen/boş durum: event'e göre kaba ifade, ama ham teknik adı gösterme.
+        if ($event === 'order.fulfilled') {
+            return __('Teslimat tamamlandı.', 'wpteslimat');
+        }
+        if (strpos((string) $event, 'partial') !== false) {
+            return __('Kısmi teslimat güncellemesi alındı.', 'wpteslimat');
+        }
+        return __('Panelden teslimat durumu güncellendi.', 'wpteslimat');
     }
 }

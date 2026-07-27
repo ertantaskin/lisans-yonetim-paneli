@@ -26,6 +26,8 @@ import {
   sites,
   type Site,
 } from '../db/schema';
+// Barrel'a eklenmedi (replacements modülüyle aynı desen) → doğrudan dosyadan al.
+import { replacementRequests } from '../db/schema/replacementRequests';
 import {
   AccountPayloadSchema,
   maskAccountFields,
@@ -289,7 +291,28 @@ export class AdminOrdersService {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
-    const lines = await this.db.select().from(orderLines).where(eq(orderLines.orderId, orderId));
+    // Siparişin geldiği mağaza (site) — operatör hangi siteden geldiğini görsün (çok siteli panel).
+    const [siteRow] = await this.db
+      .select({ domain: sites.domain })
+      .from(sites)
+      .where(eq(sites.id, order.siteId))
+      .limit(1);
+
+    // Satırlar + ürün adı (operatör hangi satırın hangi ürün olduğunu görsün, ham Woo id değil).
+    const lines = await this.db
+      .select({
+        id: orderLines.id,
+        remoteLineId: orderLines.remoteLineId,
+        qty: orderLines.qty,
+        fulfilledQty: orderLines.fulfilledQty,
+        status: orderLines.status,
+        productId: orderLines.productId,
+        canceled: orderLines.canceled,
+        productName: products.name,
+      })
+      .from(orderLines)
+      .leftJoin(products, eq(orderLines.productId, products.id))
+      .where(eq(orderLines.orderId, orderId));
 
     const asgRows = await this.db
       .select({
@@ -305,6 +328,7 @@ export class AdminOrdersService {
         itemMaxUses: licenseItems.maxUses,
         itemUseCount: licenseItems.useCount,
         productKind: products.kind,
+        productName: products.name,
         payloadSchema: products.payloadSchema,
       })
       .from(assignments)
@@ -337,28 +361,58 @@ export class AdminOrdersService {
         createdAt: assignmentHistory.createdAt,
         oldPayloadEnc: licenseItems.payloadEnc,
         oldLicenseItemId: licenseItems.id,
+        // Eski anahtarın ürün tipi: key ise TAM göster (ölü/karantina key → sır değil),
+        // account ise parola sızmasın diye maskeli kal.
+        productKind: products.kind,
       })
       .from(assignmentHistory)
       .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
       .leftJoin(licenseItems, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
       .where(eq(assignments.orderId, orderId))
       .orderBy(desc(assignmentHistory.createdAt));
 
+    // Bu siparişe ait değişim/destek talepleri (§13) — sipariş bağlamında görünsün ki operatör
+    // "Sorun Bildir → onayla" akışını siparişten takip edebilsin (support ekranıyla çift yönlü bağ).
+    const replacementRows = await this.db
+      .select({
+        id: replacementRequests.id,
+        status: replacementRequests.status,
+        reason: replacementRequests.reason,
+        withinWarranty: replacementRequests.withinWarranty,
+        resolutionNote: replacementRequests.resolutionNote,
+        lineId: replacementRequests.lineId,
+        assignmentId: replacementRequests.assignmentId,
+        createdAt: replacementRequests.createdAt,
+      })
+      .from(replacementRequests)
+      .where(eq(replacementRequests.orderId, orderId))
+      .orderBy(desc(replacementRequests.createdAt));
+
     return {
-      order,
+      // heldForReview zaten satırda; siteDomain başlıkta "hangi mağaza" için eklenir.
+      order: { ...order, siteDomain: siteRow?.domain ?? null },
       lines,
       emails,
-      history: historyRows.map((h) => ({
-        id: h.id,
-        assignmentId: h.assignmentId,
-        reason: h.reason,
-        actor: h.actor,
-        createdAt: h.createdAt,
-        oldMasked:
+      replacements: replacementRows,
+      history: historyRows.map((h) => {
+        const plain =
           h.oldPayloadEnc && h.oldLicenseItemId
-            ? mask(this.crypto.decrypt(h.oldPayloadEnc, CryptoService.licenseItemAad(h.oldLicenseItemId)))
-            : '—',
-      })),
+            ? this.crypto.decrypt(h.oldPayloadEnc, CryptoService.licenseItemAad(h.oldLicenseItemId))
+            : null;
+        return {
+          id: h.id,
+          assignmentId: h.assignmentId,
+          reason: h.reason,
+          actor: h.actor,
+          createdAt: h.createdAt,
+          oldMasked: plain !== null ? mask(plain) : '—',
+          // key-tipi ölü anahtar TAM gösterilir (operatör hangi key'in değiştiğini net görür);
+          // account-tipi → null (frontend maskeli oldMasked'e düşer, parola sızmaz).
+          oldValue: plain !== null && h.productKind === 'key' ? plain : null,
+        };
+      }),
       assignments: asgRows.map((a) => {
         const plain = this.crypto.decrypt(
           a.payloadEnc,
@@ -374,6 +428,7 @@ export class AdminOrdersService {
           deliveredAt: a.deliveredAt,
           licenseItemId: a.licenseItemId,
           kind: a.productKind,
+          productName: a.productName,
           maskedPayload: masked.maskedPayload,
           maskedFields: masked.maskedFields,
           // multi (MAK) kalan kapasite görünürlüğü.

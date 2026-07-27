@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowRight, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Ban, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { OrderRow } from '../lib/api';
 import { fmtDateTime } from '../lib/utils';
@@ -72,6 +72,7 @@ const facets: FacetConfig[] = [
       { label: 'Bekliyor', value: 'pending', icon: Clock },
       { label: 'Kısmi', value: 'partial', icon: Clock },
       { label: 'Teslim edildi', value: 'fulfilled', icon: CheckCircle2 },
+      { label: 'Geri alındı', value: 'revoked', icon: Ban },
       { label: 'Eşlenmemiş', value: 'unmapped', icon: ShieldAlert },
     ],
   },

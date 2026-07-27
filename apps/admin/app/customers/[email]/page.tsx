@@ -36,26 +36,6 @@ function ratePct(rate: number): string {
 
 const ABUSE_THRESHOLD = 0.3;
 
-/**
- * Değişim talebi durumu → rozet (onaylı=success, garanti-dışı/bilgi=warning,
- * reddedildi=destructive). Paylaşılan StatusBadge bu statüleri bilmediği için
- * (ve o dosyaya dokunulamadığı için) yerel eşleme.
- */
-const REPLACEMENT_STATUS: Record<
-  string,
-  { variant: 'neutral' | 'warning' | 'success' | 'danger'; label: string }
-> = {
-  open: { variant: 'warning', label: 'açık' },
-  info_requested: { variant: 'warning', label: 'bilgi istendi' },
-  approved: { variant: 'success', label: 'onaylandı' },
-  rejected: { variant: 'danger', label: 'reddedildi' },
-};
-
-function ReplacementStatusBadge({ status }: { status: string }) {
-  const meta = REPLACEMENT_STATUS[status] ?? { variant: 'neutral' as const, label: status };
-  return <Badge variant={meta.variant}>{meta.label}</Badge>;
-}
-
 export default async function CustomerDetailPage({
   params,
 }: {
@@ -229,7 +209,7 @@ export default async function CustomerDetailPage({
                         <span className="line-clamp-2">{r.reason}</span>
                       </TableCell>
                       <TableCell>
-                        <ReplacementStatusBadge status={r.status} />
+                        <StatusBadge status={r.status} />
                       </TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">
                         {new Date(r.createdAt).toLocaleDateString('tr-TR', { dateStyle: 'short' })}

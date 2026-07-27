@@ -147,6 +147,8 @@ class Wpteslimat_Order_Sync {
             $order->save();
         } else {
             // Başarısız → retry planla (§4 eklenti 1dk/5dk/30dk).
+            $order->add_order_note(sprintf('Teslimat: panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
+            $order->save();
             $this->schedule_retry($order_id);
         }
     }
@@ -252,7 +254,7 @@ class Wpteslimat_Order_Sync {
         // İdempotency: bir kez revoke (panel de order üzerinden idempotent).
         if ($order->get_meta('_wpteslimat_revoked') === 'yes') return;
 
-        $reason = 'WooCommerce: ' . $order->get_status();
+        $reason = 'İade/iptal (' . wc_get_order_status_name($order->get_status()) . ')';
         $body = ['reason' => $reason];
         $res = Wpteslimat_Panel_Client::post(
             '/v1/orders/' . rawurlencode((string) $order_id) . '/revoke',
@@ -276,6 +278,8 @@ class Wpteslimat_Order_Sync {
             $order->save();
         } else {
             // Başarısız → retry planla.
+            $order->add_order_note(sprintf('Teslimat: lisans geri alımı panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
+            $order->save();
             $this->schedule_revoke_retry($order_id);
         }
     }
@@ -357,6 +361,8 @@ class Wpteslimat_Order_Sync {
             $order->add_order_note(sprintf('Teslimat: kısmi iade uzlaştırıldı (%d birim geri alındı).', $revoked));
             $order->save();
         } else {
+            $order->add_order_note(sprintf('Teslimat: kısmi iade uzlaştırması panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
+            $order->save();
             $this->schedule_refund_retry($order_id);
         }
     }

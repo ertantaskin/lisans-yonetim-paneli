@@ -166,7 +166,7 @@ export interface SiteRow {
 }
 
 export interface OrderDetail {
-  order: OrderRow & { siteId: string };
+  order: OrderRow & { siteId: string; siteDomain: string | null; heldForReview: boolean };
   lines: Array<{
     id: string;
     remoteLineId: string;
@@ -174,6 +174,10 @@ export interface OrderDetail {
     fulfilledQty: number;
     status: string;
     productId: string | null;
+    /** Ürün adı (ham Woo kalem id yerine operatör dostu). */
+    productName: string | null;
+    /** İade/iptal edilmiş satır (terminal) — 'Kalanları Ata' gösterilmez. */
+    canceled: boolean;
   }>;
   assignments: Array<{
     id: string;
@@ -181,6 +185,7 @@ export interface OrderDetail {
     status: string;
     units: number;
     kind: string;
+    productName: string | null;
     maskedPayload: string;
     /** account ürünlerde alan-alan maskeli görünüm; diğer tiplerde null. */
     maskedFields: Array<{ key: string; label: string; value: string; secret: boolean }> | null;
@@ -191,7 +196,18 @@ export interface OrderDetail {
   }>;
   events: Array<{ id: string; type: string; message: string | null; createdAt: string }>;
   emails: Array<{ id: string; toEmail: string; subject: string; status: string }>;
-  /** Değişim soyağacı (§3 "eski anahtarlar"): eski key MASKELİ (son-4), yeni atama id'si. */
+  /** Bu siparişe ait değişim/destek talepleri (§13) — sipariş bağlamında görünür + aksiyon alınır. */
+  replacements: Array<{
+    id: string;
+    status: string;
+    reason: string;
+    withinWarranty: boolean;
+    resolutionNote: string | null;
+    lineId: string | null;
+    assignmentId: string | null;
+    createdAt: string;
+  }>;
+  /** Değişim soyağacı (§3 "eski anahtarlar"). oldMasked = son-4; oldValue = ölü key TAM (yalnız key-tipi). */
   history: Array<{
     id: string;
     assignmentId: string;
@@ -199,6 +215,7 @@ export interface OrderDetail {
     actor: string;
     createdAt: string;
     oldMasked: string;
+    oldValue: string | null;
   }>;
 }
 

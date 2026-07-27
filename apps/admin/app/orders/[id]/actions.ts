@@ -43,14 +43,30 @@ export interface MutationState {
   message?: string;
 }
 
-/** "Kalanları Ata" — satırın kalan adedini atar (§13). */
+/**
+ * "Kalanları Ata" — satırın kalan adedini atar (§13). Backend added=0 ile SESSİZ no-op dönebilir
+ * (stok yok / satır iptal-iade / sipariş incelemede / all-or-nothing eksik / ön-sipariş) — bu
+ * durumları yeşil "başarılı" gibi göstermeyip operatöre dürüst bir uyarı veririz (denetim bulgusu).
+ */
 export async function completeLineAction(lineId: string, orderId: string): Promise<MutationState> {
   if (!lineId || !orderId) return { ok: false, error: 'Geçersiz istek' };
   try {
     const actor = await getActor();
-    await apiPost(`/v1/admin/fulfillments/${lineId}/complete`, undefined, actor);
+    const res = await apiPost<{ added?: number }>(
+      `/v1/admin/fulfillments/${lineId}/complete`,
+      undefined,
+      actor,
+    );
     revalidatePath(`/orders/${orderId}`);
-    return { ok: true, message: 'Kalanlar atandı.' };
+    const added = typeof res?.added === 'number' ? res.added : null;
+    if (added === 0) {
+      return {
+        ok: false,
+        error:
+          'Atanacak bir şey yok — stok tükenmiş, satır iptal/iade edilmiş ya da sipariş incelemede olabilir.',
+      };
+    }
+    return { ok: true, message: added != null ? `${added} lisans atandı.` : 'Kalanlar atandı.' };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Atama başarısız' };
   }
@@ -153,5 +169,45 @@ export async function unsuspendAction(
     return { ok: true, message: 'Atama aktifleştirildi.' };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız' };
+  }
+}
+
+/**
+ * Değişim talebini SİPARİŞ ekranından onayla (§13): eskiyi geri al + taze key ata. API atomik
+ * makineyi kullanır; MAK/stok-yok → 409 (mesaj yüzeye çıkar, talep 'approved' olmaz). Hem sipariş
+ * hem /support yeniden doğrulanır → değişim her iki ekranda anında yansır (kullanıcı isteği).
+ */
+export async function approveReplacementForOrderAction(
+  replacementId: string,
+  orderId: string,
+): Promise<MutationState> {
+  if (!replacementId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  try {
+    const actor = await getActor();
+    await apiPost(`/v1/admin/replacements/${replacementId}/approve`, {}, actor);
+    revalidatePath(`/orders/${orderId}`);
+    revalidatePath('/support');
+    return { ok: true, message: 'Değişim onaylandı — taze key atandı.' };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Onaylanamadı' };
+  }
+}
+
+/** Değişim talebini sipariş ekranından reddet — not zorunlu (müşteriye bildirilir). */
+export async function rejectReplacementForOrderAction(
+  replacementId: string,
+  orderId: string,
+  note: string,
+): Promise<MutationState> {
+  if (!replacementId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!note?.trim()) return { ok: false, error: 'Red gerekçesi zorunlu.' };
+  try {
+    const actor = await getActor();
+    await apiPost(`/v1/admin/replacements/${replacementId}/reject`, { note: note.trim() }, actor);
+    revalidatePath(`/orders/${orderId}`);
+    revalidatePath('/support');
+    return { ok: true, message: 'Talep reddedildi.' };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Reddedilemedi' };
   }
 }

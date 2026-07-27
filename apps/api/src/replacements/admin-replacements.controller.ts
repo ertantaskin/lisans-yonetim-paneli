@@ -48,7 +48,9 @@ export class AdminReplacementsController {
   requestInfo(
     @Param('id') id: string,
     @Body(new ZodBody(NoteBody)) body: z.infer<typeof NoteBody>,
+    @AdminActor() actor: string,
   ) {
-    return this.replacements.requestInfo(id, body.note);
+    // actor yalnız oturumdan (header) gelir; reject/approve ile tutarlı → izlenebilir (spoof edilemez).
+    return this.replacements.requestInfo(id, body.note, actor);
   }
 }

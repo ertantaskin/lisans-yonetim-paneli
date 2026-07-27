@@ -98,15 +98,16 @@ export function AssignmentActions({
   };
 
   const revoke = () => {
-    if (
-      !window.confirm(
-        'Atama İPTAL edilsin mi? Lisans karantinaya alınır ve müşteri görünümünden düşer. Bu işlem GERİ ALINAMAZ.',
-      )
-    )
-      return;
+    // Sebep prompt'u aynı zamanda onay görevi görür (Vazgeç → iptal). Replace ile tutarlı; sebep
+    // audit_log + fulfillment_events'e düşer (iade mi, dolandırıcılık mı, kusurlu key mi ayırt edilir).
+    const reason = window.prompt(
+      'İptal sebebi (ör. iade, dolandırıcılık, kusurlu key). Lisans karantinaya alınır ve müşteri görünümünden düşer — GERİ ALINAMAZ:',
+      'iade',
+    );
+    if (reason === null) return; // vazgeçildi
     setState(null);
     startTransition(async () => {
-      const res = await revokeAction(assignmentId, orderId, 'iade/iptal');
+      const res = await revokeAction(assignmentId, orderId, reason.trim() || 'admin iptali');
       setState(res);
       announceResult(announce, res);
     });
@@ -161,9 +162,22 @@ export function AssignmentActions({
           </>
         )}
         {status === 'suspended' && (
-          <Button type="button" variant="outline" size="sm" onClick={unsuspend} disabled={pending}>
-            Askıdan Çıkar
-          </Button>
+          <>
+            <Button type="button" variant="outline" size="sm" onClick={unsuspend} disabled={pending}>
+              Askıdan Çıkar
+            </Button>
+            {/* Askıdaki key doğrudan iptal edilebilir — önce müşteriye tekrar açmaya gerek yok
+                (revoke suspended'ı destekler; şüpheli lisansı canlıya döndürmeden kapatılır). */}
+            <Button
+              type="button"
+              variant="danger-outline"
+              size="sm"
+              onClick={revoke}
+              disabled={pending}
+            >
+              İptal
+            </Button>
+          </>
         )}
       </div>
       <Feedback state={state} />

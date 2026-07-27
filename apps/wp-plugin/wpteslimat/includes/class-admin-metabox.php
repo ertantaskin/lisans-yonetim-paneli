@@ -83,6 +83,7 @@ class Wpteslimat_Admin_Metabox {
             case 'fulfilled': return 'Tamamlandı';
             case 'revoked':   return 'İptal';
             case 'held':      return 'İncelemede';
+            case 'unmapped':  return 'Ürün eşlenmemiş';
             default:          return $s ?: 'bilinmiyor';
         }
     }
@@ -211,7 +212,7 @@ class Wpteslimat_Admin_Metabox {
         echo '</div>';
 
         echo '<span class="wpt-pill ' . esc_attr(self::pill_class($status)) . '">' . esc_html(self::asg_status_label($status)) . '</span>';
-        if ($is_bonus) echo '<span class="wpt-meta wpt-meta--bonus">bonus</span>';
+        if ($is_bonus) echo '<span class="wpt-meta wpt-meta--bonus">' . esc_html__('Bonus', 'wpteslimat') . '</span>';
         if (!empty($a['maxUses']) && (int) $a['maxUses'] > 1) {
             echo '<span class="wpt-meta">' . esc_html((int) ($a['useCount'] ?? 0)) . '/' . esc_html((int) $a['maxUses']) . ' kullanım</span>';
         }
@@ -329,14 +330,14 @@ class Wpteslimat_Admin_Metabox {
         }
         $local_status = $order->get_meta('_wpteslimat_status');
         if (!$order->get_meta('_wpteslimat_order_id')) {
-            echo '<p><strong>Durum:</strong> ' . esc_html($local_status ?: 'bilinmiyor') . '</p>';
+            echo '<p><strong>Durum:</strong> ' . esc_html(self::order_status_label($local_status)) . '</p>';
             echo '<p><em>Henüz panele iletilmedi.</em></p>';
             return;
         }
 
         $view = $this->get_view($order);
         if (!$view) {
-            echo '<p><strong>Durum:</strong> ' . esc_html($local_status ?: 'bilinmiyor') . '</p>';
+            echo '<p><strong>Durum:</strong> ' . esc_html(self::order_status_label($local_status)) . '</p>';
             echo '<p><em>' . esc_html__('Panel görünümü şu an alınamadı.', 'wpteslimat') . '</em></p>';
             return;
         }

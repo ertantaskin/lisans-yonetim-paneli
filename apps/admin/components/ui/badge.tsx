@@ -57,7 +57,7 @@ const STATUS: Record<string, StatusMeta> = {
   suspended: { variant: 'warning', label: 'askıda', icon: PauseCircle },
   expired: { variant: 'warning', label: 'süresi doldu', icon: Clock },
   unmapped: { variant: 'danger', label: 'eşlenmemiş', icon: ShieldAlert },
-  revoked: { variant: 'danger', label: 'iptal', icon: Ban },
+  revoked: { variant: 'danger', label: 'Geri alındı', icon: Ban },
   failed: { variant: 'danger', label: 'başarısız', icon: AlertTriangle },
   bounced: { variant: 'danger', label: 'geri döndü', icon: AlertTriangle },
   quarantined: { variant: 'danger', label: 'karantina', icon: ShieldAlert },

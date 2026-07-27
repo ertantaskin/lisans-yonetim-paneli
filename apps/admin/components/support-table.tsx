@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Ban,
@@ -54,7 +55,15 @@ const baseColumns: ColumnDef<ReplacementRow>[] = [
     accessorKey: 'remoteOrderId',
     meta: { title: 'Sipariş No' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Sipariş No" />,
-    cell: ({ row }) => <span className="font-medium tabular-nums">{row.original.remoteOrderId}</span>,
+    cell: ({ row }) => (
+      <Link
+        href={`/orders/${row.original.orderId}`}
+        className="font-medium tabular-nums text-primary underline-offset-2 hover:underline"
+        title="Sipariş detayına git"
+      >
+        {row.original.remoteOrderId}
+      </Link>
+    ),
     // Arama: sipariş no VEYA müşteri e-postası
     filterFn: (row, _id, value) => {
       const q = String(value).toLowerCase();
