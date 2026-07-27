@@ -28,23 +28,34 @@ export default async function MappingsPage({
   searchParams: Promise<{ site?: string }>;
 }) {
   const { site } = await searchParams;
+  // ?site= yalnız geçerli UUID ise katalog çekilir. Combobox zaten yalnız geçerli UUID üretir;
+  // bu guard elle-düzenlenmiş/bayat URL'in API'de 400'e (ParseUUIDPipe) düşmesini önler.
+  const siteValid =
+    !!site && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(site);
 
   let summary: CatalogSummaryRow[] = [];
   let rows: UnmappedRow[] = [];
   let products: ProductRow[] = [];
   let catalog: CatalogRow[] = [];
   let error: string | null = null;
+  let catalogError: string | null = null;
   try {
     [summary, rows, products] = await Promise.all([
       apiGet<CatalogSummaryRow[]>('/v1/admin/catalog/summary'),
       apiGet<UnmappedRow[]>('/v1/admin/mappings/unmapped'),
       apiGet<ProductRow[]>('/v1/admin/products'),
     ]);
-    if (site) {
-      catalog = await apiGet<CatalogRow[]>(`/v1/admin/catalog?siteId=${encodeURIComponent(site)}`);
-    }
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
+  }
+  // Katalog fetch'i AYRI try/catch: tek bir bozuk ?site= (400) ya da geçici katalog hatası TÜM
+  // sayfayı (site seçici + reaktif "Eşlenmemiş Gelen Ürünler" güvenlik ağı dâhil) boşaltmasın.
+  if (siteValid) {
+    try {
+      catalog = await apiGet<CatalogRow[]>(`/v1/admin/catalog?siteId=${encodeURIComponent(site!)}`);
+    } catch (e) {
+      catalogError = e instanceof Error ? e.message : 'Katalog yüklenemedi';
+    }
   }
 
   return (
@@ -71,7 +82,17 @@ export default async function MappingsPage({
               Bir mağaza seçin; o sitenin senkronlanmış tüm ürünlerini ADIYLA görün ve sipariş
               beklemeden panel ürününe eşleyin.
             </p>
-            <CatalogTable sites={summary} siteId={site} rows={catalog} products={products} />
+            {catalogError && (
+              <p role="alert" className="text-sm text-destructive">
+                Katalog yüklenemedi: {catalogError}
+              </p>
+            )}
+            <CatalogTable
+              sites={summary}
+              siteId={siteValid ? site : undefined}
+              rows={catalog}
+              products={products}
+            />
           </section>
 
           <section className="space-y-3">

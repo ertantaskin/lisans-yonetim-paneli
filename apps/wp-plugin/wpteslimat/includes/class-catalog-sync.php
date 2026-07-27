@@ -129,6 +129,15 @@ class Wpteslimat_Catalog_Sync {
             $synced = isset($res['body']['synced']) ? (int) $res['body']['synced'] : count($products);
             self::redirect('ok', (string) $synced);
         }
+        // Panel gövde sınırı (1 MB) aşıldı → 413. Sessiz "HTTP 413" yerine anlamlı mesaj: katalog
+        // çok büyük; operatör ürün/varyasyon sayısını azaltmalı ya da destekle görüşmeli.
+        if ($code === 413) {
+            self::redirect('error', sprintf(
+                /* translators: %d: gönderilmeye çalışılan ürün+varyasyon satırı sayısı */
+                __('Katalog çok büyük (%d ürün/varyasyon) — panel gövde sınırını aştı. Ürün sayısını azaltın veya destekle görüşün.', 'wpteslimat'),
+                count($products)
+            ));
+        }
         $err = (isset($res['body']['error']) && $res['body']['error'] !== '')
             ? (string) $res['body']['error']
             : sprintf(__('HTTP %d', 'wpteslimat'), $code);

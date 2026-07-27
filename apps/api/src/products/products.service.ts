@@ -505,9 +505,19 @@ export class ProductsService {
       kind?: string | null;
     }>,
   ): Promise<{ synced: number }> {
+    // Boş snapshot'ı NO-OP say (kataloğu SİLME): WP'de toplu düzenlemede tüm ürünler geçici olarak
+    // taslağa düşerse ya da object-cache boş dönerse gelen boş dizi mevcut kataloğu YANLIŞLIKLA
+    // silmesin. Gerçek "0 ürün" durumu da proaktif eşleme için anlamsız; snapshot korunur, sonraki
+    // gerçek senkron düzeltir. (Silme YALNIZ dolu snapshot geldiğinde, replace semantiğiyle olur.)
+    if (!items.length) return { synced: 0 };
+    // Eşzamanlı aynı-site tam-snapshot'ları serileştir (upsertSiteMapping deseni): manuel "Ürünleri
+    // Panele Aktar" ile arka plan otomatik senkron ÇAKIŞABİLİR. Kilit olmadan (a) varyasyonlu
+    // katalogda T2 insert 23505 → 500; (b) tüm-basit katalogda unique index NULL'ı AYRI saydığından
+    // çift satır kalır (ürün 2× görünür, sayı şişer). Advisory-xact-lock delete+insert'i atomik yapar.
+    const lockKey = `catalog:${siteId}`;
     return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
       await tx.delete(siteRemoteProducts).where(eq(siteRemoteProducts.siteId, siteId));
-      if (!items.length) return { synced: 0 };
       const seen = new Set<string>();
       const rows = items
         .map((it) => {
@@ -599,7 +609,7 @@ export class ProductsService {
           ORDER BY rp.id, (m.remote_variation_id IS NOT NULL) DESC
         ) t
         ORDER BY (t.mapped_product_id IS NOT NULL), t.name
-        LIMIT 2000
+        LIMIT 5000
       `,
     );
     return rows.map((r) => ({
