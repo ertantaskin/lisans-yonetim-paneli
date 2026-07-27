@@ -9,7 +9,10 @@ export interface StockAdjustState {
   saved?: boolean;
 }
 
-export const initialStockAdjustState: StockAdjustState = { ok: false };
+// NOT: 'use server' dosyası YALNIZ async fonksiyon export edebilir (Next 15). Başlangıç durumu
+// objesi ('const … = { ok:false }') buradan export EDİLEMEZ — aksi halde tüm action chunk'ı
+// "can only export async functions, found object" ile patlar ve sayfadaki HER server action bozulur.
+// Başlangıç durumu tüketici istemci bileşeninde (stock-adjust-form.tsx) tanımlıdır.
 
 const ACTIONS = ['void', 'damage', 'correct', 'recall'] as const;
 type AdjustAction = (typeof ACTIONS)[number];

@@ -1,14 +1,14 @@
 'use client';
 import { useActionState } from 'react';
 import { CheckCircle2, Plus, TriangleAlert } from 'lucide-react';
-import {
-  createStockAdjustmentAction,
-  initialStockAdjustState,
-} from './actions';
+import { createStockAdjustmentAction, type StockAdjustState } from './actions';
 import { Input, Textarea, selectClass } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
 import { Field } from '../../../components/ui/field';
 import { adjustmentActionLabel } from '../../../lib/labels';
+
+// Başlangıç durumu istemcide (server-action dosyası yalnız async fonksiyon export edebilir).
+const initialStockAdjustState: StockAdjustState = { ok: false };
 
 /**
  * Manuel stok düzeltme formu (§12). Aksiyon + adet + (ops.) lisans satırı id + ZORUNLU sebep.
