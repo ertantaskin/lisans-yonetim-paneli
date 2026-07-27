@@ -24,6 +24,7 @@ import {
   products,
   siteProductMappings,
   sites,
+  stockAdjustments,
   type Site,
 } from '../db/schema';
 // Barrel'a eklenmedi (replacements modülüyle aynı desen) → doğrudan dosyadan al.
@@ -425,13 +426,19 @@ export class AdminOrdersService {
     // maskeyi kaldırmak "reveal audit'e düşer" değişmez kuralını ihlal etmez, yalnız granülerliği
     // per-key'den per-görüntülemeye taşır.
     if (asgRows.length > 0) {
-      await this.db.insert(auditLog).values({
-        action: 'reveal',
-        actor,
-        targetType: 'order',
-        targetId: orderId,
-        meta: { auto: true, view: 'order_detail', count: asgRows.length },
-      });
+      // best-effort: audit yazımı bu OKUMA yolunu (GET) bozmamalı — yazım hatasında (DB baskısı/
+      // bağlantı kesintisi) detay yine de yüklenir, 500 atmaz (denetim robustluk bulgusu).
+      try {
+        await this.db.insert(auditLog).values({
+          action: 'reveal',
+          actor,
+          targetType: 'order',
+          targetId: orderId,
+          meta: { auto: true, view: 'order_detail', count: asgRows.length },
+        });
+      } catch {
+        /* audit yazımı başarısız → görüntüleme yine de döner */
+      }
     }
 
     return {
@@ -1165,6 +1172,184 @@ export class AdminOrdersService {
             : '—',
       })),
     };
+  }
+
+  /**
+   * Karantina / Değiştirilen Anahtarlar (§2/§3): eski/ölü anahtarlar ayrı tabloda TUTULMAZ —
+   * `license_items` satırı DB'de kalır, yalnız `status` → `quarantined` (tek-kullanım revoke/iade)
+   * veya `voided` (recall) olur. Bu ekran üç kaynağı OKUMA-anında birleştirir: license_items (durum),
+   * assignment_history (değişim soyağacı + sebep), audit_log (düz-revoke sebebi fallback).
+   *
+   * GÜVENLİK: liste yüzlerce ölü anahtar döndürür → account-tipi TAM parola bir listede TOPLU dökülmez.
+   * keyPreview server-side üretilir: key/code/custom → son-4 maskeli (bulk liste reveal-audit üretmesin);
+   * account → yalnız secret-OLMAYAN alanlar (parola HİÇ dönmez). TAM değer yalnız kaynak siparişin loglu
+   * reveal yolunda görülür. Yazma yok — salt-okunur.
+   */
+  async listQuarantine() {
+    const rows = await this.db
+      .select({
+        licenseItemId: licenseItems.id,
+        payloadEnc: licenseItems.payloadEnc,
+        status: licenseItems.status,
+        assignedAt: licenseItems.assignedAt,
+        productName: products.name,
+        productKind: products.kind,
+        payloadSchema: products.payloadSchema,
+        sourceOrderId: orders.id,
+        sourceRemoteOrderId: orders.remoteOrderId,
+        customerEmail: orders.customerEmail,
+        // Değişim soyağacı (varsa): eski key → yeni atama + sebep + zaman.
+        replacedByAssignmentId: assignmentHistory.assignmentId,
+        historyReason: assignmentHistory.reason,
+        historyAt: assignmentHistory.createdAt,
+        formerAssignmentId: assignments.id,
+      })
+      .from(licenseItems)
+      .innerJoin(products, eq(licenseItems.productId, products.id))
+      // former atama/order/customer: revoke sonrası assignment satırı kalır, licenseItemId hâlâ
+      // eski key'i işaret eder.
+      .leftJoin(assignments, eq(assignments.licenseItemId, licenseItems.id))
+      .leftJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .leftJoin(orders, eq(assignments.orderId, orders.id))
+      // sebep (değişim): eski key = ah.old_license_item_id.
+      .leftJoin(assignmentHistory, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
+      .where(inArray(licenseItems.status, ['quarantined', 'voided']))
+      // NULLS LAST: voided (recall) item'ların assignedAt'i NULL — DESC'te NULLS FIRST olup listenin
+      // başını kaplamasın (yeni quarantined tek-kullanım key'ler 500 sınırında kesilmesin).
+      .orderBy(sql`${licenseItems.assignedAt} DESC NULLS LAST`)
+      .limit(500);
+
+    // audit_log fallback (detail() reasonRows deseni): düz-revoke (değişim değil) sebebi
+    // audit_log.meta.reason'da → formerAssignmentId kümesi için topla (en yeni kazanır).
+    const asgIds = Array.from(
+      new Set(rows.map((r) => r.formerAssignmentId).filter((x): x is string => !!x)),
+    );
+    const auditReasonByAsg = new Map<string, string>();
+    const auditAtByAsg = new Map<string, Date>();
+    if (asgIds.length) {
+      const reasonRows = await this.db
+        .select({
+          targetId: auditLog.targetId,
+          meta: auditLog.meta,
+          createdAt: auditLog.createdAt,
+        })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.action, 'revoke'),
+            eq(auditLog.targetType, 'assignment'),
+            inArray(auditLog.targetId, asgIds),
+          ),
+        )
+        .orderBy(desc(auditLog.createdAt));
+      for (const r of reasonRows) {
+        if (!r.targetId) continue;
+        if (!auditAtByAsg.has(r.targetId) && r.createdAt) auditAtByAsg.set(r.targetId, r.createdAt);
+        if (!auditReasonByAsg.has(r.targetId)) {
+          const reason = (r.meta as { reason?: unknown } | null)?.reason;
+          if (typeof reason === 'string' && reason) auditReasonByAsg.set(r.targetId, reason);
+        }
+      }
+    }
+
+    // Voided (recall/void/damage) item'lar için sebep+zaman stock_adjustments'tadır (atama/geçmiş
+    // YOK) → aksi halde tüm recall/void kategorisi sebep='—' görünürdü (denetim MED bulgusu).
+    const liIds = Array.from(new Set(rows.map((r) => r.licenseItemId)));
+    const adjReasonByLi = new Map<string, string>();
+    const adjAtByLi = new Map<string, Date>();
+    if (liIds.length) {
+      const adjRows = await this.db
+        .select({
+          licenseItemId: stockAdjustments.licenseItemId,
+          reason: stockAdjustments.reason,
+          createdAt: stockAdjustments.createdAt,
+        })
+        .from(stockAdjustments)
+        .where(
+          and(
+            inArray(stockAdjustments.licenseItemId, liIds),
+            inArray(stockAdjustments.action, ['recall', 'void', 'damage']),
+          ),
+        )
+        .orderBy(desc(stockAdjustments.createdAt));
+      for (const a of adjRows) {
+        if (!a.licenseItemId) continue;
+        if (!adjAtByLi.has(a.licenseItemId) && a.createdAt)
+          adjAtByLi.set(a.licenseItemId, a.createdAt);
+        if (!adjReasonByLi.has(a.licenseItemId) && a.reason)
+          adjReasonByLi.set(a.licenseItemId, a.reason);
+      }
+    }
+
+    // MAK/multi voided item, leftJoin(assignments)'te birden çok atamaya yayılabilir → licenseItem
+    // başına TEK satır (aynı ölü key mükerrer listelenmesin; denetim bulgusu).
+    const seen = new Set<string>();
+    const mapped = rows
+      .filter((r) => {
+        if (seen.has(r.licenseItemId)) return false;
+        seen.add(r.licenseItemId);
+        return true;
+      })
+      .map((r) => {
+        const auditReason = r.formerAssignmentId
+          ? (auditReasonByAsg.get(r.formerAssignmentId) ?? null)
+          : null;
+        const auditAt = r.formerAssignmentId
+          ? (auditAtByAsg.get(r.formerAssignmentId) ?? null)
+          : null;
+        const adjReason = adjReasonByLi.get(r.licenseItemId) ?? null;
+        const adjAt = adjAtByLi.get(r.licenseItemId) ?? null;
+        return {
+          licenseItemId: r.licenseItemId,
+          productName: r.productName,
+          productKind: r.productKind,
+          status: r.status,
+          keyPreview: this.quarantineKeyPreview(
+            r.payloadEnc,
+            r.licenseItemId,
+            r.productKind,
+            r.payloadSchema,
+          ),
+          sourceOrderId: r.sourceOrderId ?? null,
+          sourceRemoteOrderId: r.sourceRemoteOrderId ?? null,
+          customerEmail: r.customerEmail ?? null,
+          reason: r.historyReason ?? auditReason ?? adjReason ?? null,
+          replacedByAssignmentId: r.replacedByAssignmentId ?? null,
+          quarantinedAt: r.historyAt ?? auditAt ?? adjAt ?? r.assignedAt ?? null,
+        };
+      });
+
+    // Görüntüde en yeni üstte: voided'ın DB assignedAt'i NULL olduğu için birleşik zamana göre JS sıralaması.
+    mapped.sort((a, b) => {
+      const ta = a.quarantinedAt ? new Date(a.quarantinedAt).getTime() : 0;
+      const tb = b.quarantinedAt ? new Date(b.quarantinedAt).getTime() : 0;
+      return tb - ta;
+    });
+    return mapped;
+  }
+
+  /**
+   * Karantina listesi için anahtar önizlemesi. key/code/custom → TAM düz anahtar (ölü/karantina
+   * anahtar sır değil; kullanıcı isteği "gizleme yapma"). account → yalnız secret-OLMAYAN alanlar
+   * (ör. "kullanıcı: ahmet") — bir LİSTEDE onlarca parolayı toplu dökmemek için; tam hesap kaynak
+   * siparişte (maskesiz) görünür.
+   */
+  private quarantineKeyPreview(
+    payloadEnc: string,
+    licenseItemId: string,
+    kind: string,
+    payloadSchema: unknown,
+  ): string {
+    const plain = this.crypto.decrypt(payloadEnc, CryptoService.licenseItemAad(licenseItemId));
+    if (kind === 'account') {
+      const parsed = AccountPayloadSchema.safeParse(payloadSchema);
+      if (parsed.success) {
+        const shown = parseAccountPayload(parsed.data, plain).filter((f) => !f.secret);
+        return shown.length ? shown.map((f) => `${f.label}: ${f.value}`).join(' · ') : '—';
+      }
+      return '—';
+    }
+    return plain;
   }
 
   // ─── İnceleme Kuyruğu (§8 held_for_review — dinamik kota) ──────────────────────────

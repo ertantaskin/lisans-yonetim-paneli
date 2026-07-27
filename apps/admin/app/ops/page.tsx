@@ -20,7 +20,7 @@ export default async function OpsPage() {
     <div>
       <PageHeader
         icon={MailWarning}
-        title="Dead-letter"
+        title="Başarısız İşler"
         description="Başarısız geri-kanal webhook olayları ve mail teslimleri — tek tıkla yeniden kuyruğa al."
       />
       <MaintenanceCard />

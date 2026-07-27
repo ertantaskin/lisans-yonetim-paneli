@@ -23,7 +23,7 @@ import { Button } from '../../components/ui/button';
 import { Input, Textarea, Label } from '../../components/ui/input';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
 import { aiCategoryLabel, aiPriorityLabel } from '../../lib/labels';
-import { StatTile } from '../../components/ui/stat-tile';
+import { StatStrip } from '../../components/ui/stat-tile';
 import {
   Table,
   TableBody,
@@ -352,17 +352,18 @@ function DailySummarySection() {
           </Alert>
         ) : data ? (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              {METRIC_TILES.map((t) => (
-                <StatTile
-                  key={t.key}
-                  label={t.label}
-                  value={data.metrics[t.key]}
-                  icon={t.icon}
-                  tone={t.tone}
-                />
-              ))}
-            </div>
+            <StatStrip
+              items={METRIC_TILES.map((t) => ({
+                icon: t.icon,
+                label: t.label,
+                value: data.metrics[t.key],
+                // StatStrip yalnız success/warning/danger vurgusu taşır; accent/neutral → nötr.
+                tone:
+                  t.tone === 'success' || t.tone === 'warning' || t.tone === 'danger'
+                    ? t.tone
+                    : 'default',
+              }))}
+            />
             {data.paragraph ? (
               <Alert variant="info">
                 <Sparkles />
@@ -451,11 +452,11 @@ function TriageSection({ enabled }: { enabled: boolean }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="ai-triage-id">Talep kimliği (replacement id)</Label>
+          <Label htmlFor="ai-triage-id">Talep numarası</Label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               id="ai-triage-id"
-              placeholder="örn. 3f2a…-uuid"
+              placeholder="Talep numarasını yapıştırın"
               value={id}
               onChange={(e) => setId(e.target.value)}
               disabled={loading}

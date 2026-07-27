@@ -16,7 +16,7 @@ export default function AiPage() {
       <PageHeader
         icon={Sparkles}
         title="AI Operasyon"
-        description="Doğal dilde rapor, günlük anomali özeti ve destek triyajı — AI önerir, insan onaylar (§15)."
+        description="Doğal dilde rapor, günlük anomali özeti ve destek triyajı — AI önerir, insan onaylar."
       />
       <AiPanel />
     </div>

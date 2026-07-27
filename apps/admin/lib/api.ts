@@ -222,6 +222,21 @@ export interface OrderDetail {
   }>;
 }
 
+/** GET /v1/admin/quarantine satırı — ölü/geçersiz anahtar (payload maskeli, salt-okunur). */
+export interface QuarantineRow {
+  licenseItemId: string;
+  productName: string;
+  productKind: string;
+  status: string;
+  keyPreview: string;
+  sourceOrderId: string | null;
+  sourceRemoteOrderId: string | null;
+  customerEmail: string | null;
+  reason: string | null;
+  replacedByAssignmentId: string | null;
+  quarantinedAt: string | null;
+}
+
 /** POST /v1/admin/assignments/:id/reveal yanıtı (loglu). */
 export interface RevealResult {
   payload: string;

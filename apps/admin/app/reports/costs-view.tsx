@@ -416,7 +416,7 @@ export function CostsView() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Truck className="size-4 text-muted-foreground" /> Teslim Edilen COGS
+              <Truck className="size-4 text-muted-foreground" /> Teslim Edilen Mal Maliyeti
             </CardTitle>
             <CardDescription>
               Aktif + teslim edilmiş atamaların satılan mal maliyeti (import anındaki birim
@@ -431,7 +431,7 @@ export function CostsView() {
                   .map((d) => (
                     <StatTile
                       key={`cogs-${d.currency}`}
-                      label={multiCurrency ? `Teslim COGS (${d.currency})` : 'Teslim COGS'}
+                      label={multiCurrency ? `Teslim Edilen Maliyet (${d.currency})` : 'Teslim Edilen Maliyet'}
                       value={money(d.cogsCents, d.currency)}
                       icon={Truck}
                       tone="accent"

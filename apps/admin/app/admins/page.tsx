@@ -40,7 +40,7 @@ export default async function AdminsPage() {
       <PageHeader
         icon={ShieldCheck}
         title="Yöneticiler"
-        description="Panele erişimi olan adminler. Kullanıcı adı veya e-posta + parola ile giriş yaparlar (§8)."
+        description="Panele erişimi olan adminler. Kullanıcı adı veya e-posta + parola ile giriş yaparlar."
       />
 
       <Card className="mb-5">

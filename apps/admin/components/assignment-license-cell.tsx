@@ -12,7 +12,12 @@ interface Props {
  * Hesap ürününde alan-alan (kullanıcı adı + parola açık); diğer tiplerde tek düz payload.
  */
 export function AssignmentLicenseCell({ kind, payload, fields }: Props) {
-  if (kind === 'account' && fields) {
+  if (kind === 'account') {
+    // Hesap şeması çözülemezse (nadir; payloadSchema parse başarısız → fields=null) ham JSON
+    // payload'ı DÖKME (kullanıcı-dostu değil) — güvenli yer tutucu göster.
+    if (!fields) {
+      return <span className="text-xs text-muted-foreground">Hesap alanları okunamadı</span>;
+    }
     return (
       <div className="space-y-0.5">
         {fields.map((f) => (

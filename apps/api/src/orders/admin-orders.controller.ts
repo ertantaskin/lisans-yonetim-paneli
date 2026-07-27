@@ -81,6 +81,12 @@ export class AdminOrdersController {
     return this.adminOrders.resend(id);
   }
 
+  /** Karantina / Değiştirilen Anahtarlar (§2/§3): ölü/geçersiz anahtarlar (salt-okunur, payload maskeli). */
+  @Get('quarantine')
+  quarantine() {
+    return this.adminOrders.listQuarantine();
+  }
+
   // ─── İnceleme Kuyruğu (§8 dinamik kota held_for_review) ────────────────────────────
   /** İnceleme kuyruğu: dinamik kota eşiğini aşıp beklemeye alınmış siparişler (payload yok). */
   @Get('review')

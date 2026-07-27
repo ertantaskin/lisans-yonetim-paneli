@@ -2,7 +2,6 @@ import {
   ShieldCheck,
   ShieldOff,
   Send,
-  Globe,
   FlaskConical,
   Server,
   KeyRound,
@@ -33,7 +32,7 @@ function StateBadge({ on, onLabel, offLabel }: { on: boolean; onLabel: string; o
 }
 
 export function SettingsView({ data }: { data: SystemStatus }) {
-  const { authEnabled, telegramConfigured, env, sites, sitesError, runtime } = data;
+  const { authEnabled, telegramConfigured, env, sites, runtime } = data;
 
   // Üst özet: kritik durum kartları.
   const authIcon: LucideIcon = authEnabled ? ShieldCheck : ShieldOff;
@@ -94,50 +93,6 @@ export function SettingsView({ data }: { data: SystemStatus }) {
               </li>
             ))}
           </ul>
-        </CardContent>
-      </Card>
-
-      {/* Kanal / site durumu */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="size-4 text-muted-foreground" /> Kanal durumu
-          </CardTitle>
-          <CardDescription>Bağlı site sayıları ve test modu (sandbox) dağılımı.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {sitesError || !sites ? (
-            <p className="text-sm text-muted-foreground">
-              Site özeti alınamadı{sitesError ? `: ${sitesError}` : ''}.
-            </p>
-          ) : (
-            <dl className="grid grid-cols-3 gap-4 text-center">
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Toplam
-                </dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-foreground">
-                  {sites.total}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Canlı
-                </dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-success">
-                  {sites.live}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Sandbox
-                </dt>
-                <dd className="mt-1 text-2xl font-semibold tabular-nums text-warning">
-                  {sites.sandbox}
-                </dd>
-              </div>
-            </dl>
-          )}
         </CardContent>
       </Card>
     </div>

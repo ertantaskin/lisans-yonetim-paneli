@@ -1,16 +1,16 @@
-import { PackageCheck } from 'lucide-react';
+import { ShieldOff } from 'lucide-react';
+import { apiGet, type QuarantineRow } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
-import { BatchesTable } from '../../components/batches-table';
-import { getBatches, type BatchRow } from './queries';
+import { QuarantineTable } from '../../components/quarantine-table';
 
 export const dynamic = 'force-dynamic';
 
-export default async function BatchesPage() {
-  let batches: BatchRow[] = [];
+export default async function QuarantinePage() {
+  let rows: QuarantineRow[] = [];
   let error: string | null = null;
   try {
-    batches = await getBatches();
+    rows = await apiGet<QuarantineRow[]>('/v1/admin/quarantine');
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -18,16 +18,16 @@ export default async function BatchesPage() {
   return (
     <div>
       <PageHeader
-        icon={PackageCheck}
-        title="Partiler"
-        description="Tedarik partileri — satılmamış/satılmış adet ve geri çekme."
+        icon={ShieldOff}
+        title="Karantina"
+        description="Değiştirilen/iade edilen ölü anahtarlar — satışa dönmez."
       />
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         </Card>
       ) : (
-        <BatchesTable batches={batches} />
+        <QuarantineTable rows={rows} />
       )}
     </div>
   );

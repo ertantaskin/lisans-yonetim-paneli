@@ -1,7 +1,7 @@
-import { ClipboardList, Plus } from 'lucide-react';
+import { ClipboardList } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
-import { CreatePOForm } from '@/components/create-po-form';
+import { CreatePOSheet } from '@/components/create-po-sheet';
 import { PurchaseOrdersTable } from '@/components/purchase-orders-table';
 import { getPurchaseOrders, getPurchaseOrderFormData, type PurchaseOrderRow } from './queries';
 
@@ -22,17 +22,14 @@ export default async function PurchaseOrdersPage() {
   }
 
   return (
-    <div>
-      <PageHeader icon={ClipboardList} title="Satın Alma Emirleri" description="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur (§12)." />
-
-      <Card className="mb-5 max-w-3xl">
-        <CardContent className="p-5">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Plus className="size-4 text-muted-foreground" /> Yeni Emir
-          </h2>
-          <CreatePOForm suppliers={suppliers} products={products} />
-        </CardContent>
-      </Card>
+    <div className="space-y-5">
+      <PageHeader
+        icon={ClipboardList}
+        title="Satın Alma Emirleri"
+        description="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur."
+      >
+        <CreatePOSheet suppliers={suppliers} products={products} />
+      </PageHeader>
 
       {error ? (
         <Card>

@@ -17,6 +17,7 @@ import {
   Settings,
   ShieldCheck,
   ShieldAlert,
+  ShieldOff,
   Sparkles,
   BookOpen,
   Rocket,
@@ -76,13 +77,14 @@ export const NAV: NavSection[] = [
       { label: 'Raporlar', href: '/reports', icon: BarChart3 },
       { label: 'AI Operasyon', href: '/ai', icon: Sparkles },
       { label: 'Bildirimler', href: '/notifications', icon: Bell },
-      { label: 'Dead-letter', href: '/ops', icon: MailWarning },
+      { label: 'Başarısız İşler', href: '/ops', icon: MailWarning },
     ],
   },
   {
     title: 'Sistem',
     items: [
       { label: 'Güvenlik', href: '/security', icon: ShieldAlert },
+      { label: 'Karantina', href: '/quarantine', icon: ShieldOff },
       { label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true },
     ],
   },

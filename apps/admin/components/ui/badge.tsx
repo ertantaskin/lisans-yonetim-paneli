@@ -60,7 +60,8 @@ const STATUS: Record<string, StatusMeta> = {
   revoked: { variant: 'danger', label: 'Geri alındı', icon: Ban },
   failed: { variant: 'danger', label: 'başarısız', icon: AlertTriangle },
   bounced: { variant: 'danger', label: 'geri döndü', icon: AlertTriangle },
-  quarantined: { variant: 'danger', label: 'karantina', icon: ShieldAlert },
+  quarantined: { variant: 'danger', label: 'Karantina', icon: ShieldAlert },
+  voided: { variant: 'danger', label: 'Geçersiz', icon: Ban },
 };
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
