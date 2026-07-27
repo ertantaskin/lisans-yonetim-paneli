@@ -14,6 +14,23 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### WP eklentisi v0.5.0 (yayınlandı — panele publish, müşteri siteleri güncelleyebilir)
+- **Lisanslar sipariş-kalemi bağlamında (per-line):** her ürünün anahtarları + Göster/Değiştir/
+  Askıya al/+1 Bonus + değişim geçmişi artık o ürünün SİPARİŞ KALEMİ altında (uzun sağ metabox
+  yerine) → çok ürünlü siparişte her ürün kendi bağlamında yönetilir.
+- **Yenilenmiş kart arayüzü (UI/UX):** başlıkta özet sayaç ("N lisans · X aktif · Y askıda"),
+  renkli durum rozetleri (Aktif/Askıda/İptal…), ikonlu + hiyerarşik butonlar (nötr Göster / mavi
+  Değiştir / amber Askıya al / yeşil Geri aç), ürün-bazlı "Bonus Ekle" alt aksiyonu, katlanır
+  değişim geçmişi; **5+ anahtarda kart kaydırılır** (max-height ~232px) → sipariş ekranı asla
+  uzamaz. İptal/değiştirilen anahtarda aksiyon butonu görünmez (yanlış işlem imkânsız). Saf
+  sunum katmanı — backend/API/kontrat değişmedi, migration yok.
+- **+1 Bonus ürün-bazlı:** ayrı sentetik satır (`bonus:<item>:…`) → sonraki Woo senkronu/iadesi
+  bonusu geri almaz (qty şişmez).
+- **Kritik iade düzeltmesi:** kısmi iade sonrası re-sync artık iade edilen birimleri yeniden
+  teslim ETMEZ (net adet gönderilir); `bundleQty>1` üründe iade doğru ölçeklenir (aşırı revoke giderildi).
+- 16 WP denetim düzeltmesi (boş-secret webhook reddi, misafir Sorun Bildir, katalog önbelleği,
+  100+ toplu-güncelleme parçalama vb.).
+
 ### Düzeltildi — teslimat-hazırlık denetimi (5-lens workflow, 16 doğrulanmış bulgu)
 - **Dağıtım [yüksek]:** `deploy.sh` rollback artık dala BAĞLI kalır (`git reset --hard`; eskiden
   `git checkout <sha>` → detached HEAD sonraki TÜM deploy'ları kilitliyordu); build/up hatası da

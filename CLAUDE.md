@@ -616,6 +616,26 @@ güvenlik/test) + paralel ekip (P1-P4 işçi + W5 WP-D3) + 5-lensli çekişmeli 
   **entegrasyon 114/114 + yarış 3/3** · PHP-lint 11/11 · deploy /health 200 v1.0.0 (tüm yeni rota map'lendi) ·
   eklenti v0.4.0 panele publish (201). **migration YOK** (şemaya dokunulmadı; mevcut tablolar kullanıldı).
 
+**§7 PER-LINE LİSANS + KART UI YENİLEME (commit 811df48→48513d7, CANLI + deploy + eklenti v0.5.0):**
+Kullanıcı "lisanslar sağdaki uzun metabox yerine her ürünün SİPARİŞ KALEMİ altında görünmeli (çok
+ürünlü sipariş = karışık liste); ürüne göre değiştir/bonus; daha kolay/düzenli olsun" dedi → iki dalga:
+- **811df48 (per-line + 16 WP denetim):** panel admin-view her atama/geçmiş için `remoteLineId` döner →
+  WP `woocommerce_after_order_itemmeta` ile lisansları o ürünün kalemi altında gruplar; **+1 Bonus
+  ürün-bazlı** (ayrı sentetik satır `bonus:<item>:<uuid>` → reconcile/syncRefunds bonusu görmez, qty
+  şişmez); **kritik iade düzeltmesi** (collect_lines NET adet → re-sync iade edilen birimi yeniden teslim
+  etmez; syncRefunds `remoteProductId` gönderir → panel `resolveBundleQty` ile bundleQty ölçekler, aşırı-
+  revoke kapandı). Yeni site-scoped HMAC uçları: `/lines/:remoteLineId/bonus`. Sağ metabox inceldi
+  (yalnız durum + Tekrar Mail + bağlanmayan atamalar).
+- **48513d7 (kart UI/UX yenileme — SAF SUNUM, backend değişmedi):** her ürün kendi KARTINDA — başlık
+  özet sayaç ("N lisans · X aktif · Y askıda"), renkli durum rozetleri, ikonlu + hiyerarşik butonlar
+  (nötr Göster / mavi Değiştir / amber Askıya al / yeşil Geri aç), ürün-bazlı "Bonus Ekle" alt aksiyonu,
+  katlanır değişim geçmişi (`<details>`); **5+ anahtarda kart kaydırılır** (`wpt-keys--scroll`, max-height
+  ~232px) → çok anahtarlı üründe sipariş ekranı asla uzamaz. İptal/değiştirilen anahtarda aksiyon butonu
+  görünmez (suspend guard'la tutarlı). Sınıf-tabanlı stil sayfada bir kez basılır; dashicons ikonlar.
+- **Doğrulama:** PHP-lint temiz; dev sipariş #17'de gerçek render tarayıcıda doğrulandı; VPS izole test DB
+  **entegrasyon 115/115 + yarış 3/3** (per-line/bonus/held/refund/TOCTOU/ABBA dahil); prod deploy.sh api+admin
+  (rollback'li) → /health 200 v1.0.0; eklenti v0.5.0 panele publish (201, id 411e750b). **migration YOK.**
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
