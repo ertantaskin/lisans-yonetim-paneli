@@ -663,6 +663,42 @@ order-detail zinciri. **Dev'de canlı uçtan-uca deneyimlendi** (SSH tünel + ge
   **DERS [[denetim-regresyon-dersleri]]:** yeni durum-geçiş ucu (approve) eklerken advisory-lock ekle (TOCTOU);
   istemcide backend added/status'unu yut**ma** (sessiz no-op yanıltıcı "başarılı" üretir).
 
+**UI/UX DALGASI 2 — sipariş detayı cila + panel-geneli kompakt + KARANTİNA ekranı + ultracode denetim
+(commit 8242c2b→46741ee, CANLI + prod deploy 46741ee):** Kullanıcı sipariş detayı üzerine ardışık geri
+bildirim verdi (kartlar hâlâ büyük/karışık; Göster ayrı satır; site+Woo id belirgin değil; sonra: ikon-only
+butonlar anlaşılmıyor → etiketli olsun; admin girişliyim, maskeleme yapma; değiştirilen eski anahtarları
+nerede saklıyorsun; geçmiş satırında sebep; çok üründe kart rengi farkı) + "projeyi kapsamlı değerlendir,
+agent'larınla çöz". İki analiz ajanı + 4 disjoint işçi (kompakt panel) + 5-parça sıralı workflow (analiz→
+uygula→3-lens adversaryel doğrula) ile yapıldı. **migration YOK.**
+- **Sipariş detayı yerleşim:** 2-kolon (sol geniş ürünler+lisanslar, sağ dar rail destek+mail+timeline);
+  başlıkta **Site + WooCommerce sipariş no belirgin çipler**; aksiyonlar önce ikon-only'ye indi sonra
+  kullanıcı isteğiyle **etiketli+ikonlu** butona geri döndü; çok ürün kaleminde **kart sol-kenar aksan
+  rengi** (chart paleti, yalnız >1 ürün); "Geçmiş" satırında en sağda **iptal sebebi** (audit_log.meta).
+- **MASKELEME KALDIRILDI (kullanıcı isteği, güvenlik notu):** admin `detail()` artık düz `payload`+`fields`
+  döndürür (Göster tıklaması yok); "reveal audit'e düşer" DEĞİŞMEZ kuralını korumak için her görüntülemede
+  TEK `reveal` audit kaydı (per-key→per-view granülerlik). YALNIZ admin `detail()` maskesiz — WP My Account /
+  müşteri `getDeliveries` §7 gereği MASKELİ KALDI. **Bağımlılık:** auth AÇIK olmalı (env-gate KAPALIykense
+  panel zaten herkese açık — plaintext exposure auth'a bağlı, denetimde işaretlendi).
+- **Panel-geneli kompakt:** yeni `StatStrip` primitifi (ince tek-satır özet şeridi) → tedarikçi/ürün/site/
+  müşteri/satın-alma-emri detaylarındaki büyük StatTile ızgaralarının yerini aldı (ürün detayı 2-kolon + SKU
+  çipi); Güvenlik/Bildirim ekranı `(§N)` iç-referans + İngilizce jargon temizliği + ham UUID yerine site domain
+  (security.service leftJoin); inceleme kuyruğu kompakt dropdown; 8 UX düzeltmesi (PO formu Sheet'e, Dead-letter→
+  "Başarısız İşler", "Teslim Edilen COGS"→"…Mal Maliyeti", AI anomali StatStrip, ayarlar tekrar-kart temizliği).
+- **YENİ /quarantine (Karantina / Değiştirilen Anahtarlar):** "eski anahtarları nerede saklıyorsun" cevabı —
+  `quarantined`/`voided` TÜM ölü anahtarlar tek DataTable'da (ürün, durum, anahtar, **kaynak sipariş linki**,
+  müşteri, **sebep**, tarih). `listQuarantine()` + `GET /v1/admin/quarantine` (salt-okunur, migration YOK —
+  license_items/assignments/assignment_history/audit_log/stock_adjustments okunur). key-tipi TAM düz (ölü key
+  sır değil); account listede yalnız secret-olmayan alanlar (tam hesap kaynak siparişte). Sidebar "Sistem"→Karantina.
+- **Adversaryel doğrulama (3 lens → 8 bulgu, hepsi düzeltildi):** [MED] voided (recall/void/damage) sebebi
+  `stock_adjustments`'tan (eskiden hep '—') · MAK/multi voided leftJoin fan-out → licenseItem başına tek satır
+  (dedup) · `assignedAt DESC NULLS LAST` + birleşik-zaman JS sıralaması (voided listeyi kaplamasın) · `detail()`
+  audit-on-view try/catch (yazım hatası okuma yolunu 500'lemez) · account `fields=null` → ham JSON DÖKME (yer tutucu).
+- **Doğrulama:** typecheck api+admin temiz · admin production build (/quarantine route dahil) · dev canlı:
+  sipariş detayı **maskesiz** (0 mask char, 0 "Göster", tam key'ler) + `/quarantine` API **6 satır gerçek veri**
+  (tam key, sebep, kaynak sipariş, sıralı) · prod deploy.sh api+admin (rollback'li) → **/health 200 v1.0.0**,
+  quarantine route mapped, boot hatasız. **AÇIK SORU (kullanıcıya soruldu):** görüntüleme-audit'i kalsın mı,
+  yoksa tamamen kaldırılsın mı (kullanıcı henüz yanıtlamadı; mevcut: kalıyor).
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
