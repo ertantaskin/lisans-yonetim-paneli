@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 0.5.0
+Stable tag: 0.5.1
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,15 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 0.5.1 =
+* Sipariş notları netleşti: teslimat webhook'u artık ham "order.fulfilled (durum: fulfilled)"
+  yerine düz Türkçe ("Teslimat tamamlandı — tüm lisanslar müşteriye iletildi.") yazar.
+* İade/iptalde ham İngilizce WooCommerce durumu (refunded/cancelled) yerine yerelleştirilmiş
+  ad kullanılır; panele iletim/geri-alma/iade BAŞARISIZ olursa sipariş notuna uyarı düşer
+  (arka planda tekrar denenir — artık sessiz takılma yok).
+* Meta box durum gösterimi her yolda Türkçe (ham enum sızmaz); eşlemesiz ürün "Ürün eşlenmemiş";
+  bonus etiketi düzeltildi.
 
 = 0.5.0 =
 * Lisanslar artık her ürünün SİPARİŞ KALEMİ altında (order items), uzun yan metabox yerine —

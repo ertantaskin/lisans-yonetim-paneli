@@ -636,6 +636,33 @@ Kullanıcı "lisanslar sağdaki uzun metabox yerine her ürünün SİPARİŞ KAL
   **entegrasyon 115/115 + yarış 3/3** (per-line/bonus/held/refund/TOCTOU/ABBA dahil); prod deploy.sh api+admin
   (rollback'li) → /health 200 v1.0.0; eklenti v0.5.0 panele publish (201, id 411e750b). **migration YOK.**
 
+**SİPARİŞ DETAYI + DESTEK AKIŞI UX/CORRECTNESS DALGASI (commit 1a0d219, CANLI + deploy + eklenti v0.5.1):**
+Kullanıcı "'order.fulfilled' anlaşılmıyor; sipariş detayı karışık, iptal lisanslar listede; değişim geçmişi
+gizlenmeden açık görünsün; support'tan 'değiştir' dediğimde siparişte görünmüyor; tüm eksikleri deneyimleyip
+düzelt" dedi → somut düzeltmeler + 4-lensli çekişmeli denetim workflow'u (32 ajan, bul→doğrula, **23 bulgu**).
+Migration YOK (tümü okuma/sunum). Paralel: 3 ayrık-dosya işçi (WP / replacements / tutarlılık) + merkezî
+order-detail zinciri. **Dev'de canlı uçtan-uca deneyimlendi** (SSH tünel + gerçek approve).
+- **Sipariş detayı (/orders/[id]):** aktif vs iptal/değiştirilen/expired atama ayrımı (katlanır "Geçmiş");
+  ürün adı (detail() products JOIN — satır+atama); başlıkta site domain (sites JOIN); held uyarı bandı +
+  /review linki + held/canceled satırda "Kalanları Ata" gizli; **"Kalanları Ata" added=0 dürüst raporlar**
+  (eskiden hep "başarılı" — yanıltıcıydı); değişim geçmişinde **eski key TAM** (key-tipi ölü key; account
+  secret maskeli, `oldValue`); revoke sebep sorar; askıdaki atama doğrudan iptal.
+- **Destek↔sipariş:** sipariş detayına "Değişim/Destek Talepleri" kartı (backend detail() `replacements`;
+  inline Onayla/Reddet — `approveReplacementForOrderAction` order+/support revalidate) + /support link;
+  /support Sipariş No → siparişe link. **replacements.approve TOCTOU:** advisory-lock + tx FOR UPDATE
+  re-check → çift-tıkta "Talep zaten çözülmüş" (409), sahte "stok yok" DEĞİL; onayda `enqueueReplacementNotice
+  ('approved')` (reject/info simetrisi); requestInfo `@AdminActor`.
+- **WP (v0.5.1):** webhook notu ham event→Türkçe cümle (`human_note`); revoke sebebi `wc_get_order_status_name`;
+  push/revoke/refund başarısızlığında sipariş notu (sessiz takılma bitti); metabox durum fallback'leri
+  `order_status_label`'dan + 'unmapped'→'Ürün eşlenmemiş' + bonus i18n.
+- **Tutarlılık:** StatusBadge `revoked`→'Geri alındı' (labels.ts tek kaynak); /orders faceti 'Geri alındı';
+  customers/[email] paylaşılan StatusBadge.
+- **Doğrulama:** typecheck 4/4 + PHP-lint temiz · VPS izole test DB **entegrasyon 115/115 + yarış 3/3** ·
+  dev canlı: seeded talep→approve 201 (ATAMA 7→8, "onaylandı", eski key TAM görünür, "Değişim talebiniz" maili)
+  + double-approve **409 "zaten çözülmüş"** · prod deploy.sh api+admin → /health 200 v1.0.0 · eklenti v0.5.1 publish.
+  **DERS [[denetim-regresyon-dersleri]]:** yeni durum-geçiş ucu (approve) eklerken advisory-lock ekle (TOCTOU);
+  istemcide backend added/status'unu yut**ma** (sessiz no-op yanıltıcı "başarılı" üretir).
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

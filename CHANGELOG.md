@@ -14,6 +14,24 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Sipariş detayı + destek akışı UX/correctness dalgası (kullanıcı geri bildirimi + 4-lens denetim / 23 bulgu)
+- **Sipariş detayı (/orders/[id]):** aktif lisanslar ile iptal/değiştirilen/expired atamalar ayrıldı
+  (katlanır "Geçmiş" bölümü); her satır+atamada ürün adı (ham Woo kalem id yerine); başlıkta siparişin
+  geldiği site; held (inceleme) sipariş için uyarı bandı + /review linki; held/canceled satırda
+  "Kalanları Ata" gizli. "Kalanları Ata" artık added=0'ı dürüstçe raporlar (eskiden hep yeşil "başarılı").
+  Değişim geçmişinde eski key TAM görünür (key-tipi ölü/karantina key; account secret maskeli). İptal
+  (revoke) sebep sorar; askıdaki atama doğrudan iptal edilebilir.
+- **Destek ↔ sipariş bağı:** sipariş detayına "Değişim/Destek Talepleri" kartı (inline Onayla/Reddet +
+  /support linki); /support satırı siparişe link. `replacements.approve` TOCTOU advisory-lock + tx
+  (çift-tıkta "zaten çözülmüş", sahte "stok yok" değil); onayda müşteriye "değişim onaylandı" bildirimi;
+  requestInfo aktör kaydı.
+- **WP eklentisi (v0.5.1):** teslimat webhook sipariş notu ham event/enum yerine Türkçe cümle;
+  iade sebebi yerelleştirilmiş WC durumu; push/revoke/refund başarısızlığında sipariş notu; metabox
+  durum fallback'leri Türkçe + 'unmapped'→'Ürün eşlenmemiş' + bonus i18n.
+- **Tutarlılık:** StatusBadge revoked→'Geri alındı' (labels.ts ile); /orders faceti 'Geri alındı';
+  müşteri detayı değişim durumu paylaşılan StatusBadge. **Migration YOK.** Doğrulama: typecheck 4/4,
+  entegrasyon 115/115 + yarış 3/3, dev canlı uçtan-uca (approve→409 zaten-çözülmüş, eski key tam görünür).
+
 ### WP eklentisi v0.5.0 (yayınlandı — panele publish, müşteri siteleri güncelleyebilir)
 - **Lisanslar sipariş-kalemi bağlamında (per-line):** her ürünün anahtarları + Göster/Değiştir/
   Askıya al/+1 Bonus + değişim geçmişi artık o ürünün SİPARİŞ KALEMİ altında (uzun sağ metabox
