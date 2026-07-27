@@ -145,22 +145,25 @@ export default function GuidePage() {
         id="genel"
         icon={Workflow}
         title="Panel nasıl çalışır"
-        description="Merkezî lisans dağıtım mantığı ve WooCommerce ile ilişkisi."
+        description="Merkezî lisans dağıtım mantığı ve satış kanallarıyla (mağaza) ilişkisi."
       >
         <p>
           Bu panel, dijital lisansların (Windows/Office key, hesap, kod) tek doğruluk kaynağıdır.
-          Ödeme ve sepet tamamen WooCommerce tarafındadır; panel ödemeye dokunmaz, yalnızca{' '}
-          <strong>ödenmiş siparişi görür ve teslim eder</strong>.
+          Ödeme ve sepet tamamen <strong>mağaza (satış kanalı)</strong> tarafındadır; panel ödemeye
+          dokunmaz, yalnızca <strong>ödenmiş siparişi görür ve teslim eder</strong>. Panel{' '}
+          <strong>platform-bağımsızdır</strong>: mağaza tarafı jenerik imzalı (HMAC) API ile konuşur —
+          bugün hazır entegrasyon <strong>WooCommerce eklentisi</strong>dir; başka platformlar için de
+          aynı kontratı konuşan bir eklenti/adaptör eklenebilir.
         </p>
         <p className="font-medium text-foreground">Tipik akış:</p>
         <Steps>
-          <li>Müşteri WooCommerce&apos;te öder → sipariş imzalı (HMAC) olarak panele iletilir.</li>
+          <li>Müşteri mağazada öder → sipariş imzalı (HMAC) olarak panele iletilir.</li>
           <li>Panel, siteye+ürüne uygun stoktan <strong>atomik</strong> bir lisans ayırır (aynı key iki kez satılamaz).</li>
-          <li>Müşteri, WooCommerce hesabındaki &quot;Siparişlerim&quot; ekranında çözülmüş lisansı görür.</li>
-          <li>Panel, sipariş durumunu geri kanaldan (webhook) WooCommerce&apos;e bildirir.</li>
+          <li>Müşteri, mağaza hesabındaki &quot;Siparişlerim&quot; ekranında çözülmüş lisansı görür.</li>
+          <li>Panel, sipariş durumunu geri kanaldan (webhook) mağazaya bildirir.</li>
         </Steps>
         <Tip>
-          Lisans verisi <strong>asla</strong> WooCommerce veritabanında durmaz; her zaman panelde şifreli
+          Lisans verisi <strong>asla</strong> mağaza veritabanında durmaz; her zaman panelde şifreli
           tutulur. Bu yüzden bir key yalnızca panelden yönetilir (görüntüleme, askıya alma, iptal).
         </Tip>
       </Section>
@@ -169,7 +172,7 @@ export default function GuidePage() {
         id="kurulum"
         icon={Plug}
         title="İlk kurulum: site bağlama"
-        description="Bir WooCommerce mağazasını panele güvenli şekilde bağlama."
+        description="Bir mağazayı (satış kanalı) panele güvenli şekilde bağlama."
       >
         <Steps>
           <li>
@@ -228,18 +231,18 @@ export default function GuidePage() {
         id="esleme"
         icon={Link2}
         title="Site eşlemeleri"
-        description="WooCommerce ürününü panel ürününe bağlama."
+        description="Mağaza ürününü panel ürününe bağlama."
       >
         <p>
           Panel, gelen bir siparişin hangi panel ürününü teslim edeceğini <strong>eşlemeden</strong> bulur.
           Eşlemeler ürün detay sayfasındaki <strong>Site Eşlemeleri</strong> kartından yönetilir:
         </p>
         <Bullets>
-          <li><strong>Site</strong> + <strong>WooCommerce ürün ID</strong> (varsa <strong>varyasyon ID</strong>) → bu panel ürünü.</li>
-          <li><strong>Paket adedi:</strong> 1 WooCommerce siparişi kaç key teslim etsin (varsayılan 1).</li>
+          <li><strong>Site</strong> + <strong>mağaza ürün ID</strong> (varsa <strong>varyasyon ID</strong>) → bu panel ürünü.</li>
+          <li><strong>Paket adedi:</strong> 1 mağaza siparişi kaç key teslim etsin (varsayılan 1).</li>
         </Bullets>
         <Tip>
-          Bir Woo ürünü panelde eşli değilse, o ürünün siparişi teslim edilemez ve bekleyen olarak kalır.
+          Bir mağaza ürünü panelde eşli değilse, o ürünün siparişi teslim edilemez ve bekleyen olarak kalır.
           Yeni ürün satışa açtığınızda eşlemeyi eklemeyi unutmayın.
         </Tip>
       </Section>

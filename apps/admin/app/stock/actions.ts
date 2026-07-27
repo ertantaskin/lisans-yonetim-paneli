@@ -221,7 +221,7 @@ export async function createMappingAction(
   const productId = String(formData.get('productId') || '');
   const remoteProductId = String(formData.get('remoteProductId') || '').trim();
   if (!siteId || !productId || !remoteProductId) {
-    return { ok: false, error: 'Site, ürün ve Woo ürün ID zorunlu' };
+    return { ok: false, error: 'Site, ürün ve mağaza ürün ID zorunlu' };
   }
   const remoteVariationId = String(formData.get('remoteVariationId') || '').trim();
   const bundleQtyRaw = String(formData.get('bundleQty') || '').trim();

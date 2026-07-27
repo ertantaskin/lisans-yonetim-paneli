@@ -19,7 +19,7 @@ export function CreateSiteForm() {
           label="Domain"
           htmlFor="cs-domain"
           required
-          hint="Bağlanacak WooCommerce/pazar yeri sitesinin alan adı."
+          hint="Bağlanacak satış kanalının (mağaza / pazar yeri) alan adı."
         >
           <Input id="cs-domain" name="domain" placeholder="magazam.com" required className="max-w-sm" />
         </Field>

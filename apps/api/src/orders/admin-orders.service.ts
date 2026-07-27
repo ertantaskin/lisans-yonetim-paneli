@@ -292,9 +292,10 @@ export class AdminOrdersService {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
-    // Siparişin geldiği mağaza (site) — operatör hangi siteden geldiğini görsün (çok siteli panel).
+    // Siparişin geldiği mağaza (site) + kanal tipi — operatör hangi siteden/hangi platformdan
+    // geldiğini görsün (çok siteli, platform-bağımsız panel: woocommerce/marketplace/reseller).
     const [siteRow] = await this.db
-      .select({ domain: sites.domain })
+      .select({ domain: sites.domain, type: sites.type })
       .from(sites)
       .where(eq(sites.id, order.siteId))
       .limit(1);
@@ -442,8 +443,8 @@ export class AdminOrdersService {
     }
 
     return {
-      // heldForReview zaten satırda; siteDomain başlıkta "hangi mağaza" için eklenir.
-      order: { ...order, siteDomain: siteRow?.domain ?? null },
+      // heldForReview zaten satırda; siteDomain + siteType başlıkta "hangi mağaza / hangi kanal".
+      order: { ...order, siteDomain: siteRow?.domain ?? null, siteType: siteRow?.type ?? null },
       lines,
       emails,
       replacements: replacementRows,

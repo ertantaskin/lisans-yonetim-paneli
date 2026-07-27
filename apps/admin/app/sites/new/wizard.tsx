@@ -73,7 +73,7 @@ function Stepper({ step }: { step: 1 | 2 | 3 }) {
 }
 
 /**
- * Site bağlama sihirbazı (§14): 3 adımda yeni bir WooCommerce/pazar yeri sitesini panele
+ * Site bağlama sihirbazı (§14): 3 adımda yeni bir satış kanalını (mağaza/pazar yeri/bayi) panele
  * bağlar. Adım 1 site oluşturur + tek-seferlik bağlan kodu üretir; Adım 2 kodu WP eklentisine
  * girmek için gösterir; Adım 3 bağlantı sağlığını test eder. Optimistic UI yok; para/stok yok.
  */
@@ -160,7 +160,7 @@ export function Wizard() {
           <CardHeader>
             <CardTitle>Site bilgileri</CardTitle>
             <CardDescription>
-              Bağlanacak WooCommerce/pazar yeri sitesinin temel bilgileri. Yalnız domain zorunlu.
+              Bağlanacak satış kanalının temel bilgileri. Yalnız domain zorunlu.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -184,7 +184,7 @@ export function Wizard() {
               <Field
                 label="Kanal tipi"
                 htmlFor="wz-type"
-                hint="Sitenin satış kanalı türü. Çoğu kurulum WooCommerce'tir."
+                hint="Sitenin satış kanalı türü (bugün hazır entegrasyon: WooCommerce eklentisi)."
               >
                 <select
                   id="wz-type"

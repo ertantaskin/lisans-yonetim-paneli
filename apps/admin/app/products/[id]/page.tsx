@@ -231,12 +231,12 @@ export default async function ProductDetailPage({
             </CardContent>
           </Card>
 
-          {/* Site eşlemeleri — yalnız bu ürünün eşlemeleri (Woo → panel), oluştur + aç-kapa */}
+          {/* Site eşlemeleri — yalnız bu ürünün eşlemeleri (mağaza → panel), oluştur + aç-kapa */}
           <Card>
             <CardHeader>
               <CardTitle icon={Link2}>Site Eşlemeleri</CardTitle>
               <CardDescription>
-                Bu ürünü WooCommerce ürün/varyasyonlarına bağlayın. Sipariş bu eşleme ile teslim edilir.
+                Bu ürünü mağaza (satış kanalı) ürün/varyasyonlarına bağlayın. Sipariş bu eşleme ile teslim edilir.
               </CardDescription>
             </CardHeader>
             <CardContent>

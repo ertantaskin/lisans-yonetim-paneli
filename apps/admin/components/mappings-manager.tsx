@@ -88,14 +88,14 @@ export function MappingsManager({
             </Field>
           )}
           <Field
-            label="WooCommerce ürün ID"
+            label="Mağaza ürün ID"
             htmlFor="map-remote"
-            hint="Woo'daki ürünün ID'si."
+            hint="Satış kanalındaki (mağaza) ürünün ID'si."
           >
             <Input id="map-remote" name="remoteProductId" placeholder="ör. 555" required />
           </Field>
           <Field
-            label="Woo varyasyon ID"
+            label="Mağaza varyasyon ID"
             htmlFor="map-variation"
             hint="Yalnız varyasyonlu üründe; yoksa boş."
           >
@@ -104,7 +104,7 @@ export function MappingsManager({
           <Field
             label="Paket adedi"
             htmlFor="map-bundle"
-            hint="1 Woo siparişi kaç key teslim etsin (varsayılan 1)."
+            hint="1 mağaza siparişi kaç key teslim etsin (varsayılan 1)."
           >
             <Input
               id="map-bundle"
@@ -138,7 +138,7 @@ export function MappingsManager({
               <TableHeader>
                 <TableRow>
                   <TableHead>Site</TableHead>
-                  <TableHead>Woo (ürün · varyasyon)</TableHead>
+                  <TableHead>Mağaza (ürün · varyasyon)</TableHead>
                   {!productId && <TableHead>Panel ürünü</TableHead>}
                   <TableHead className="text-right">Paket</TableHead>
                   <TableHead>Durum</TableHead>

@@ -19,7 +19,7 @@ export default function NewSitePage() {
           <PageHeader
             icon={Globe}
             title="Yeni Site (Sihirbaz)"
-            description="Yeni bir WooCommerce/pazar yeri sitesini 3 adımda panele bağlayın (§14)."
+            description="Yeni bir satış kanalını (mağaza / pazar yeri / bayi) 3 adımda panele bağlayın."
           />
         </div>
       </div>

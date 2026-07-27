@@ -27,7 +27,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
-import { eventTypeLabel } from '../../../lib/labels';
+import { eventTypeLabel, siteTypeLabel } from '../../../lib/labels';
 import { CompleteLineButton, AssignmentActions, ResendButton } from './order-actions';
 import { OrderReplacements } from './order-replacements';
 
@@ -156,7 +156,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
   return (
     <div className="space-y-4">
-      {/* ── Başlık: Woo sipariş no (h1) + belirgin Site & WooCommerce çipleri ── */}
+      {/* ── Başlık: mağaza sipariş no (h1) + belirgin Site & kanal-farkında çipler ── */}
       <div className="space-y-2.5">
         <Button asChild variant="ghost" size="sm" className="-ml-2">
           <Link href="/orders">
@@ -175,7 +175,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                 Sipariş #{order.remoteOrderId}
               </h1>
-              {/* Site + WooCommerce sipariş no belirgin çipler (kullanıcı isteği) */}
+              {/* Site + kanal-farkında mağaza sipariş no belirgin çipler (platform-bağımsız:
+                  siteType woocommerce/marketplace/reseller → etiket; null → "Mağaza"). */}
               <div className="flex flex-wrap items-center gap-2">
                 {order.siteDomain && (
                   <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground">
@@ -185,7 +186,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 )}
                 <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground">
                   <ShoppingCart className="size-3.5 text-muted-foreground" />
-                  WooCommerce #{order.remoteOrderId}
+                  {order.siteType ? siteTypeLabel(order.siteType) : 'Mağaza'} #{order.remoteOrderId}
                 </span>
                 <span className="text-xs text-muted-foreground">
                   {order.customerEmail} · {createdAt}

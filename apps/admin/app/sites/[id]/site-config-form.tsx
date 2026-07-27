@@ -114,7 +114,7 @@ export function SiteConfigForm({
 
         <FormSection
           title="Entegrasyon"
-          description="Teslimat e-postası ve WooCommerce eklentisine geri bildirim ayarları."
+          description="Teslimat e-postası ve mağaza entegrasyonuna geri bildirim ayarları."
         >
           <FieldRow>
             <Field
@@ -134,7 +134,7 @@ export function SiteConfigForm({
             <Field
               label="Geri kanal webhook URL"
               htmlFor="sc-webhook"
-              hint="Panel sipariş durumunu bu adrese bildirir (WooCommerce eklentisi)."
+              hint="Panel sipariş durumunu bu adrese bildirir (mağaza eklentisi / entegrasyonu)."
             >
               <Input
                 id="sc-webhook"

@@ -166,7 +166,13 @@ export interface SiteRow {
 }
 
 export interface OrderDetail {
-  order: OrderRow & { siteId: string; siteDomain: string | null; heldForReview: boolean };
+  order: OrderRow & {
+    siteId: string;
+    siteDomain: string | null;
+    /** Satış kanalı tipi (woocommerce | marketplace | reseller) — başlıkta platform-farkında etiket. */
+    siteType: string | null;
+    heldForReview: boolean;
+  };
   lines: Array<{
     id: string;
     remoteLineId: string;
@@ -174,7 +180,7 @@ export interface OrderDetail {
     fulfilledQty: number;
     status: string;
     productId: string | null;
-    /** Ürün adı (ham Woo kalem id yerine operatör dostu). */
+    /** Ürün adı (ham mağaza kalem id yerine operatör dostu). */
     productName: string | null;
     /** İade/iptal edilmiş satır (terminal) — 'Kalanları Ata' gösterilmez. */
     canceled: boolean;

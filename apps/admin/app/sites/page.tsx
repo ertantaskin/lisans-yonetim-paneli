@@ -19,7 +19,7 @@ export default async function SitesPage() {
 
   return (
     <div>
-      <PageHeader icon={Globe} title="Siteler" description="Her WooCommerce/pazar yeri kanalı bir tenant.">
+      <PageHeader icon={Globe} title="Siteler" description="Her satış kanalı (mağaza / pazar yeri / bayi) bir tenant.">
         <Button asChild>
           <Link href="/sites/new">
             <Plus /> Yeni Site (Sihirbaz)
