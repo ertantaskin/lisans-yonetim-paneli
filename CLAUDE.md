@@ -699,6 +699,35 @@ uygula→3-lens adversaryel doğrula) ile yapıldı. **migration YOK.**
   quarantine route mapped, boot hatasız. **AÇIK SORU (kullanıcıya soruldu):** görüntüleme-audit'i kalsın mı,
   yoksa tamamen kaldırılsın mı (kullanıcı henüz yanıtlamadı; mevcut: kalıyor).
 
+**PLATFORM-BAĞIMSIZ ETİKETLER + ÜRÜN EŞLEŞTİRME İYİLEŞTİRMESİ (commit d5c958c + ba19811, CANLI + eklenti v0.6.0):**
+Kullanıcı iki şey sordu: (a) "sistem başka altyapılara da entegre edilebilir mi, WooCommerce sabit mi?" → çekirdek
+zaten platform-bağımsız (jenerik HMAC `remote*` kontratı + tipli site kanalı), yalnız UI etiketleri Woo-sabitti →
+nötrleştirildi (bkz [[platform-agnostik-mimari]]); (b) "ürün eşleştirmeyi daha iyi yap, doğruluğu belirsiz, neye göre
+eşleşiyor?".
+- **Platform-bağımsız etiketler (d5c958c):** sunum katmanı WooCommerce→"mağaza/satış kanalı"; sipariş detayı çipi
+  `siteType`-farkında (detail() +siteType; woocommerce→WooCommerce / marketplace→Pazar yeri / reseller→Bayi / null→Mağaza);
+  "Mağaza ürün ID" vb. WooCommerce yalnız gerçek platform adı olduğu yerde kaldı (tip label + dropdown + "hazır entegrasyon" notu).
+- **Eşleştirme sistemi — nasıl çalışıyordu:** `site_product_mappings` = `(siteId, remoteProductId[, variation]) → productId +
+  bundleQty`. Eşleme ELLE tanımlı ID→ID bağı; sipariş gelince `resolveMapping` (varyasyon-özel→ürün-seviyesi fallback, aktif,
+  en-eski). Fail-safe: eşleme yoksa satır pending (yanlış teslim YOK). Zayıflık: elle ham ID → typo riski; panelin adı doğrulama
+  yolu yoktu (push adı taşımıyordu).
+- **İyileştirme (ba19811, migration 0022):** order_lines += `remote_product_id/remote_variation_id/remote_name` (additive,
+  nullable). WP eklenti **v0.6.0** push'a `remoteName` (`$item->get_name()`) ekler → panel gerçek siparişlerden ürün adını
+  ÖĞRENİR. `listUnmapped()` + `GET /v1/admin/mappings/unmapped` + YENİ **/mappings "Ürün Eşleştirme"** ekranı: gerçek
+  siparişlerde gelmiş ama eşlenmemiş ürünleri ADIYLA gör → **tek-tıkla eşle** (site+remoteProductId+varyasyon gerçek veriden
+  hidden input, ELLE ID YAZMA yok → typo riski biter; yalnız panel ürünü seçilir). **Doğruluk sertleştirme:** `createMapping`
+  NULL-varyasyon çift-eşleme açığı kapatıldı (Postgres unique NULL'ı ayrı sayar) — advisory-lock `upsertSiteMapping` ile
+  BİREBİR aynı anahtar (`site:remote:variation`) → panel-formu + WP-kutu iki yazar aynı kilitte serialize.
+- **Adversaryel denetim (deploy-öncesi, 2 bulgu düzeltildi):** [MED] createMapping kilit anahtarı 'map:' önekiyle
+  upsertSiteMapping'den farklıydı → çapraz-yazar dedup kapanmamıştı (anahtar birebir eşitlendi + 23505 catch) · [LOW]
+  `remoteName` z.max(255) astral/emoji adda tüm siparişi 400'lerdi → transform-kırp + .catch(null) (kritik-olmayan ad siparişi
+  ASLA reddetmez). Defect-değil doğrulanan: listUnmapped SQL varyasyon eşleşmesi resolveMapping ile denk, HMAC remoteName'i
+  kapsıyor, createOrder tüm dallar. **Bilinçli kapsam-dışı:** eşleme sonrası ESKİ bekleyen unmapped sipariş otomatik teslime
+  dönmez (mağaza resync gerekir; ileride eklenebilir).
+- **Doğrulama:** typecheck api+admin+shared temiz · admin build · **dev E2E** (eşlenmemiş→tek-tıkla-eşle 201→listeden düştü→
+  dedup 409) · PHP-lint temiz · migration 0022 prod (api boot auto-migrate) · /health 200 v1.0.0 · unmapped route 200 ·
+  eklenti v0.6.0 panele publish (201). migration 0000-0022.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
