@@ -50,12 +50,7 @@ function LicenseRow({ a, orderId }: { a: Assignment; orderId: string }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-3 py-2 first:border-t-0">
       <div className="min-w-0 flex-1">
-        <AssignmentLicenseCell
-          assignmentId={a.id}
-          kind={a.kind}
-          maskedPayload={a.maskedPayload}
-          maskedFields={a.maskedFields}
-        />
+        <AssignmentLicenseCell kind={a.kind} payload={a.payload} fields={a.fields} />
       </div>
       <StatusBadge status={a.status} />
       {isMulti && (
@@ -122,6 +117,30 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const sortedLines = [...lines].sort(
     (x, y) => Number(isBonusLine(x.remoteLineId)) - Number(isBonusLine(y.remoteLineId)),
   );
+
+  // Çok ürün kalemli siparişte kartları ayırt edilebilir kılmak için ürün kalemi başına ince bir
+  // sol kenar aksan rengi (chart paleti — monokrom UI'da nötr kalır; kullanıcı isteği). Yalnız
+  // birden çok GERÇEK ürün kalemi (bonus hariç) varsa uygulanır; tek üründe gereksiz.
+  const CARD_ACCENTS = [
+    'var(--chart-1)',
+    'var(--chart-2)',
+    'var(--chart-3)',
+    'var(--chart-4)',
+    'var(--chart-5)',
+  ];
+  const productLineCount = sortedLines.filter((l) => !isBonusLine(l.remoteLineId)).length;
+  const lineAccent = new Map<string, string | null>();
+  {
+    let pIdx = 0;
+    for (const l of sortedLines) {
+      lineAccent.set(
+        l.id,
+        productLineCount > 1 && !isBonusLine(l.remoteLineId)
+          ? CARD_ACCENTS[pIdx++ % CARD_ACCENTS.length]
+          : null,
+      );
+    }
+  }
 
   const openReplacements = replacements.filter(
     (r) => r.status === 'open' || r.status === 'info_requested',
@@ -236,10 +255,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               const lineAsg = asgByLine.get(l.id) ?? [];
               const activeLine = lineAsg.filter(isActive);
               const bonus = isBonusLine(l.remoteLineId);
+              const accent = lineAccent.get(l.id);
               // "Kalanları Ata" yalnız gerçekten eksik + işlenebilir satırda (held/canceled/bonus hariç).
               const incomplete = l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
               return (
-                <Card key={l.id} className="overflow-hidden">
+                <Card
+                  key={l.id}
+                  className="overflow-hidden"
+                  style={accent ? { borderLeftWidth: '4px', borderLeftColor: accent } : undefined}
+                >
                   {/* Ürün başlığı: ad + teslim durumu + (eksikse) Kalanları Ata */}
                   <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-2.5">
                     <div className="min-w-0">
@@ -297,13 +321,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 {terminalAsg.map((a) => (
                   <div
                     key={a.id}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 opacity-80 first:border-t-0"
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 opacity-90 first:border-t-0"
                   >
-                    <span className="min-w-0 text-sm text-foreground">{a.productName ?? '—'}</span>
-                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                      {a.maskedPayload || a.maskedFields?.map((f) => f.value).join(' / ') || '—'}
+                    <span className="text-sm text-foreground">{a.productName ?? '—'}</span>
+                    <code className="max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                      {a.kind === 'account'
+                        ? (a.fields?.map((f) => `${f.label}: ${f.value}`).join(' / ') ?? '—')
+                        : a.payload || '—'}
                     </code>
                     <StatusBadge status={a.status} />
+                    {a.revokeReason && (
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        Sebep: <span className="text-foreground/80">{a.revokeReason}</span>
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

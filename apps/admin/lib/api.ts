@@ -186,9 +186,12 @@ export interface OrderDetail {
     units: number;
     kind: string;
     productName: string | null;
-    maskedPayload: string;
-    /** account ürünlerde alan-alan maskeli görünüm; diğer tiplerde null. */
-    maskedFields: Array<{ key: string; label: string; value: string; secret: boolean }> | null;
+    /** Kimlik-doğrulamalı admin paneli — DÜZ lisans (maskesiz; görüntüleme audit'e düşer). */
+    payload: string;
+    /** account ürünlerde alan-alan DÜZ değerler (kullanıcı adı + parola açık); diğer tiplerde null. */
+    fields: Array<{ key: string; label: string; value: string; secret: boolean }> | null;
+    /** Terminal (iptal/iade/değiştirilmiş) atamada iptal sebebi; aktifte null. */
+    revokeReason: string | null;
     validUntil: string | null;
     /** multi (MAK) kapasite görünürlüğü. */
     maxUses: number;

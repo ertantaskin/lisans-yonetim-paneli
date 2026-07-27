@@ -29,8 +29,8 @@ export class AdminOrdersController {
   }
 
   @Get('orders/:id')
-  detail(@Param('id') id: string) {
-    return this.adminOrders.detail(id);
+  detail(@Param('id') id: string, @AdminActor() actor: string) {
+    return this.adminOrders.detail(id, actor);
   }
 
   /** "Kalanları Ata" (units yok) / "N Adet Ata" (?units=N) — gövdesiz (§13). */

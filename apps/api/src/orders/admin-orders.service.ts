@@ -287,7 +287,7 @@ export class AdminOrdersService {
   }
 
   /** Admin sipariş detayı: satırlar + atamalar (maskeli) + timeline (§7 meta box). */
-  async detail(orderId: string) {
+  async detail(orderId: string, actor = 'admin') {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
@@ -336,6 +336,35 @@ export class AdminOrdersService {
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .innerJoin(products, eq(orderLines.productId, products.id))
       .where(eq(assignments.orderId, orderId));
+
+    // Terminal (iade/iptal/değiştirilmiş) atamaların iptal SEBEBİ — audit_log.meta.reason'dan
+    // toplanır → "Geçmiş" satırında kısaca gösterilir (operatör neden iptal edildiğini görsün).
+    // Bir atamanın birden çok revoke kaydı olamaz ama defansif: en yeni kazanır.
+    const asgIds = asgRows.map((a) => a.id);
+    const reasonRows = asgIds.length
+      ? await this.db
+          .select({
+            targetId: auditLog.targetId,
+            meta: auditLog.meta,
+            createdAt: auditLog.createdAt,
+          })
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.action, 'revoke'),
+              eq(auditLog.targetType, 'assignment'),
+              inArray(auditLog.targetId, asgIds),
+            ),
+          )
+          .orderBy(desc(auditLog.createdAt))
+      : [];
+    const revokeReasonByAsg = new Map<string, string>();
+    for (const r of reasonRows) {
+      if (r.targetId && !revokeReasonByAsg.has(r.targetId)) {
+        const reason = (r.meta as { reason?: unknown } | null)?.reason;
+        if (typeof reason === 'string' && reason) revokeReasonByAsg.set(r.targetId, reason);
+      }
+    }
 
     const events = await this.db
       .select()
@@ -390,6 +419,21 @@ export class AdminOrdersService {
       .where(eq(replacementRequests.orderId, orderId))
       .orderBy(desc(replacementRequests.createdAt));
 
+    // Görüntüleme audit'i (§ "reveal/kopyalama audit'e düşer"): admin paneli kimlik-doğrulamalı
+    // olduğu için lisanslar artık maskesiz gösterilir (kullanıcı isteği) — bu yüzden her sipariş
+    // detayı görüntülemesi TEK reveal kaydına düşer (kim, ne zaman, kaç lisans gördü). Böylece
+    // maskeyi kaldırmak "reveal audit'e düşer" değişmez kuralını ihlal etmez, yalnız granülerliği
+    // per-key'den per-görüntülemeye taşır.
+    if (asgRows.length > 0) {
+      await this.db.insert(auditLog).values({
+        action: 'reveal',
+        actor,
+        targetType: 'order',
+        targetId: orderId,
+        meta: { auto: true, view: 'order_detail', count: asgRows.length },
+      });
+    }
+
     return {
       // heldForReview zaten satırda; siteDomain başlıkta "hangi mağaza" için eklenir.
       order: { ...order, siteDomain: siteRow?.domain ?? null },
@@ -418,7 +462,12 @@ export class AdminOrdersService {
           a.payloadEnc,
           CryptoService.licenseItemAad(a.licenseItemId),
         );
-        const masked = maskPayload(plain, a.productKind, a.payloadSchema);
+        // Kimlik-doğrulamalı admin paneli: lisans/hesap DÜZ gösterilir (maskeleme yok, kullanıcı
+        // isteği — görüntüleme yukarıda audit'e düştü). Hesap ürününde alan-alan düz değerler
+        // (kullanıcı adı + parola açık); diğer tiplerde tek düz payload.
+        const schema =
+          a.productKind === 'account' ? AccountPayloadSchema.safeParse(a.payloadSchema) : null;
+        const fields = schema?.success ? parseAccountPayload(schema.data, plain) : null;
         return {
           id: a.id,
           lineId: a.lineId,
@@ -429,8 +478,10 @@ export class AdminOrdersService {
           licenseItemId: a.licenseItemId,
           kind: a.productKind,
           productName: a.productName,
-          maskedPayload: masked.maskedPayload,
-          maskedFields: masked.maskedFields,
+          payload: plain,
+          fields,
+          // Terminal atamada iptal sebebi (aktifte null) — "Geçmiş" satırında gösterilir.
+          revokeReason: revokeReasonByAsg.get(a.id) ?? null,
           // multi (MAK) kalan kapasite görünürlüğü.
           maxUses: a.itemMaxUses,
           useCount: a.itemUseCount,

@@ -13,35 +13,6 @@ import {
 import { Button } from '../../../components/ui/button';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 
-/** Kompakt ikon aksiyon butonu (yer tasarrufu) — erişilebilir ad title+aria-label ile. */
-function IconAction({
-  title,
-  onClick,
-  disabled,
-  danger,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  disabled?: boolean;
-  danger?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      type="button"
-      variant={danger ? 'danger-outline' : 'outline'}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={title}
-      className="size-7 p-0"
-    >
-      {children}
-    </Button>
-  );
-}
-
 /** Mutasyon sonucunu ekran okuyucuya duyurur (WCAG 4.1.3): hata → assertive. */
 function announceResult(announce: (t: string, o?: { assertive?: boolean }) => void, state: MutationState) {
   announce(state.ok ? (state.message ?? 'Tamam') : (state.error ?? 'İşlem başarısız'), {
@@ -170,30 +141,42 @@ export function AssignmentActions({
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
         {status === 'active' && (
           <>
-            <IconAction title="Askıya Al" onClick={suspend} disabled={pending}>
-              <PauseCircle />
-            </IconAction>
-            <IconAction title="Değiştir (taze key ata)" onClick={replace} disabled={pending}>
-              <RefreshCw />
-            </IconAction>
-            <IconAction title="İptal et / Geri al" onClick={revoke} disabled={pending} danger>
-              <Ban />
-            </IconAction>
+            <Button type="button" variant="outline" size="sm" onClick={suspend} disabled={pending}>
+              <PauseCircle /> Askıya Al
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={replace} disabled={pending}>
+              <RefreshCw /> Değiştir
+            </Button>
+            <Button
+              type="button"
+              variant="danger-outline"
+              size="sm"
+              onClick={revoke}
+              disabled={pending}
+            >
+              <Ban /> İptal
+            </Button>
           </>
         )}
         {status === 'suspended' && (
           <>
-            <IconAction title="Askıdan Çıkar" onClick={unsuspend} disabled={pending}>
-              <PlayCircle />
-            </IconAction>
+            <Button type="button" variant="outline" size="sm" onClick={unsuspend} disabled={pending}>
+              <PlayCircle /> Askıdan Çıkar
+            </Button>
             {/* Askıdaki key doğrudan iptal edilebilir — önce müşteriye tekrar açmaya gerek yok
                 (revoke suspended'ı destekler; şüpheli lisansı canlıya döndürmeden kapatılır). */}
-            <IconAction title="İptal et / Geri al" onClick={revoke} disabled={pending} danger>
-              <Ban />
-            </IconAction>
+            <Button
+              type="button"
+              variant="danger-outline"
+              size="sm"
+              onClick={revoke}
+              disabled={pending}
+            >
+              <Ban /> İptal
+            </Button>
           </>
         )}
       </div>
