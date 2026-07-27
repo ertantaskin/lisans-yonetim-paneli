@@ -1,15 +1,54 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Store, PackageSearch, Search } from 'lucide-react';
+import { Store, PackageSearch, Search, Trash2 } from 'lucide-react';
 import type { CatalogRow, CatalogSummaryRow, ProductRow } from '../lib/api';
+import { removeMappingAction } from '../app/stock/actions';
 import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Combobox } from './ui/combobox';
 import { Card } from './ui/card';
 import { EmptyState } from './ui/page-header';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { MapProductSheet } from './map-product-sheet';
+
+/**
+ * Eşlemeyi KALDIR butonu (§3). Onay ister (yanlışlıkla kaldırmayı önle); kaldırınca bu mağaza
+ * ürününün siparişleri artık panel ürünü çözemez → beklemede kalır (operatör yeniden eşleyebilir).
+ */
+function RemoveMappingButton({ mappingId, productLabel }: { mappingId: string; productLabel: string }) {
+  const router = useRouter();
+  const [pending, start] = React.useTransition();
+  return (
+    <form
+      action={(fd) => {
+        if (
+          !window.confirm(
+            `"${productLabel}" eşlemesini kaldırmak istediğinize emin misiniz?\n\nBu mağaza ürününün yeni siparişleri artık panel ürünü çözemez (beklemede kalır). İstediğiniz zaman yeniden eşleyebilirsiniz.`,
+          )
+        ) {
+          return;
+        }
+        start(async () => {
+          await removeMappingAction(fd);
+          router.refresh();
+        });
+      }}
+    >
+      <input type="hidden" name="mappingId" value={mappingId} />
+      <Button
+        type="submit"
+        size="sm"
+        variant="ghost"
+        disabled={pending}
+        aria-label={`${productLabel} eşlemesini kaldır`}
+      >
+        <Trash2 /> {pending ? 'Kaldırılıyor…' : 'Kaldır'}
+      </Button>
+    </form>
+  );
+}
 
 /** ISO → tr-TR gün/ay/yıl saat:dakika (geçersiz/null ise em-dash). */
 function trDateTime(iso: string | null): string {
@@ -168,8 +207,22 @@ export function CatalogTable({
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {row.mapped ? (
-                          <span className="text-xs text-muted-foreground">eşli</span>
+                        {row.mapped && row.mappingId ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <MapProductSheet
+                              mode="edit"
+                              siteId={selected.siteId}
+                              siteDomain={selected.domain}
+                              remoteProductId={row.remoteProductId}
+                              remoteVariationId={row.remoteVariationId}
+                              productName={row.name}
+                              products={products}
+                              mappingId={row.mappingId}
+                              currentProductId={row.mappedProductId}
+                              currentBundleQty={row.bundleQty}
+                            />
+                            <RemoveMappingButton mappingId={row.mappingId} productLabel={row.name} />
+                          </div>
                         ) : (
                           <MapProductSheet
                             siteId={selected.siteId}

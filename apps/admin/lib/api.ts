@@ -215,6 +215,8 @@ export interface CatalogRow {
   syncedAt: string;
   /** Panelde aktif bir eşlemesi var mı. */
   mapped: boolean;
+  /** Eşliyse eşleme kaydının id'si — "Değiştir"/"Kaldır" için (eşlenmemişte null). */
+  mappingId: string | null;
   mappedProductId: string | null;
   /** Eşliyse panel ürün adı (ham UUID yerine operatör dostu). */
   mappedProductName: string | null;

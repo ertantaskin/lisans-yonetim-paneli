@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -78,7 +79,18 @@ const CreateMappingBody = z.object({
 });
 type CreateMappingBody = z.infer<typeof CreateMappingBody>;
 
-const UpdateMappingBody = z.object({ active: z.boolean() });
+// Eşleme kısmi güncelleme: aktif/pasif toggle VE/VEYA hedef panel ürününü değiştir (remap) + bundle.
+// En az bir alan zorunlu (boş PATCH anlamsız). Eşleme her zaman elle — otomatik değişim yok.
+const UpdateMappingBody = z
+  .object({
+    active: z.boolean().optional(),
+    productId: z.string().uuid().optional(),
+    bundleQty: z.number().int().positive().optional(),
+  })
+  .refine(
+    (b) => b.active !== undefined || b.productId !== undefined || b.bundleQty !== undefined,
+    { message: 'En az bir alan gerekli (active/productId/bundleQty)' },
+  );
 type UpdateMappingBody = z.infer<typeof UpdateMappingBody>;
 
 /** Admin: ürün + site-ürün eşleme yönetimi. */
@@ -137,10 +149,16 @@ export class ProductsController {
 
   @Patch('mappings/:id')
   updateMapping(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(UpdateMappingBody)) body: UpdateMappingBody,
   ) {
-    return this.products.updateMapping(id, body.active);
+    return this.products.updateMapping(id, body);
+  }
+
+  /** Eşlemeyi tamamen kaldır (§3) — operatör kontrolünde; ürün artık çözülmez (unmapped→pending). */
+  @Delete('mappings/:id')
+  deleteMapping(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.products.deleteMapping(id);
   }
 
   /**

@@ -1,4 +1,10 @@
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
@@ -476,15 +482,46 @@ export class ProductsService {
     }));
   }
 
-  /** Eşlemeyi pasifleştir/etkinleştir (§3). Yoksa 404. */
-  async updateMapping(id: string, active: boolean) {
+  /**
+   * Eşleme kısmi güncelleme (§3): aktif/pasif toggle VE/VEYA hedef panel ürününü DEĞİŞTİR (remap) +
+   * bundle adedi. productId verilirse ürün varlığı doğrulanır (yoksa 404, ham FK 500 yerine). En az
+   * bir alan zorunlu. (site, remote, varyasyon) anahtarı değişmediği için remap unique çakışması
+   * YARATMAZ — advisory-lock gerekmez. Eşleme HER ZAMAN operatör kontrolünde; otomatik değişim YOK.
+   */
+  async updateMapping(
+    id: string,
+    patch: { active?: boolean; productId?: string; bundleQty?: number },
+  ) {
+    const set: Partial<typeof siteProductMappings.$inferInsert> = {};
+    if (patch.active !== undefined) set.active = patch.active;
+    if (patch.productId !== undefined) {
+      await this.getById(patch.productId); // hedef ürün yoksa 404
+      set.productId = patch.productId;
+    }
+    if (patch.bundleQty !== undefined) set.bundleQty = patch.bundleQty;
+    if (Object.keys(set).length === 0) {
+      throw new BadRequestException('Güncellenecek alan yok');
+    }
     const [row] = await this.db
       .update(siteProductMappings)
-      .set({ active })
+      .set(set)
       .where(eq(siteProductMappings.id, id))
       .returning();
     if (!row) throw new NotFoundException('Eşleme bulunamadı');
     return row;
+  }
+
+  /**
+   * Eşlemeyi TAMAMEN kaldır (§3). Yoksa 404. Sonrasında bu mağaza ürününün siparişleri artık panel
+   * ürünü çözemez (unmapped → pending; yanlış teslim YOK). Operatör dilerse yeniden eşler.
+   */
+  async deleteMapping(id: string) {
+    const [row] = await this.db
+      .delete(siteProductMappings)
+      .where(eq(siteProductMappings.id, id))
+      .returning({ id: siteProductMappings.id });
+    if (!row) throw new NotFoundException('Eşleme bulunamadı');
+    return { id: row.id, deleted: true };
   }
 
   // ─── Mağaza ürün kataloğu senkronu (§3 — panelde PROAKTİF eşleme) ────────────────────
@@ -587,6 +624,7 @@ export class ProductsService {
       sku: string | null;
       kind: string | null;
       synced_at: string;
+      mapping_id: string | null;
       mapped_product_id: string | null;
       bundle_qty: number | null;
       mapped_product_name: string | null;
@@ -597,7 +635,7 @@ export class ProductsService {
           SELECT DISTINCT ON (rp.id)
                  rp.id,
                  rp.remote_product_id, rp.remote_variation_id, rp.name, rp.sku, rp.kind, rp.synced_at,
-                 m.product_id AS mapped_product_id, m.bundle_qty, p.name AS mapped_product_name
+                 m.id AS mapping_id, m.product_id AS mapped_product_id, m.bundle_qty, p.name AS mapped_product_name
           FROM site_remote_products rp
           LEFT JOIN site_product_mappings m
             ON m.site_id = rp.site_id
@@ -620,6 +658,7 @@ export class ProductsService {
       kind: r.kind,
       syncedAt: r.synced_at,
       mapped: r.mapped_product_id !== null,
+      mappingId: r.mapping_id,
       mappedProductId: r.mapped_product_id,
       mappedProductName: r.mapped_product_name,
       bundleQty: r.bundle_qty,

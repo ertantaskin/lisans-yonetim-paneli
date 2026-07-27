@@ -1,8 +1,12 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Link2 } from 'lucide-react';
-import { createMappingAction, type FormState } from '../app/stock/actions';
+import { Link2, Replace } from 'lucide-react';
+import {
+  createMappingAction,
+  changeMappingAction,
+  type FormState,
+} from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -20,22 +24,28 @@ import {
 const initial: FormState = { ok: false };
 
 /**
- * Paylaşılan tek-tıkla eşleme Sheet'i (§3). Hem "Eşlenmemiş Gelen Ürünler" (reaktif — bir
- * siparişte GELMİŞ ürün) hem "Site Kataloğu" (proaktif — sipariş beklemeden mağaza kataloğu)
- * ekranları AYNI akışı kullanır: mağaza ürünü + site SALT-OKUNUR gösterilir (operatör NEYİ
- * eşlediğini doğrular), yalnız Panel ürünü (aranabilir Combobox) + Paket adedi sorulur.
- * `siteId`/`remoteProductId`/`remoteVariationId` gizli input ile GERÇEK satır/katalog verisinden
- * gider — operatör ID YAZMAZ (elle-ID typo riski yok). Başarıda sheet kapanır + `router.refresh()`
- * ile mevcut liste tazelenir (eşlenen ürün "eşli" olur / listeden düşer).
+ * Paylaşılan tek-tıkla eşleme Sheet'i (§3). İKİ mod:
+ *  - **create** (varsayılan): mağaza ürününü panel ürününe İLK KEZ eşle ("Eşlenmemiş Gelen Ürünler"
+ *    reaktif + "Site Kataloğu" proaktif). Gizli: siteId/remoteProductId/remoteVariationId.
+ *  - **edit**: VAR OLAN eşlemenin HEDEF panel ürününü DEĞİŞTİR (remap). Gizli: mappingId. Mağaza
+ *    ürünü/site/varyasyon değişmez; yalnız hangi panel ürününün teslim edeceği değişir.
+ * Her iki modda da mağaza ürünü + site SALT-OKUNUR gösterilir (operatör NEYİ eşlediğini doğrular),
+ * mağaza ID'si gerçek veriden gizli input ile gider — operatör ID YAZMAZ (typo riski yok). Eşleme
+ * HER ZAMAN elle; otomatik eşleştirme YOK. Başarıda sheet kapanır + router.refresh() ile liste tazelenir.
  */
 export function MapProductSheet({
+  mode = 'create',
   siteId,
   siteDomain,
   remoteProductId,
   remoteVariationId,
   productName,
   products,
+  mappingId,
+  currentProductId,
+  currentBundleQty,
 }: {
+  mode?: 'create' | 'edit';
   siteId: string;
   siteDomain: string;
   remoteProductId: string;
@@ -43,10 +53,20 @@ export function MapProductSheet({
   /** Mağaza ürününün görünen adı (eşlenmemişte "(ad yok)" olabilir, katalogda gerçek ad). */
   productName: string;
   products: ProductRow[];
+  /** edit modunda ZORUNLU: değiştirilecek eşleme kaydının id'si. */
+  mappingId?: string;
+  /** edit modunda: mevcut hedef panel ürünü (Combobox varsayılanı). */
+  currentProductId?: string | null;
+  /** edit modunda: mevcut paket adedi. */
+  currentBundleQty?: number | null;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
-  const [state, action, pending] = React.useActionState(createMappingAction, initial);
+  const isEdit = mode === 'edit';
+  const [state, action, pending] = React.useActionState(
+    isEdit ? changeMappingAction : createMappingAction,
+    initial,
+  );
 
   React.useEffect(() => {
     if (state.ok) {
@@ -68,17 +88,30 @@ export function MapProductSheet({
         <Button
           size="sm"
           variant="outline"
-          aria-label={`${productName} mağaza ürününü panel ürününe eşle`}
+          aria-label={
+            isEdit
+              ? `${productName} eşlemesini başka panel ürünüyle değiştir`
+              : `${productName} mağaza ürününü panel ürününe eşle`
+          }
         >
-          <Link2 /> Eşle
+          {isEdit ? (
+            <>
+              <Replace /> Değiştir
+            </>
+          ) : (
+            <>
+              <Link2 /> Eşle
+            </>
+          )}
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Mağaza ürününü eşle</SheetTitle>
+          <SheetTitle>{isEdit ? 'Eşlemeyi değiştir' : 'Mağaza ürününü eşle'}</SheetTitle>
           <SheetDescription>
-            Bu mağaza ürününü hangi panel ürünü teslim etsin? Mağaza bilgileri gerçek katalog/sipariş
-            verisinden gelir — değiştiremezsiniz.
+            {isEdit
+              ? 'Bu mağaza ürününü artık hangi panel ürünü teslim etsin? Mağaza bilgileri değişmez, yalnız hedef panel ürünü değişir.'
+              : 'Bu mağaza ürününü hangi panel ürünü teslim etsin? Mağaza bilgileri gerçek katalog/sipariş verisinden gelir — değiştiremezsiniz.'}
           </SheetDescription>
         </SheetHeader>
 
@@ -100,15 +133,22 @@ export function MapProductSheet({
             </div>
           </div>
 
-          {/* Sabit alanlar — gerçek satır/katalog verisinden, operatör YAZMAZ (typo riski yok). */}
-          <input type="hidden" name="siteId" value={siteId} />
-          <input type="hidden" name="remoteProductId" value={remoteProductId} />
-          {remoteVariationId && (
-            <input type="hidden" name="remoteVariationId" value={remoteVariationId} />
+          {/* Sabit alanlar — modda göre gizli anahtar. create: gerçek katalog/sipariş verisi;
+              edit: değiştirilecek eşleme id'si. Operatör hiçbirini YAZMAZ. */}
+          {isEdit ? (
+            <input type="hidden" name="mappingId" value={mappingId} />
+          ) : (
+            <>
+              <input type="hidden" name="siteId" value={siteId} />
+              <input type="hidden" name="remoteProductId" value={remoteProductId} />
+              {remoteVariationId && (
+                <input type="hidden" name="remoteVariationId" value={remoteVariationId} />
+              )}
+            </>
           )}
 
           <Field
-            label="Panel ürünü"
+            label={isEdit ? 'Yeni panel ürünü' : 'Panel ürünü'}
             htmlFor={`map-product-${uid}`}
             hint="Bu mağaza ürününü teslim edecek panel ürünü. Ada veya SKU'ya göre arayın."
             required
@@ -117,7 +157,8 @@ export function MapProductSheet({
               id={`map-product-${uid}`}
               name="productId"
               required
-              ariaLabel="Panel ürünü"
+              defaultValue={isEdit ? (currentProductId ?? '') : ''}
+              ariaLabel={isEdit ? 'Yeni panel ürünü' : 'Panel ürünü'}
               items={products.map((p) => ({
                 value: p.id,
                 label: p.name,
@@ -140,7 +181,7 @@ export function MapProductSheet({
               name="bundleQty"
               type="number"
               min={1}
-              defaultValue={1}
+              defaultValue={currentBundleQty && currentBundleQty > 0 ? currentBundleQty : 1}
               className="w-40"
             />
           </Field>
@@ -152,7 +193,8 @@ export function MapProductSheet({
           )}
 
           <Button type="submit" disabled={pending}>
-            <Link2 /> {pending ? 'Eşleniyor…' : 'Eşle'}
+            {isEdit ? <Replace /> : <Link2 />}{' '}
+            {pending ? 'Kaydediliyor…' : isEdit ? 'Değişikliği kaydet' : 'Eşle'}
           </Button>
         </form>
       </SheetContent>

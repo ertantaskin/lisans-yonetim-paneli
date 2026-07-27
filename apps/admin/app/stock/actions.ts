@@ -263,3 +263,43 @@ export async function updateMappingAction(formData: FormData) {
   if (productId) revalidatePath(`/products/${productId}`);
   else revalidatePath('/stock');
 }
+
+/**
+ * Var olan eşlemenin HEDEF panel ürününü DEĞİŞTİR (remap) + bundle — useActionState uyumlu (§3).
+ * Mağaza ürünü/site/varyasyon DEĞİŞMEZ; yalnız hangi panel ürününün teslim edeceği değişir. Eşleme
+ * her zaman elle — operatör başka bir panel ürünü seçer. Hata (ör. ürün yok/eşleme silinmiş) yüzeye çıkar.
+ */
+export async function changeMappingAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const id = String(formData.get('mappingId') || '').trim();
+  const productId = String(formData.get('productId') || '').trim();
+  if (!id || !productId) return { ok: false, error: 'Eşleme ve yeni ürün zorunlu' };
+  const bundleQtyRaw = String(formData.get('bundleQty') || '').trim();
+  const bundleQty = bundleQtyRaw ? Number(bundleQtyRaw) : undefined;
+  try {
+    await apiSend(
+      'PATCH',
+      `/v1/admin/mappings/${id}`,
+      { productId, ...(bundleQty && bundleQty > 0 ? { bundleQty } : {}) },
+      await getActor(),
+    );
+    revalidatePath('/mappings');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
+/** Eşlemeyi tamamen KALDIR (§3). Basit form action; hata yutulur (kardeş action deseni), revalidate tazeler. */
+export async function removeMappingAction(formData: FormData) {
+  const id = String(formData.get('mappingId') || '').trim();
+  if (!id) return;
+  try {
+    await apiSend('DELETE', `/v1/admin/mappings/${id}`, undefined, await getActor());
+  } catch {
+    // Eşleme zaten silinmiş / 404 olabilir — yut; revalidate UI'ı gerçek duruma tazeler.
+  }
+  revalidatePath('/mappings');
+}

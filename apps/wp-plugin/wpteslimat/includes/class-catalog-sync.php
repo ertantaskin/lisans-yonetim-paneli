@@ -90,9 +90,22 @@ class Wpteslimat_Catalog_Sync {
         $products = $this->collect_products();
         if ($products === null) return; // WooCommerce yok → kataloğu YANLIŞLIKLA boşaltma.
 
-        $res = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', ['products' => $products]);
+        // YÜK OPTİMİZASYONU: katalog gerçekten değişmediyse push'u ATLA. woocommerce_update_product
+        // her ürün kaydında (stok/fiyat düzenlemesi, sipariş stok düşümü dâhil) tetikler; ama katalog
+        // yalnız ürün listesi/ad/sku/tip'i taşır. Hash aynıysa gereksiz HTTP + panelde gereksiz
+        // yeniden-yazma olmaz → yoğun mağazada bile katalog yükü sıfıra yakın. (Manuel buton hash'i
+        // yok sayar → her zaman zorla tazeler; kurtarma yolu.)
+        $hash = md5((string) wp_json_encode($products));
+        if (get_option('wpteslimat_catalog_hash') === $hash) {
+            return; // değişiklik yok — atla
+        }
+
+        $res  = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', ['products' => $products]);
         $code = isset($res['code']) ? (int) $res['code'] : 0;
-        if ($code < 200 || $code >= 300) {
+        if ($code >= 200 && $code < 300) {
+            // Yalnız BAŞARILI push sonrası hash'i sabitle → başarısızsa sonraki tetik yeniden dener.
+            update_option('wpteslimat_catalog_hash', $hash, false);
+        } else {
             // Arka plan — sessiz kalmasın ama sipariş akışını etkilemesin. Bir sonraki ürün
             // düzenlemesi yeniden planlar; kalıcı hata operatöre manuel "Ürünleri Panele Aktar"
             // butonundaki bildirimle görünür olur.
@@ -126,6 +139,9 @@ class Wpteslimat_Catalog_Sync {
         $res  = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', ['products' => $products]);
         $code = isset($res['code']) ? (int) $res['code'] : 0;
         if ($code >= 200 && $code < 300) {
+            // Manuel push HER ZAMAN gönderir (zorla tazele) ama başarı sonrası hash'i günceller →
+            // hemen ardından tetiklenen otomatik senkron aynı kataloğu tekrar itmez.
+            update_option('wpteslimat_catalog_hash', md5((string) wp_json_encode($products)), false);
             $synced = isset($res['body']['synced']) ? (int) $res['body']['synced'] : count($products);
             self::redirect('ok', (string) $synced);
         }
