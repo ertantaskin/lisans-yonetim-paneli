@@ -24,6 +24,8 @@ class Wpteslimat_Admin_Metabox {
     /** Script için hatırlanan sipariş (Woo id). */
     private static $script_order = null;
     private static $script_printed = false;
+    /** Sipariş ekranı lisans stilleri bir kez basılır (ilk render). */
+    private static $styles_printed = false;
 
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
@@ -119,7 +121,70 @@ class Wpteslimat_Admin_Metabox {
         return $out;
     }
 
-    /** Tek atama satırı (maskeli değer + durum + key-bazlı aksiyonlar). */
+    /** Durum → renkli pill CSS sınıfı (bilinmeyen → nötr). */
+    private static function pill_class($status) {
+        $known = ['active', 'suspended', 'revoked', 'expired', 'replaced'];
+        return 'wpt-pill--' . (in_array($status, $known, true) ? $status : 'replaced');
+    }
+
+    /**
+     * Sipariş ekranı lisans katmanı stilleri — sayfada BİR kez (ilk render_line/render_side).
+     * Sınıf tabanlı (satır-içi stil dağınıklığı yok); hover/durum renkleri, kaydırma, buton hiyerarşisi.
+     * WP admin dashicons her zaman kayıtlı → ikonlar ek yükleme gerektirmez.
+     */
+    private static function maybe_print_styles() {
+        if (self::$styles_printed) return;
+        self::$styles_printed = true;
+        ?>
+        <style id="wpteslimat-mb-styles">
+        .wpt-line{margin:8px 0 2px;border:1px solid #dcdcde;border-radius:6px;background:#fff;overflow:hidden;font-size:13px;line-height:1.5}
+        .wpt-line-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;background:#f6f7f7;border-bottom:1px solid #f0f0f1}
+        .wpt-line-head__title{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:#1d2327;font-size:12px}
+        .wpt-line-head__title .dashicons{font-size:16px;width:16px;height:16px;color:#787c82}
+        .wpt-line-head__count{font-size:11px;color:#646970;white-space:nowrap}
+        .wpt-keys{list-style:none;margin:0;padding:0}
+        .wpt-keys--scroll{max-height:232px;overflow-y:auto}
+        .wpt-key{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid #f0f0f1}
+        .wpt-keys>.wpt-key:first-child{border-top:0}
+        .wpt-key__main{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1 1 200px;min-width:0}
+        .wpt-key__val{min-width:0}
+        .wpt-key__val code{display:inline-block;background:#f0f6fc;border:1px solid #dae4ee;border-radius:4px;padding:2px 7px;font-size:12px;color:#0a4b78;word-break:break-all}
+        .wpt-key__val>div{margin:1px 0}
+        .wpt-key__actions{display:flex;gap:5px;flex-wrap:wrap}
+        .wpt-pill{display:inline-flex;align-items:center;font-size:11px;font-weight:600;line-height:1;padding:3px 8px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+        .wpt-pill--active{background:#edfaef;color:#0a7d2c;border-color:#b8e6c4}
+        .wpt-pill--suspended{background:#fcf6e6;color:#8a6d0b;border-color:#f0dfa8}
+        .wpt-pill--revoked,.wpt-pill--expired{background:#fcf0f1;color:#b32d2e;border-color:#f2c7c9}
+        .wpt-pill--replaced{background:#f0f0f1;color:#646970;border-color:#dcdcde}
+        .wpt-meta{font-size:11px;color:#646970;white-space:nowrap}
+        .wpt-meta--bonus{color:#2271b1;font-weight:600}
+        .wpt-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:12px;line-height:1.7;border:1px solid #c3c4c7;border-radius:4px;background:#fff;color:#2c3338;cursor:pointer;transition:background .1s,border-color .1s,color .1s}
+        .wpt-btn .dashicons{font-size:14px;width:14px;height:14px;line-height:1}
+        .wpt-btn:hover{background:#f6f7f7;border-color:#8c8f94}
+        .wpt-btn:disabled{opacity:.55;cursor:default}
+        .wpt-btn--replace:hover{border-color:#2271b1;color:#2271b1;background:#f0f6fc}
+        .wpt-btn--suspend .dashicons{color:#996800}
+        .wpt-btn--suspend:hover{border-color:#dba617;background:#fcf9e8;color:#8a6d0b}
+        .wpt-btn--resume .dashicons{color:#0a7d2c}
+        .wpt-btn--resume:hover{border-color:#00a32a;background:#edfaef;color:#0a7d2c}
+        .wpt-btn.is-done{background:#edfaef;border-color:#b8e6c4;color:#0a7d2c}
+        .wpt-btn.is-done .dashicons{color:#0a7d2c}
+        .wpt-line-foot{display:flex;justify-content:flex-end;padding:7px 10px;background:#fbfbfc;border-top:1px solid #f0f0f1}
+        .wpt-btn--bonus{border-color:#2271b1;color:#2271b1;background:#f0f6fc;font-weight:500}
+        .wpt-btn--bonus:hover{background:#2271b1;color:#fff;border-color:#2271b1}
+        .wpt-btn--bonus:hover .dashicons{color:#fff}
+        .wpt-empty{padding:12px 10px;font-size:12px;color:#787c82;text-align:center}
+        .wpt-history{border-top:1px solid #f0f0f1;background:#fbfbfc}
+        .wpt-history>summary{padding:6px 10px;font-size:11px;color:#646970;cursor:pointer}
+        .wpt-history ul{margin:0;padding:0 10px 8px 26px;font-size:11px;color:#646970}
+        .wpt-history li{margin:2px 0}
+        .wpt-history code{background:#f0f0f1;border-radius:3px;padding:0 4px}
+        .wpt-side-status{display:inline-flex;align-items:center;font-size:11px;font-weight:600;line-height:1;padding:3px 9px;border-radius:999px;border:1px solid #dcdcde;background:#f6f7f7;color:#3c434a}
+        </style>
+        <?php
+    }
+
+    /** Tek atama satırı (maskeli değer + durum pill + key-bazlı aksiyonlar). */
     private static function render_asg_row($a, $can_reveal, $can_op) {
         $aid = isset($a['id']) ? (string) $a['id'] : '';
         if ($aid === '') return;
@@ -129,9 +194,11 @@ class Wpteslimat_Admin_Metabox {
         $is_bonus = isset($a['remoteLineId']) && strpos((string) $a['remoteLineId'], 'bonus:') === 0;
         $is_account = isset($a['kind']) ? ($a['kind'] === 'account') : (!empty($a['maskedFields']));
 
-        echo '<li class="wpteslimat-asg-row" data-assignment="' . esc_attr($aid) . '" style="padding:5px 0;border-top:1px solid #f0f0f0;list-style:none">';
+        echo '<li class="wpteslimat-asg-row wpt-key" data-assignment="' . esc_attr($aid) . '">';
 
-        echo '<div class="wpteslimat-val">';
+        // Sol blok: değer + durum pill + meta çipleri.
+        echo '<div class="wpt-key__main">';
+        echo '<div class="wpteslimat-val wpt-key__val">';
         if ($is_account && !empty($a['maskedFields']) && is_array($a['maskedFields'])) {
             foreach ($a['maskedFields'] as $f) {
                 $label = isset($f['label']) ? $f['label'] : '';
@@ -143,27 +210,33 @@ class Wpteslimat_Admin_Metabox {
         }
         echo '</div>';
 
-        echo '<div style="font-size:11px;color:#555;margin:2px 0">' . esc_html(self::asg_status_label($status));
-        if ($is_bonus) echo ' · <span style="color:#2271b1">bonus</span>';
+        echo '<span class="wpt-pill ' . esc_attr(self::pill_class($status)) . '">' . esc_html(self::asg_status_label($status)) . '</span>';
+        if ($is_bonus) echo '<span class="wpt-meta wpt-meta--bonus">bonus</span>';
         if (!empty($a['maxUses']) && (int) $a['maxUses'] > 1) {
-            echo ' · ' . esc_html((int) ($a['useCount'] ?? 0)) . '/' . esc_html((int) $a['maxUses']) . ' kullanım';
+            echo '<span class="wpt-meta">' . esc_html((int) ($a['useCount'] ?? 0)) . '/' . esc_html((int) $a['maxUses']) . ' kullanım</span>';
         }
         if (!empty($a['validUntil'])) {
-            echo ' · ' . esc_html__('Geçerlilik:', 'wpteslimat') . ' ' . esc_html(Wpteslimat_My_Account::format_date($a['validUntil']));
+            echo '<span class="wpt-meta">' . esc_html__('Geçerlilik:', 'wpteslimat') . ' ' . esc_html(Wpteslimat_My_Account::format_date($a['validUntil'])) . '</span>';
         }
         echo '</div>';
 
-        echo '<div class="wpteslimat-actions" style="display:flex;flex-wrap:wrap;gap:4px">';
+        // Sağ blok: key-bazlı aksiyonlar (ikonlu, hiyerarşik).
+        echo '<div class="wpteslimat-actions wpt-key__actions">';
         if ($can_reveal && ($is_active || $is_suspended)) {
-            echo '<button type="button" class="button button-small wpteslimat-op" data-op="reveal">' . esc_html__('Göster', 'wpteslimat') . '</button>';
+            echo '<button type="button" class="wpteslimat-op wpt-btn wpt-btn--reveal" data-op="reveal" title="' . esc_attr__('Anahtarı göster (loglanır)', 'wpteslimat') . '">'
+                . '<span class="dashicons dashicons-visibility"></span><span class="wpt-btn__label">' . esc_html__('Göster', 'wpteslimat') . '</span></button>';
         }
         if ($can_op && $is_active) {
-            echo '<button type="button" class="button button-small wpteslimat-op" data-op="replace">' . esc_html__('Değiştir', 'wpteslimat') . '</button>';
+            echo '<button type="button" class="wpteslimat-op wpt-btn wpt-btn--replace" data-op="replace" title="' . esc_attr__('Bu anahtarı taze biriyle değiştir', 'wpteslimat') . '">'
+                . '<span class="dashicons dashicons-update"></span><span class="wpt-btn__label">' . esc_html__('Değiştir', 'wpteslimat') . '</span></button>';
         }
         if ($can_op && ($is_active || $is_suspended)) {
             $sv = $is_suspended ? '0' : '1';
+            $cls = $is_suspended ? 'wpt-btn--resume' : 'wpt-btn--suspend';
+            $icon = $is_suspended ? 'dashicons-controls-play' : 'dashicons-controls-pause';
             $slabel = $is_suspended ? __('Geri aç', 'wpteslimat') : __('Askıya al', 'wpteslimat');
-            echo '<button type="button" class="button button-small wpteslimat-op" data-op="suspend" data-suspend="' . esc_attr($sv) . '">' . esc_html($slabel) . '</button>';
+            echo '<button type="button" class="wpteslimat-op wpt-btn ' . $cls . '" data-op="suspend" data-suspend="' . esc_attr($sv) . '">'
+                . '<span class="dashicons ' . $icon . '"></span><span class="wpt-btn__label">' . esc_html($slabel) . '</span></button>';
         }
         echo '</div>';
         echo '</li>';
@@ -173,6 +246,9 @@ class Wpteslimat_Admin_Metabox {
      * ÜRÜN-BAĞLAMLI render — her sipariş kaleminin (line_item) altına o ürünün lisansları +
      * aksiyonları (+1 Bonus dahil). Bonus, o ürüne (bu satıra) eklenir ve `bonus:<item_id>:` önekiyle
      * yine bu satırın altında görünür (Woo kalemi şişmez, reconcile/iade dokunmaz).
+     *
+     * Kart düzeni: başlık (özet sayaç) + kaydırılabilir key listesi (çok anahtarda sayfa uzamaz) +
+     * (varsa) katlanır değişim geçmişi + ürün-bazlı "Bonus Ekle" alt aksiyonu.
      */
     public function render_line($item_id, $item, $product) {
         if (!is_a($item, 'WC_Order_Item') || $item->get_type() !== 'line_item') return;
@@ -181,22 +257,40 @@ class Wpteslimat_Admin_Metabox {
         $view = $this->get_view($order);
         if (!$view) return; // iletilmemiş/klon/hata → sessiz (yan metabox durumu gösterir)
 
+        self::maybe_print_styles();
         $can_reveal = self::can_reveal();
         $can_op = self::can_operate();
         $mine = self::assignments_for_line($view, $item_id);
 
-        echo '<div class="wpteslimat-line" data-line="' . esc_attr($item_id) . '" style="margin-top:6px;padding:6px;background:#f8f9fa;border-radius:4px">';
-        echo '<div style="font-size:11px;color:#787c82;margin-bottom:3px">' . esc_html__('Panel lisansları', 'wpteslimat') . '</div>';
+        // Özet sayaç: toplam + aktif/askıda (bir bakışta durum).
+        $total = count($mine);
+        $active = 0; $suspended = 0;
+        foreach ($mine as $a) {
+            $s = isset($a['status']) ? $a['status'] : '';
+            if ($s === 'active') $active++;
+            elseif ($s === 'suspended') $suspended++;
+        }
+        $summary = $total . ' ' . esc_html__('lisans', 'wpteslimat');
+        if ($active > 0)    $summary .= ' · ' . $active . ' ' . esc_html__('aktif', 'wpteslimat');
+        if ($suspended > 0) $summary .= ' · ' . $suspended . ' ' . esc_html__('askıda', 'wpteslimat');
+
+        echo '<div class="wpt-line" data-line="' . esc_attr($item_id) . '">';
+        echo '<div class="wpt-line-head">';
+        echo '<span class="wpt-line-head__title"><span class="dashicons dashicons-admin-network"></span>' . esc_html__('Panel Lisansları', 'wpteslimat') . '</span>';
+        echo '<span class="wpt-line-head__count">' . $summary . '</span>';
+        echo '</div>';
 
         if (!empty($mine)) {
-            echo '<ul style="margin:0;padding:0">';
+            // 5+ anahtarda kaydır → sipariş ekranı sonsuz uzamaz.
+            $scroll = $total > 5 ? ' wpt-keys--scroll' : '';
+            echo '<ul class="wpt-keys' . $scroll . '">';
             foreach ($mine as $a) self::render_asg_row($a, $can_reveal, $can_op);
             echo '</ul>';
         } else {
-            echo '<div style="font-size:11px;color:#787c82"><em>' . esc_html__('Bu ürün için henüz teslim edilmiş lisans yok.', 'wpteslimat') . '</em></div>';
+            echo '<div class="wpt-empty">' . esc_html__('Bu ürün için henüz teslim edilmiş lisans yok.', 'wpteslimat') . '</div>';
         }
 
-        // Bu satıra ait değişim geçmişi (eski anahtarlar).
+        // Bu satıra ait değişim geçmişi (eski anahtarlar) — katlanır (varsayılan kapalı, yer kaplamaz).
         $hist = [];
         if (isset($view['history']) && is_array($view['history'])) {
             foreach ($view['history'] as $h) {
@@ -204,19 +298,20 @@ class Wpteslimat_Admin_Metabox {
             }
         }
         if (!empty($hist)) {
-            echo '<div style="margin-top:4px;font-size:11px;color:#787c82"><strong>' . esc_html__('Değişim geçmişi:', 'wpteslimat') . '</strong>';
-            echo '<ul style="margin:2px 0 0;padding-left:14px">';
+            echo '<details class="wpt-history"><summary>' . esc_html__('Değişim geçmişi', 'wpteslimat') . ' (' . count($hist) . ')</summary>';
+            echo '<ul>';
             foreach ($hist as $h) {
                 $old = isset($h['oldMasked']) ? $h['oldMasked'] : '—';
                 $reason = isset($h['reason']) ? $h['reason'] : '';
                 echo '<li><code>' . esc_html($old) . '</code>' . ($reason !== '' ? ' — ' . esc_html($reason) : '') . '</li>';
             }
-            echo '</ul></div>';
+            echo '</ul></details>';
         }
 
-        // +1 Bonus — bu satırın (ürünün) için.
+        // Ürün-bazlı "Bonus Ekle" — kartın alt aksiyonu (key-bazlı aksiyonlardan görsel olarak ayrı).
         if ($can_op) {
-            echo '<div style="margin-top:5px"><button type="button" class="button button-small wpteslimat-op" data-op="bonus" data-line="' . esc_attr($item_id) . '">' . esc_html__('+1 Bonus', 'wpteslimat') . '</button></div>';
+            echo '<div class="wpt-line-foot"><button type="button" class="wpteslimat-op wpt-btn wpt-btn--bonus" data-op="bonus" data-line="' . esc_attr($item_id) . '" title="' . esc_attr__('Bu ürüne ücretsiz ek lisans ata', 'wpteslimat') . '">'
+                . '<span class="dashicons dashicons-plus-alt2"></span><span class="wpt-btn__label">' . esc_html__('Bonus Ekle', 'wpteslimat') . '</span></button></div>';
         }
         echo '</div>';
     }
@@ -225,6 +320,8 @@ class Wpteslimat_Admin_Metabox {
     public function render_side($post_or_order) {
         $order = ($post_or_order instanceof WC_Order) ? $post_or_order : wc_get_order($post_or_order->ID);
         if (!$order) return;
+
+        self::maybe_print_styles();
 
         if (Wpteslimat_Settings::is_clone()) {
             echo '<p><em>' . esc_html__('Bu ortam (klon/staging) lisans işlemlerini yürütemez.', 'wpteslimat') . '</em></p>';
@@ -285,7 +382,8 @@ class Wpteslimat_Admin_Metabox {
 
         // Sipariş-seviyesi: Tekrar Mail.
         if (self::can_operate()) {
-            echo '<p style="margin-top:8px"><button type="button" class="button button-small wpteslimat-op" data-op="resend">' . esc_html__('Teslimat Mailini Tekrar Gönder', 'wpteslimat') . '</button></p>';
+            echo '<p style="margin-top:8px"><button type="button" class="wpteslimat-op wpt-btn wpt-btn--resend" data-op="resend">'
+                . '<span class="dashicons dashicons-email-alt"></span><span class="wpt-btn__label">' . esc_html__('Teslimat Mailini Tekrar Gönder', 'wpteslimat') . '</span></button></p>';
         }
 
         $panel = Wpteslimat_Settings::panel_url();
@@ -314,6 +412,11 @@ class Wpteslimat_Admin_Metabox {
                     .then(done).catch(function () { done({ success: false, data: { message: 'Ağ hatası' } }); });
             }
             function fail(j) { window.alert((j && j.data && j.data.message) ? j.data.message : 'İşlem başarısız'); }
+            function markDone(btn, text) {
+                var lab = btn.querySelector('.wpt-btn__label');
+                if (lab) lab.textContent = text; else btn.textContent = text;
+                btn.classList.add('is-done'); btn.disabled = true;
+            }
             function escapeHtml(s) {
                 return String(s).replace(/[&<>"']/g, function (c) {
                     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -341,7 +444,7 @@ class Wpteslimat_Admin_Metabox {
                         } else if (typeof d.payload === 'string') {
                             valEl.innerHTML = '<code>' + escapeHtml(d.payload) + '</code>';
                         }
-                        btn.textContent = 'Gösterildi'; btn.disabled = true;
+                        markDone(btn, 'Gösterildi');
                     });
                     return;
                 }
@@ -375,9 +478,8 @@ class Wpteslimat_Admin_Metabox {
                 if (op === 'resend') {
                     btn.disabled = true;
                     post('wpteslimat_mb_resend', {}, function (j) {
-                        btn.disabled = false;
-                        if (!j || !j.success) return fail(j);
-                        btn.textContent = 'Gönderildi';
+                        if (!j || !j.success) { btn.disabled = false; return fail(j); }
+                        markDone(btn, 'Gönderildi');
                     });
                     return;
                 }

@@ -34,6 +34,9 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 = 0.5.0 =
 * Lisanslar artık her ürünün SİPARİŞ KALEMİ altında (order items), uzun yan metabox yerine —
   her ürünün kendi anahtarları + Göster/Değiştir/Askıya al/+1 Bonus + değişim geçmişi orada.
+* Kart arayüzü yenilendi: özet sayaç (N lisans · X aktif), renkli durum rozetleri, ikonlu ve
+  hiyerarşik butonlar (nötr Göster / mavi Değiştir / amber Askıya al / yeşil Geri aç), ürün-bazlı
+  "Bonus Ekle" alt aksiyonu, katlanır değişim geçmişi; 5+ anahtarda kart KAYDIRILIR (ekran uzamaz).
 * +1 Bonus artık ürün-bazlı (ayrı satır → sonraki Woo senkronu/iadesi bonusu geri almaz).
 * Kritik iade düzeltmesi: kısmi iade sonrası re-sync artık iade edilen birimleri yeniden teslim
   ETMEZ (net adet gönderilir); bundleQty>1 üründe iade doğru ölçeklenir (aşırı revoke giderildi).
