@@ -545,6 +545,37 @@ VERİLMEZ** (konteyner→host tam erişim riski) — istek/çalıştırma ayrım
 Owner-only Next katmanında (`isOwner()`); auth kapalıyken panel zaten açık. İlk yayın SSH+deploy.sh ile; sonrası
 panelden. `DeploymentsModule` app.module'e eklendi. Kurulum: `docs/RUNBOOK-RELEASE.md` §A2.
 
+**TESLİMAT-HAZIRLIK DENETİMİ → 16 BULGU DÜZELTİLDİ (commit ada9e12, CANLI):** Kullanıcı "kalan sorunları
+tespit et + düzelt, dağıtımı iyileştir, WordPress performansını optimize et, eklenti bağlantılarını yap,
+teslimata hazır hale getir — ekibinle" dedi → 5-lensli çekişmeli-doğrulamalı workflow (deploy / wp-perf /
+wp-connect / genel-boşluk / wp-doğruluk; bul→sentez): 24 ham → **16 CONFIRMED (2 yüksek-bloker) + 1 DUBIOUS**
+(elle-deploy geçmişi = bilinçli). Çekirdek lisans-teslimat yolu SAĞLAM; blokerler yalnız yeni dağıtım
+araçlarındaydı. **Migration YOK** (advisory-lock mevcut tablo; webhookUrl mevcut `sites.webhook_url` kolonu).
+- **Dağıtım [YÜKSEK]:** `deploy.sh` rollback `git checkout <sha>` → **detached HEAD** bırakıp SONRAKİ tüm
+  deploy'ları `git pull --ff-only`'da kilitliyordu → dala BAĞLI `git reset --hard` + boot'ta detached self-heal;
+  ayrıca build/up hatası da (yalnız sağlık değil) rollback tetikler; **admin runtime health probu** (admin-only
+  deploy artık doğrulanır, auth-ON 3xx sağlıklı sayılır); renk kodları yalnız TTY'de (runner logu/panel kirlenmez).
+- **Dağıtım [YÜKSEK]:** `deploy-runner.sh` deploy çıktısını göndermeden **jq içinde 20000 char'a** kısaltır
+  (>200KB build logu `finish`'i 400'leyip başarılı deploy'u 'stuck/failed'+30dk kilit yapıyordu; jq codepoint
+  slice UTF-8-güvenli); controller Zod cap servis `.slice` ile hizalı; `deployments.request()` **advisory-lock**
+  (çift-tık iki 'pending' üretmez).
+- **Sürüm:** `apps/api`+`apps/admin` **0.0.0→1.0.0** (health/deployments/settings artık doğru; admin kendi
+  package.json'ından okur). **Eklenti bağlantısı:** `onboarding.claim` artık `webhookUrl` (host-doğrulamalı)
+  kabul edip `sites.webhookUrl`'e yazar → connect-KOD akışıyla kurulan sitede geri-kanal webhook GERÇEKTEN
+  gönderilir (eskiden NULL→sessiz atlama); WP `handle_connect` kendi `rest_url`'ini yollar; testConnection
+  null-webhook 'beklemede' (yanlış-yeşil önlendi).
+- **WP performans (kullanıcı isteği):** `order-sync` push/revoke/resync **Action Scheduler ile ARKA PLANDA**
+  (checkout thank-you / ödeme-callback / admin isteği 15sn BLOKLANMAZ; AS yoksa senkron fallback; idempotency
+  `_wpteslimat_pushed/_revoked` + klon guard + resync $syncing korunur); render OKUMA yolları (my-account+metabox)
+  **5sn** timeout (sır → cache YOK, §7). **WP doğruluk:** `is_clone()` **şema-bağımsız** (HTTP→HTTPS geçişi klon
+  sanılıp sipariş durmuyordu); guest 'Sorun Bildir' **order_key** ile yetkilendirilir (eskiden guest checkout'ta
+  hep 403); updater changelog `sections`'tan; 'unmapped' Türkçe etiket; `.env.example` `API_URL`/`PUBLIC_API_URL`.
+- **Doğrulama:** typecheck api+admin temiz · **PHP-lint 9/9** (throwaway php:8.2 container) · VPS izole test DB
+  **entegrasyon 94/94** (2 yeni onboarding webhookUrl persist+host-validation) **+ yarış 2/2** · yeni `deploy.sh`
+  ile prod dağıtım (admin probe SAHADA çalıştı) → `/health` 200 **v1.0.0** (db+redis ok), api boot hatasız.
+  **DERS [[denetim-regresyon-dersleri]]:** yeni terminal-durum/araç eklerken (deploy rollback git-state, async
+  offload) TÜM yolların ardışık davranışını gözden geçir; test DB'sini de prod migration seviyesine getir.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
