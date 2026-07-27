@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, apiSend } from '../../lib/api';
+import { apiGet, apiPost, apiSend, type CatalogRow } from '../../lib/api';
 import { getActor } from '../../lib/session';
 
 export interface ImportState {
@@ -292,14 +292,36 @@ export async function changeMappingAction(
   }
 }
 
-/** Eşlemeyi tamamen KALDIR (§3). Basit form action; hata yutulur (kardeş action deseni), revalidate tazeler. */
+/** Eşlemeyi tamamen KALDIR (§3). Basit form action; hata yutulur (kardeş action deseni), revalidate tazeler.
+ *  productId taşınırsa ürün detayını tazeler (ürün-merkezli kutu); yoksa /mappings (katalog ekranı). */
 export async function removeMappingAction(formData: FormData) {
   const id = String(formData.get('mappingId') || '').trim();
   if (!id) return;
+  const productId = String(formData.get('productId') || '').trim();
   try {
     await apiSend('DELETE', `/v1/admin/mappings/${id}`, undefined, await getActor());
   } catch {
     // Eşleme zaten silinmiş / 404 olabilir — yut; revalidate UI'ı gerçek duruma tazeler.
   }
-  revalidatePath('/mappings');
+  if (productId) revalidatePath(`/products/${productId}`);
+  else revalidatePath('/mappings');
+}
+
+/**
+ * Bir sitenin katalog satırlarını getirir (ürün detayı eşleme kutusu için — mağaza ürününü ADIYLA
+ * seç, ham ID yazma). Sunucu-taraflı (ADMIN_TOKEN gizli kalır); istemci site seçince çağırır.
+ */
+export async function fetchSiteCatalogAction(
+  siteId: string,
+): Promise<{ ok: boolean; rows?: CatalogRow[]; error?: string }> {
+  const id = String(siteId || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return { ok: false, error: 'Geçersiz site' };
+  }
+  try {
+    const rows = await apiGet<CatalogRow[]>(`/v1/admin/catalog?siteId=${encodeURIComponent(id)}`);
+    return { ok: true, rows };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Katalog alınamadı' };
+  }
 }

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import {
@@ -61,6 +61,8 @@ export interface ProductDetail {
     productName: string;
     remoteProductId: string;
     remoteVariationId: string | null;
+    /** Katalogdan öğrenilen mağaza ürün adı (varsa) — ham ID yerine operatör dostu; yoksa null. */
+    remoteName: string | null;
     bundleQty: number;
     active: boolean;
     createdAt: string;
@@ -179,6 +181,7 @@ export class ProductsService {
         productName: products.name,
         remoteProductId: siteProductMappings.remoteProductId,
         remoteVariationId: siteProductMappings.remoteVariationId,
+        remoteName: siteRemoteProducts.name,
         bundleQty: siteProductMappings.bundleQty,
         active: siteProductMappings.active,
         createdAt: siteProductMappings.createdAt,
@@ -186,6 +189,22 @@ export class ProductsService {
       .from(siteProductMappings)
       .innerJoin(sites, eq(sites.id, siteProductMappings.siteId))
       .innerJoin(products, eq(products.id, siteProductMappings.productId))
+      // Katalog snapshot'ından mağaza ürün adını öğren (varsa) — ham ID yerine ad göster.
+      // (site, remote_product_id, varyasyon-eşit-VEYA-ikisi-de-null) ile tek satır eşleşir (unique index).
+      .leftJoin(
+        siteRemoteProducts,
+        and(
+          eq(siteRemoteProducts.siteId, siteProductMappings.siteId),
+          eq(siteRemoteProducts.remoteProductId, siteProductMappings.remoteProductId),
+          or(
+            eq(siteRemoteProducts.remoteVariationId, siteProductMappings.remoteVariationId),
+            and(
+              isNull(siteRemoteProducts.remoteVariationId),
+              isNull(siteProductMappings.remoteVariationId),
+            ),
+          ),
+        ),
+      )
       .where(eq(siteProductMappings.productId, id))
       .orderBy(desc(siteProductMappings.createdAt));
     return rows.map((r) => ({

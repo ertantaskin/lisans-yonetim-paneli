@@ -67,6 +67,7 @@ export interface ProductDetail {
     productName: string;
     remoteProductId: string;
     remoteVariationId: string | null;
+    remoteName: string | null;
     bundleQty: number;
     active: boolean;
     createdAt: string;
