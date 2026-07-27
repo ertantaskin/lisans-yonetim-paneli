@@ -1,4 +1,4 @@
-# Jetlisans — Caddy reverse proxy + otomatik TLS (MIMARI.md §1).
+# Lisans Yönetim Paneli — Caddy reverse proxy + otomatik TLS (MIMARI.md §1).
 #
 # Üretim: API_DOMAIN / ADMIN_DOMAIN gerçek alan adları → Caddy Let's Encrypt
 # sertifikasını otomatik alır ve yeniler.

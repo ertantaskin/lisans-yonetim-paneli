@@ -31,4 +31,4 @@ export function verifyPassword(password: string, stored: string): boolean {
  * Var olmayan/pasif kullanıcı yolunda da hash maliyeti ödenir (timing sızıntısı azaltma).
  * Sabit bir dummy hash'e karşı doğrulama yapılır.
  */
-export const DUMMY_HASH = hashPassword('jetlisans-dummy-timing-guard');
+export const DUMMY_HASH = hashPassword('lisans-panel-dummy-timing-guard');

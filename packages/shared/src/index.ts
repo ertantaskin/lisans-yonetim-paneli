@@ -1,4 +1,4 @@
-// @jetlisans/shared — API + admin + eklenti sözleşmesi için ortak tipler.
+// @lisans/shared — API + admin + eklenti sözleşmesi için ortak tipler.
 export * from './domain/enums';
 export * from './domain/payload';
 export * from './domain/risk';

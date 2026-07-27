@@ -1,4 +1,4 @@
-<title>Jetlisans — Merkezi Lisans Dağıtım Paneli Mimarisi</title>
+<title>Lisans Yönetim Paneli — Merkezi Lisans Dağıtım Paneli Mimarisi</title>
 <style>
   :root {
     --bg: #f6f9fc;
@@ -271,7 +271,7 @@
 <main>
 <header class="hero">
   <span class="eyebrow">Mimari Doküman · v2.6 · Temmuz 2026</span>
-  <h1>Jetlisans Merkezi Lisans Dağıtım Paneli</h1>
+  <h1>Lisans Yönetim Paneli Merkezi Lisans Dağıtım Paneli</h1>
   <p class="lede">WooCommerce sitelerini ince birer vitrine indirgeyip; stok, atama, teslimat ve iade yönetimini tek bir merkezi panelde toplayan, günde 1.000+ siparişe göre tasarlanmış mimari.</p>
   <div class="meta-row">
     <span class="chip">NestJS + Fastify</span>
@@ -1014,7 +1014,7 @@ flowchart TD
   <h3>Çoklu operatör güvenliği</h3>
   <ul>
     <li><strong>Çakışma uyarısı:</strong> aynı sipariş/talep iki operatörde açıksa ekranda "Ali şu an bu kaydı inceliyor" rozeti görünür (Redis presence); aynı talebe iki kişinin aynı anda değişim onayı vermesi zaten idempotency ile engellidir, rozet çifte emeği önler.</li>
-    <li><strong>Kayıtlı görünümler:</strong> sık kullanılan filtre kombinasyonları isimle kaydedilir ("Bekleyen toptan siparişler", "Bu hafta değişim yiyenler", "Jetlisans — kritik stok") ve ekip içinde paylaşılabilir.</li>
+    <li><strong>Kayıtlı görünümler:</strong> sık kullanılan filtre kombinasyonları isimle kaydedilir ("Bekleyen toptan siparişler", "Bu hafta değişim yiyenler", "Lisans Yönetim Paneli — kritik stok") ve ekip içinde paylaşılabilir.</li>
   </ul>
 </section>
 
@@ -1040,7 +1040,7 @@ flowchart TD
   <ul>
     <li><strong>Talep triyajı:</strong> Gelen değişim talebinin serbest metni sınıflandırılır (gerçek arıza / kullanım hatası / suistimal şüphesi / aciliyet) ve kuyrukta ona göre etiketlenip sıralanır; operatöre <strong>taslak cevap</strong> önerilir. Taslak, operatör onaylamadan asla gönderilmez.</li>
     <li><strong>Günlük özetin anomali paragrafı:</strong> Sabah Telegram özetine insan diliyle yazılmış bir analiz eklenir: <em>"Site 2'de değişim oranı dün 3 katına çıktı; taleplerin tamamı parti #124'ten — tedarikçi X'le görüşülmeli."</em> Rakam yığını yerine "neye bakmalıyım"ın cevabı.</li>
-    <li><strong>Doğal dilde rapor:</strong> Panelde soru kutusu: "bu ay en çok değişim yiyen tedarikçi kim?", "Jetlisans'ta kâr marjı en düşük 10 ürün?" — model salt-okunur bir DB rolüyle SQL üretir, sonucu tabloyla döner. Rapor ekranı yetişmeyen her soru için hazır cevap.</li>
+    <li><strong>Doğal dilde rapor:</strong> Panelde soru kutusu: "bu ay en çok değişim yiyen tedarikçi kim?", "Lisans Yönetim Paneli'ta kâr marjı en düşük 10 ürün?" — model salt-okunur bir DB rolüyle SQL üretir, sonucu tabloyla döner. Rapor ekranı yetişmeyen her soru için hazır cevap.</li>
     <li><strong>Gizlilik sınırı:</strong> Modele giden veriden key/şifre payload'ları her zaman maskelenir; yalnızca üst veri (sebep, tarih, adet, oran) işlenir. Entegrasyon Claude API ile küçük bir NestJS modülüdür; AI erişilemezse tüm akışlar AI'sız çalışmaya devam eder — süsleme katmanıdır, bağımlılık değildir.</li>
   </ul>
 </section>
@@ -1168,7 +1168,7 @@ flowchart LR
         </div>
         <div style="border:1px solid var(--line); border-radius:6px; overflow:hidden;">
           <div style="display:flex; gap:10px; padding:5px 10px; background:var(--surface-2); color:var(--ink-3); font-size:10px; text-transform:uppercase; letter-spacing:.05em;"><span style="flex:2;">Sipariş</span><span style="flex:2;">Ürün · İlerleme</span><span style="flex:1;">Neden</span><span style="flex:1.4;">Aksiyon</span></div>
-          <div style="display:flex; gap:10px; padding:6px 10px; border-top:1px solid var(--line); align-items:center;"><span style="flex:2;">jetlisans · #1042</span><span style="flex:2;">Win 11 Pro — <strong>30/50</strong></span><span style="flex:1;"><span class="pill warn" style="font-size:10px;">onay bekliyor</span></span><span style="flex:1.4; color:var(--accent-ink); font-weight:600;">Kalanları Ata ▸</span></div>
+          <div style="display:flex; gap:10px; padding:6px 10px; border-top:1px solid var(--line); align-items:center;"><span style="flex:2;">lisans · #1042</span><span style="flex:2;">Win 11 Pro — <strong>30/50</strong></span><span style="flex:1;"><span class="pill warn" style="font-size:10px;">onay bekliyor</span></span><span style="flex:1.4; color:var(--accent-ink); font-weight:600;">Kalanları Ata ▸</span></div>
           <div style="display:flex; gap:10px; padding:6px 10px; border-top:1px solid var(--line); align-items:center;"><span style="flex:2;">site2 · #883</span><span style="flex:2;">Office 365 — <strong>0/5</strong></span><span style="flex:1;"><span class="pill warn" style="font-size:10px;">stok yok · yolda</span></span><span style="flex:1.4; color:var(--ink-3);">ETA: Çarşamba</span></div>
         </div>
       </div>
@@ -1211,7 +1211,7 @@ flowchart LR
       <div class="ph-no">Faz 1<br/>~3–4 hafta</div>
       <div>
         <h4>MVP — tek site, key ürünleri</h4>
-        <p>Şifreli stok modeli + toplu import (CSV/yapıştır), atomik atama, sipariş API'si + idempotency, temel şablon + mail gönderimi, <strong>kısmi teslimat motoru + Bekleyen Teslimatlar ekranı</strong> (çekirdek davranış olduğu için MVP'de), panel→site geri kanal webhook ucu, WP eklentisi (sipariş push, My Account görüntüleme, admin meta box: görüntüle/değiştir/tekrar gönder/revoke). Eklenti çekirdeğine ilk günden: tanılama ekranı, otomatik log budama, staging klon koruması, HPOS/blok checkout uyumu. CI'da yarış testi ilk günden zorunlu. <strong>Jetlisans'ta 1-2 pilot ürünle canlıya alınır; mevcut eklenti diğer ürünlerde çalışmaya devam eder.</strong></p>
+        <p>Şifreli stok modeli + toplu import (CSV/yapıştır), atomik atama, sipariş API'si + idempotency, temel şablon + mail gönderimi, <strong>kısmi teslimat motoru + Bekleyen Teslimatlar ekranı</strong> (çekirdek davranış olduğu için MVP'de), panel→site geri kanal webhook ucu, WP eklentisi (sipariş push, My Account görüntüleme, admin meta box: görüntüle/değiştir/tekrar gönder/revoke). Eklenti çekirdeğine ilk günden: tanılama ekranı, otomatik log budama, staging klon koruması, HPOS/blok checkout uyumu. CI'da yarış testi ilk günden zorunlu. <strong>Lisans Yönetim Paneli'ta 1-2 pilot ürünle canlıya alınır; mevcut eklenti diğer ürünlerde çalışmaya devam eder.</strong></p>
       </div>
     </div>
     <div class="phase">

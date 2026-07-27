@@ -43,7 +43,7 @@ export const envSchema = z.object({
     .string()
     .transform((v) => v === 'true' || v === '1')
     .default('false'),
-  MAIL_FROM: z.string().default('Jetlisans <teslimat@jetlisans.local>'),
+  MAIL_FROM: z.string().default('Lisans Paneli <teslimat@localhost>'),
   /**
    * SMTP kimlik doğrulama (SendGrid/SES/Mailgun/Gmail vb. kimlik isteyen relay'ler).
    * İKİSİ de verilmezse kimliksiz relay (dev Mailpit) — transport'a auth EKLENMEZ.

@@ -1,4 +1,4 @@
-// Jetlisans — /v1/orders yük testi (k6). MIMARI.md §16.
+// Lisans Yönetim Paneli — /v1/orders yük testi (k6). MIMARI.md §16.
 //
 // Amaç (iki hedef birden):
 //   1) Performans: sipariş push'unun p95 gecikmesi < 300ms.

@@ -29,7 +29,7 @@ WP_ADMIN_PASS="admin12345"
 WP_ADMIN_EMAIL="admin@ornek-site.local"
 API_HOST="http://localhost:3001"                    # override ile host'a açık
 PANEL_URL_INTERNAL="http://api:3001"                 # WP container'ından panel
-WEBHOOK_URL="http://wordpress/wp-json/jetlisans/v1/webhook"  # panelden WP'ye
+WEBHOOK_URL="http://wordpress/wp-json/wpteslimat/v1/webhook"  # panelden WP'ye
 
 say()  { printf '\n\033[1;36m▸ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
@@ -90,11 +90,11 @@ else
 fi
 
 # ── 5) Panele bağla (site kaydı + sabitler) ──────────────────────────────────
-if wpc config has JETLISANS_API_KEY >/dev/null 2>&1; then
-  ok "Panel bağlantısı zaten yapılandırılmış (JETLISANS_API_KEY sabiti mevcut)."
+if wpc config has WPTESLIMAT_API_KEY >/dev/null 2>&1; then
+  ok "Panel bağlantısı zaten yapılandırılmış (WPTESLIMAT_API_KEY sabiti mevcut)."
 elif [ -z "$ADMIN_TOKEN" ]; then
   warn "ADMIN_TOKEN .env'de boş — panel bağlantısı otomatik kurulamadı. Elle: panelde site oluşturup"
-  warn "  wp config set JETLISANS_API_KEY '<key>' --type=constant  (wpcli) ile bağlayın."
+  warn "  wp config set WPTESLIMAT_API_KEY '<key>' --type=constant  (wpcli) ile bağlayın."
 else
   say "Panelde site kaydı oluşturuluyor…"
   RESP="$(curl -fsS -X POST "$API_HOST/v1/admin/sites" \
@@ -103,8 +103,8 @@ else
   API_KEY="$(printf '%s' "$RESP" | grep -oE '"apiKey":"[^"]*"' | sed 's/.*:"//;s/"$//')"
   HMAC="$(printf '%s' "$RESP" | grep -oE '"hmacSecret":"[^"]*"' | sed 's/.*:"//;s/"$//')"
   if [ -n "$API_KEY" ] && [ -n "$HMAC" ]; then
-    wpc config set JETLISANS_API_KEY "$API_KEY" --type=constant >/dev/null
-    wpc config set JETLISANS_HMAC_SECRET "$HMAC" --type=constant >/dev/null
+    wpc config set WPTESLIMAT_API_KEY "$API_KEY" --type=constant >/dev/null
+    wpc config set WPTESLIMAT_HMAC_SECRET "$HMAC" --type=constant >/dev/null
     ok "Panel sitesi oluşturuldu ve WP'ye bağlandı (api_key + hmac_secret sabit yazıldı)."
   else
     warn "Panel sitesi oluşturulamadı (aynı domain zaten kayıtlı olabilir). Yanıt: ${RESP:0:200}"
@@ -113,11 +113,11 @@ else
 fi
 
 # ── 6) Eklentiyi aktive et (bağlantı sabitleri yazıldıktan SONRA → bound_home tabanı kurulur) ─
-if wpc plugin is-active jetlisans >/dev/null 2>&1; then
-  wpc plugin deactivate jetlisans >/dev/null 2>&1 || true   # bound_home tabanını taze yaz
+if wpc plugin is-active wpteslimat >/dev/null 2>&1; then
+  wpc plugin deactivate wpteslimat >/dev/null 2>&1 || true   # bound_home tabanını taze yaz
 fi
 say "WP Teslimat Eklentisi aktive ediliyor…"
-wpc plugin activate jetlisans && ok "Eklenti aktif."
+wpc plugin activate wpteslimat && ok "Eklenti aktif."
 
 # ── Özet ─────────────────────────────────────────────────────────────────────
 cat <<SUMMARY
@@ -130,7 +130,7 @@ cat <<SUMMARY
   Panel API        : $API_HOST/v1/health
   Mailpit (mail)   : http://localhost:8025
 
-  Eklenti kaynağı bind-mount: apps/wp-plugin/jetlisans → düzenle, WP'de anında yansır.
+  Eklenti kaynağı bind-mount: apps/wp-plugin/wpteslimat → düzenle, WP'de anında yansır.
   Test akışı: panelde ürün+eşleme+stok gir → WooCommerce'te sipariş oluştur →
               "Siparişlerim"de çözülmüş key'i gör.
 

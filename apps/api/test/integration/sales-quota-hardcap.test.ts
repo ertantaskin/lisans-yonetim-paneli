@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { HttpStatus } from '@nestjs/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { CreateOrderRequest } from '@jetlisans/shared';
+import type { CreateOrderRequest } from '@lisans/shared';
 import type { Site } from '../../src/db/schema';
 import { OrdersService } from '../../src/orders/orders.service';
 import { FulfillmentService } from '../../src/orders/fulfillment.service';

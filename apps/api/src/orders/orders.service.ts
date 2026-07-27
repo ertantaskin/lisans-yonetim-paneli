@@ -6,8 +6,8 @@ import type {
   AssignmentResult,
   OrderLineResult,
   DeliveryItem,
-} from '@jetlisans/shared';
-import { ORDER_HTTP_STATUS, AccountPayloadSchema, parseAccountPayload } from '@jetlisans/shared';
+} from '@lisans/shared';
+import { ORDER_HTTP_STATUS, AccountPayloadSchema, parseAccountPayload } from '@lisans/shared';
 import { NotFoundException } from '@nestjs/common';
 import { DB, type Database } from '../db/db.module';
 import {

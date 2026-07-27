@@ -1,5 +1,5 @@
 {
-  "name": "@jetlisans/api",
+  "name": "@lisans/api",
   "version": "0.0.0",
   "private": true,
   "scripts": {
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@fastify/helmet": "^13.0.1",
-    "@jetlisans/shared": "workspace:*",
+    "@lisans/shared": "workspace:*",
     "@nestjs/bullmq": "^11.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.0",

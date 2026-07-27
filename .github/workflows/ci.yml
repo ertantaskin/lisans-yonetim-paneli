@@ -51,13 +51,13 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: jetlisans
-          POSTGRES_PASSWORD: jetlisans
-          POSTGRES_DB: jetlisans_test
+          POSTGRES_USER: lisanspanel
+          POSTGRES_PASSWORD: lisanspanel
+          POSTGRES_DB: lisanspanel_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U jetlisans -d jetlisans_test"
+          --health-cmd "pg_isready -U lisanspanel -d lisanspanel_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -74,7 +74,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://jetlisans:jetlisans@localhost:5432/jetlisans_test
+      DATABASE_URL: postgres://lisanspanel:lisanspanel@localhost:5432/lisanspanel_test
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@v4
@@ -91,16 +91,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Ortak paketi derle
-        run: pnpm --filter @jetlisans/shared build
+        run: pnpm --filter @lisans/shared build
 
       - name: Migration'ları uygula
-        run: pnpm --filter @jetlisans/api db:migrate
+        run: pnpm --filter @lisans/api db:migrate
 
       - name: Yarış testi — 100 sipariş × 50 stok → çifte atama = 0
-        run: pnpm --filter @jetlisans/api test:race
+        run: pnpm --filter @lisans/api test:race
 
       - name: Test MASTER_KEY üret (entegrasyon testleri için)
         run: echo "MASTER_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
       - name: Entegrasyon testleri — createOrder/replacement/recall/KVKK/quota + audit regresyonları
-        run: pnpm --filter @jetlisans/api test:integration
+        run: pnpm --filter @lisans/api test:integration

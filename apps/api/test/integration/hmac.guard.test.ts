@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { UnauthorizedException, type ExecutionContext } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { HMAC_KEY_ROTATION_GRACE_SEC, HMAC_TIMESTAMP_TOLERANCE_SEC } from '@jetlisans/shared';
+import { HMAC_KEY_ROTATION_GRACE_SEC, HMAC_TIMESTAMP_TOLERANCE_SEC } from '@lisans/shared';
 import { HmacGuard } from '../../src/auth/hmac.guard';
 import { SitesService } from '../../src/sites/sites.service';
 import { CryptoService } from '../../src/crypto/crypto.service';

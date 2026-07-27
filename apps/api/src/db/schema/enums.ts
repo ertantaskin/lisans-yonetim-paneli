@@ -1,7 +1,7 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
 
 /**
- * PostgreSQL enum tipleri — @jetlisans/shared enum'larıyla birebir.
+ * PostgreSQL enum tipleri — @lisans/shared enum'larıyla birebir.
  * Değer eklerken önce shared/src/domain/enums.ts, sonra burası güncellenir.
  */
 export const siteTypeEnum = pgEnum('site_type', ['woocommerce', 'marketplace', 'reseller']);

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { CreateOrderRequest } from '@jetlisans/shared';
+import type { CreateOrderRequest } from '@lisans/shared';
 import * as schema from '../../src/db/schema';
 import type { Site } from '../../src/db/schema';
 import { OrdersService } from '../../src/orders/orders.service';

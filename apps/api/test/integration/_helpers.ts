@@ -8,7 +8,7 @@ import {
   buildSignaturePayload,
   type ProductKind,
   type UsageMode,
-} from '@jetlisans/shared';
+} from '@lisans/shared';
 import { CryptoService } from '../../src/crypto/crypto.service';
 import { SitesService } from '../../src/sites/sites.service';
 import * as schema from '../../src/db/schema';

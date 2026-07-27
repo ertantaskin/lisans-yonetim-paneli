@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import { type Transporter } from 'nodemailer';
-import { AccountPayloadSchema, parseAccountPayload } from '@jetlisans/shared';
+import { AccountPayloadSchema, parseAccountPayload } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import {

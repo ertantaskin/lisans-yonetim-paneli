@@ -1,4 +1,4 @@
-# Jetlisans — Merkezi Lisans Dağıtım Paneli
+# Lisans Yönetim Paneli — Merkezi Lisans Dağıtım Paneli
 
 Dijital lisans satışı (Windows/Office key, hesaplar, kodlar) için WooCommerce'ten
 ayrık merkezi stok/teslimat paneli. Tam mimari şartname: `docs/MIMARI.md`
@@ -88,7 +88,7 @@ doğrulandı). **Prod: Ubuntu VPS + Docker Compose + Caddy TLS (canlı).**
 - Geri kanal webhook: HMAC imzalı, outbox, WP eklentisine hazır (order.fulfilled/partial)
 - Admin UI (Next.js, sunucu-taraflı): Bekleyen Teslimatlar / Siparişler+detay / Stok / Siteler
 - audit_log: reveal/revoke/suspend/import/… ; migration 0000-0005
-- **WP eklentisi** (`apps/wp-plugin/jetlisans`, ince istemci): HMAC istemci, sipariş push
+- **WP eklentisi** (`apps/wp-plugin/wpteslimat`, ince istemci): HMAC istemci, sipariş push
   (Woo→panel), webhook alıcı, My Account teslimat, admin meta box; lisans verisi WP'de durmaz
 
 **e2e doğrulandı** (gerçek stack, 50+ assert): yarış (çifte atama=0), sipariş→atama→çözülmüş
@@ -215,7 +215,7 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
 - **Denetim düzeltmeleri:** **[H1]** iade/iptal edilen satır partial-auto ile taze key'le yeniden teslim
   ediliyordu (bedava lisans) → migration **0015** `order_lines.canceled` terminal işareti; revoke→canceled,
   autoComplete/completeLine iptal satırı hariç, recompute iptalleri aktif saymaz (hepsi iptalse 'revoked').
-  **[H2]** WP Updater + Order_List `jetlisans_init`'te örneklenmiyordu (ölü) → düzeltildi. **[M3]** readonly-sql
+  **[H2]** WP Updater + Order_List `wpteslimat_init`'te örneklenmiyordu (ölü) → düzeltildi. **[M3]** readonly-sql
   OOM → CTE+DB-LIMIT. **[M4]** plugin latest SEMVER. **[M5]** completeLine enqueue try/catch. LOW: WP https
   zorlama · webhook timeout · x-trace-id sanitize · onboarding claim atomik-öncesi doğrulama · AI butonları
   kapalıyken disabled · site-oluşturma yetki tutarlılığı. Testler: readonly-sql yazma-reddi + AI maskeleme +
@@ -293,11 +293,11 @@ ops-kenar) triyaj edildi; migration EKLENMEDİ (0000-0018 sabit). Yapılanlar:
   sızıntısı → tek `toPublicSite()` mapper ile TÜM sır kolonları strip · [#11] `readonly-sql` denylist `SELECT *`+
   `api_key_hash_prev` ile atlanıyordu → DÖNEN kolon adları (postgres.js `.columns`) denylist'e süzülür + varyant eklendi ·
   [#10] `MailService.mailer()` SMTP auth eksikti (üretimde değişim bildirimleri sessizce fail) → tek `createMailTransport`
-  ortak kurucu · [#4] geri-kanal webhook'a monoton `seq` (outbox createdAt epoch-ms) + WP alıcıda `_jetlisans_seq`
+  ortak kurucu · [#4] geri-kanal webhook'a monoton `seq` (outbox createdAt epoch-ms) + WP alıcıda `_wpteslimat_seq`
   karşılaştırması → bayat webhook durumu geri yazamaz · [#24] `webhook.processor` attempts atomik (`+1` SQL) · [#25]
   SalesQuotaGuard kota aşımı → `quota_exceeded` security_event (dedupe'lu) + 429'a `Retry-After` (gün sınırı).
-- **WP eklentisi (§7):** [#1] kuyruk-log 30 gün BUDAMA cron'u (aktivasyonda schedule, `jetlisans_prune_queue`) — "DB
-  şişmesin" sözü artık kodda · [#8] staging/klon koruması (`jetlisans_bound_home`; home_url değişince push PASİF + admin
+- **WP eklentisi (§7):** [#1] kuyruk-log 30 gün BUDAMA cron'u (aktivasyonda schedule, `wpteslimat_prune_queue`) — "DB
+  şişmesin" sözü artık kodda · [#8] staging/klon koruması (`wpteslimat_bound_home`; home_url değişince push PASİF + admin
   uyarısı) · [#16] My Account view-order'da `DONOTCACHEPAGE`+`nocache_headers` (çözülmüş key cache'lenmez).
 - **Admin UI/kalite:** [#21] `updateMappingAction` try/catch (fail → tüm /stock error-boundary'ye düşmez) · [#22]
   `apiPost/apiSend` artık status-taşıyan `ApiError` + API `message` alanından temiz mesaj (ham gövde sızmaz) · [#23]
@@ -322,7 +322,7 @@ paralel dalgayla kapatıldı — çekirdek seri (hepsi orders.service/şemada i�
   (atama yok, satır pending, `body.held=true`, 202); autoComplete + completeLine held siparişi ATLAR (job gecikse bile payload sızmaz).
   `AdminOrdersService.listHeldOrders`/`releaseHeld`(onayla→completeLine)/`rejectHeld`(reddet→satır canceled→'revoked'). Uçlar:
   `GET /v1/admin/review`, `POST /v1/admin/orders/:id/release|reject`. Admin UI **/review** kuyruğu (Onayla/Reddet) + sidebar +
-  site config dinamik-kota alanları. WP: 202 held → `_jetlisans_held_for_review` meta + My Account inceleme bildirimi + metabox rozeti.
+  site config dinamik-kota alanları. WP: 202 held → `_wpteslimat_held_for_review` meta + My Account inceleme bildirimi + metabox rozeti.
 - **[#20] TOCTOU:** sert kota (`salesDailyQuota`) artık createOrder içinde `pg_advisory_xact_lock(hashtext(site.id))` ALTINDA →
   say-sonra-ekle yarışı kapandı; idempotent retry advisory-lock'a HİÇ ulaşmaz (kotaya takılmaz). 429'a gerçekten Retry-After +
   `security_event` (quota_exceeded) — guard route'a bağlı DEĞİLDİ, #25'in Retry-After'ı latent'ti; artık servis yolu üretiyor.
@@ -403,7 +403,7 @@ paralel ekip (4 UX işçisi + 5 düzeltme işçisi + 26-ajanlı adversaryel dene
   verip eski key'i karantinaya atıyordu (bedava lisans kaybı) → hedef-farkında guard (`maxUnits` set ise
   `min(qty, fulfilled+toAssign)`) + regresyon testi (3/6 satır → taze key, 409 değil). **[ORTA]** `payloadSchema`
   `required` round-trip: form 4. alanı düşürüyordu → "Zorunlu" onay kutusu (opsiyonel hesap alanı mümkün, düzenlemede
-  sessizce zorunlulaşmıyor). **[ORTA]** `JETLISANS_WEBHOOK_SECRET` panelde karşılığı yok; ayarlanırsa TÜM webhook'lar
+  sessizce zorunlulaşmıyor). **[ORTA]** `WPTESLIMAT_WEBHOOK_SECRET` panelde karşılığı yok; ayarlanırsa TÜM webhook'lar
   401 → hayalet ayar kaldırıldı (verify hep site HMAC secret'ıyla). **Düşük (16):** kota↔idempotency yarışı (spurious
   429 → advisory-lock altında re-check), iade↔releaseHeld yarışı (§2 canlı key → per-order advisory-lock + tüm satır
   canceled + teslim-sonrası savunma), createMapping FK→404/409, stok import `@AdminActor`, opsiyonel ürün alanı
@@ -484,27 +484,35 @@ kontrol edip eksikleri düzelt" dedi → (a) hiyerarşi + (b) 5-lensli genel den
   çapraz çarpımı (15dk'da bir) → iki ayrı per-site CTE alt-sorgu (çarpım yok, approved 24s pencereli). **[low]**
   SentryExceptionFilter degraded /health 503'ünü her poll'da capture ediyordu (kesinti=Sentry sel) → sağlık probu hariç.
   **WP eklentisi: [high]** klon/staging guard sabit-tabanlı/el-ile kurulumda (ÖNERİLEN güvenli kurulum) KALICI no-op'ti
-  (`jetlisans_bound_home` yalnız "Panele Bağlan" akışında yazılıyordu, const install o akışa girmez → is_clone() hep false
-  → klon canlı lisansı revoke/tüketebilir); taban çizgisi artık **aktivasyonda** yazılır + `JETLISANS_BOUND_HOME` sabiti de
+  (`wpteslimat_bound_home` yalnız "Panele Bağlan" akışında yazılıyordu, const install o akışa girmez → is_clone() hep false
+  → klon canlı lisansı revoke/tüketebilir); taban çizgisi artık **aktivasyonda** yazılır + `WPTESLIMAT_BOUND_HOME` sabiti de
   onurlandırılır. **[low]** My Account okuma yolu klon guard'sızdı (klon GERÇEK maskesiz key gösterebilir) → render() başında
   is_clone() kısa devre. **[low]** `handle_bulk` panel YETKİLİ `held` bayrağını yok sayıyordu → toplu yenileme bayat rozeti
   temizlemiyordu; held=false ise meta silinir. **[low]** kuyruk-log budama cron'u yalnız aktivasyonda (WP güncelleme
-  aktivasyonu tetiklemez) → `jetlisans_init`'te yeniden kur. **Doğrulama:** typecheck+build temiz, api birim 31/31, VPS izole
+  aktivasyonu tetiklemez) → `wpteslimat_init`'te yeniden kur. **Doğrulama:** typecheck+build temiz, api birim 31/31, VPS izole
   test DB **entegrasyon 89/89 + yarış 2/2**, api rebuild → /health 200 (db+redis). **NOT:** denetim workflow'unda 3 ajan
   "haftalık limit" ile düştü (admin-shape lensi + 2 doğrulama); kalan 9 bulgu tam doğrulandı, admin-shape lensi bir sonraki
   turda tekrar koşulabilir.
 
-**MARKA SADELEŞTİRME (commit 49cf534, CANLI, migration YOK):** Kullanıcı "sabit 'jetlisans' adı kullanma;
-WP / wp-teslimat eklentisi gibi generic olsun" dedi → **YALNIZ kullanıcıya görünen metinler** değişti.
-WP eklentisi görünen adı → **"WP Teslimat Eklentisi"** (menü "Teslimat Eklentisi", sipariş-notu öneki "Teslimat:");
-panel tarafı: update-info plugin adı, mail fallback site adı ('Jetlisans'→'Mağaza'), şablon örnek site_name
-('jetlisans.com'→'ornek-site.com'), /guide + /sites/new WP menü yolu metni ("Ayarlar › Teslimat Eklentisi"),
-boot log. **İç kod tanımlayıcıları DEĞİŞMEDİ (bilinçli):** `Jetlisans_*` sınıf, `jetlisans_*` fonksiyon,
-`JETLISANS_*` sabit (wp-config: PANEL_URL/API_KEY/HMAC_SECRET/BOUND_HOME), `_jetlisans_*` meta, `jetlisans_*`
-option/cron, text-domain `jetlisans`, REST namespace `jetlisans/v1`, klasör `apps/wp-plugin/jetlisans`, updater
-slug `jetlisans` → hepsi AYNI kaldı ki mevcut kurulumdaki kayıtlı veri kopmasın + updater/webhook çalışmaya devam
-etsin. typecheck+build temiz, api+admin deploy, /health 200. (Not: kod içi `jetlisans` görünce şaşırma — kayıtlı
-anahtar; kullanıcıya görünen ad "WP Teslimat Eklentisi".)
+**MARKA SADELEŞTİRME — 1. AŞAMA (commit 49cf534, CANLI):** Kullanıcı "sabit 'jetlisans' adı kullanma" dedi →
+önce YALNIZ kullanıcıya görünen metinler değişti (WP eklentisi görünen adı "WP Teslimat Eklentisi", menü
+"Teslimat Eklentisi", sipariş-notu öneki "Teslimat:", mail fallback 'Mağaza', örnek site_name 'ornek-site.com').
+
+**TAM YENİDEN ADLANDIRMA — 2. AŞAMA (CANLI):** Kullanıcı "jetlisans ile alakalı HİÇBİR ŞEY kalmasın; sistematik
+proje adları kullan" dedi → iç tanımlayıcılar dahil TÜM `jetlisans` kaldırıldı (402 atıf / 74 dosya). **İki
+sistematik ad:** (a) **panel** paketleri `@jetlisans/*` → **`@lisans/*`** (kök paket `jetlisans`→`lisans-panel`,
+tüm import/config/Dockerfile/CI/lockfile); (b) **WP eklentisi** her tanımlayıcı `jetlisans`/`JETLISANS`/`Jetlisans`
+→ **`wpteslimat`/`WPTESLIMAT`/`Wpteslimat`** (klasör `apps/wp-plugin/wpteslimat` + ana dosya `wpteslimat.php`,
+sınıf/fonksiyon/sabit/option/cron/meta prefiksleri, text-domain `wpteslimat`, REST ns `wpteslimat/v1`, updater slug,
+DB tablosu `{prefix}wpteslimat_queue`). Panel<->eklenti slug/filename senkron (`updates.controller` slug `wpteslimat`).
+DB kimlik ŞABLONLARI (.env.example/CI/drizzle default) `jetlisans`→`lisanspanel`; MAIL_FROM `Lisans Paneli
+<teslimat@localhost>`. **GERİYE DÖNÜK UYUM (mevcut kurulumlar kopmaz):** (1) eklenti eski `JETLISANS_*` wp-config
+sabitlerini yeni `WPTESLIMAT_*`'a köprüler (define-if-not-defined); (2) tek-seferlik göç eski `{prefix}jetlisans_queue`
+tablosunu + `jetlisans_*` connect-option'larını yeni adlara taşır (`plugins_loaded` öncelik 5, sürüm option'ıyla
+korunur); (3) webhook alıcı eski `jetlisans/v1/webhook` REST rotasını da AYNI işleyiciye bağlar (panelde kayıtlı eski
+webhook_url 404 yemez). **NOT (bilinçli kalan):** yalnız `wpteslimat.php` içindeki uyum köprüsü + göç kodu eski
+`jetlisans`/`JETLISANS` adlarını referans eder (mecburen — eski kurulumları okur). Kod tabanının geri kalanında sıfır
+`jetlisans`. Prod DB adı/kimlikleri `.env`'de olduğu gibi kalır (deploy git ile gelir, `.env`'e dokunmaz).
 
 **YAYIN YÖNETİM SİSTEMİ + DEV ORTAMLARI (commit 8f2dee1→60d46bf, CANLI):** Kullanıcı "gerçek yazılım
 şirketi gibi, sürüm-bazlı, güncelleme geçmişi görünür, sohbet hafızasından bağımsız sistematik bir
@@ -535,14 +543,14 @@ yayın/dağıtım sistemi + izole dev" istedi. Kuruldu (4 parça). **SÜRECİN T
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
 (PG+Redis+API+admin+Caddy). Migration: `pnpm db:generate` (şema→SQL) / `pnpm db:migrate`.
-Yarış testi (gerçek PG ister): `pnpm --filter @jetlisans/api test:race`. Lokal Node 22
+Yarış testi (gerçek PG ister): `pnpm --filter @lisans/api test:race`. Lokal Node 22
 önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
 DB dışa kapalıdır; lokalde host'tan PG/Redis'e erişmek için `docker-compose.override.yml`
 (gitignore'da) 127.0.0.1'e port açar — yarış testi bunu kullanır.
 
 `pnpm install` · `pnpm build|typecheck|lint|test` · `docker compose up -d --build`
 (PG+Redis+API+admin+Caddy). Migration: `pnpm db:generate` (şema→SQL) / `pnpm db:migrate`.
-Yarış testi (gerçek PG ister): `pnpm --filter @jetlisans/api test:race`. Lokal Node 22
+Yarış testi (gerçek PG ister): `pnpm --filter @lisans/api test:race`. Lokal Node 22
 önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
 DB dışa kapalıdır; lokalde host'tan PG/Redis'e erişmek için `docker-compose.override.yml`
 (gitignore'da) 127.0.0.1'e port açar — yarış testi bunu kullanır.

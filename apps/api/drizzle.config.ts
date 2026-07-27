@@ -9,7 +9,7 @@ export default defineConfig({
   schema: './src/db/schema/index.ts',
   out: './drizzle',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'postgres://jetlisans:jetlisans@localhost:5432/jetlisans',
+    url: process.env.DATABASE_URL ?? 'postgres://lisanspanel:lisanspanel@localhost:5432/lisanspanel',
   },
   strict: true,
   verbose: true,

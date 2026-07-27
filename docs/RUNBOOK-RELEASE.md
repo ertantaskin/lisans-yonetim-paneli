@@ -28,7 +28,7 @@ dağıtım yapacaksa bu adımları izler. Amaç: her seferinde aynı, güvenli, 
 1. **Geliştir** (yerel veya izole dev). Değişikliği test et:
    ```bash
    pnpm typecheck && pnpm build
-   pnpm --filter @jetlisans/api test        # birim
+   pnpm --filter @lisans/api test        # birim
    # davranış değiştiyse VPS izole test DB'sinde entegrasyon+yarış (bkz. RUNBOOK-DR / CLAUDE.md)
    ```
 2. **CHANGELOG.md** → `[Yayınlanmamış]` altına ne değiştiğini yaz.
@@ -70,7 +70,7 @@ kendi güncelleyicisiyle `/v1/updates/plugin/info`'yu yoklar).
    ```bash
    ./scripts/release-plugin.sh <yeni-sürüm>     # ör. 0.2.0
    ```
-   Script: `jetlisans.php` + `readme.txt` sürümünü günceller → temiz `.zip` paketler →
+   Script: `wpteslimat.php` + `readme.txt` sürümünü günceller → temiz `.zip` paketler →
    panele publish (`POST /v1/admin/updates/plugin`, ADMIN_TOKEN) → CHANGELOG'a not.
    Alternatif (UI): panelde **Sürümler (/releases)** → "Yeni sürüm yayınla" (zip yükle).
 3. **Doğrula:** panelde **/releases** listesinde yeni sürüm görünür; müşteri sitesi

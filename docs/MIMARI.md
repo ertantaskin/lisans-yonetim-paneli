@@ -1,4 +1,4 @@
-# Jetlisans — Merkezi Lisans Dağıtım Paneli Mimarisi
+# Lisans Yönetim Paneli — Merkezi Lisans Dağıtım Paneli Mimarisi
 
 **v2.6 · Temmuz 2026** · Görsel kopya: https://claude.ai/code/artifact/4adb7a2c-ba7d-4379-b0ee-2f7b07b56b7c
 
@@ -368,7 +368,7 @@ aynı); My Account bloğu tema-nötr.
 - **Faz 1 (~3-4 hafta) MVP:** şifreli stok + import, atomik atama + idempotency,
   kısmi teslimat motoru + Bekleyen Teslimatlar, sipariş API + şablon + mail, WP eklentisi
   (push, My Account, meta box: göster/değiştir/tekrar gönder/revoke), geri kanal webhook.
-  CI yarış testi ilk günden. Jetlisans'ta 1-2 pilot ürünle canlı (eski eklenti paralel).
+  CI yarış testi ilk günden. Lisans Yönetim Paneli'ta 1-2 pilot ürünle canlı (eski eklenti paralel).
 - **Faz 2 (~2-3 hafta):** hesap ürünleri (JSONB), çok kullanımlık, şablon override, 2. site,
   domain doğrulama, mutabakat cron, düşük stok + Telegram, misafir link (site bayrağı),
   akıllı stok önizleme, Ctrl+K, toplu değiştirme, self-servis + müşteri 360, tedarik

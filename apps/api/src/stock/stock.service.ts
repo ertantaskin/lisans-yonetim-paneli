@@ -5,7 +5,7 @@ import {
   AccountPayloadSchema,
   serializeAccountPayload,
   type AccountPayloadSchema as AccountPayloadSchemaT,
-} from '@jetlisans/shared';
+} from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import {

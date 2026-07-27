@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Jetlisans — Yük (k6) + Uçtan-uca (Playwright) CI (§16 / D19)
+# Lisans Yönetim Paneli — Yük (k6) + Uçtan-uca (Playwright) CI (§16 / D19)
 #
 # AYRI dosya: mevcut `ci.yml` (build/typecheck/lint/birim + YARIŞ testi) DOKUNULMADI.
 # Bu workflow onu bozmadan, ağır/ortam-bağımlı test paketlerini opsiyonel olarak koşar.
@@ -69,13 +69,13 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: jetlisans
-          POSTGRES_PASSWORD: jetlisans
-          POSTGRES_DB: jetlisans_load
+          POSTGRES_USER: lisanspanel
+          POSTGRES_PASSWORD: lisanspanel
+          POSTGRES_DB: lisanspanel_load
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U jetlisans -d jetlisans_load"
+          --health-cmd "pg_isready -U lisanspanel -d lisanspanel_load"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -91,7 +91,7 @@ jobs:
 
     env:
       # API boot + k6 aynı değerleri paylaşır (yarış-testi job deseninden alındı).
-      DATABASE_URL: postgres://jetlisans:jetlisans@localhost:5432/jetlisans_load
+      DATABASE_URL: postgres://lisanspanel:lisanspanel@localhost:5432/lisanspanel_load
       REDIS_URL: redis://localhost:6379
       API_PORT: '3001'
       NODE_ENV: production
@@ -117,19 +117,19 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # API @jetlisans/shared'a bağlı → önce onu, sonra API'yi derle (admin build'i atlanır, hafif).
+      # API @lisans/shared'a bağlı → önce onu, sonra API'yi derle (admin build'i atlanır, hafif).
       - name: Ortak paketi derle
-        run: pnpm --filter @jetlisans/shared build
+        run: pnpm --filter @lisans/shared build
 
       - name: API derle
-        run: pnpm --filter @jetlisans/api build
+        run: pnpm --filter @lisans/api build
 
       # MASTER_KEY (AES-256-GCM envelope, 32 byte base64) koşuda üretilir — asla loglanmaz.
       - name: MASTER_KEY üret
         run: echo "MASTER_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
       - name: Migration'ları uygula
-        run: pnpm --filter @jetlisans/api db:migrate
+        run: pnpm --filter @lisans/api db:migrate
 
       # Arka planda API'yi başlat (GitHub Actions arka plan süreçleri job boyunca yaşar).
       - name: API'yi başlat (arka plan)

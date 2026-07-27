@@ -10,10 +10,10 @@ if (!defined('ABSPATH')) exit;
  * tek kullanımlık kodu buraya girer → eklenti kimlik doğrulaması GEREKTİRMEYEN
  * `POST {panel}/v1/connect/claim { code }` çağrısını yapar; panel siteyi eşler
  * ve `{ siteDomain, apiKey, hmacSecret }` döner. Bunlar option'a kaydedilir.
- * Sabit tanımlıysa (JETLISANS_API_KEY vb.) option'lar yok sayılacağı için bu
+ * Sabit tanımlıysa (WPTESLIMAT_API_KEY vb.) option'lar yok sayılacağı için bu
  * akış devre dışı bırakılır.
  */
-class Jetlisans_Settings {
+class Wpteslimat_Settings {
     private static $instance = null;
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
@@ -23,19 +23,19 @@ class Jetlisans_Settings {
     private function __construct() {
         add_action('admin_menu', [$this, 'menu']);
         add_action('admin_init', [$this, 'register']);
-        add_action('admin_post_jetlisans_connect', [$this, 'handle_connect']);
+        add_action('admin_post_wpteslimat_connect', [$this, 'handle_connect']);
         add_action('admin_notices', [$this, 'clone_notice']);
     }
 
     public static function panel_url() {
-        if (defined('JETLISANS_PANEL_URL')) return rtrim(JETLISANS_PANEL_URL, '/');
-        return rtrim((string) get_option('jetlisans_panel_url', ''), '/');
+        if (defined('WPTESLIMAT_PANEL_URL')) return rtrim(WPTESLIMAT_PANEL_URL, '/');
+        return rtrim((string) get_option('wpteslimat_panel_url', ''), '/');
     }
     public static function api_key() {
-        return defined('JETLISANS_API_KEY') ? JETLISANS_API_KEY : (string) get_option('jetlisans_api_key', '');
+        return defined('WPTESLIMAT_API_KEY') ? WPTESLIMAT_API_KEY : (string) get_option('wpteslimat_api_key', '');
     }
     public static function hmac_secret() {
-        return defined('JETLISANS_HMAC_SECRET') ? JETLISANS_HMAC_SECRET : (string) get_option('jetlisans_hmac_secret', '');
+        return defined('WPTESLIMAT_HMAC_SECRET') ? WPTESLIMAT_HMAC_SECRET : (string) get_option('wpteslimat_hmac_secret', '');
     }
     public static function is_configured() {
         return self::panel_url() && self::api_key() && self::hmac_secret();
@@ -43,9 +43,9 @@ class Jetlisans_Settings {
 
     /**
      * Staging/klon koruması (§7 "URL değişince pasif mod"). Taban çizgisi (beklenen home_url) üç
-     * kaynaktan gelebilir, öncelik sırasıyla: (1) wp-config.php'de JETLISANS_BOUND_HOME sabiti
+     * kaynaktan gelebilir, öncelik sırasıyla: (1) wp-config.php'de WPTESLIMAT_BOUND_HOME sabiti
      * (sabit-tabanlı kurulumların operatörü beklenen adresi açıkça sabitleyebilir); (2) aktivasyonda
-     * yazılan `jetlisans_bound_home` option'ı (prod'da kurulumda sabitlenir, klon DB bunu devralır);
+     * yazılan `wpteslimat_bound_home` option'ı (prod'da kurulumda sabitlenir, klon DB bunu devralır);
      * (3) "Panele Bağlan" akışının yazdığı aynı option. Site başka bir alan adına klonlanırsa (prod →
      * staging, aynı wp-config → aynı api_key/hmac_secret) home_url DEĞİŞİR ve klon gerçek panele push
      * edip CANLI stoğu tüketebilir / gerçek müşterinin lisansını geri alabilir. Bu kontrol o durumu yakalar.
@@ -54,9 +54,9 @@ class Jetlisans_Settings {
      * varsayılan); korumayı etkinleştirmek için yeniden aktivasyon veya sabit tanımı yeterlidir.
      */
     public static function is_clone() {
-        $bound = (defined('JETLISANS_BOUND_HOME') && JETLISANS_BOUND_HOME)
-            ? (string) JETLISANS_BOUND_HOME
-            : (string) get_option('jetlisans_bound_home', '');
+        $bound = (defined('WPTESLIMAT_BOUND_HOME') && WPTESLIMAT_BOUND_HOME)
+            ? (string) WPTESLIMAT_BOUND_HOME
+            : (string) get_option('wpteslimat_bound_home', '');
         if ($bound === '') return false;
         return untrailingslashit(home_url()) !== untrailingslashit($bound);
     }
@@ -65,7 +65,7 @@ class Jetlisans_Settings {
     public function clone_notice() {
         if (!self::is_clone()) return;
         if (!current_user_can('manage_options')) return;
-        $bound = (string) get_option('jetlisans_bound_home', '');
+        $bound = (string) get_option('wpteslimat_bound_home', '');
         echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
             'Teslimat eklentisi: Site adresi (%s) bağlanma anındaki adresten (%s) farklı. Kopya/staging koruması etkin: ' .
             'siparişler panele İLETİLMİYOR (canlı stok korunur). Bu kasıtlı bir taşımaysa panele yeniden bağlanın.',
@@ -79,12 +79,12 @@ class Jetlisans_Settings {
      * akışının tek amacı bu sırları panelden çekip option'a yazmaktır; sırlar sabitse
      * yazılan option'lar yok sayılacağından akış anlamsızdır (devre dışı).
      *
-     * NOT: Sırsız JETLISANS_PANEL_URL sabiti bu akışı KİLİTLEMEZ — yalnız panel
+     * NOT: Sırsız WPTESLIMAT_PANEL_URL sabiti bu akışı KİLİTLEMEZ — yalnız panel
      * adresi sabitken token/secret alma akışı geçerli kalmalıdır (panel URL yine
      * connect isteğinde `self::panel_url()` sabit değerinden gelir).
      */
     private static function has_const() {
-        return defined('JETLISANS_API_KEY') || defined('JETLISANS_HMAC_SECRET');
+        return defined('WPTESLIMAT_API_KEY') || defined('WPTESLIMAT_HMAC_SECRET');
     }
 
     /**
@@ -101,13 +101,13 @@ class Jetlisans_Settings {
     }
 
     public function menu() {
-        add_options_page('WP Teslimat Eklentisi', 'Teslimat Eklentisi', 'manage_options', 'jetlisans', [$this, 'page']);
+        add_options_page('WP Teslimat Eklentisi', 'Teslimat Eklentisi', 'manage_options', 'wpteslimat', [$this, 'page']);
     }
 
     public function register() {
-        register_setting('jetlisans', 'jetlisans_panel_url');
-        register_setting('jetlisans', 'jetlisans_api_key');
-        register_setting('jetlisans', 'jetlisans_hmac_secret');
+        register_setting('wpteslimat', 'wpteslimat_panel_url');
+        register_setting('wpteslimat', 'wpteslimat_api_key');
+        register_setting('wpteslimat', 'wpteslimat_hmac_secret');
     }
 
     public function page() {
@@ -134,14 +134,14 @@ class Jetlisans_Settings {
                    Kimlik bilgileri <code>wp-config.php</code> sabitlerinden okunuyor.</p>
             <?php else: ?>
                 <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
-                    <input type="hidden" name="action" value="jetlisans_connect">
-                    <?php wp_nonce_field('jetlisans_connect'); ?>
+                    <input type="hidden" name="action" value="wpteslimat_connect">
+                    <?php wp_nonce_field('wpteslimat_connect'); ?>
                     <table class="form-table">
                         <tr>
                             <th><label for="jl-connect-panel">Panel URL</label></th>
                             <td>
                                 <input type="url" id="jl-connect-panel" name="panel_url" required
-                                       value="<?php echo esc_attr(get_option('jetlisans_panel_url', '')); ?>"
+                                       value="<?php echo esc_attr(get_option('wpteslimat_panel_url', '')); ?>"
                                        placeholder="https://api.167-233-108-12.sslip.io" class="regular-text">
                             </td>
                         </tr>
@@ -161,15 +161,15 @@ class Jetlisans_Settings {
             <hr>
             <h2>Gelişmiş — kimlik bilgilerini el ile gir</h2>
             <p><em>Güvenlik önerisi (§8):</em> sırları <code>wp-config.php</code>'ye sabit olarak ekleyin:</p>
-            <pre style="background:#f6f7f7;padding:12px;border-radius:6px">define('JETLISANS_PANEL_URL', 'https://api.panel.example');
-define('JETLISANS_API_KEY', 'jl_...');
-define('JETLISANS_HMAC_SECRET', '...');</pre>
+            <pre style="background:#f6f7f7;padding:12px;border-radius:6px">define('WPTESLIMAT_PANEL_URL', 'https://api.panel.example');
+define('WPTESLIMAT_API_KEY', 'jl_...');
+define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
             <form method="post" action="options.php">
-                <?php settings_fields('jetlisans'); ?>
+                <?php settings_fields('wpteslimat'); ?>
                 <table class="form-table">
-                    <tr><th>Panel URL</th><td><input type="url" name="jetlisans_panel_url" value="<?php echo esc_attr(get_option('jetlisans_panel_url', '')); ?>" class="regular-text" <?php disabled(defined('JETLISANS_PANEL_URL')); ?>></td></tr>
-                    <tr><th>API Key</th><td><input type="text" name="jetlisans_api_key" value="<?php echo esc_attr(get_option('jetlisans_api_key', '')); ?>" class="regular-text" <?php disabled(defined('JETLISANS_API_KEY')); ?>><br><small>Sabit tanımlıysa buradan değiştirilemez.</small></td></tr>
-                    <tr><th>HMAC Secret</th><td><input type="password" name="jetlisans_hmac_secret" value="<?php echo esc_attr(get_option('jetlisans_hmac_secret', '')); ?>" class="regular-text" <?php disabled(defined('JETLISANS_HMAC_SECRET')); ?>></td></tr>
+                    <tr><th>Panel URL</th><td><input type="url" name="wpteslimat_panel_url" value="<?php echo esc_attr(get_option('wpteslimat_panel_url', '')); ?>" class="regular-text" <?php disabled(defined('WPTESLIMAT_PANEL_URL')); ?>></td></tr>
+                    <tr><th>API Key</th><td><input type="text" name="wpteslimat_api_key" value="<?php echo esc_attr(get_option('wpteslimat_api_key', '')); ?>" class="regular-text" <?php disabled(defined('WPTESLIMAT_API_KEY')); ?>><br><small>Sabit tanımlıysa buradan değiştirilemez.</small></td></tr>
+                    <tr><th>HMAC Secret</th><td><input type="password" name="wpteslimat_hmac_secret" value="<?php echo esc_attr(get_option('wpteslimat_hmac_secret', '')); ?>" class="regular-text" <?php disabled(defined('WPTESLIMAT_HMAC_SECRET')); ?>></td></tr>
                 </table>
                 <?php submit_button(); ?>
             </form>
@@ -182,10 +182,10 @@ define('JETLISANS_HMAC_SECRET', '...');</pre>
      * Ayar sayfası başında çağrılır.
      */
     private static function render_connect_notice() {
-        if (!isset($_GET['jetlisans_connect'])) return;
-        $flag = sanitize_key(wp_unslash($_GET['jetlisans_connect']));
-        $msg  = isset($_GET['jetlisans_msg'])
-            ? sanitize_text_field(wp_unslash($_GET['jetlisans_msg'])) : '';
+        if (!isset($_GET['wpteslimat_connect'])) return;
+        $flag = sanitize_key(wp_unslash($_GET['wpteslimat_connect']));
+        $msg  = isset($_GET['wpteslimat_msg'])
+            ? sanitize_text_field(wp_unslash($_GET['wpteslimat_msg'])) : '';
 
         if ($flag === 'ok') {
             $text = $msg !== ''
@@ -219,7 +219,7 @@ define('JETLISANS_HMAC_SECRET', '...');</pre>
         if (!current_user_can('manage_options')) {
             wp_die(esc_html('Bu işlem için yetkiniz yok.'), '', ['response' => 403]);
         }
-        check_admin_referer('jetlisans_connect');
+        check_admin_referer('wpteslimat_connect');
 
         // Sabit tanımlıysa option yazımı yok sayılır — akış devre dışı.
         if (self::has_const()) {
@@ -261,12 +261,12 @@ define('JETLISANS_HMAC_SECRET', '...');</pre>
             self::redirect_settings('error', $err);
         }
 
-        update_option('jetlisans_panel_url', $panel);
-        update_option('jetlisans_api_key', (string) $data['apiKey']);
-        update_option('jetlisans_hmac_secret', (string) $data['hmacSecret']);
+        update_option('wpteslimat_panel_url', $panel);
+        update_option('wpteslimat_api_key', (string) $data['apiKey']);
+        update_option('wpteslimat_hmac_secret', (string) $data['hmacSecret']);
         // Staging/klon koruması baseline'ı (§7): bağlanma anındaki site adresi. Site başka
         // alana klonlanırsa is_clone() bunu yakalar ve push'u pasifleştirir.
-        update_option('jetlisans_bound_home', home_url());
+        update_option('wpteslimat_bound_home', home_url());
 
         $domain = isset($data['siteDomain']) ? (string) $data['siteDomain'] : '';
         self::redirect_settings('ok', $domain);
@@ -274,9 +274,9 @@ define('JETLISANS_HMAC_SECRET', '...');</pre>
 
     /** Ayar sayfasına sonuç bayrağıyla (ve varsa mesajla) geri yönlendirir. */
     private static function redirect_settings($flag, $detail = '') {
-        $url = add_query_arg('jetlisans_connect', $flag, admin_url('options-general.php?page=jetlisans'));
+        $url = add_query_arg('wpteslimat_connect', $flag, admin_url('options-general.php?page=wpteslimat'));
         if ($detail !== '') {
-            $url = add_query_arg('jetlisans_msg', rawurlencode($detail), $url);
+            $url = add_query_arg('wpteslimat_msg', rawurlencode($detail), $url);
         }
         wp_safe_redirect($url);
         exit;

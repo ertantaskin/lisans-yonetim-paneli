@@ -5,7 +5,7 @@ if (!defined('ABSPATH')) exit;
  * Panele HMAC imzalı HTTP istemcisi (MIMARI.md §4).
  *   X-Signature = HMAC-SHA256(secret, METHOD\nPATH\nTS\nNONCE\nSHA256(body))
  */
-class Jetlisans_Panel_Client {
+class Wpteslimat_Panel_Client {
 
     /**
      * İmza yolu kanonikleştirme — panel `canonicalizePath` (shared/api/hmac.ts) ile
@@ -39,17 +39,17 @@ class Jetlisans_Panel_Client {
      * @return array{code:int, body:array} — HTTP kodu + çözümlenmiş JSON.
      */
     private static function request($method, $path, $body) {
-        $url = Jetlisans_Settings::panel_url() . $path;
+        $url = Wpteslimat_Settings::panel_url() . $path;
         $body_str = $body === null ? '' : wp_json_encode($body);
         $ts = (string) time();
         $nonce = wp_generate_uuid4();
         $body_hash = hash('sha256', $body_str);
 
         $payload = strtoupper($method) . "\n" . self::canonical_path($path) . "\n" . $ts . "\n" . $nonce . "\n" . $body_hash;
-        $sig = hash_hmac('sha256', $payload, Jetlisans_Settings::hmac_secret());
+        $sig = hash_hmac('sha256', $payload, Wpteslimat_Settings::hmac_secret());
 
         $headers = [
-            'X-Api-Key'   => Jetlisans_Settings::api_key(),
+            'X-Api-Key'   => Wpteslimat_Settings::api_key(),
             'X-Timestamp' => $ts,
             'X-Nonce'     => $nonce,
             'X-Signature' => $sig,
@@ -80,11 +80,11 @@ class Jetlisans_Panel_Client {
     /**
      * Gelen webhook imzasını doğrular (§2). Panel geri-kanal webhook'ları YALNIZ sitenin
      * HMAC secret'iyle imzalar — ayrı bir "webhook secret" API'de YOKTUR. Bu yüzden doğrulama
-     * her zaman `Jetlisans_Settings::hmac_secret()` kullanır (ayrı knob kaldırıldı; tanımlansa
+     * her zaman `Wpteslimat_Settings::hmac_secret()` kullanır (ayrı knob kaldırıldı; tanımlansa
      * panelin imzasıyla eşleşmez ve tüm gelen webhook'lar 401 olurdu).
      */
     public static function verify_webhook($method, $path, $ts, $nonce, $body_str, $signature) {
-        $secret = Jetlisans_Settings::hmac_secret();
+        $secret = Wpteslimat_Settings::hmac_secret();
         // Zaman penceresi ±300sn (replay).
         if (abs(time() - (int) $ts) > 300) return false;
         $payload = strtoupper($method) . "\n" . self::canonical_path($path) . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $body_str);

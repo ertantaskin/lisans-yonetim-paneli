@@ -1,5 +1,5 @@
 import { Controller, Get, HttpException, HttpStatus } from '@nestjs/common';
-import type { HealthResponse } from '@jetlisans/shared';
+import type { HealthResponse } from '@lisans/shared';
 import { HealthService } from './health.service';
 
 /** GET /v1/health — bağlantı testi (§4). */

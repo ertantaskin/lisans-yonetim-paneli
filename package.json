@@ -1,8 +1,8 @@
 {
-  "name": "jetlisans",
+  "name": "lisans-panel",
   "version": "1.0.0",
   "private": true,
-  "description": "Jetlisans — merkezi lisans dağıtım paneli (monorepo)",
+  "description": "Lisans Yönetim Paneli — merkezi lisans dağıtım paneli (monorepo)",
   "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=20"
@@ -13,11 +13,11 @@
     "lint": "eslint .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "test:race": "turbo run test:race --filter=@jetlisans/api",
+    "test:race": "turbo run test:race --filter=@lisans/api",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
-    "db:generate": "pnpm --filter @jetlisans/api db:generate",
-    "db:migrate": "pnpm --filter @jetlisans/api db:migrate",
+    "db:generate": "pnpm --filter @lisans/api db:generate",
+    "db:migrate": "pnpm --filter @lisans/api db:migrate",
     "stack:up": "docker compose up -d",
     "stack:down": "docker compose down",
     "stack:logs": "docker compose logs -f api admin",

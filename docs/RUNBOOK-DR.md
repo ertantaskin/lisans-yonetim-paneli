@@ -1,6 +1,6 @@
 # RUNBOOK — Felaket Kurtarma (DR) & Yedek Tatbikatı
 
-> Jetlisans Merkezi Lisans Paneli · MIMARI.md **§16** (Operasyon: test, sürüm, DR) + **§8** (Güvenlik).
+> Lisans Yönetim Paneli Merkezi Lisans Paneli · MIMARI.md **§16** (Operasyon: test, sürüm, DR) + **§8** (Güvenlik).
 > Bu belge operasyoneldir: VPS'te elle uygulanır. Otomatik doğrulama scripti: `scripts/backup-drill.sh`.
 
 ---
@@ -31,9 +31,9 @@ sipariş/atama kaybı = çifte satış / müşteri mağduriyeti riski). §16 hed
 > §1: "Yedek: **pgBackRest** → offsite **S3** + sürekli **WAL** (PITR); master key AYRI saklanır."
 
 1. **pgBackRest** kur (repo = offsite S3/B2/Wasabi bucket, `repo1-retention-full`, sıkıştırma+şifreleme).
-2. PostgreSQL `archive_mode=on` + `archive_command = 'pgbackrest --stanza=jetlisans archive-push %p'`
+2. PostgreSQL `archive_mode=on` + `archive_command = 'pgbackrest --stanza=lisanspanel archive-push %p'`
    → her WAL segmenti offsite'a itilir ⇒ **RPO ≤ 5 dk** (`archive_timeout=60s` ile en fazla ~1dk WAL gecikmesi).
-3. Günlük `full`/`diff`, saatlik `incr` yedek (cron). Restore: `pgbackrest --stanza=jetlisans restore`
+3. Günlük `full`/`diff`, saatlik `incr` yedek (cron). Restore: `pgbackrest --stanza=lisanspanel restore`
    + `--type=time --target='...'` ile **noktaya-dönük (PITR)** kurtarma.
 4. Offsite kopyanın **kendisi de** düzenli tatbikatla doğrulanır (bu runbook §6).
 
@@ -111,7 +111,7 @@ docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" lisans-yonetim-paneli-postgres
 ### 5.3 PITR (noktaya-dönük) — pgBackRest kurulduysa
 ```bash
 # Hizmeti durdur, veriyi temizle, hedef zamana restore et:
-pgbackrest --stanza=jetlisans --delta --type=time \
+pgbackrest --stanza=lisanspanel --delta --type=time \
   --target='2026-07-21 09:55:00+00' restore
 # PostgreSQL'i başlat → recovery hedef zamana kadar WAL oynatır (RPO≤5dk).
 ```

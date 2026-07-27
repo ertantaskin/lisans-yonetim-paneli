@@ -1,4 +1,4 @@
-# Jetlisans — geliştirme/tek-VPS yığını (MIMARI.md §1).
+# Lisans Yönetim Paneli — geliştirme/tek-VPS yığını (MIMARI.md §1).
 # PostgreSQL 17 + Redis 7 + API + Admin + Caddy (otomatik TLS).
 #
 # Kullanım:
@@ -83,7 +83,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      MAIL_FROM: ${MAIL_FROM:-Jetlisans <teslimat@jetlisans.local>}
+      MAIL_FROM: ${MAIL_FROM:-Lisans Paneli <teslimat@localhost>}
       # Telegram bildirimi (§13/§18) — düşük stok + kritik uyarılar. İKİSİ de SET EDİLİRSE
       # aktif; boşsa bildirim no-op (env-gated). Bot: @BotFather, chat id: @userinfobot.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}

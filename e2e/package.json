@@ -1,8 +1,8 @@
 {
-  "name": "@jetlisans/e2e",
+  "name": "@lisans/e2e",
   "version": "0.0.0",
   "private": true,
-  "description": "Jetlisans admin paneli — Playwright uçtan-uca duman testleri (CI/manuel artifact; deploy edilmez)",
+  "description": "Lisans Yönetim Paneli admin paneli — Playwright uçtan-uca duman testleri (CI/manuel artifact; deploy edilmez)",
   "scripts": {
     "test": "playwright test"
   },

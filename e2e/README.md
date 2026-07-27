@@ -1,4 +1,4 @@
-# Jetlisans — Playwright e2e duman testleri
+# Lisans Yönetim Paneli — Playwright e2e duman testleri
 
 Admin panelinin temel akışlarını (yönlendirme, ana ekranların yüklenmesi) uçtan uca
 doğrulayan **ayrık** test paketi. §16 "e2e Playwright" kapsamındadır.

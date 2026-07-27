@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Jetlisans Admin — Next.js (standalone, Node 22).
+# Lisans Yönetim Paneli Admin — Next.js (standalone, Node 22).
 # Kök bağlamdan build edilir: docker build -f apps/admin/Dockerfile .
 
 FROM node:22-slim AS base
@@ -17,8 +17,8 @@ COPY apps/admin/package.json ./apps/admin/
 RUN pnpm install --frozen-lockfile || pnpm install
 COPY packages/shared ./packages/shared
 COPY apps/admin ./apps/admin
-RUN pnpm --filter @jetlisans/shared build \
-  && pnpm --filter @jetlisans/admin build
+RUN pnpm --filter @lisans/shared build \
+  && pnpm --filter @lisans/admin build
 
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production

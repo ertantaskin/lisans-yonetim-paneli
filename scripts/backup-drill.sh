@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Jetlisans — Yedek / Geri-Yükleme TATBİKATI (backup drill)   · MIMARI.md §16 DR
+# Lisans Yönetim Paneli — Yedek / Geri-Yükleme TATBİKATI (backup drill)   · MIMARI.md §16 DR
 # ─────────────────────────────────────────────────────────────────────────────
 # Amaç (§16): RPO≤5dk / RTO≤2sa hedefleri için AYLIK yedek tatbikatı. Prod
 # PostgreSQL'den mantıksal yedek alır, AYRI bir "${DB}_drill" doğrulama
@@ -148,7 +148,7 @@ DRILL_START=$(date +%s)
 TS="$(date +%Y%m%d-%H%M%S)"
 
 line
-echo "Jetlisans Yedek Tatbikatı — $(date '+%Y-%m-%d %H:%M:%S %z')"
+echo "Lisans Yönetim Paneli Yedek Tatbikatı — $(date '+%Y-%m-%d %H:%M:%S %z')"
 echo "  Mod           : $MODE${MODE:+ (container=${PG_CONTAINER})}"
 echo "  Prod DB       : $DB_NAME   (kullanıcı: $DB_USER)"
 echo "  Doğrulama DB  : $DRILL_DB   (tatbikat sonunda düşürülür)"

@@ -10,11 +10,11 @@ if (!defined('ABSPATH')) exit;
  * Panel yapılandırılmamışsa (panel_url yok) hiçbir şey yapmaz — no-op.
  * Sürüm bilgisi 12 saat transient ile önbelleğe alınır (her istekte panel çağrısı yapılmaz).
  */
-class Jetlisans_Updater {
+class Wpteslimat_Updater {
     private static $instance = null;
 
     /** Sürüm bilgisi önbellek anahtarı ve süresi (12 saat). */
-    const CACHE_KEY = 'jetlisans_update_info';
+    const CACHE_KEY = 'wpteslimat_update_info';
     const CACHE_TTL = 12 * HOUR_IN_SECONDS;
 
     public static function instance() {
@@ -24,16 +24,16 @@ class Jetlisans_Updater {
 
     private function __construct() {
         // Panel yapılandırılmamışsa güncelleme denetimini hiç bağlama (no-op).
-        if (Jetlisans_Settings::panel_url() === '') {
+        if (Wpteslimat_Settings::panel_url() === '') {
             return;
         }
         add_filter('pre_set_site_transient_update_plugins', [$this, 'check_update']);
         add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
     }
 
-    /** Bu eklentinin plugin_basename değeri (ör. "jetlisans/jetlisans.php"). */
+    /** Bu eklentinin plugin_basename değeri (ör. "wpteslimat/wpteslimat.php"). */
     private static function basename() {
-        return plugin_basename(JETLISANS_FILE);
+        return plugin_basename(WPTESLIMAT_FILE);
     }
 
     /**
@@ -46,7 +46,7 @@ class Jetlisans_Updater {
             return $cached;
         }
 
-        $panel = Jetlisans_Settings::panel_url();
+        $panel = Wpteslimat_Settings::panel_url();
         if ($panel === '') {
             return null;
         }
@@ -86,7 +86,7 @@ class Jetlisans_Updater {
         }
 
         $new_version = (string) $info['version'];
-        if (version_compare($new_version, JETLISANS_VERSION, '<=')) {
+        if (version_compare($new_version, WPTESLIMAT_VERSION, '<=')) {
             return $transient; // Panel sürümü mevcut sürümden yeni değil — dokunma.
         }
 
@@ -98,11 +98,11 @@ class Jetlisans_Updater {
         }
 
         $transient->response[$basename] = (object) [
-            'slug'        => 'jetlisans',
+            'slug'        => 'wpteslimat',
             'plugin'      => $basename,
             'new_version' => $new_version,
             'package'     => $download,
-            'url'         => Jetlisans_Settings::panel_url(),
+            'url'         => Wpteslimat_Settings::panel_url(),
         ];
 
         return $transient;
@@ -116,7 +116,7 @@ class Jetlisans_Updater {
         if ($action !== 'plugin_information') {
             return $result;
         }
-        if (!isset($args->slug) || $args->slug !== 'jetlisans') {
+        if (!isset($args->slug) || $args->slug !== 'wpteslimat') {
             return $result;
         }
 
@@ -130,7 +130,7 @@ class Jetlisans_Updater {
 
         return (object) [
             'name'          => isset($info['name']) ? (string) $info['name'] : 'WP Teslimat Eklentisi',
-            'slug'          => 'jetlisans',
+            'slug'          => 'wpteslimat',
             'version'       => (string) $info['version'],
             'download_link' => $download,
             'sections'      => [

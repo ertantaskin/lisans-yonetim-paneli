@@ -93,7 +93,7 @@ export class UpdatesController {
 
     return {
       name: 'WP Teslimat Eklentisi',
-      slug: 'jetlisans',
+      slug: 'wpteslimat',
       version: release.version,
       download_url: downloadUrl,
       requires: '5.8',
@@ -142,7 +142,7 @@ export class UpdatesController {
 
     reply
       .header('content-type', 'application/zip')
-      .header('content-disposition', `attachment; filename=jetlisans-${version}.zip`)
+      .header('content-disposition', `attachment; filename=wpteslimat-${version}.zip`)
       .header('content-length', buffer.length)
       .header('etag', etag)
       // Sürüm .zip'i kısa süre önbelleklenebilir: yinelenen DB base64 çözümünü azaltır.

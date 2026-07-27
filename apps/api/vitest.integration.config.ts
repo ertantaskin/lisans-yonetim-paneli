@@ -6,14 +6,14 @@ import { defineConfig } from 'vitest/config';
 // tag'iyle seed edip afterAll'da yalnız kendi eklediklerini siler (global truncate YOK).
 // Migration'lar önceden koşmuş olmalı (db:migrate → test:integration).
 //
-// @jetlisans/shared package.json'ı main=./dist/index.js gösterir (workspace'te dist YOK —
+// @lisans/shared package.json'ı main=./dist/index.js gösterir (workspace'te dist YOK —
 // API tsc-paths ile KAYNAKTAN tüketir). Vite paket exports'unu çözemediğinden alias ile
 // doğrudan kaynağa (src/index.ts) yönlendiriyoruz; build adımı gerekmez.
 const sharedSrc = fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url));
 
 export default defineConfig({
   resolve: {
-    alias: { '@jetlisans/shared': sharedSrc },
+    alias: { '@lisans/shared': sharedSrc },
   },
   test: {
     environment: 'node',

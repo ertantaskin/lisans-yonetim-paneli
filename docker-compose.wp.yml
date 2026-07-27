@@ -45,7 +45,7 @@ services:
       # wp-config.php'ye enjekte edilen ek tanımlar (geliştirme kolaylığı):
       #  - WP_HOME/WP_SITEURL: site 8090 portunda; WP kendi adresini bilsin.
       #  - WP_DEBUG*: hata ayıklama logu (wp-content/debug.log).
-      #  - JETLISANS_PANEL_URL: eklentinin paneli gördüğü sabit adres (SIR DEĞİL).
+      #  - WPTESLIMAT_PANEL_URL: eklentinin paneli gördüğü sabit adres (SIR DEĞİL).
       #    api_key/hmac_secret SIRLARı burada DURMAZ — scripts/wp-dev.sh panelde site
       #    oluşturup `wp config set` ile enjekte eder (site-özel, güvenli).
       # WP_SITE_URL / PANEL_NETWORK / WP_BIND ortam değişkenleriyle override edilebilir
@@ -59,12 +59,12 @@ services:
         define('WP_DEBUG_LOG', true);
         define('WP_DEBUG_DISPLAY', false);
         define('FS_METHOD', 'direct');
-        define('JETLISANS_PANEL_URL', 'http://api:3001');
+        define('WPTESLIMAT_PANEL_URL', 'http://api:3001');
     volumes:
       - wp_data:/var/www/html
       # Eklenti KAYNAKTAN bind-mount (salt-okunur): host'ta düzenle → WP'de anında
       # yansır; WP eklenti dosyalarını DEĞİŞTİREMEZ (kaynak tek doğruluk).
-      - ./apps/wp-plugin/jetlisans:/var/www/html/wp-content/plugins/jetlisans:ro
+      - ./apps/wp-plugin/wpteslimat:/var/www/html/wp-content/plugins/wpteslimat:ro
     ports:
       - '${WP_BIND:-127.0.0.1:8090}:80'
 
@@ -82,7 +82,7 @@ services:
       WORDPRESS_DB_NAME: wordpress
     volumes:
       - wp_data:/var/www/html
-      - ./apps/wp-plugin/jetlisans:/var/www/html/wp-content/plugins/jetlisans:ro
+      - ./apps/wp-plugin/wpteslimat:/var/www/html/wp-content/plugins/wpteslimat:ro
     entrypoint: ['tail', '-f', '/dev/null']
 
 volumes:

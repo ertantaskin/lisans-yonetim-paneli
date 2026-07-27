@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
-import type { CustomerRisk, RiskBand } from '@jetlisans/shared';
+import type { CustomerRisk, RiskBand } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { customers } from '../db/schema/customers';

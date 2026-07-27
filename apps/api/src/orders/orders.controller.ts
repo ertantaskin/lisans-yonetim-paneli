@@ -1,7 +1,7 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { CreateOrderRequest, type CreateOrderResponse } from '@jetlisans/shared';
+import { CreateOrderRequest, type CreateOrderResponse } from '@lisans/shared';
 import { HmacGuard } from '../auth/hmac.guard';
 import { CurrentSite } from '../auth/current-site.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';

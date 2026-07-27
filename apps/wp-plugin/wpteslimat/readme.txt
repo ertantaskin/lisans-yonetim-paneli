@@ -9,15 +9,15 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 
 == Kurulum ==
 
-1. `jetlisans` klasörünü `wp-content/plugins/` altına koyun ve etkinleştirin.
+1. `wpteslimat` klasörünü `wp-content/plugins/` altına koyun ve etkinleştirin.
 2. Sırları `wp-config.php`'ye sabit olarak ekleyin (§8 — WP DB'de düz metin option DEĞİL):
 
-   define('JETLISANS_PANEL_URL', 'https://api.panel.example');
-   define('JETLISANS_API_KEY', 'jl_...');       // panelde site oluşturunca döner
-   define('JETLISANS_HMAC_SECRET', '...');       // panelde site oluşturunca döner
+   define('WPTESLIMAT_PANEL_URL', 'https://api.panel.example');
+   define('WPTESLIMAT_API_KEY', 'jl_...');       // panelde site oluşturunca döner
+   define('WPTESLIMAT_HMAC_SECRET', '...');       // panelde site oluşturunca döner
 
 3. Panelde bu site için webhook_url'i şuna ayarlayın:
-   https://SITENIZ/wp-json/jetlisans/v1/webhook
+   https://SITENIZ/wp-json/wpteslimat/v1/webhook
 4. Panelde ürünleri eşleyin: remoteProductId = WooCommerce ürün ID'si.
 5. "Ayarlar → Teslimat Eklentisi" ekranından durumu doğrulayın (kalıcı bağlantılar/permalink açık olmalı).
 

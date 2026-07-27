@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, eq, gte, or, sql } from 'drizzle-orm';
-import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@jetlisans/shared';
+import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import { auditLog, orders, siteProductMappings, sites, type Site } from '../db/schema';

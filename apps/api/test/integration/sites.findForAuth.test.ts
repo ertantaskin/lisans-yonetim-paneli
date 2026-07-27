@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { HMAC_KEY_ROTATION_GRACE_SEC } from '@jetlisans/shared';
+import { HMAC_KEY_ROTATION_GRACE_SEC } from '@lisans/shared';
 import { SitesService } from '../../src/sites/sites.service';
 import { CryptoService } from '../../src/crypto/crypto.service';
 import * as schema from '../../src/db/schema';

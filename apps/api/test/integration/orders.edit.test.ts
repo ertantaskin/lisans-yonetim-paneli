@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { CreateOrderRequest } from '@jetlisans/shared';
+import type { CreateOrderRequest } from '@lisans/shared';
 import { OrdersService } from '../../src/orders/orders.service';
 import { FulfillmentService } from '../../src/orders/fulfillment.service';
 import { AdminOrdersService } from '../../src/orders/admin-orders.service';

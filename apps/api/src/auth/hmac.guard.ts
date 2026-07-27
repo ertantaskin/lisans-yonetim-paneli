@@ -8,7 +8,7 @@ import {
   HMAC_NONCE_TTL_SEC,
   HMAC_TIMESTAMP_TOLERANCE_SEC,
   buildSignaturePayload,
-} from '@jetlisans/shared';
+} from '@lisans/shared';
 import { CryptoService } from '../crypto/crypto.service';
 import { REDIS } from '../redis/redis.module';
 import { SitesService } from '../sites/sites.service';

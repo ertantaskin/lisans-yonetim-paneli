@@ -10,7 +10,7 @@ export interface PublishState {
 /**
  * Yeni eklenti sürümü yayınla (POST /v1/admin/updates/plugin). Yüklenen .zip sunucuda
  * base64'e çevrilip API'ye iletilir; ADMIN_TOKEN yalnız Next sunucusunda kalır. Aynı
- * sürüm varsa API upsert yapar. Zip kökü 'jetlisans/' olmalı (WP doğru klasöre açsın).
+ * sürüm varsa API upsert yapar. Zip kökü 'wpteslimat/' olmalı (WP doğru klasöre açsın).
  */
 export async function publishRelease(_prev: PublishState, formData: FormData): Promise<PublishState> {
   const version = String(formData.get('version') ?? '').trim();

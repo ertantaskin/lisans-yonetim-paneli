@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
-import { AccountPayloadSchema } from '@jetlisans/shared';
+import { AccountPayloadSchema } from '@lisans/shared';
 import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ProductsService } from './products.service';

@@ -1,4 +1,4 @@
-# Jetlisans — Merkezi Lisans Dağıtım Paneli
+# Lisans Yönetim Paneli — Merkezi Lisans Dağıtım Paneli
 
 Dijital lisans (Windows/Office key, hesaplar, kodlar) satışı için WooCommerce'ten
 ayrık, çoklu site destekli merkezi stok/teslimat paneli.
@@ -21,7 +21,7 @@ docker compose up -d --build  # PG17 + Redis7 + API + admin + Caddy + Mailpit
 - Mailpit (yakalanan teslimat mailleri): override ile `http://localhost:8025`
 
 Geliştirme: `pnpm install` · `pnpm build|typecheck|lint|test` ·
-`pnpm --filter @jetlisans/api test:race` (yarış testi, gerçek PG ister).
+`pnpm --filter @lisans/api test:race` (yarış testi, gerçek PG ister).
 
 ## Durum
 

@@ -30,7 +30,7 @@ export function PublishForm() {
       <Field
         label="Eklenti paketi (.zip)"
         htmlFor="zip"
-        hint="scripts/release-plugin.sh ile üretilen zip önerilir; kök klasör 'jetlisans/' olmalı. En çok 5 MB."
+        hint="scripts/release-plugin.sh ile üretilen zip önerilir; kök klasör 'wpteslimat/' olmalı. En çok 5 MB."
       >
         <Input id="zip" type="file" name="zip" accept=".zip" required />
       </Field>

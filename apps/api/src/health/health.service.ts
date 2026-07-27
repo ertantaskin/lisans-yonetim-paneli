@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Inject, Injectable } from '@nestjs/common';
-import type { HealthResponse } from '@jetlisans/shared';
+import type { HealthResponse } from '@lisans/shared';
 import { sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';

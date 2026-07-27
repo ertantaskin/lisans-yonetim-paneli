@@ -45,7 +45,7 @@ const nextConfig: NextConfig = {
   // açılır: Windows'ta standalone symlink'leri EPERM verir (geliştirici modu ister).
   output: process.env.NEXT_OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
   // Monorepo ortak paketi Next tarafında transpile edilir.
-  transpilePackages: ['@jetlisans/shared'],
+  transpilePackages: ['@lisans/shared'],
   eslint: { ignoreDuringBuilds: true },
   // Tüm rotalara güvenlik başlıkları uygula.
   async headers() {

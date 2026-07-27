@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Jetlisans admin duman testleri (§16 "e2e Playwright").
+ * Lisans Yönetim Paneli admin duman testleri (§16 "e2e Playwright").
  *
  * Ayrık standalone paket — pnpm workspace glob'u (apps/*, packages/*) e2e/'yi kapsamaz,
  * bu yüzden kendi node_modules'ı vardır ve monorepo build'ine dahil değildir.

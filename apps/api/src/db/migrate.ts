@@ -4,7 +4,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 
 /**
- * Standalone migration runner. `pnpm --filter @jetlisans/api db:migrate`.
+ * Standalone migration runner. `pnpm --filter @lisans/api db:migrate`.
  * Docker compose'da api açılmadan önce (veya entrypoint'te) çalıştırılır.
  */
 async function main(): Promise<void> {

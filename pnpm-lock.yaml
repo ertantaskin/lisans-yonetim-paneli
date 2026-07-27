@@ -32,7 +32,7 @@ importers:
 
   apps/admin:
     dependencies:
-      '@jetlisans/shared':
+      '@lisans/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@radix-ui/react-dialog':
@@ -135,7 +135,7 @@ importers:
       '@fastify/helmet':
         specifier: ^13.0.1
         version: 13.1.0
-      '@jetlisans/shared':
+      '@lisans/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@nestjs/bullmq':

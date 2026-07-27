@@ -31,7 +31,7 @@ import {
   maskSecret,
   parseAccountPayload,
   type PayloadField,
-} from '@jetlisans/shared';
+} from '@lisans/shared';
 import { CryptoService } from '../crypto/crypto.service';
 import { REDIS } from '../redis/redis.module';
 import { MailService } from '../mail/mail.service';

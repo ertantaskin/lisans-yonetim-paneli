@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Jetlisans API — NestJS + Fastify (Node 22 LTS, §1).
+# Lisans Yönetim Paneli API — NestJS + Fastify (Node 22 LTS, §1).
 # Kök bağlamdan build edilir: docker build -f apps/api/Dockerfile .
 
 FROM node:22-slim AS base
@@ -16,8 +16,8 @@ COPY apps/api/package.json ./apps/api/
 RUN pnpm install --frozen-lockfile || pnpm install
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
-RUN pnpm --filter @jetlisans/shared build \
-  && pnpm --filter @jetlisans/api build
+RUN pnpm --filter @lisans/shared build \
+  && pnpm --filter @lisans/api build
 
 # ── Runtime ─────────────────────────────────────────────────────────────────
 FROM base AS runtime

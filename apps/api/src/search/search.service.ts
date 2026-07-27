@@ -5,7 +5,7 @@ import {
   maskAccountFields,
   maskSecret,
   parseAccountPayload,
-} from '@jetlisans/shared';
+} from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { CryptoService } from '../crypto/crypto.service';

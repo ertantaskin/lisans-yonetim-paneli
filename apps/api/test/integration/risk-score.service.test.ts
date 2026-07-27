@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { CustomerRisk } from '@jetlisans/shared';
+import type { CustomerRisk } from '@lisans/shared';
 import { RiskScoreService } from '../../src/security/risk-score.service';
 import * as schema from '../../src/db/schema';
 import type { Database } from '../../src/db/db.module';

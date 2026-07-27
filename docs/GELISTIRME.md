@@ -25,10 +25,10 @@ Bittiğinde:
 `pnpm wp:dev` için şu üç değer yeterli (yereldir, üretim sırrı DEĞİL — istediğini yaz):
 
 ```
-POSTGRES_USER=jetlisans
+POSTGRES_USER=lisanspanel
 POSTGRES_PASSWORD=dev
-POSTGRES_DB=jetlisans
-DATABASE_URL=postgres://jetlisans:dev@postgres:5432/jetlisans
+POSTGRES_DB=lisanspanel
+DATABASE_URL=postgres://lisanspanel:dev@postgres:5432/lisanspanel
 REDIS_URL=redis://redis:6379
 MASTER_KEY=<openssl rand -base64 32>
 ADMIN_TOKEN=<openssl rand -hex 24>
@@ -68,7 +68,7 @@ Yönetim (VPS'te): `./scripts/dev-stack.sh up|wp|down|status|subdomains`.
 
 ## Eklenti geliştirme akışı
 
-`apps/wp-plugin/jetlisans` klasörü WordPress container'ına **salt-okunur bind-mount**
+`apps/wp-plugin/wpteslimat` klasörü WordPress container'ına **salt-okunur bind-mount**
 edilir: host'ta dosyayı düzenle → WP'de **anında** yansır (yeniden kurulum/kopyalama yok).
 WordPress kendi eklenti dosyalarını değiştiremez (kaynak tek doğruluk kaynağı).
 
@@ -76,7 +76,7 @@ PHP değişikliğinden sonra çoğu şey anında geçerlidir. Yeni hook/aktivasy
 eklediysen eklentiyi bir tur kapat/aç:
 
 ```bash
-pnpm wp:cli plugin deactivate jetlisans && pnpm wp:cli plugin activate jetlisans
+pnpm wp:cli plugin deactivate wpteslimat && pnpm wp:cli plugin activate wpteslimat
 ```
 
 Hata ayıklama logu: WordPress container'ında `wp-content/debug.log` (WP_DEBUG_LOG açık).
@@ -94,9 +94,9 @@ Hata ayıklama logu: WordPress container'ında `wp-content/debug.log` (WP_DEBUG_
 
 Her iki yığın da aynı Docker ağındadır (`lisans-yonetim-paneli_default`):
 
-- WP eklentisi paneli **`http://api:3001`** olarak görür (`JETLISANS_PANEL_URL` sabiti,
+- WP eklentisi paneli **`http://api:3001`** olarak görür (`WPTESLIMAT_PANEL_URL` sabiti,
   `docker-compose.wp.yml` içinde).
-- Panel webhook'u WP'yi **`http://wordpress/wp-json/jetlisans/v1/webhook`** olarak görür.
+- Panel webhook'u WP'yi **`http://wordpress/wp-json/wpteslimat/v1/webhook`** olarak görür.
 - `api_key` + `hmac_secret`: `pnpm wp:dev` panelde site açıp bu sırları WP'ye
   **sabit** (wp-config) olarak yazar → önerilen güvenli kurulumun (§8) birebir aynısı.
 
@@ -106,6 +106,6 @@ Her iki yığın da aynı Docker ağındadır (`lisans-yonetim-paneli_default`):
   `docker compose logs api` ile ilerlemeyi izle, sonra `pnpm wp:dev` tekrar çalıştır.
 - **Panel bağlantısı kurulamadı ("aynı domain zaten kayıtlı")** — daha önce site
   açılmış. Panelden o sitenin secret'ını rotate edip `pnpm wp:cli config set
-  JETLISANS_API_KEY '<key>' --type=constant` ile elle yaz (HMAC için de aynısı).
+  WPTESLIMAT_API_KEY '<key>' --type=constant` ile elle yaz (HMAC için de aynısı).
 - **Webhook/My Account boş** — kalıcı bağlantılar kapalı olabilir; script açar ama
   gerekirse `pnpm wp:cli rewrite structure '/%postname%/'` + `... rewrite flush`.

@@ -9,7 +9,7 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 İki ayrı sürüm izi vardır:
 - **Panel** (API + Admin) — bu dosyadaki sürüm numarası + `git tag vX.Y.Z`.
-- **WP eklentisi** — kendi sürümü (`apps/wp-plugin/jetlisans/jetlisans.php` `Version:`),
+- **WP eklentisi** — kendi sürümü (`apps/wp-plugin/wpteslimat/wpteslimat.php` `Version:`),
   müşteri sitelerine `plugin_releases` üzerinden dağıtılır (bkz. Sürümler / `/releases`).
 
 ## [Yayınlanmamış]
@@ -27,6 +27,15 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
   sitesi, panele otomatik bağlanır), iyileştirilmiş `docker-compose.wp.yml`,
   [docs/GELISTIRME.md](docs/GELISTIRME.md), kök `package.json` kısayolları (`wp:dev`, `stack:up` …).
 
+### Değişti
+- **Tam yeniden adlandırma — `jetlisans` kaldırıldı (iç tanımlayıcılar dahil).** İki sistematik ad:
+  panel paketleri `@jetlisans/*` → **`@lisans/*`** (kök paket `lisans-panel`); WP eklentisi tüm
+  tanımlayıcılar → **`wpteslimat`** (klasör/ana dosya/sınıf/fonksiyon/sabit/option/cron/meta,
+  text-domain, REST namespace, updater slug, DB tablosu). DB kimlik şablonları → `lisanspanel`.
+- **Geriye dönük uyum (mevcut kurulumlar kesintisiz):** eklenti eski `JETLISANS_*` wp-config
+  sabitlerini yeni ada köprüler; tek-seferlik göç eski kuyruk tablosunu + connect-option'larını
+  taşır; webhook alıcı eski REST rotasını da dinler.
+
 ## [1.0.0] - 2026-07-27
 
 İlk resmî sürümlenmiş yayın. Sistem üretimde, uçtan uca doğrulanmış ve VPS'te canlı
@@ -41,7 +50,8 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 - **Operasyon:** tedarik zinciri (tedarikçi/PO/parti/düzeltme), değişim & garanti kuyruğu,
   müşteri 360 + site→müşteri hiyerarşisi, raporlar, şablonlar, bildirimler, inceleme kuyruğu.
 - **Marka:** panel "Lisans Paneli"; WP eklentisi görünen adı "WP Teslimat Eklentisi"
-  (iç anahtarlar `jetlisans` — geriye uyum).
+  (bu sürümde yalnız görünen adlar; iç tanımlayıcılar bir sonraki sürümde tamamen
+  sadeleştirildi — bkz. [Yayınlanmamış] › Değişti).
 
 ### Son düzeltmeler (1.0.0 öncesi denetimler)
 - 5-lens sistem denetimi → 9 bulgu: `completeLine` webhook kaybı (mail/webhook ayrı
