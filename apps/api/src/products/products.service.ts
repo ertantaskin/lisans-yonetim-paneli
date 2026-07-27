@@ -369,10 +369,13 @@ export class ProductsService {
     // AYRI sayar → aynı (site, ürün, varyasyonsuz) için İKİ eşleme eklenebilir (sessiz mükerrer,
     // resolveMapping "en eski"i seçer). advisory-lock + app-düzeyi ön-kontrol ile kapatılır
     // (D3 site-scoped upsert deseni; artık panel formu da güvenli). Kilit anahtarı normalize varyasyonu içerir.
+    // KRİTİK: advisory-lock anahtarı upsertSiteMapping (WP "Panel Eşlemesi" kutusu,
+    // /v1/site-mappings) ile BİREBİR AYNI olmalı → iki yazar aynı kilitte serialize olur. Farklı
+    // anahtar (ör. 'map:' önekli) kullanılsaydı eşzamanlı panel-formu + WP-kutu, NULL-varyasyonda
+    // (unique index NULL'ı ayrı sayar) çift-satır üretebilirdi (denetim MED bulgusu).
+    const lockKey = `${input.siteId}:${input.remoteProductId}:${variation ?? ''}`;
     return this.db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtext(${`map:${input.siteId}:${input.remoteProductId}:${variation ?? ''}`}))`,
-      );
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
       const existing = await tx
         .select({ id: siteProductMappings.id })
         .from(siteProductMappings)
@@ -389,17 +392,25 @@ export class ProductsService {
       if (existing.length) {
         throw new ConflictException('Bu site + mağaza ürün/varyasyon eşlemesi zaten kayıtlı');
       }
-      const [row] = await tx
-        .insert(siteProductMappings)
-        .values({
-          siteId: input.siteId,
-          productId: input.productId,
-          remoteProductId: input.remoteProductId,
-          remoteVariationId: variation,
-          bundleQty: input.bundleQty ?? 1,
-        })
-        .returning();
-      return row!;
+      try {
+        const [row] = await tx
+          .insert(siteProductMappings)
+          .values({
+            siteId: input.siteId,
+            productId: input.productId,
+            remoteProductId: input.remoteProductId,
+            remoteVariationId: variation,
+            bundleQty: input.bundleQty ?? 1,
+          })
+          .returning();
+        return row!;
+      } catch (err) {
+        // Varyasyonlu yarışta mappings_site_remote_uniq (23505) → ham 500 yerine anlamlı 409.
+        if (String(err).toLowerCase().includes('unique') || String(err).includes('23505')) {
+          throw new ConflictException('Bu site + mağaza ürün/varyasyon eşlemesi zaten kayıtlı');
+        }
+        throw err;
+      }
     });
   }
 

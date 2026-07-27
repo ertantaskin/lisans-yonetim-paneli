@@ -19,8 +19,15 @@ export const CreateOrderLine = z.object({
   // İstemciler varyasyonsuz üründe null gönderebilir — undefined/null ikisi de kabul.
   remoteVariationId: z.string().min(1).nullish(),
   /** Mağaza ürün adı (opsiyonel — eski eklenti göndermez). Panel eşleştirme doğrulaması +
-   *  "eşlenmemiş gelen ürünler" ekranı için saklar; teslimat mantığını ETKİLEMEZ. */
-  remoteName: z.string().max(255).nullish(),
+   *  "eşlenmemiş gelen ürünler" ekranı için saklar; teslimat mantığını ETKİLEMEZ.
+   *  KRİTİK: kritik-olmayan bu alan siparişi ASLA reddetmemeli → max() ile 400 atmak yerine
+   *  255'e KIRP (astral/emoji ad UTF-16 birim ≠ WP mb_substr kod-noktası; denetim LOW); hatalı
+   *  tip → null'a düş (.catch), sipariş yine teslim edilir. */
+  remoteName: z
+    .string()
+    .transform((s) => s.slice(0, 255))
+    .nullish()
+    .catch(null),
   qty: z.number().int().positive(),
   /** Ürün varsayılan politikasını sipariş bazında ezme (opsiyonel). */
   policyOverride: z.enum(['partial-auto', 'partial-approval', 'all-or-nothing']).optional(),
