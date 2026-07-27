@@ -5,6 +5,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { securityEvents, type SecurityEvent } from '../db/schema/securityEvents';
+import { sites } from '../db/schema/sites';
 
 export const SECURITY_QUEUE = 'security';
 
@@ -58,12 +59,28 @@ export class SecurityService implements OnModuleInit {
     );
   }
 
-  /** Güvenlik olaylarını (opsiyonel tür filtresi) en yeni önce döndürür. */
-  async listEvents(type?: string): Promise<SecurityEvent[]> {
+  /**
+   * Güvenlik olaylarını (opsiyonel tür filtresi) en yeni önce döndürür.
+   * sites LEFT JOIN ile `siteDomain` eklenir → admin tablosu anlamsız UUID yerine site
+   * alan adını gösterir (site silinmiş/olayın site'ı yoksa null; siteId FK olmadığından JOIN'i
+   * bozmaz). Sıralama/filtre değişmez.
+   */
+  async listEvents(type?: string): Promise<Array<SecurityEvent & { siteDomain: string | null }>> {
     const where = type ? eq(securityEvents.type, type) : undefined;
     return this.db
-      .select()
+      .select({
+        id: securityEvents.id,
+        type: securityEvents.type,
+        severity: securityEvents.severity,
+        siteId: securityEvents.siteId,
+        subject: securityEvents.subject,
+        detail: securityEvents.detail,
+        meta: securityEvents.meta,
+        createdAt: securityEvents.createdAt,
+        siteDomain: sites.domain,
+      })
       .from(securityEvents)
+      .leftJoin(sites, eq(sites.id, securityEvents.siteId))
       .where(where)
       .orderBy(desc(securityEvents.createdAt))
       .limit(500);

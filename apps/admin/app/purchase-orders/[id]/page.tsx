@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ClipboardList, Boxes, PackageCheck, CalendarClock, Building2, Coins } from 'lucide-react';
+import { ArrowLeft, ClipboardList, Boxes, PackageCheck, Tag } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatTile } from '@/components/ui/stat-tile';
+import { StatStrip } from '@/components/ui/stat-tile';
 import { Button } from '@/components/ui/button';
 import { POStatusBadge } from '@/components/purchase-orders-table';
 import { POReceiveForm, POUpdateForm } from '@/components/po-detail-forms';
@@ -73,28 +73,31 @@ export default async function PurchaseOrderDetailPage({
                 {po.supplierName}
               </h1>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">
-              <span className="font-mono text-xs text-foreground/70">{po.productSku}</span>{' '}
-              {po.productName}
-            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground">
+                <Tag className="size-3.5 text-muted-foreground" />
+                {po.productSku}
+              </span>
+              <span className="text-xs text-muted-foreground">{po.productName}</span>
+            </div>
           </div>
           <POStatusBadge status={po.status} className="mt-1" />
         </div>
       </div>
 
-      {/* Özet */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label="Teslim"
-          value={`${po.qtyReceived}/${po.qtyOrdered}`}
-          icon={PackageCheck}
-          tone={remaining === 0 ? 'success' : 'warning'}
-          hint={remaining === 0 ? 'tamamlandı' : `kalan ${remaining}`}
-        />
-        <StatTile label="Birim maliyet" value={fmtCost(po.unitCostCents, po.currency)} icon={Coins} tone="neutral" />
-        <StatTile label="ETA" value={fmtDate(po.eta)} icon={CalendarClock} tone="neutral" />
-        <StatTile label="Tedarikçi" value={po.supplierName} icon={Building2} tone="accent" />
-      </div>
+      {/* Özet — yalnız gereksiz olmayan metrik (teslim ilerlemesi); tedarikçi başlıkta,
+          ETA/birim maliyet aşağıdaki Emir Bilgileri'nde. */}
+      <StatStrip
+        items={[
+          {
+            icon: PackageCheck,
+            label: 'Teslim',
+            value: `${po.qtyReceived}/${po.qtyOrdered}`,
+            tone: remaining === 0 ? 'success' : 'warning',
+            hint: remaining === 0 ? 'tamamlandı' : `kalan ${remaining}`,
+          },
+        ]}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Teslim al */}
@@ -122,8 +125,12 @@ export default async function PurchaseOrderDetailPage({
               <dd className="tabular-nums text-foreground">{po.qtyOrdered}</dd>
               <dt className="text-muted-foreground">Teslim alınan</dt>
               <dd className="tabular-nums text-foreground">{po.qtyReceived}</dd>
+              <dt className="text-muted-foreground">Birim maliyet</dt>
+              <dd className="tabular-nums text-foreground">{fmtCost(po.unitCostCents, po.currency)}</dd>
               <dt className="text-muted-foreground">Sipariş tarihi</dt>
               <dd className="text-foreground">{fmtDate(po.orderedAt)}</dd>
+              <dt className="text-muted-foreground">ETA</dt>
+              <dd className="text-foreground">{fmtDate(po.eta)}</dd>
               <dt className="text-muted-foreground">Teslim tarihi</dt>
               <dd className="text-foreground">{fmtDate(po.receivedAt)}</dd>
               <dt className="text-muted-foreground">Oluşturma</dt>

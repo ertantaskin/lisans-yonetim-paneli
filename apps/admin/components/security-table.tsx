@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import type { SecurityEventRow } from '../app/security/queries';
 import { fmtDateTime } from '../lib/utils';
+import { securityTypeLabel, severityLabel } from '../lib/labels';
 import { scanSecurityAction, anonymizeCustomerAction } from '../app/security/actions';
 import { Badge, type BadgeProps } from './ui/badge';
 import { Button } from './ui/button';
@@ -26,50 +27,42 @@ import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
-// ── Tip → etiket/ikon (velocity/quota_exceeded/anomaly/blocklist) ────────────
-const TYPE_META: Record<
-  string,
-  { label: string; icon: React.ComponentType<{ className?: string }> }
-> = {
-  velocity: { label: 'hız (velocity)', icon: RadioTower },
-  quota_exceeded: { label: 'kota aşımı', icon: Gauge },
-  quota_review: { label: 'Kota incelemesi', icon: Gauge },
-  anomaly: { label: 'anomali', icon: Activity },
-  blocklist: { label: 'kara liste', icon: Ban },
+// ── Tip → ikon (etiket labels.ts securityTypeLabel'dan gelir — TEK KAYNAK) ────
+const TYPE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  velocity: RadioTower,
+  quota_exceeded: Gauge,
+  quota_review: Gauge,
+  anomaly: Activity,
+  blocklist: Ban,
 };
 
-// ── Severity → rozet varyant/etiket/ikon (info/warning/critical) ─────────────
+// ── Severity → rozet varyant + ikon (etiket labels.ts severityLabel'dan) ──────
 const SEVERITY_META: Record<
   string,
-  { variant: NonNullable<BadgeProps['variant']>; label: string; icon: React.ComponentType<{ className?: string }> }
+  { variant: NonNullable<BadgeProps['variant']>; icon: React.ComponentType<{ className?: string }> }
 > = {
-  info: { variant: 'outline', label: 'bilgi', icon: Info },
-  warning: { variant: 'warning', label: 'uyarı', icon: TriangleAlert },
-  critical: { variant: 'danger', label: 'kritik', icon: ShieldAlert },
+  info: { variant: 'outline', icon: Info },
+  warning: { variant: 'warning', icon: TriangleAlert },
+  critical: { variant: 'danger', icon: ShieldAlert },
 };
 
 function TypeCell({ type }: { type: string }) {
-  const meta = TYPE_META[type] ?? { label: type, icon: ShieldAlert };
-  const Icon = meta.icon;
+  const Icon = TYPE_ICON[type] ?? ShieldAlert;
   return (
     <span className="inline-flex items-center gap-1.5 text-foreground">
       <Icon className="size-3.5 text-muted-foreground" />
-      {meta.label}
+      {securityTypeLabel(type)}
     </span>
   );
 }
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const meta = SEVERITY_META[severity] ?? {
-    variant: 'neutral' as const,
-    label: severity,
-    icon: Info,
-  };
+  const meta = SEVERITY_META[severity] ?? { variant: 'neutral' as const, icon: Info };
   const Icon = meta.icon;
   return (
     <Badge variant={meta.variant}>
       <Icon />
-      {meta.label}
+      {severityLabel(severity)}
     </Badge>
   );
 }
@@ -110,14 +103,15 @@ const columns: ColumnDef<SecurityEventRow>[] = [
     enableSorting: false,
   },
   {
-    accessorKey: 'siteId',
+    accessorKey: 'siteDomain',
     meta: { title: 'Site' },
     header: 'Site',
-    cell: ({ row }) => (
-      <span className="font-mono text-xs text-muted-foreground">
-        {row.original.siteId ? row.original.siteId.slice(0, 8) : '—'}
-      </span>
-    ),
+    cell: ({ row }) => {
+      const { siteDomain, siteId } = row.original;
+      // Domain varsa alan adı; site'lı ama domain gelmediyse '—'; site'sız (global) olay → 'sistem'.
+      const label = siteDomain ?? (siteId ? '—' : 'sistem');
+      return <span className="text-xs text-muted-foreground">{label}</span>;
+    },
     enableSorting: false,
   },
   {
@@ -138,20 +132,20 @@ const facets: FacetConfig[] = [
     columnId: 'type',
     title: 'Tür',
     options: [
-      { label: 'Hız (velocity)', value: 'velocity', icon: RadioTower },
-      { label: 'Kota aşımı', value: 'quota_exceeded', icon: Gauge },
-      { label: 'Kota incelemesi', value: 'quota_review', icon: Gauge },
-      { label: 'Anomali', value: 'anomaly', icon: Activity },
-      { label: 'Kara liste', value: 'blocklist', icon: Ban },
+      { label: securityTypeLabel('velocity'), value: 'velocity', icon: RadioTower },
+      { label: securityTypeLabel('quota_exceeded'), value: 'quota_exceeded', icon: Gauge },
+      { label: securityTypeLabel('quota_review'), value: 'quota_review', icon: Gauge },
+      { label: securityTypeLabel('anomaly'), value: 'anomaly', icon: Activity },
+      { label: securityTypeLabel('blocklist'), value: 'blocklist', icon: Ban },
     ],
   },
   {
     columnId: 'severity',
     title: 'Önem',
     options: [
-      { label: 'Bilgi', value: 'info', icon: Info },
-      { label: 'Uyarı', value: 'warning', icon: TriangleAlert },
-      { label: 'Kritik', value: 'critical', icon: ShieldAlert },
+      { label: severityLabel('info'), value: 'info', icon: Info },
+      { label: severityLabel('warning'), value: 'warning', icon: TriangleAlert },
+      { label: severityLabel('critical'), value: 'critical', icon: ShieldAlert },
     ],
   },
 ];
@@ -196,7 +190,7 @@ function AnonymizeForm({
     setLocalError(null);
     if (
       !window.confirm(
-        `${trimmed} anonimleştirilsin mi?\n\nTEK YÖNLÜ işlem (§9/KVKK): bu e-postanın PII'ı tüm siparişler ve değişim taleplerinde maskelenir, müşteri kaydı silinir. Sipariş/atama bütünlüğü korunur. Geri alınamaz ve audit_log'a yazılır.`,
+        `${trimmed} anonimleştirilsin mi?\n\nTEK YÖNLÜ işlem (KVKK): bu e-postanın kişisel verisi tüm siparişler ve değişim taleplerinde maskelenir, müşteri kaydı silinir. Sipariş/atama bütünlüğü korunur. Geri alınamaz ve denetim kaydına yazılır.`,
       )
     )
       return;
@@ -215,11 +209,11 @@ function AnonymizeForm({
     <div className="rounded-xl border border-border bg-card p-5">
       <div className="mb-1 flex items-center gap-2">
         <UserX className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold text-foreground">KVKK anonimleştirme (§9)</h2>
+        <h2 className="text-sm font-semibold text-foreground">KVKK anonimleştirme</h2>
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
         Verilen e-postanın kişisel verisi tüm kayıtlarda maskelenir (tek yönlü). Sipariş/atama
-        bütünlüğü korunur; işlem audit_log'a düşer.
+        bütünlüğü korunur; işlem denetim kaydına düşer.
       </p>
       <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1.5">
@@ -317,7 +311,7 @@ export function SecurityTable({ events }: { events: SecurityEventRow[] }) {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Otomatik askıya alma yok — olaylar insan onayı için yüzeye çıkar (§15).
+          Otomatik askıya alma yok — olaylar insan onayı için yüzeye çıkar.
         </p>
         <ScanButton onError={handleError} onDone={handleScanDone} />
       </div>

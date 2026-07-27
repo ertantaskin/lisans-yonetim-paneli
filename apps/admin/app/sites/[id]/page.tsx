@@ -7,13 +7,12 @@ import {
   FlaskConical,
   Gauge,
   Globe,
-  Mail,
   Receipt,
   ShoppingCart,
   Users,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { StatTile } from '../../../components/ui/stat-tile';
+import { StatStrip } from '../../../components/ui/stat-tile';
 import { StatusBadge, Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
@@ -114,25 +113,20 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
         </div>
       </div>
 
-      {/* Özet istatistikler */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Sipariş" value={orderCount} icon={ShoppingCart} tone="neutral" />
-        <StatTile
-          label="Bugün / Kota"
-          value={quotaValue(todayOrderCount, site.salesDailyQuota)}
-          icon={Gauge}
-          tone={quotaTone}
-          hint={site.salesDailyQuota == null ? 'limitsiz' : 'günlük satış kotası'}
-        />
-        <StatTile label="Ürün Eşleme" value={mappingCount} icon={Boxes} tone="accent" />
-        <StatTile
-          label="Gönderen"
-          value={site.senderEmail ?? '—'}
-          icon={Mail}
-          tone="neutral"
-          hint={site.senderEmail ? undefined : 'varsayılan gönderen'}
-        />
-      </div>
+      {/* Özet istatistikler — tek satır şerit (Gönderen aşağıdaki Yapılandırma'da gösterilir) */}
+      <StatStrip
+        items={[
+          { icon: ShoppingCart, label: 'Sipariş', value: orderCount },
+          {
+            icon: Gauge,
+            label: 'Bugün / Kota',
+            value: quotaValue(todayOrderCount, site.salesDailyQuota),
+            tone: quotaTone === 'warning' ? 'warning' : undefined,
+            hint: site.salesDailyQuota == null ? 'limitsiz' : 'günlük satış kotası',
+          },
+          { icon: Boxes, label: 'Ürün Eşleme', value: mappingCount },
+        ]}
+      />
 
       {/* Yapılandırma */}
       <Card>

@@ -79,7 +79,7 @@ export function MaintenanceCard() {
           icon={<ShieldCheck />}
           label="Mutabakat denetimi"
           pendingLabel="Denetleniyor…"
-          desc="Sayaç ↔ atama tutarlılığını doğrular (düzeltmez, §16)."
+          desc="Sayaç ↔ atama tutarlılığını doğrular (düzeltmez)."
         />
       </CardContent>
     </Card>

@@ -147,3 +147,35 @@ const EVENT_TYPE: Record<string, string> = {
   review_rejected: 'İnceleme reddedildi',
 };
 export const eventTypeLabel = (t: string) => lookup(EVENT_TYPE, t);
+
+// ── Güvenlik olayı tipi ──────────────────────────────────────────────────────
+// Anahtarlar GERÇEK `security_events.type` değerleridir (kaynak: apps/api/src/security/
+// security.service.ts — velocity/anomaly/quota_exceeded/quota_review; blocklist şemada
+// belgeli rezerve tür). Bilinmeyen anahtar → ham değer. English-in-parens YOK.
+const SECURITY_TYPE: Record<string, string> = {
+  velocity: 'Anormal hız',
+  quota_exceeded: 'Kota aşımı',
+  quota_review: 'Kota incelemesi',
+  anomaly: 'Anomali',
+  blocklist: 'Kara liste',
+};
+export const securityTypeLabel = (t: string) => lookup(SECURITY_TYPE, t);
+
+// ── Önem seviyesi (güvenlik + bildirim ortak: info/warning/critical) ──────────
+const SEVERITY: Record<string, string> = {
+  info: 'Bilgi',
+  warning: 'Uyarı',
+  critical: 'Kritik',
+};
+export const severityLabel = (s: string) => lookup(SEVERITY, s);
+
+// ── Bildirim türü ────────────────────────────────────────────────────────────
+// Anahtarlar GERÇEK `notifications.type` değerleridir (kaynak: low-stock/daily-digest/
+// reconcile servisleri). Bilinmeyen anahtar → ham değer.
+const NOTIFICATION_TYPE: Record<string, string> = {
+  low_stock: 'Düşük stok',
+  digest_alert: 'Günlük özet uyarısı',
+  reconcile_violation: 'Mutabakat ihlali',
+  quota_review: 'Kota incelemesi',
+};
+export const notificationTypeLabel = (t: string) => lookup(NOTIFICATION_TYPE, t);

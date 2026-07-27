@@ -1,13 +1,20 @@
 'use client';
 import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Ban, CheckCircle2, Globe, TriangleAlert, X } from 'lucide-react';
+import { Ban, CheckCircle2, Globe, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
 import type { ReviewRow } from '../app/review/queries';
 import { fmtDateTime } from '../lib/utils';
 import { rejectAction, releaseAction } from '../app/review/actions';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Label, Textarea } from './ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 
@@ -89,7 +96,8 @@ const baseColumns: ColumnDef<ReviewRow>[] = [
   },
 ];
 
-/** Satır aksiyonları — Onayla (release, confirm'li) / Reddet (gerekçe modalı). */
+/** Satır aksiyonları — Onayla (release, confirm'li) / Reddet (gerekçe modalı).
+ *  support-table ile tutarlı: kompakt MoreHorizontal (icon-sm) dropdown. */
 function ReviewRowActions({
   row,
   onReject,
@@ -115,21 +123,34 @@ function ReviewRowActions({
   };
 
   return (
-    <div className="flex justify-end gap-1.5">
-      <Button variant="outline" size="sm" onClick={approve} disabled={pending}>
-        <CheckCircle2 />
-        {pending ? 'İşleniyor…' : 'Onayla'}
-      </Button>
-      <Button
-        variant="danger-outline"
-        size="sm"
-        onClick={() => onReject(row)}
-        disabled={pending}
-      >
-        <Ban />
-        Reddet
-      </Button>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          disabled={pending}
+          title="Aksiyonlar"
+          aria-label={`${row.remoteOrderId} siparişi aksiyonları`}
+        >
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={approve} disabled={pending}>
+          <CheckCircle2 />
+          {pending ? 'İşleniyor…' : 'Onayla'}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => onReject(row)}
+          disabled={pending}
+          className="text-destructive focus:text-destructive"
+        >
+          <Ban />
+          Reddet
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -237,7 +258,9 @@ export function ReviewTable({ items }: { items: ReviewRow[] }) {
         id: 'actions',
         header: () => <span className="sr-only">Aksiyonlar</span>,
         cell: ({ row }) => (
-          <ReviewRowActions row={row.original} onReject={setRejectRow} onError={handleError} />
+          <div className="flex justify-end">
+            <ReviewRowActions row={row.original} onReject={setRejectRow} onError={handleError} />
+          </div>
         ),
         enableSorting: false,
         enableHiding: false,

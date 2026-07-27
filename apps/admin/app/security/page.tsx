@@ -20,7 +20,7 @@ export default async function SecurityPage() {
       <PageHeader
         icon={ShieldAlert}
         title="Güvenlik"
-        description="Velocity/kota/anomali olayları — insan onaylar (§15). Otomatik askıya alma yok."
+        description="Anormal hız, kota ve anomali olayları — insan onaylar. Otomatik askıya alma yok."
       />
       {error ? (
         <Card className="p-6">

@@ -13,7 +13,7 @@ import {
   Layers,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { StatTile } from '../../../components/ui/stat-tile';
+import { StatStrip } from '../../../components/ui/stat-tile';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
@@ -26,6 +26,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { ApiError } from '../../../lib/api';
+import { supplyStatusLabel } from '../../../lib/labels';
 import { getSupplierScorecard, type SupplierScorecard } from '../queries';
 
 export const dynamic = 'force-dynamic';
@@ -66,7 +67,7 @@ const BATCH_STATUS: Record<string, { variant: 'success' | 'warning' | 'danger'; 
 };
 
 function BatchStatusBadge({ status }: { status: string }) {
-  const meta = BATCH_STATUS[status] ?? { variant: 'warning' as const, label: status };
+  const meta = BATCH_STATUS[status] ?? { variant: 'warning' as const, label: supplyStatusLabel(status) };
   return <Badge variant={meta.variant}>{meta.label}</Badge>;
 }
 
@@ -142,58 +143,51 @@ export default async function SupplierScorecardPage({
         )}
       </div>
 
-      {/* Özet karne istatistikleri */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Satın Alma Emri" value={data.poCount} icon={ClipboardList} tone="neutral" />
-        <StatTile
-          label="Açık Emir"
-          value={data.openPoCount}
-          icon={Package}
-          tone={data.openPoCount > 0 ? 'warning' : 'neutral'}
+      {/* Özet karne istatistikleri — tek satır şerit + para birimi başına maliyet */}
+      <div className="space-y-3">
+        <StatStrip
+          items={[
+            { icon: ClipboardList, label: 'Satın Alma Emri', value: data.poCount },
+            {
+              icon: Package,
+              label: 'Açık Emir',
+              value: data.openPoCount,
+              tone: data.openPoCount > 0 ? 'warning' : undefined,
+            },
+            { icon: Boxes, label: 'Sipariş Edilen', value: data.totalOrdered },
+            { icon: PackageCheck, label: 'Teslim Alınan', value: data.totalReceived },
+            {
+              icon: Timer,
+              label: 'Ort. Tedarik',
+              value: data.avgLeadDays == null ? '—' : `${data.avgLeadDays} gün`,
+              hint: data.avgLeadDays == null ? 'veri yok' : undefined,
+            },
+            {
+              icon: RotateCcw,
+              label: 'Geri-Çekilme',
+              value: ratePct(data.recallRate),
+              tone: highRecall ? 'danger' : undefined,
+              hint: highRecall ? 'kalite işareti' : undefined,
+            },
+            { icon: Layers, label: 'Parti', value: batches.length },
+          ]}
         />
-        <StatTile label="Sipariş Edilen" value={data.totalOrdered} icon={Boxes} tone="neutral" />
-        <StatTile
-          label="Teslim Alınan"
-          value={data.totalReceived}
-          icon={PackageCheck}
-          tone="accent"
-        />
-        <StatTile
-          label="Ort. Tedarik Süresi"
-          value={data.avgLeadDays == null ? '—' : `${data.avgLeadDays} gün`}
-          icon={Timer}
-          tone="neutral"
-          hint={data.avgLeadDays == null ? 'veri yok' : undefined}
-        />
-        <StatTile
-          label="Geri-Çekilme Oranı"
-          value={ratePct(data.recallRate)}
-          icon={RotateCcw}
-          tone={highRecall ? 'danger' : 'neutral'}
-          hint={highRecall ? 'kalite işareti' : undefined}
-        />
-        <StatTile
-          label="Toplam Maliyet"
-          value={
-            data.totalCostCents.length === 0 ? (
-              '—'
-            ) : (
-              <div className="space-y-0.5">
-                {data.totalCostCents.map((c) => (
-                  <div key={c.currency || 'unknown'}>{formatCost(c.cents, c.currency)}</div>
-                ))}
-              </div>
-            )
-          }
-          icon={Wallet}
-          tone="neutral"
-          hint={
-            data.totalCostCents.length > 1
-              ? 'para birimi başına ayrı'
-              : 'teslim alınan × birim'
-          }
-        />
-        <StatTile label="Parti" value={batches.length} icon={Layers} tone="neutral" />
+        {data.totalCostCents.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm">
+            <span className="inline-flex items-center gap-1.5">
+              <Wallet className="size-4 text-muted-foreground" />
+              <span className="text-muted-foreground">Toplam Maliyet</span>
+            </span>
+            {data.totalCostCents.map((c) => (
+              <strong key={c.currency || 'unknown'} className="tabular-nums text-foreground">
+                {formatCost(c.cents, c.currency)}
+              </strong>
+            ))}
+            <span className="text-xs text-muted-foreground">
+              {data.totalCostCents.length > 1 ? 'para birimi başına ayrı' : 'teslim alınan × birim'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Partiler */}

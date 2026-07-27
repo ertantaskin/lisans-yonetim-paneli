@@ -10,6 +10,8 @@ export interface SecurityEventRow {
   type: string;
   severity: string;
   siteId: string | null;
+  /** Olayın site alan adı (API sites LEFT JOIN'i döndürür; site yoksa/silinmişse null). */
+  siteDomain: string | null;
   subject: string | null;
   detail: string;
   meta: Record<string, unknown> | null;

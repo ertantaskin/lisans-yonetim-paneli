@@ -49,3 +49,51 @@ export function StatTile({
     </div>
   );
 }
+
+// ── İnce özet şeridi (StatStrip) ─────────────────────────────────────────────
+// Büyük StatTile ızgaralarının yer-tasarruflu alternatifi: tek satırda ikon +
+// etiket + değer. Sipariş detayındaki özet şeridiyle aynı görsel dil (§17) —
+// bir sayfada 3+ metriği başlık altında yığmak yerine tek bar'da göster.
+type StripTone = 'default' | 'success' | 'warning' | 'danger';
+
+const stripToneText: Record<StripTone, string> = {
+  default: 'text-foreground',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+};
+
+export interface StatStripItem {
+  icon?: LucideIcon;
+  label: string;
+  value: React.ReactNode;
+  /** Değerden sonra küçük gri ek (ör. "adet", "TL"). */
+  hint?: string;
+  tone?: StripTone;
+}
+
+export function StatStrip({ items, className }: { items: StatStripItem[]; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm',
+        className,
+      )}
+    >
+      {items.map((it, i) => {
+        const Icon = it.icon;
+        const toneCls = it.tone ? stripToneText[it.tone] : 'text-foreground';
+        return (
+          <span key={i} className="inline-flex items-center gap-1.5">
+            {Icon && (
+              <Icon className={cn('size-4', it.tone ? stripToneText[it.tone] : 'text-muted-foreground')} />
+            )}
+            <span className="text-muted-foreground">{it.label}</span>
+            <strong className={cn('tabular-nums', toneCls)}>{it.value}</strong>
+            {it.hint && <span className="text-xs text-muted-foreground">{it.hint}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}

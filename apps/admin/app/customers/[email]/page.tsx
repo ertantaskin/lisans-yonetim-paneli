@@ -10,7 +10,7 @@ import {
   Tags,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { StatTile } from '../../../components/ui/stat-tile';
+import { StatStrip } from '../../../components/ui/stat-tile';
 import { StatusBadge, Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
@@ -105,22 +105,26 @@ export default async function CustomerDetailPage({
         </div>
       </div>
 
-      {/* Özet istatistikler */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Sipariş" value={stats.orderCount} icon={ShoppingCart} tone="neutral" />
-        <StatTile label="Atama" value={stats.assignmentCount} icon={KeyRound} tone="accent" />
-        <StatTile label="Değişim" value={stats.replacementCount} icon={RefreshCw} tone="neutral" />
-        <StatTile
-          label="Değişim Oranı"
-          value={ratePct(stats.replacementRate)}
-          icon={ShieldAlert}
-          tone={abusive ? 'warning' : 'neutral'}
-          hint={abusive ? 'suistimal işareti' : undefined}
+      {/* Özet istatistikler + advisory risk skoru (§8/§9) tek satırda */}
+      <div className="flex flex-wrap items-center gap-3">
+        <StatStrip
+          className="flex-1"
+          items={[
+            { icon: ShoppingCart, label: 'Sipariş', value: stats.orderCount },
+            { icon: KeyRound, label: 'Atama', value: stats.assignmentCount },
+            { icon: RefreshCw, label: 'Değişim', value: stats.replacementCount },
+            {
+              icon: ShieldAlert,
+              label: 'Değişim Oranı',
+              value: ratePct(stats.replacementRate),
+              tone: abusive ? 'warning' : undefined,
+              hint: abusive ? 'suistimal işareti' : undefined,
+            },
+          ]}
         />
+        {/* Advisory risk skoru — salt bilgi, otomatik eylem yok */}
+        <RiskBadge email={data.email} />
       </div>
-
-      {/* Advisory risk skoru (§8/§9) — salt bilgi, otomatik eylem yok */}
-      <RiskBadge email={data.email} />
 
       {/* Etiket/Not düzenleme */}
       <Card>

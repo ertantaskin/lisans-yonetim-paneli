@@ -156,11 +156,12 @@ export default async function DeploymentsPage() {
               </TableHeader>
               <TableBody>
                 {rows.map((r) => {
-                  const s = DEPLOY_STATUS[r.status] ?? { variant: 'neutral' as const, label: r.status };
+                  // Savunmalı: bilinmeyen enum/slug kullanıcıya ham sızmasın → nötr Türkçe fallback.
+                  const s = DEPLOY_STATUS[r.status] ?? { variant: 'neutral' as const, label: 'bilinmiyor' };
                   return (
                     <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap font-medium text-foreground">
-                        {TARGET_LABEL[r.target] ?? r.target}
+                        {TARGET_LABEL[r.target] ?? 'bilinmiyor'}
                       </TableCell>
                       <TableCell>
                         <Badge variant={s.variant}>{s.label}</Badge>
@@ -169,7 +170,7 @@ export default async function DeploymentsPage() {
                         ) : null}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">
-                        {r.requestedBy}
+                        {r.requestedBy || '—'}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                         {r.gitSha ? r.gitSha.slice(0, 10) : '—'}

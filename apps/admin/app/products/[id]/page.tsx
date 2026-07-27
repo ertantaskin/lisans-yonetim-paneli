@@ -18,7 +18,7 @@ import {
   Pencil,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
-import { StatTile } from '../../../components/ui/stat-tile';
+import { StatStrip } from '../../../components/ui/stat-tile';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
@@ -130,9 +130,11 @@ export default async function ProductDetailPage({
             </span>
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">{product.name}</h1>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                <span className="font-mono text-xs">{product.sku}</span>
-                <span aria-hidden>·</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground">
+                  <Package className="size-3.5 text-muted-foreground" />
+                  {product.sku}
+                </span>
                 <span>{productTypeSummary(product)}</span>
                 <span aria-hidden>·</span>
                 <span>{fulfillmentPolicyLabel(product.fulfillmentPolicy)}</span>
@@ -159,233 +161,242 @@ export default async function ProductDetailPage({
         </div>
       </div>
 
-      {/* Stok kırılımı */}
-      <div className="space-y-3">
+      {/* Stok durumu — tek satırlık ince özet şeridi (StatTile ızgarası yerine) */}
+      <div className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Boxes className="size-4 text-muted-foreground" aria-hidden /> Stok durumu
         </h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <StatTile
-            label={stockStateLabel('available')}
-            value={stock.available}
-            icon={Boxes}
-            tone={stock.available > 0 ? 'success' : 'danger'}
-            hint="kalan kapasite"
-          />
-          <StatTile label={stockStateLabel('assigned')} value={stock.assigned} icon={KeyRound} tone="accent" />
-          <StatTile label={stockStateLabel('revoked')} value={stock.revoked} icon={Ban} tone="neutral" />
-          <StatTile label={stockStateLabel('expired')} value={stock.expired} icon={Clock} tone="neutral" />
-          <StatTile label={stockStateLabel('voided')} value={stock.voided} icon={ShieldAlert} tone="neutral" />
-        </div>
+        <StatStrip
+          items={[
+            {
+              icon: Boxes,
+              label: stockStateLabel('available'),
+              value: stock.available,
+              hint: 'kalan kapasite',
+              tone: stock.available === 0 ? 'danger' : lowStock ? 'warning' : 'success',
+            },
+            { icon: KeyRound, label: stockStateLabel('assigned'), value: stock.assigned },
+            { icon: Ban, label: stockStateLabel('revoked'), value: stock.revoked },
+            { icon: Clock, label: stockStateLabel('expired'), value: stock.expired },
+            { icon: ShieldAlert, label: stockStateLabel('voided'), value: stock.voided },
+          ]}
+        />
       </div>
 
-      {/* Satış hızı */}
-      <div className="space-y-3">
+      {/* Satış & tükenme — ince özet şeridi */}
+      <div className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <TrendingDown className="size-4 text-muted-foreground" aria-hidden /> Satış & tükenme
         </h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="7 günlük satış" value={velocity.sold7d} icon={TrendingUp} tone="neutral" />
-          <StatTile label="30 günlük satış" value={velocity.sold30d} icon={TrendingUp} tone="neutral" />
-          <StatTile
-            label="Günlük ortalama"
-            value={velocity.dailyRate}
-            icon={TrendingUp}
-            tone="neutral"
-            hint="son 30 gün / 30"
-          />
-          <StatTile
-            label="Tahmini tükenme"
-            value={velocity.daysRemaining != null ? `${velocity.daysRemaining} gün` : '—'}
-          icon={Clock}
-          tone={
-            velocity.daysRemaining != null && velocity.daysRemaining <= 7 ? 'warning' : 'neutral'
-          }
-          hint={velocity.daysRemaining == null ? 'tahmin edilemez' : undefined}
+        <StatStrip
+          items={[
+            { icon: TrendingUp, label: '7 günlük satış', value: velocity.sold7d },
+            { icon: TrendingUp, label: '30 günlük satış', value: velocity.sold30d },
+            {
+              icon: TrendingUp,
+              label: 'Günlük ortalama',
+              value: velocity.dailyRate,
+              hint: 'son 30 gün / 30',
+            },
+            {
+              icon: Clock,
+              label: 'Tahmini tükenme',
+              value: velocity.daysRemaining != null ? `${velocity.daysRemaining} gün` : '—',
+              tone:
+                velocity.daysRemaining != null && velocity.daysRemaining <= 7 ? 'warning' : 'default',
+              hint: velocity.daysRemaining == null ? 'tahmin edilemez' : undefined,
+            },
+          ]}
         />
+      </div>
+
+      {/* ── İki kolon: sol (geniş) ana çalışma; sağ (dar) referans + geçmiş ── */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* SOL (geniş) — ana çalışma alanı: içe aktar + eşlemeler */}
+        <div className="space-y-4 lg:col-span-2">
+          {/* Key/Stok import — ürün-merkezli (ürün SABİT, dropdown yok). ?batchId= ön-doldurur. */}
+          <Card>
+            <CardHeader>
+              <CardTitle icon={Upload}>Key / Stok İçe Aktar</CardTitle>
+              <CardDescription>
+                Bu ürüne yeni key/hesap ekleyin. &apos;Kuru Çalıştır&apos; ile önce güvenle doğrulayın.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ImportStockForm
+                fixedProductId={product.id}
+                products={[{ ...product, availableStock: stock.available }]}
+                defaultBatchId={batchId}
+              />
+            </CardContent>
+          </Card>
+
+          {/* Site eşlemeleri — yalnız bu ürünün eşlemeleri (Woo → panel), oluştur + aç-kapa */}
+          <Card>
+            <CardHeader>
+              <CardTitle icon={Link2}>Site Eşlemeleri</CardTitle>
+              <CardDescription>
+                Bu ürünü WooCommerce ürün/varyasyonlarına bağlayın. Sipariş bu eşleme ile teslim edilir.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MappingsManager productId={product.id} sites={sites} mappings={data.mappings} />
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* SAĞ (dar) rail — referans: partiler + satın alma emirleri + stok düzeltme (form + geçmişi) */}
+        <div className="space-y-4">
+          {/* Partiler */}
+          <Card>
+            <CardHeader>
+              <CardTitle icon={Package}>Partiler</CardTitle>
+              <CardDescription>
+                Tedarikçiden gelen stok partileri (geri çekme bu partiler üzerinden yapılır).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className={batches.length === 0 ? '' : 'overflow-x-auto p-0'}>
+              {batches.length === 0 ? (
+                <EmptyState
+                  icon={Package}
+                  title="Parti yok"
+                  description="Bu ürün için henüz tedarik partisi kaydı yok."
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Etiket</TableHead>
+                      <TableHead>Durum</TableHead>
+                      <TableHead className="text-right">Alınan</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {batches.map((b) => (
+                      <TableRow key={b.id}>
+                        <TableCell className="font-medium text-foreground">{b.label}</TableCell>
+                        <TableCell>
+                          <StateBadge status={b.status} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {b.qtyReceived}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Satın alma emirleri */}
+          <Card>
+            <CardHeader>
+              <CardTitle icon={Truck}>Satın Alma Emirleri</CardTitle>
+              <CardDescription>Bu ürün için açık/kapalı tedarik siparişleri.</CardDescription>
+            </CardHeader>
+            <CardContent className={purchaseOrders.length === 0 ? '' : 'overflow-x-auto p-0'}>
+              {purchaseOrders.length === 0 ? (
+                <EmptyState
+                  icon={Truck}
+                  title="Satın alma emri yok"
+                  description="Açık satın alma emri yok."
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Durum</TableHead>
+                      <TableHead className="text-right">Sipariş</TableHead>
+                      <TableHead className="text-right">Alınan</TableHead>
+                      <TableHead>ETA</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {purchaseOrders.map((po) => (
+                      <TableRow key={po.id}>
+                        <TableCell>
+                          <StateBadge status={po.status} />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {po.qtyOrdered}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {po.qtyReceived}
+                        </TableCell>
+                        <TableCell className="tabular-nums text-muted-foreground">
+                          {po.eta
+                            ? new Date(po.eta).toLocaleDateString('tr-TR', { dateStyle: 'short' })
+                            : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Stok düzeltme ekle (manuel, sebepli — audit'e düşer) + hemen altında geçmişi */}
+          <Card>
+            <CardHeader>
+              <CardTitle icon={Wrench}>Stok Düzeltme Ekle</CardTitle>
+              <CardDescription>
+                Manuel stok düzeltmesi (void/hasar/geri çekme) — sebep zorunlu, denetime yazılır.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <StockAdjustForm productId={product.id} />
+            </CardContent>
+          </Card>
+
+          {/* Stok düzeltmeleri (geçmiş — form ile eşli) */}
+          <Card>
+            <CardHeader>
+              <CardTitle icon={ClipboardList}>Stok Düzeltmeleri</CardTitle>
+              <CardDescription>Geçmiş manuel düzeltme kayıtları.</CardDescription>
+            </CardHeader>
+            <CardContent className={adjustments.length === 0 ? '' : 'overflow-x-auto p-0'}>
+              {adjustments.length === 0 ? (
+                <EmptyState
+                  icon={ClipboardList}
+                  title="Düzeltme kaydı yok"
+                  description="Henüz manuel düzeltme yapılmadı."
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Aksiyon</TableHead>
+                      <TableHead className="text-right">Adet</TableHead>
+                      <TableHead>Sebep</TableHead>
+                      <TableHead>Tarih</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {adjustments.map((a) => (
+                      <TableRow key={a.id} className="align-top">
+                        <TableCell>
+                          <Badge variant="outline">{adjustmentActionLabel(a.action)}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {a.qty}
+                        </TableCell>
+                        <TableCell className="text-foreground">
+                          <span className="line-clamp-2">{a.reason}</span>
+                        </TableCell>
+                        <TableCell className="tabular-nums text-muted-foreground">
+                          {dtFmt(a.createdAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
-
-      {/* Key/Stok import — ürün-merkezli (ürün SABİT, dropdown yok). ?batchId= ön-doldurur. */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={Upload}>Key / Stok İçe Aktar</CardTitle>
-          <CardDescription>
-            Bu ürüne yeni key/hesap ekleyin. &apos;Kuru Çalıştır&apos; ile önce güvenle doğrulayın.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ImportStockForm
-            fixedProductId={product.id}
-            products={[{ ...product, availableStock: stock.available }]}
-            defaultBatchId={batchId}
-          />
-        </CardContent>
-      </Card>
-
-      {/* Site eşlemeleri — yalnız bu ürünün eşlemeleri (Woo → panel), oluştur + aç-kapa */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={Link2}>Site Eşlemeleri</CardTitle>
-          <CardDescription>
-            Bu ürünü WooCommerce ürün/varyasyonlarına bağlayın. Sipariş bu eşleme ile teslim edilir.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <MappingsManager productId={product.id} sites={sites} mappings={data.mappings} />
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Partiler */}
-        <Card>
-          <CardHeader>
-            <CardTitle icon={Package}>Partiler</CardTitle>
-            <CardDescription>
-              Tedarikçiden gelen stok partileri (geri çekme bu partiler üzerinden yapılır).
-            </CardDescription>
-          </CardHeader>
-          <CardContent className={batches.length === 0 ? '' : 'p-0'}>
-            {batches.length === 0 ? (
-              <EmptyState
-                icon={Package}
-                title="Parti yok"
-                description="Bu ürün için henüz tedarik partisi kaydı yok."
-              />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Etiket</TableHead>
-                    <TableHead>Durum</TableHead>
-                    <TableHead className="text-right">Alınan</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {batches.map((b) => (
-                    <TableRow key={b.id}>
-                      <TableCell className="font-medium text-foreground">{b.label}</TableCell>
-                      <TableCell>
-                        <StateBadge status={b.status} />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {b.qtyReceived}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Satın alma emirleri */}
-        <Card>
-          <CardHeader>
-            <CardTitle icon={Truck}>Satın Alma Emirleri</CardTitle>
-            <CardDescription>Bu ürün için açık/kapalı tedarik siparişleri.</CardDescription>
-          </CardHeader>
-          <CardContent className={purchaseOrders.length === 0 ? '' : 'p-0'}>
-            {purchaseOrders.length === 0 ? (
-              <EmptyState
-                icon={Truck}
-                title="Satın alma emri yok"
-                description="Açık satın alma emri yok."
-              />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Durum</TableHead>
-                    <TableHead className="text-right">Sipariş</TableHead>
-                    <TableHead className="text-right">Alınan</TableHead>
-                    <TableHead>ETA</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {purchaseOrders.map((po) => (
-                    <TableRow key={po.id}>
-                      <TableCell>
-                        <StateBadge status={po.status} />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {po.qtyOrdered}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {po.qtyReceived}
-                      </TableCell>
-                      <TableCell className="tabular-nums text-muted-foreground">
-                        {po.eta
-                          ? new Date(po.eta).toLocaleDateString('tr-TR', { dateStyle: 'short' })
-                          : '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Stok düzeltme ekle (manuel, sebepli — audit'e düşer) */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={Wrench}>Stok Düzeltme Ekle</CardTitle>
-          <CardDescription>
-            Manuel stok düzeltmesi (void/hasar/geri çekme) — sebep zorunlu, denetime yazılır.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <StockAdjustForm productId={product.id} />
-        </CardContent>
-      </Card>
-
-      {/* Stok düzeltmeleri */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={Wrench}>Stok Düzeltmeleri</CardTitle>
-          <CardDescription>Geçmiş manuel düzeltme kayıtları.</CardDescription>
-        </CardHeader>
-        <CardContent className={adjustments.length === 0 ? '' : 'p-0'}>
-          {adjustments.length === 0 ? (
-            <EmptyState
-              icon={ClipboardList}
-              title="Düzeltme kaydı yok"
-              description="Henüz manuel düzeltme yapılmadı."
-            />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Aksiyon</TableHead>
-                  <TableHead className="text-right">Adet</TableHead>
-                  <TableHead>Sebep</TableHead>
-                  <TableHead>Tarih</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {adjustments.map((a) => (
-                  <TableRow key={a.id} className="align-top">
-                    <TableCell>
-                      <Badge variant="outline">{adjustmentActionLabel(a.action)}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {a.qty}
-                    </TableCell>
-                    <TableCell className="max-w-md text-foreground">
-                      <span className="line-clamp-2">{a.reason}</span>
-                    </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">
-                      {dtFmt(a.createdAt)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }
