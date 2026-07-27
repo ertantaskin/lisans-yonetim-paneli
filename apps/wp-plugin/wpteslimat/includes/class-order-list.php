@@ -137,40 +137,43 @@ class Wpteslimat_Order_List {
         if (empty($ids)) return $redirect;
 
         $remote_ids = array_map('strval', $ids);
-        $res = Wpteslimat_Panel_Client::post('/v1/orders/bulk-status', [
-            'remoteOrderIds' => $remote_ids,
-        ]);
 
+        // (#11) Panel bulk-status şeması TEK istekte en fazla 100 remoteOrderId kabul eder;
+        // >100 seçimde tüm istek 400 döner ve HİÇBİR sipariş güncellenmez. 100'lük parçalara böl,
+        // her parçayı ayrı çağır, güncellenen sayısını birleştir (kolon/held-clear mantığı korunur).
         $updated = 0;
-        $ok = isset($res['code']) && $res['code'] >= 200 && $res['code'] < 300;
-        if ($ok && !empty($res['body']) && is_array($res['body'])) {
+        foreach (array_chunk($remote_ids, 100) as $chunk) {
+            $res = Wpteslimat_Panel_Client::post('/v1/orders/bulk-status', [
+                'remoteOrderIds' => $chunk,
+            ]);
+            $ok = isset($res['code']) && $res['code'] >= 200 && $res['code'] < 300;
+            if (!$ok || empty($res['body']) || !is_array($res['body'])) continue;
             // Yanıt düz dizi [{...}] ya da { results: [{...}] } olabilir — ikisini de karşıla.
             $rows = (isset($res['body']['results']) && is_array($res['body']['results']))
                 ? $res['body']['results']
                 : $res['body'];
-            if (is_array($rows)) {
-                foreach ($rows as $row) {
-                    if (!is_array($row) || empty($row['remoteOrderId'])) continue;
-                    $oid = absint($row['remoteOrderId']);
-                    $order = $oid ? wc_get_order($oid) : null;
-                    if (!$order) continue;
-                    $order->update_meta_data('_wpteslimat_panel_status',
-                        isset($row['status']) ? sanitize_text_field((string) $row['status']) : '');
-                    $order->update_meta_data('_wpteslimat_panel_fulfilled',
-                        isset($row['fulfilled']) ? (int) $row['fulfilled'] : 0);
-                    $order->update_meta_data('_wpteslimat_panel_total',
-                        isset($row['total']) ? (int) $row['total'] : 0);
-                    // (§8 held staleness) Panel YETKİLİ `held` bayrağını bulk-status'ta da döndürür.
-                    // Sipariş artık incelemede değilse bayat _wpteslimat_held_for_review işaretini temizle
-                    // — toplu yenileme, incelemeden çıkmış (release/reject) siparişin rozetini de düşürsün
-                    // (aksi halde meta, sipariş tek tek açılana dek 'yes' kalırdı; rejectHeld webhook atmaz).
-                    if (array_key_exists('held', $row) && !$row['held']
-                        && $order->get_meta('_wpteslimat_held_for_review') === 'yes') {
-                        $order->delete_meta_data('_wpteslimat_held_for_review');
-                    }
-                    $order->save();
-                    $updated++;
+            if (!is_array($rows)) continue;
+            foreach ($rows as $row) {
+                if (!is_array($row) || empty($row['remoteOrderId'])) continue;
+                $oid = absint($row['remoteOrderId']);
+                $order = $oid ? wc_get_order($oid) : null;
+                if (!$order) continue;
+                $order->update_meta_data('_wpteslimat_panel_status',
+                    isset($row['status']) ? sanitize_text_field((string) $row['status']) : '');
+                $order->update_meta_data('_wpteslimat_panel_fulfilled',
+                    isset($row['fulfilled']) ? (int) $row['fulfilled'] : 0);
+                $order->update_meta_data('_wpteslimat_panel_total',
+                    isset($row['total']) ? (int) $row['total'] : 0);
+                // (§8 held staleness) Panel YETKİLİ `held` bayrağını bulk-status'ta da döndürür.
+                // Sipariş artık incelemede değilse bayat _wpteslimat_held_for_review işaretini temizle
+                // — toplu yenileme, incelemeden çıkmış (release/reject) siparişin rozetini de düşürsün
+                // (aksi halde meta, sipariş tek tek açılana dek 'yes' kalırdı; rejectHeld webhook atmaz).
+                if (array_key_exists('held', $row) && !$row['held']
+                    && $order->get_meta('_wpteslimat_held_for_review') === 'yes') {
+                    $order->delete_meta_data('_wpteslimat_held_for_review');
                 }
+                $order->save();
+                $updated++;
             }
         }
 

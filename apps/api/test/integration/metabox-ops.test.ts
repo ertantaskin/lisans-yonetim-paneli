@@ -130,7 +130,7 @@ describe('§7 meta box site-scoped operasyonlar', () => {
       admin.siteReveal(siteRow(siteB), s.order.remoteOrderId, s.assignmentId, actorB),
     ).rejects.toThrow();
     await expect(
-      admin.siteBonus(siteRow(siteB), s.order.remoteOrderId, s.assignmentId, actorB),
+      admin.siteBonus(siteRow(siteB), s.order.remoteOrderId, s.order.remoteLineId, actorB),
     ).rejects.toThrow();
     await expect(
       admin.siteSuspend(siteRow(siteB), s.order.remoteOrderId, s.assignmentId, true, actorB),
@@ -207,7 +207,12 @@ describe('§7 meta box site-scoped operasyonlar', () => {
     const s = await seed();
     const actor = `wp:operator@${siteA.domain}`;
 
-    const res = await admin.siteBonus(siteRow(siteA), s.order.remoteOrderId, s.assignmentId, actor);
+    const res = await admin.siteBonus(
+      siteRow(siteA),
+      s.order.remoteOrderId,
+      s.order.remoteLineId,
+      actor,
+    );
     expect(res.added).toBe(1);
     // Bonus AYRI bir satıra gitti — orijinal satır id'si DEĞİL.
     expect(res.lineId).not.toBe(s.order.lineId);
@@ -235,7 +240,8 @@ describe('§7 meta box site-scoped operasyonlar', () => {
       .from(schema.orderLines)
       .where(eq(schema.orderLines.id, res.lineId))
       .limit(1);
-    expect(bonusLine!.remoteLineId.startsWith('bonus:')).toBe(true);
+    // Bonus satırı origin Woo item id'sini gömer (WP o ürünün altında gösterir) → reconcile dokunmaz.
+    expect(bonusLine!.remoteLineId.startsWith(`bonus:${s.order.remoteLineId}:`)).toBe(true);
     expect(bonusLine!.qty).toBe(1);
     expect(bonusLine!.fulfilledQty).toBe(1);
     expect(bonusLine!.fulfilledQty).toBeLessThanOrEqual(bonusLine!.qty);
@@ -264,7 +270,7 @@ describe('§7 meta box site-scoped operasyonlar', () => {
       .where(eq(schema.orders.id, s.order.orderId));
 
     await expect(
-      admin.siteBonus(siteRow(siteA), s.order.remoteOrderId, s.assignmentId, `wp:x@${siteA.domain}`),
+      admin.siteBonus(siteRow(siteA), s.order.remoteOrderId, s.order.remoteLineId, `wp:x@${siteA.domain}`),
     ).rejects.toThrow();
 
     // Bonus atanmadı: hâlâ tek aktif atama, qty 1.

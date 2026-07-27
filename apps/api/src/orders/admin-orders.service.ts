@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
 import { recordReplacementLineage } from './assignment-history';
@@ -22,6 +22,7 @@ import {
   orders,
   orderStatusEnum,
   products,
+  siteProductMappings,
   sites,
   type Site,
 } from '../db/schema';
@@ -667,10 +668,60 @@ export class AdminOrdersService {
    * doldurulabilir). TAM iade (sipariş 'refunded' → tüm satırlar net=0) revokeOrderForSite ile
    * gider (terminal canceled). İdempotent: aynı net adetler tekrar gelirse fark yok → no-op.
    */
+  /**
+   * (§3) Bir sipariş satırının PANEL birimi başına Woo adedi (bundleQty). reconcileOrder ile AYNI
+   * çözüm: varyasyon-özel eşleme öncelikli, yoksa ürün-seviyesi. Eşleme yoksa 1 (birim=adet).
+   * order_lines remoteProductId'yi SAKLAMAZ → WP refund satırındaki remoteProductId ile çözülür.
+   */
+  private async resolveBundleQty(
+    siteId: string,
+    remoteProductId?: string,
+    remoteVariationId?: string,
+  ): Promise<number> {
+    if (!remoteProductId) return 1;
+    const variation =
+      remoteVariationId && remoteVariationId !== '0' ? remoteVariationId : null;
+    if (variation) {
+      const [row] = await this.db
+        .select({ bundleQty: siteProductMappings.bundleQty })
+        .from(siteProductMappings)
+        .where(
+          and(
+            eq(siteProductMappings.siteId, siteId),
+            eq(siteProductMappings.remoteProductId, remoteProductId),
+            eq(siteProductMappings.remoteVariationId, variation),
+            eq(siteProductMappings.active, true),
+          ),
+        )
+        .orderBy(asc(siteProductMappings.createdAt))
+        .limit(1);
+      if (row) return row.bundleQty;
+    }
+    const [row] = await this.db
+      .select({ bundleQty: siteProductMappings.bundleQty })
+      .from(siteProductMappings)
+      .where(
+        and(
+          eq(siteProductMappings.siteId, siteId),
+          eq(siteProductMappings.remoteProductId, remoteProductId),
+          isNull(siteProductMappings.remoteVariationId),
+          eq(siteProductMappings.active, true),
+        ),
+      )
+      .orderBy(asc(siteProductMappings.createdAt))
+      .limit(1);
+    return row?.bundleQty ?? 1;
+  }
+
   async syncRefunds(
     site: Site,
     remoteOrderId: string,
-    lines: { remoteLineId: string; netQty: number }[],
+    lines: {
+      remoteLineId: string;
+      netQty: number;
+      remoteProductId?: string;
+      remoteVariationId?: string;
+    }[],
     reason: string,
   ): Promise<{ orderId: string; revoked: number; adjustedLines: number }> {
     const [order] = await this.db
@@ -685,7 +736,14 @@ export class AdminOrdersService {
     let adjusted = 0;
 
     for (const l of lines) {
-      const netQty = Math.max(0, Math.floor(l.netQty));
+      // netQty WP'den SİPARİŞ birimi gelir; panel line.qty/fulfilledQty PANEL birimidir
+      // (= sipariş adedi × bundleQty). Denetim: bundleQty ile ÖLÇEKLE — aksi halde bundleQty>1'de
+      // netQty doğrudan panel qty ile karşılaştırılıp iade edilmeyen satırlardan bile aşırı revoke
+      // ederdi. reconcileOrder ile aynı çözüm (resolveBundleQty). Eski eklenti remoteProductId
+      // göndermezse bundleQty=1 (geriye dönük uyumlu).
+      const orderNetQty = Math.max(0, Math.floor(l.netQty));
+      const bundleQty = await this.resolveBundleQty(site.id, l.remoteProductId, l.remoteVariationId);
+      const netQty = orderNetQty * bundleQty;
       const [line] = await this.db
         .select()
         .from(orderLines)
@@ -843,9 +901,34 @@ export class AdminOrdersService {
     return r;
   }
 
-  /** §7 +1 bonus atama — site-scoped. Atamanın satırına bir ekstra key ekler + bonus maili. */
-  async siteBonus(site: Site, remoteOrderId: string, assignmentId: string, actor: string) {
-    const { lineId } = await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
+  /**
+   * Sipariş satırının (Woo item id) bu siteye ait siparişe ait olduğunu doğrula → panel iç line id.
+   * Çapraz-site/eksik = 404. Bonus per-LINE olduğundan (atama üzerinden değil) kullanılır.
+   */
+  private async assertLineInSite(
+    remoteOrderId: string,
+    remoteLineId: string,
+    siteId: string,
+  ): Promise<string> {
+    const [l] = await this.db
+      .select({ id: orderLines.id })
+      .from(orderLines)
+      .innerJoin(orders, eq(orderLines.orderId, orders.id))
+      .where(
+        and(
+          eq(orderLines.remoteLineId, remoteLineId),
+          eq(orders.remoteOrderId, remoteOrderId),
+          eq(orders.siteId, siteId),
+        ),
+      )
+      .limit(1);
+    if (!l) throw new NotFoundException('Sipariş satırı bulunamadı');
+    return l.id;
+  }
+
+  /** §7 +1 bonus atama — site-scoped, PER-LINE (Woo item id). Satıra ekstra key ekler + bonus maili. */
+  async siteBonus(site: Site, remoteOrderId: string, remoteLineId: string, actor: string) {
+    const lineId = await this.assertLineInSite(remoteOrderId, remoteLineId, site.id);
     const res = await this.fulfillment.bonusAssign(lineId, actor);
     await this.db.insert(auditLog).values({
       action: 'assign',
@@ -899,6 +982,9 @@ export class AdminOrdersService {
     const asgRows = await this.db
       .select({
         id: assignments.id,
+        // remoteLineId: WP tarafı her atamayı KENDİ sipariş kalemi (Woo item id) altında gösterebilsin.
+        // Bonus atamaları `bonus:<origLine>:<uuid>` taşır → WP origin satırın altında gruplar.
+        remoteLineId: orderLines.remoteLineId,
         status: assignments.status,
         units: assignments.units,
         validUntil: assignments.validUntil,
@@ -920,6 +1006,7 @@ export class AdminOrdersService {
     const historyRows = await this.db
       .select({
         assignmentId: assignmentHistory.assignmentId,
+        remoteLineId: orderLines.remoteLineId,
         reason: assignmentHistory.reason,
         actor: assignmentHistory.actor,
         createdAt: assignmentHistory.createdAt,
@@ -928,6 +1015,7 @@ export class AdminOrdersService {
       })
       .from(assignmentHistory)
       .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .leftJoin(licenseItems, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
       .where(eq(assignments.orderId, order.id))
       .orderBy(desc(assignmentHistory.createdAt));
@@ -947,6 +1035,7 @@ export class AdminOrdersService {
         // licenseItemId DÖNMEZ (site iç id'yi görmez) — yalnız assignmentId aksiyon hedefidir.
         return {
           id: a.id,
+          remoteLineId: a.remoteLineId,
           status: a.status,
           units: a.units,
           validUntil: a.validUntil,
@@ -960,6 +1049,7 @@ export class AdminOrdersService {
       }),
       history: historyRows.map((h) => ({
         assignmentId: h.assignmentId,
+        remoteLineId: h.remoteLineId,
         reason: h.reason,
         actor: h.actor,
         createdAt: h.createdAt,

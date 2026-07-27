@@ -101,7 +101,18 @@ class Wpteslimat_Order_Sync {
         if (!$order) return;
 
         // Idempotency: bir kez push (panel de site+order ile idempotent).
-        if ($order->get_meta('_wpteslimat_pushed') === 'yes') return;
+        if ($order->get_meta('_wpteslimat_pushed') === 'yes') {
+            // (#4 denetim) İptal/iade (revoked) edilmiş sipariş tekrar processing/completed'a çevrilirse
+            // buraya döner ama re-push YAPILMAZ (§2 terminal — iade edilen hak otomatik dönmez). Otomatik
+            // re-teslim yok ama operatör sessiz kalmasın: BİR KEZ sipariş notu bırak (manuel işlem gerekli).
+            if ($order->get_meta('_wpteslimat_revoked') === 'yes'
+                && $order->get_meta('_wpteslimat_reactivate_notice') !== 'yes') {
+                $order->add_order_note('Teslimat: Bu sipariş daha önce iptal/iade edilip lisansları geri alınmıştı; yeniden etkinleştirildi ancak lisanslar OTOMATİK teslim EDİLMEZ. Gerekiyorsa ürün satırındaki "+1 Bonus" ya da panelden manuel atama ile teslim edin.');
+                $order->update_meta_data('_wpteslimat_reactivate_notice', 'yes');
+                $order->save();
+            }
+            return;
+        }
 
         $lines = $this->collect_lines($order);
         if (empty($lines)) return;
@@ -149,16 +160,25 @@ class Wpteslimat_Order_Sync {
         foreach ($order->get_items() as $item_id => $item) {
             $product = $item->get_product();
             if (!$product) continue;
-            // WooCommerce Product Bundles / Composite: TÜM kalemler (konteyner + bileşen) push edilir.
-            // Teslimat kararı PANEL EŞLEMESİNE bırakılır — hangi seviye (konteyner VEYA bileşen) panel
-            // ürününe eşliyse O teslim edilir; eşlemesiz kalem panelde zararsız 'unmapped' satır olur
-            // (operatör görür/filtreler). Konteyneri KOŞULSUZ atlamak, konteynerin kendisi lisans
-            // taşıyorsa (ona eşliyse) SESSİZ EKSİK-TESLİMAT üretirdi → paralı müşteri sıfır lisans alırdı.
-            // Bu yüzden atlama YOK; yalnız varyasyon id'si (varsa) eklenir (panel string bekler).
+            // NET adet = brüt − iade edilen (get_qty_refunded_for_item). KRİTİK (§2): WooCommerce iade
+            // ile order item qty'sini DÜŞÜRMEZ. BRÜT push edilirse, kısmi iade sonrası bir re-sync
+            // (woocommerce_saved_order_items) panel line.qty'sini brüte geri çıkarır → autoComplete iade
+            // edilen birimleri YENİDEN teslim eder (BEDAVA LİSANS). NET gönderilir → re-sync iadeyi geri
+            // açamaz (ilk push'ta iade=0 → net=brüt, davranış aynı). Tümüyle iade edilen (net=0) satır
+            // ATLANIR: /refund ucu ya da tam-iade revoke zaten uzlaştırmıştır ve reconcile yalnız
+            // GÖNDERİLEN satırları işler → atlanan satıra dokunmaz (mevcut revoke durumu korunur).
+            //
+            // Bundle/Composite: TÜM kalemler (konteyner + bileşen) push edilir; teslimat kararı PANEL
+            // EŞLEMESİNE bırakılır (konteyneri koşulsuz atlamak, konteyner lisans taşıyorsa eksik-teslimat
+            // üretirdi). Eşlemesiz kalem panelde zararsız 'unmapped' satır olur.
+            $gross = (int) $item->get_quantity();
+            $refunded = abs((int) $order->get_qty_refunded_for_item($item_id));
+            $net = max(0, $gross - $refunded);
+            if ($net <= 0) continue;
             $line = [
                 'remoteLineId'    => (string) $item_id,
                 'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
-                'qty'             => (int) $item->get_quantity(),
+                'qty'             => $net,
             ];
             if ($product->is_type('variation')) {
                 $line['remoteVariationId'] = (string) $product->get_id();
@@ -294,14 +314,25 @@ class Wpteslimat_Order_Sync {
         $total_net = 0;
         $total_ordered = 0;
         foreach ($order->get_items() as $item_id => $item) {
-            if (!$item->get_product()) continue;
+            $product = $item->get_product();
+            if (!$product) continue;
             $qty = (int) $item->get_quantity();
             // get_qty_refunded_for_item NEGATİF döner (iade edilen adet) → abs ile net hesapla.
             $refunded = abs((int) $order->get_qty_refunded_for_item($item_id));
             $net = max(0, $qty - $refunded);
             $total_net    += $net;
             $total_ordered += $qty;
-            $lines[] = ['remoteLineId' => (string) $item_id, 'netQty' => $net];
+            // remoteProductId/remoteVariationId gönderilir → panel bu satırın bundleQty'sini yeniden
+            // çözüp NET sipariş adedini PANEL birimine ölçekler (bundleQty>1'de aşırı/yanlış revoke önlenir).
+            $line = [
+                'remoteLineId'    => (string) $item_id,
+                'netQty'          => $net,
+                'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
+            ];
+            if ($product->is_type('variation')) {
+                $line['remoteVariationId'] = (string) $product->get_id();
+            }
+            $lines[] = $line;
         }
         if (empty($lines)) return;
 

@@ -100,6 +100,10 @@ class Wpteslimat_Panel_Client {
      */
     public static function verify_webhook($method, $path, $ts, $nonce, $body_str, $signature) {
         $secret = Wpteslimat_Settings::hmac_secret();
+        // (#12) Yapılandırılmamış sitede secret boş ('') olur; boş anahtar herkesçe bilinir →
+        // saldırgan boş anahtarla geçerli imza üretip sahte webhook geçirebilir. Boş secret'ı
+        // hiç doğrulama denemeden reddet.
+        if ($secret === '') return false;
         // Zaman penceresi ±300sn (replay).
         if (abs(time() - (int) $ts) > 300) return false;
         $payload = strtoupper($method) . "\n" . self::canonical_path($path) . "\n" . $ts . "\n" . $nonce . "\n" . hash('sha256', $body_str);

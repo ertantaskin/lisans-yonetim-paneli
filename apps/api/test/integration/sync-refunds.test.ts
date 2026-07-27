@@ -316,6 +316,37 @@ describe('AdminOrdersService.syncRefunds (kısmi iade uzlaştırması)', () => {
     expect(line!.canceled).toBe(false);
   });
 
+  it('(e) bundleQty>1: netQty (sipariş birimi) bundleQty ile PANEL birimine ölçeklenir → doğru revoke', async () => {
+    // Panel line.qty=4 (=2 sipariş adedi × bundleQty 2), 4 atama.
+    const seed = await seedSingleDelivered(4);
+    const remoteProductId = `WOO-${tag}`;
+    await db.insert(schema.siteProductMappings).values({
+      siteId: site.id,
+      productId: seed.product.id,
+      remoteProductId,
+      bundleQty: 2,
+    });
+
+    // 2 sipariş adedi alındı (=4 panel), 1 sipariş adedi iade → net 1 sipariş = 2 PANEL birimi.
+    const res = await admin.syncRefunds(
+      siteRow(site),
+      seed.remoteOrderId,
+      [{ remoteLineId: seed.remoteLineId, netQty: 1, remoteProductId }],
+      'kısmi iade (bundle)',
+    );
+    // Denetim düzeltmesi: netQty(1)×bundleQty(2)=2 panel birimi → excess=4−2=2 geri alınır
+    // (ölçeklemeseydik netQty=1'i doğrudan qty=4 ile karşılaştırıp 3 birim AŞIRI revoke ederdi).
+    expect(res.revoked).toBe(2);
+    const [line] = await db
+      .select({ qty: schema.orderLines.qty, fulfilledQty: schema.orderLines.fulfilledQty })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.id, seed.lineId))
+      .limit(1);
+    expect(line!.qty).toBe(2);
+    expect(line!.fulfilledQty).toBe(2);
+    expect(await activeCount(seed.lineId)).toBe(2);
+  });
+
   it('(d) canceled (iptal/tam-iade) satır ATLANIR → syncRefunds no-op', async () => {
     const seed = await seedSingleDelivered(3);
     // Satırı terminal 'canceled' işaretle (tam iade / iptal senaryosu).

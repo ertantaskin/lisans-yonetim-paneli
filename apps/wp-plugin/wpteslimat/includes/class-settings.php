@@ -24,6 +24,8 @@ class Wpteslimat_Settings {
         add_action('admin_menu', [$this, 'menu']);
         add_action('admin_init', [$this, 'register']);
         add_action('admin_post_wpteslimat_connect', [$this, 'handle_connect']);
+        // (#10) Klon/staging koruması taban çizgisini mevcut adrese sıfırlama (yeniden bağla).
+        add_action('admin_post_wpteslimat_rebind', [$this, 'handle_rebind']);
         add_action('admin_notices', [$this, 'clone_notice']);
         // §7 admin bar sağlık göstergesi — her yönetici sayfasında panel bağlantı rozeti.
         add_action('admin_bar_menu', [$this, 'admin_bar_health'], 100);
@@ -189,7 +191,8 @@ class Wpteslimat_Settings {
         $bound = self::bound_home();
         echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
             'Teslimat eklentisi: Site adresi (%s) bağlanma anındaki adresten (%s) farklı. Kopya/staging koruması etkin: ' .
-            'siparişler panele İLETİLMİYOR (canlı stok korunur). Bu kasıtlı bir taşımaysa panele yeniden bağlanın.',
+            'siparişler panele İLETİLMİYOR (canlı stok korunur). Bu kasıtlı bir taşımaysa Ayarlar → Teslimat Eklentisi ' .
+            'sayfasındaki "Bu adrese yeniden bağla" ile taban çizgisini sıfırlayın.',
             home_url(),
             $bound
         )) . '</p></div>';
@@ -227,8 +230,32 @@ class Wpteslimat_Settings {
 
     public function register() {
         register_setting('wpteslimat', 'wpteslimat_panel_url');
-        register_setting('wpteslimat', 'wpteslimat_api_key');
-        register_setting('wpteslimat', 'wpteslimat_hmac_secret');
+        // (#14) Sır alanları (api_key/hmac_secret) formda value ile ÖN-DOLDURULMAZ; boş POST'ta
+        // mevcut option KORUNUR (yalnız yeni değer girilince güncellenir). Aksi halde operatör
+        // yalnız panel URL'ini değiştirmek için kaydettiğinde boş sır alanları mevcut sırları
+        // silerdi. Bu, WP API-anahtarı alanlarının standart güvenli desenidir.
+        register_setting('wpteslimat', 'wpteslimat_api_key', [
+            'type'              => 'string',
+            'sanitize_callback' => [$this, 'sanitize_api_key'],
+        ]);
+        register_setting('wpteslimat', 'wpteslimat_hmac_secret', [
+            'type'              => 'string',
+            'sanitize_callback' => [$this, 'sanitize_hmac_secret'],
+        ]);
+    }
+
+    /** (#14) Boş girilirse mevcut api_key korunur; doluysa temizlenip yazılır. */
+    public function sanitize_api_key($value) {
+        $value = is_string($value) ? trim($value) : '';
+        if ($value === '') return (string) get_option('wpteslimat_api_key', '');
+        return sanitize_text_field($value);
+    }
+
+    /** (#14) Boş girilirse mevcut hmac_secret korunur; doluysa temizlenip yazılır. */
+    public function sanitize_hmac_secret($value) {
+        $value = is_string($value) ? trim($value) : '';
+        if ($value === '') return (string) get_option('wpteslimat_hmac_secret', '');
+        return sanitize_text_field($value);
     }
 
     public function page() {
@@ -245,6 +272,30 @@ class Wpteslimat_Settings {
                     <strong style="color:#c0392b">✗ Eksik</strong>
                 <?php endif; ?>
             </p>
+
+            <?php if (self::is_clone()): ?>
+                <hr>
+                <h2><?php esc_html_e('Bu adrese yeniden bağla', 'wpteslimat'); ?></h2>
+                <?php if (defined('WPTESLIMAT_BOUND_HOME') && WPTESLIMAT_BOUND_HOME): ?>
+                    <p><em><?php echo esc_html(sprintf(
+                        /* translators: 1: sabitteki beklenen adres, 2: mevcut adres */
+                        __('Beklenen adres wp-config.php\'de WPTESLIMAT_BOUND_HOME sabitiyle sabitlenmiş (%1$s). Bu taşıma kalıcıysa taban çizgisini panelden değil, sabiti mevcut adrese (%2$s) güncelleyerek sıfırlayın.', 'wpteslimat'),
+                        (string) WPTESLIMAT_BOUND_HOME,
+                        home_url()
+                    )); ?></em></p>
+                <?php else: ?>
+                    <p><?php echo esc_html(sprintf(
+                        /* translators: %s: mevcut site adresi */
+                        __('Klon/staging koruması etkin: mevcut adres (%s) taban çizgisinden farklı olduğundan siparişler panele iletilmiyor. Bu taşıma kalıcıysa taban çizgisini bu adrese sıfırlayın; koruma yeniden etkin olur ve siparişler iletilmeye devam eder.', 'wpteslimat'),
+                        home_url()
+                    )); ?></p>
+                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                        <input type="hidden" name="action" value="wpteslimat_rebind">
+                        <?php wp_nonce_field('wpteslimat_rebind'); ?>
+                        <?php submit_button(__('Bu adrese yeniden bağla (taban çizgisini sıfırla)', 'wpteslimat'), 'primary', 'submit', false); ?>
+                    </form>
+                <?php endif; ?>
+            <?php endif; ?>
 
             <hr>
             <h2><?php esc_html_e('Tanılama', 'wpteslimat'); ?></h2>
@@ -312,10 +363,36 @@ define('WPTESLIMAT_API_KEY', 'jl_...');
 define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
             <form method="post" action="options.php">
                 <?php settings_fields('wpteslimat'); ?>
+                <?php
+                // (#14) Sırlar value ile BASILMAZ (ekranda/DOM'da düz metin görünmez). Bunun yerine
+                // "ayarlı/ayarsız" rozeti gösterilir; boş bırakılırsa kayıt işleyicisi mevcut değeri korur.
+                $api_set  = defined('WPTESLIMAT_API_KEY') || get_option('wpteslimat_api_key', '') !== '';
+                $hmac_set = defined('WPTESLIMAT_HMAC_SECRET') || get_option('wpteslimat_hmac_secret', '') !== '';
+                ?>
                 <table class="form-table">
                     <tr><th>Panel URL</th><td><input type="url" name="wpteslimat_panel_url" value="<?php echo esc_attr(get_option('wpteslimat_panel_url', '')); ?>" class="regular-text" <?php disabled(defined('WPTESLIMAT_PANEL_URL')); ?>></td></tr>
-                    <tr><th>API Key</th><td><input type="text" name="wpteslimat_api_key" value="<?php echo esc_attr(get_option('wpteslimat_api_key', '')); ?>" class="regular-text" <?php disabled(defined('WPTESLIMAT_API_KEY')); ?>><br><small>Sabit tanımlıysa buradan değiştirilemez.</small></td></tr>
-                    <tr><th>HMAC Secret</th><td><input type="password" name="wpteslimat_hmac_secret" value="<?php echo esc_attr(get_option('wpteslimat_hmac_secret', '')); ?>" class="regular-text" <?php disabled(defined('WPTESLIMAT_HMAC_SECRET')); ?>></td></tr>
+                    <tr><th>API Key</th><td>
+                        <input type="text" name="wpteslimat_api_key" value="" autocomplete="off" class="regular-text"
+                               placeholder="<?php echo $api_set ? esc_attr__('•••••• (ayarlı — değiştirmek için yeni değer girin)', 'wpteslimat') : esc_attr__('ayarlanmadı', 'wpteslimat'); ?>"
+                               <?php disabled(defined('WPTESLIMAT_API_KEY')); ?>>
+                        <br><small>
+                            <?php echo $api_set
+                                ? esc_html__('Ayarlı. Boş bırakılırsa mevcut değer korunur.', 'wpteslimat')
+                                : esc_html__('Henüz ayarlanmadı.', 'wpteslimat'); ?>
+                            <?php if (defined('WPTESLIMAT_API_KEY')) echo ' ' . esc_html__('Sabit tanımlı — buradan değiştirilemez.', 'wpteslimat'); ?>
+                        </small>
+                    </td></tr>
+                    <tr><th>HMAC Secret</th><td>
+                        <input type="password" name="wpteslimat_hmac_secret" value="" autocomplete="new-password" class="regular-text"
+                               placeholder="<?php echo $hmac_set ? esc_attr__('•••••• (ayarlı — değiştirmek için yeni değer girin)', 'wpteslimat') : esc_attr__('ayarlanmadı', 'wpteslimat'); ?>"
+                               <?php disabled(defined('WPTESLIMAT_HMAC_SECRET')); ?>>
+                        <br><small>
+                            <?php echo $hmac_set
+                                ? esc_html__('Ayarlı. Boş bırakılırsa mevcut değer korunur.', 'wpteslimat')
+                                : esc_html__('Henüz ayarlanmadı.', 'wpteslimat'); ?>
+                            <?php if (defined('WPTESLIMAT_HMAC_SECRET')) echo ' ' . esc_html__('Sabit tanımlı — buradan değiştirilemez.', 'wpteslimat'); ?>
+                        </small>
+                    </td></tr>
                 </table>
                 <?php submit_button(); ?>
             </form>
@@ -348,12 +425,33 @@ define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
             echo '<div class="notice notice-error is-dismissible"><p>' .
                 esc_html('Panel adresi https değil. Kimlik bilgileri düz metin gönderileceğinden bağlantı yapılmadı; güvenli (https) bir panel adresi girin.') .
                 '</p></div>';
+        } elseif ($flag === 'rebound') {
+            echo '<div class="notice notice-success is-dismissible"><p>' .
+                esc_html('Taban çizgisi bu adrese sıfırlandı. Klon/staging koruması artık bu adrese göre çalışır; siparişler panele iletilecek.') .
+                '</p></div>';
         } elseif ($flag === 'error') {
             $text = $msg !== ''
                 ? sprintf('Panele bağlanılamadı: %s', $msg)
                 : 'Panele bağlanılamadı. Kodu ve panel adresini kontrol edin.';
             echo '<div class="notice notice-error is-dismissible"><p>' . esc_html($text) . '</p></div>';
         }
+    }
+
+    /**
+     * (#10) Klon/staging koruması taban çizgisini MEVCUT adrese sıfırlar ("bu adrese yeniden bağla").
+     * Site meşru olarak yeni bir alana taşınınca is_clone()=true olur ve push/revoke sessizce durur;
+     * sırlar wp-config sabitleriyle tanımlıysa (has_const) normal "Panele Bağlan" formu devre dışıdır →
+     * taban çizgisini sıfırlamanın başka yolu kalmaz. `wpteslimat_bound_home` option'ı SIRDAN BAĞIMSIZ
+     * olduğundan sabit-tabanlı kurulumda da yazılabilir (yalnız WPTESLIMAT_BOUND_HOME sabiti tanımlıysa
+     * o öncelikli olur ve bu form gösterilmez — o durumda sabit güncellenir).
+     */
+    public function handle_rebind() {
+        if (!current_user_can('manage_options')) {
+            wp_die(esc_html('Bu işlem için yetkiniz yok.'), '', ['response' => 403]);
+        }
+        check_admin_referer('wpteslimat_rebind');
+        update_option('wpteslimat_bound_home', home_url());
+        self::redirect_settings('rebound');
     }
 
     /**

@@ -57,6 +57,17 @@ class Wpteslimat_My_Account {
         $panel_order_id = $order->get_meta('_wpteslimat_order_id');
         if (!$panel_order_id) return;
 
+        // (#8 savunma-derinliği) Bu hook normalde yalnız WC'nin yetkilendirdiği sipariş
+        // görünümünde tetiklenir; yine de çözülmüş key'i basmadan ÖNCE kendi yetki kapımızı +
+        // no-store başlığımızı uygula. can_view: login → view_order; misafir → URL ?key= (order_key).
+        // nocache_account() yalnız view-order/order-received endpoint'inde çalışır → hook başka bir
+        // bağlamda tetiklenirse bu ek kat sırrı yetkisiz göze/cache'e vermez. Meşru görüntüleyici
+        // (owner veya anahtarlı misafir) her zaman geçer → mevcut akış BOZULMAZ, yalnız güçlenir.
+        $req_key = isset($_GET['key']) ? sanitize_text_field(wp_unslash($_GET['key'])) : '';
+        if (!self::can_view($order, $req_key)) return;
+        if (!defined('DONOTCACHEPAGE')) define('DONOTCACHEPAGE', true);
+        if (!headers_sent()) nocache_headers();
+
         // (§7 klon/staging koruması) Klon canlı panelden GERÇEK (maskesiz) key çekip gösterebilir →
         // okuma yolunu da kısa devre yap (yazma yolları zaten is_clone() korumalı).
         if (Wpteslimat_Settings::is_clone()) {
@@ -264,7 +275,11 @@ class Wpteslimat_My_Account {
               .then(function(j){
                 if (!j || !j.success || !j.data) { schedule(); return; }
                 var d = j.data;
-                if ((typeof d.count==='number' && d.count>base.count) || (d.status && d.status!==base.status && (d.status==='fulfilled'||d.status==='partial'))) {
+                // (#7) Yeni teslimat (count arttı) VEYA durum BAŞLANGIÇTAN farklı herhangi bir
+                // (boş-olmayan) yeni duruma geçtiyse yenile — özellikle held→rejected (status
+                // 'revoked', webhook YOK) müşteriyi "inceleme altında" ekranında kilitlemesin.
+                // Yalnız status/count okunur; payload/key sızmaz.
+                if ((typeof d.count==='number' && d.count>base.count) || (d.status && d.status!==base.status)) {
                   location.reload(); return;
                 }
                 schedule();

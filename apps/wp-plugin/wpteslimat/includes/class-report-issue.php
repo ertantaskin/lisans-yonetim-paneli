@@ -116,6 +116,14 @@ class Wpteslimat_Report_Issue {
             ? sanitize_text_field(wp_unslash($_POST['assignment_id'])) : '';
 
         $back = $order->get_view_order_url();
+        // Misafir (giriş yapmamış) sahiplik order_key ile kanıtlanır; ancak get_view_order_url()
+        // order_key İÇERMEZ → misafir /my-account/view-order/<id>/'de login duvarına takılır,
+        // bildirimi göremez ve lisans erişimini kaybeder. WooCommerce'in misafir sipariş
+        // erişiminde kullandığı `key` query arg'ını ekle ki ok/short/error tüm sonuçlarda
+        // misafir erişilebilir bir sayfaya dönsün.
+        if (!is_user_logged_in()) {
+            $back = add_query_arg('key', $order->get_order_key(), $back);
+        }
 
         if (mb_strlen($reason) < 3) {
             self::redirect_back($back, 'short');

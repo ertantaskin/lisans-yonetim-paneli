@@ -16,6 +16,15 @@ if (!defined('ABSPATH')) exit;
  */
 class Wpteslimat_Product_Mapping {
     private static $instance = null;
+
+    /**
+     * (#15) Panel ürün kataloğu (ad/sku/tür — SIR DEĞİL) kısa önbellek anahtarı + TTL.
+     * Her ürün düzenleme ekranı açılışında panele ikinci senkron çağrı (5sn blok) yapılmasını önler.
+     * "Cache yok — sır" kuralı yalnız gizli payload içindir; katalog metası için geçerli değildir.
+     */
+    const CATALOG_CACHE_KEY = 'wpteslimat_catalog';
+    const CATALOG_CACHE_TTL = 90; // saniye
+
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
         return self::$instance;
@@ -57,6 +66,11 @@ class Wpteslimat_Product_Mapping {
     public function render($post) {
         if (!$post || !isset($post->ID)) return;
 
+        // (#16) Yazma yolundaki (guard()) yetki ile simetrik: yalnız manage_woocommerce yetkilisi
+        // eşleme kutusunu görsün. Yalnız edit_products yetkili editöre işlevsiz kutu + panel
+        // kataloğunun (ad/sku/tür) gereksiz ifşası olmasın.
+        if (!self::can_manage()) return;
+
         if (!Wpteslimat_Settings::is_configured()) {
             echo '<p><em>' . esc_html__('Önce eklentiyi yapılandırın.', 'wpteslimat') . '</em></p>';
             echo '<p><a href="' . esc_url(admin_url('options-general.php?page=wpteslimat')) . '">'
@@ -93,9 +107,19 @@ class Wpteslimat_Product_Mapping {
         }
 
         // 2) Panel ürün kataloğu (dropdown). Alınamazsa graceful — ekranı BLOKLAMA.
-        $cat_res = Wpteslimat_Panel_Client::get('/v1/site-mappings/products', 5);
-        $cat_ok  = isset($cat_res['code']) && $cat_res['code'] >= 200 && $cat_res['code'] < 300;
-        $catalog = ($cat_ok && isset($cat_res['body']) && is_array($cat_res['body'])) ? $cat_res['body'] : null;
+        //    (#15) Katalog SIR DEĞİL → kısa transient ile önbelleğe al: her ürün ekranı açılışında
+        //    ikinci senkron panel çağrısı (5sn blok) yapılmaz. Mevcut-eşleme sorgusu (yukarıda,
+        //    ürüne ÖZEL) önbeklenmez. Önbellek yoksa panelden çek; başarıysa cache'le. Panel
+        //    erişilemezken önbellek de yoksa null → "Panel görünümü alınamadı" (mevcut graceful davranış).
+        $catalog = get_transient(self::CATALOG_CACHE_KEY);
+        if (!is_array($catalog)) {
+            $cat_res = Wpteslimat_Panel_Client::get('/v1/site-mappings/products', 5);
+            $cat_ok  = isset($cat_res['code']) && $cat_res['code'] >= 200 && $cat_res['code'] < 300;
+            $catalog = ($cat_ok && isset($cat_res['body']) && is_array($cat_res['body'])) ? $cat_res['body'] : null;
+            if (is_array($catalog)) {
+                set_transient(self::CATALOG_CACHE_KEY, $catalog, self::CATALOG_CACHE_TTL);
+            }
+        }
 
         $current_pid = ($current && isset($current['productId'])) ? (string) $current['productId'] : '';
         $current_qty = ($current && isset($current['bundleQty'])) ? (int) $current['bundleQty'] : 1;

@@ -291,13 +291,16 @@ export class FulfillmentService {
         throw new ConflictException('Bonus için stok yok');
       }
 
-      // Sentetik bonus satırı — Woo remoteLineId ile ÇAKIŞMAZ (reconcile/syncRefunds dokunmaz).
+      // Sentetik bonus satırı — remoteLineId = `bonus:<orijinWooItemId>:<uuid>`. Woo bu id'yi ASLA
+      // göndermez → reconcile/syncRefunds (tam remoteLineId eşleştirir) DOKUNMAZ; ama origin Woo
+      // kalemini gömdüğümüz için WP tarafı bonus'u DOĞRU ürün satırının altında gösterebilir
+      // (item N için `bonus:N:` önekli atamaları o satıra grupla).
       const [bonusLine] = await tx
         .insert(orderLines)
         .values({
           orderId: ref.orderId,
           productId: ref.productId,
-          remoteLineId: `bonus:${randomUUID()}`,
+          remoteLineId: `bonus:${ref.remoteLineId}:${randomUUID()}`,
           qty: added,
           fulfilledQty: added,
           status: 'fulfilled',

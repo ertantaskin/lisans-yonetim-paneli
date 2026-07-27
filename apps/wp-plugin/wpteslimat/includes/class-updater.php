@@ -86,12 +86,26 @@ class Wpteslimat_Updater {
         }
 
         $new_version = (string) $info['version'];
-        if (version_compare($new_version, WPTESLIMAT_VERSION, '<=')) {
-            return $transient; // Panel sürümü mevcut sürümden yeni değil — dokunma.
-        }
-
         $basename = self::basename();
         $download = isset($info['download_url']) ? (string) $info['download_url'] : '';
+
+        if (version_compare($new_version, WPTESLIMAT_VERSION, '<=')) {
+            // (#13) Panel sürümü mevcut sürümden YENİ DEĞİL. Erken dönmek yerine `no_update`
+            // kaydı yaz: WP eklenti listesindeki "otomatik güncellemeleri etkinleştir" bağlantısı
+            // + auto-update cron YALNIZ eklenti bu transient'in no_update listesinde göründüğünde
+            // çalışır (aksi halde WP eklentiyi 'bilinmeyen kaynak' sayıp oto-güncelleme UI'sini gizler).
+            if (!isset($transient->no_update) || !is_array($transient->no_update)) {
+                $transient->no_update = [];
+            }
+            $transient->no_update[$basename] = (object) [
+                'slug'        => 'wpteslimat',
+                'plugin'      => $basename,
+                'new_version' => WPTESLIMAT_VERSION,
+                'package'     => $download,
+                'url'         => Wpteslimat_Settings::panel_url(),
+            ];
+            return $transient;
+        }
 
         if (!isset($transient->response) || !is_array($transient->response)) {
             $transient->response = [];

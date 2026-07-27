@@ -25,6 +25,10 @@ const SyncRefundsRequest = z.object({
       z.object({
         remoteLineId: z.string().min(1),
         netQty: z.number().int().nonnegative(),
+        // Opsiyonel (yeni eklenti): panel netQty'yi (sipariş birimi) bundleQty ile PANEL birimine
+        // ölçekler. Yoksa (eski eklenti) bundleQty=1 varsayılır — geriye dönük uyumlu.
+        remoteProductId: z.string().min(1).max(64).optional(),
+        remoteVariationId: z.string().max(64).optional(),
       }),
     )
     .min(1)
@@ -205,19 +209,19 @@ export class OrdersController {
     );
   }
 
-  /** +1 bonus atama (satıra ekstra key). */
-  @Post(':remoteOrderId/assignments/:assignmentId/bonus')
+  /** +1 bonus atama — per-LINE (Woo item id). O satırın ürününden ekstra key ekler. */
+  @Post(':remoteOrderId/lines/:remoteLineId/bonus')
   @HttpCode(200)
   mbBonus(
     @CurrentSite() site: Site,
     @Param('remoteOrderId') remoteOrderId: string,
-    @Param('assignmentId') assignmentId: string,
+    @Param('remoteLineId') remoteLineId: string,
     @WpActor() wpUser: string,
   ) {
     return this.adminOrders.siteBonus(
       site,
       remoteOrderId,
-      assignmentId,
+      remoteLineId,
       `wp:${wpUser}@${site.domain}`,
     );
   }

@@ -32,6 +32,12 @@ class Wpteslimat_Webhook {
     }
 
     public function handle(WP_REST_Request $request) {
+        // (#12) Yapılandırılmamış sitede HMAC secret boş ('') olur; boş anahtar herkesçe
+        // bilinir → sahte webhook imzası geçebilir. verify_webhook() de boş secret'ı reddeder
+        // (savunma katmanı); burada erken 401 ile hiç işleme almadan reddet (no-op).
+        if (!Wpteslimat_Settings::is_configured()) {
+            return new WP_REST_Response(['error' => 'not_configured'], 401);
+        }
         $raw = $request->get_body();
         $ts = $request->get_header('x-timestamp');
         $nonce = $request->get_header('x-nonce');
@@ -64,8 +70,11 @@ class Wpteslimat_Webhook {
             // (ör. 'partial') daha yeni olandan ('fulfilled') SONRA ulaştırırsa, seq son-uygulanan
             // değerden küçük/eşittir → güncel durumu GERİ yazma (no-op). seq yoksa (eski panel) 0
             // → koşul devre dışı, eski davranış korunur (geriye dönük uyumlu).
-            $seq = isset($body['seq']) ? (int) $body['seq'] : 0;
-            $last_seq = (int) $order->get_meta('_wpteslimat_seq');
+            // (#9) seq epoch-MİLİSANİYE (~1.7e12); (int) cast 32-bit PHP'de PHP_INT_MAX'e
+            // doygunlaşır → ilk webhook'tan sonra HEPSİ "stale" sanılır. float ile karşılaştır +
+            // string olarak sakla (epoch-ms < 2^53 → float tam sayısaldır; 64-bit bozulmaz).
+            $seq = isset($body['seq']) ? (float) $body['seq'] : 0.0;
+            $last_seq = (float) $order->get_meta('_wpteslimat_seq');
             if ($seq > 0 && $seq <= $last_seq) {
                 return new WP_REST_Response(['ok' => true, 'stale' => true], 200);
             }
@@ -77,8 +86,13 @@ class Wpteslimat_Webhook {
                 // bu meta normalde yalnız manuel toplu-poll ile yazılır. Webhook durumunu da aynı meta'ya
                 // aynala → geri-kanal ile teslim edilen (hiç poll edilmemiş) siparişler de filtrede görünür
                 // (aksi halde kolon "Teslim edildi" derken filtre onları eler = yanıltıcı eksik sonuç).
-                // Poll'ün yazdığı fulfilled/total sayaçlarına DOKUNMAZ (webhook onları taşımaz).
                 $order->update_meta_data('_wpteslimat_panel_status', $status);
+                // (#6) Webhook teslim SAYACI taşımaz; eski manuel-poll'dan kalan fulfilled/total
+                // meta'ları `_wpteslimat_panel_status` yazılırken SİL → sipariş listesi kolonu
+                // "Teslim edildi (2/5)" gibi çelişkili bayat sayaç göstermesin (sayaç meta'sı
+                // yoksa kolon zaten hiç göstermez).
+                $order->delete_meta_data('_wpteslimat_panel_fulfilled');
+                $order->delete_meta_data('_wpteslimat_panel_total');
                 // (§8 İnceleme Kuyruğu) Panel geri-kanal bir TERMİNAL/teslim durumu bildirdiyse
                 // (order.fulfilled/partially_fulfilled → fulfilled/partial, ya da revoked) inceleme
                 // SONUÇLANMIŞ demektir (held sipariş yalnız release SONRASI webhook üretir). Bayat
@@ -91,7 +105,9 @@ class Wpteslimat_Webhook {
                 }
             }
             if ($seq > 0) {
-                $order->update_meta_data('_wpteslimat_seq', $seq);
+                // (#9) 32-bit güvenli: seq'i tam sayı STRING olarak sakla (float→bilimsel
+                // gösterim/taşma yok; okurken (float) cast ile karşılaştırılır).
+                $order->update_meta_data('_wpteslimat_seq', sprintf('%.0f', $seq));
             }
             if ($status || $seq > 0) {
                 $order->save();
