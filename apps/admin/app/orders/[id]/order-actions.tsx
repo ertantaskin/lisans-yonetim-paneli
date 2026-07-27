@@ -1,6 +1,6 @@
 'use client';
 import * as React from 'react';
-import { CheckCircle2, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, TriangleAlert, PauseCircle, PlayCircle, RefreshCw, Ban } from 'lucide-react';
 import {
   completeLineAction,
   replaceAction,
@@ -12,6 +12,35 @@ import {
 } from './actions';
 import { Button } from '../../../components/ui/button';
 import { useAnnouncer } from '../../../components/a11y/announcer';
+
+/** Kompakt ikon aksiyon butonu (yer tasarrufu) — erişilebilir ad title+aria-label ile. */
+function IconAction({
+  title,
+  onClick,
+  disabled,
+  danger,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      type="button"
+      variant={danger ? 'danger-outline' : 'outline'}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className="size-7 p-0"
+    >
+      {children}
+    </Button>
+  );
+}
 
 /** Mutasyon sonucunu ekran okuyucuya duyurur (WCAG 4.1.3): hata → assertive. */
 function announceResult(announce: (t: string, o?: { assertive?: boolean }) => void, state: MutationState) {
@@ -140,43 +169,31 @@ export function AssignmentActions({
   };
 
   return (
-    <div className="flex flex-col items-end gap-1.5">
-      <div className="flex flex-wrap items-center justify-end gap-2">
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-1.5">
         {status === 'active' && (
           <>
-            <Button type="button" variant="outline" size="sm" onClick={suspend} disabled={pending}>
-              Askıya Al
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={replace} disabled={pending}>
-              Değiştir
-            </Button>
-            <Button
-              type="button"
-              variant="danger-outline"
-              size="sm"
-              onClick={revoke}
-              disabled={pending}
-            >
-              İptal
-            </Button>
+            <IconAction title="Askıya Al" onClick={suspend} disabled={pending}>
+              <PauseCircle />
+            </IconAction>
+            <IconAction title="Değiştir (taze key ata)" onClick={replace} disabled={pending}>
+              <RefreshCw />
+            </IconAction>
+            <IconAction title="İptal et / Geri al" onClick={revoke} disabled={pending} danger>
+              <Ban />
+            </IconAction>
           </>
         )}
         {status === 'suspended' && (
           <>
-            <Button type="button" variant="outline" size="sm" onClick={unsuspend} disabled={pending}>
-              Askıdan Çıkar
-            </Button>
+            <IconAction title="Askıdan Çıkar" onClick={unsuspend} disabled={pending}>
+              <PlayCircle />
+            </IconAction>
             {/* Askıdaki key doğrudan iptal edilebilir — önce müşteriye tekrar açmaya gerek yok
                 (revoke suspended'ı destekler; şüpheli lisansı canlıya döndürmeden kapatılır). */}
-            <Button
-              type="button"
-              variant="danger-outline"
-              size="sm"
-              onClick={revoke}
-              disabled={pending}
-            >
-              İptal
-            </Button>
+            <IconAction title="İptal et / Geri al" onClick={revoke} disabled={pending} danger>
+              <Ban />
+            </IconAction>
           </>
         )}
       </div>

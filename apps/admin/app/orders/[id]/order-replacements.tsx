@@ -55,7 +55,7 @@ function ReplacementRow({ r, orderId }: { r: Replacement; orderId: string }) {
   };
 
   return (
-    <li className="flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between">
+    <li className="flex flex-col gap-2 p-3">
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={r.status} />

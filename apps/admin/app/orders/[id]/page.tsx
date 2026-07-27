@@ -43,12 +43,12 @@ function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
   };
 }
 
-/** Tek aktif lisans satırı — ürün kartının içinde kompakt (ürün başlıkta olduğu için tekrar edilmez). */
+/** Tek aktif lisans satırı — kompakt: anahtar + yanında Göster, sağda ikon aksiyonlar. */
 function LicenseRow({ a, orderId }: { a: Assignment; orderId: string }) {
   const vu = fmtValidUntil(a.validUntil);
   const isMulti = a.maxUses > 1;
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border px-4 py-2.5 first:border-t-0">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-3 py-2 first:border-t-0">
       <div className="min-w-0 flex-1">
         <AssignmentLicenseCell
           assignmentId={a.id}
@@ -136,15 +136,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   });
 
   return (
-    <div className="space-y-5">
-      {/* ── Başlık + kompakt özet (büyük stat kartları kaldırıldı — yer tasarrufu) ── */}
-      <div>
+    <div className="space-y-4">
+      {/* ── Başlık: Woo sipariş no (h1) + belirgin Site & WooCommerce çipleri ── */}
+      <div className="space-y-2.5">
         <Button asChild variant="ghost" size="sm" className="-ml-2">
           <Link href="/orders">
             <ArrowLeft /> Siparişler
           </Link>
         </Button>
-        <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <span
               className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground shadow-sm sm:flex"
@@ -152,28 +152,33 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             >
               <ShoppingCart className="size-5" />
             </span>
-            <div>
+            <div className="space-y-1.5">
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-                Sipariş {order.remoteOrderId}
+                Sipariş #{order.remoteOrderId}
               </h1>
-              <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-                <span>{order.customerEmail}</span>
+              {/* Site + WooCommerce sipariş no belirgin çipler (kullanıcı isteği) */}
+              <div className="flex flex-wrap items-center gap-2">
                 {order.siteDomain && (
-                  <span className="inline-flex items-center gap-1 text-foreground">
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground">
                     <Store className="size-3.5 text-muted-foreground" />
                     {order.siteDomain}
                   </span>
                 )}
-                <span aria-hidden>·</span>
-                <span>{createdAt}</span>
-              </p>
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-foreground">
+                  <ShoppingCart className="size-3.5 text-muted-foreground" />
+                  WooCommerce #{order.remoteOrderId}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {order.customerEmail} · {createdAt}
+                </span>
+              </div>
             </div>
           </div>
           <StatusBadge status={order.status} className="mt-1" />
         </div>
 
         {/* Tek satırlık ince özet şeridi */}
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm">
           <span className="inline-flex items-center gap-1.5">
             <PackageCheck className={`size-4 ${fullyDelivered ? 'text-success' : 'text-warning'}`} />
             <span className="text-muted-foreground">Teslim</span>
@@ -215,205 +220,217 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         </div>
       )}
 
-      {/* ── Değişim / Destek Talepleri (varsa) — üst öncelik, aksiyonlu ── */}
-      {replacements.length > 0 && (
-        <Card id="destek" className={openReplacements > 0 ? 'scroll-mt-4 border-warning/50' : 'scroll-mt-4'}>
-          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-            <CardTitle icon={LifeBuoy}>
-              Değişim / Destek Talepleri
-              {openReplacements > 0 && (
-                <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning">
-                  {openReplacements} açık
-                </span>
-              )}
-            </CardTitle>
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/support">Destek ekranı</Link>
-            </Button>
-          </CardHeader>
-          <CardContent className="p-0">
-            <OrderReplacements replacements={replacements} orderId={order.id} />
-          </CardContent>
-        </Card>
-      )}
+      {/* ── İki kolon: sol (geniş) ürünler+lisanslar; sağ (dar) destek + referans ── */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* SOL (geniş) — ana çalışma alanı */}
+        <div className="space-y-4 lg:col-span-2">
+          <section className="space-y-3">
+            <div className="flex items-center gap-2 px-0.5">
+              <KeyRound className="size-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Ürünler ve Lisanslar
+              </h2>
+            </div>
 
-      {/* ── Ürünler ve Lisanslar (ANA bölüm) — her ürün kalemi + o ürünün teslim durumu +
-             anahtarları tek kartta (eski "Satırlar" + "Aktif Lisanslar" birleşti). ── */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2 px-0.5">
-          <KeyRound className="size-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Ürünler ve Lisanslar
-          </h2>
+            {sortedLines.map((l) => {
+              const lineAsg = asgByLine.get(l.id) ?? [];
+              const activeLine = lineAsg.filter(isActive);
+              const bonus = isBonusLine(l.remoteLineId);
+              // "Kalanları Ata" yalnız gerçekten eksik + işlenebilir satırda (held/canceled/bonus hariç).
+              const incomplete = l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
+              return (
+                <Card key={l.id} className="overflow-hidden">
+                  {/* Ürün başlığı: ad + teslim durumu + (eksikse) Kalanları Ata */}
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-2.5">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-foreground">
+                        {l.productName ?? (l.productId ? '—' : 'Ürün eşlenmemiş')}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {bonus ? 'Bonus lisans (ek teslimat)' : `kalem #${l.remoteLineId} · ${l.qty} adet`}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm tabular-nums text-muted-foreground">
+                        <strong className="text-foreground">
+                          {l.fulfilledQty}/{l.qty}
+                        </strong>{' '}
+                        teslim
+                      </span>
+                      {l.canceled ? (
+                        <Badge variant="danger">İade/İptal</Badge>
+                      ) : (
+                        <StatusBadge status={l.status} />
+                      )}
+                      {incomplete && <CompleteLineButton lineId={l.id} orderId={order.id} />}
+                    </div>
+                  </div>
+                  {/* Bu ürünün aktif anahtarları */}
+                  <div>
+                    {activeLine.length === 0 ? (
+                      <p className="px-4 py-3 text-sm text-muted-foreground">
+                        {lineAsg.length > 0
+                          ? 'Aktif lisans yok — anahtarlar iptal/değiştirilmiş (aşağıdaki geçmişe bakın).'
+                          : l.canceled
+                            ? 'İade/iptal edildi.'
+                            : 'Henüz lisans atanmadı.'}
+                      </p>
+                    ) : (
+                      activeLine.map((a) => <LicenseRow key={a.id} a={a} orderId={order.id} />)
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
+          </section>
+
+          {/* Geçmiş / iptal edilen lisanslar — katlanır, sönük. */}
+          {terminalAsg.length > 0 && (
+            <details className="group rounded-xl border border-border bg-card">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
+                <Archive className="size-4" />
+                Geçmiş / iptal edilen lisanslar ({terminalAsg.length})
+                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
+                <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
+              </summary>
+              <div className="border-t border-border">
+                {terminalAsg.map((a) => (
+                  <div
+                    key={a.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 opacity-80 first:border-t-0"
+                  >
+                    <span className="min-w-0 text-sm text-foreground">{a.productName ?? '—'}</span>
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                      {a.maskedPayload || a.maskedFields?.map((f) => f.value).join(' / ') || '—'}
+                    </code>
+                    <StatusBadge status={a.status} />
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
+          {/* Değişim geçmişi (eski anahtarlar) — katlanır referans. */}
+          {history.length > 0 && (
+            <details className="group rounded-xl border border-border bg-card">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
+                <RefreshCw className="size-4" />
+                Değişim geçmişi — eski anahtarlar ({history.length})
+                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
+                <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
+              </summary>
+              <div className="overflow-x-auto border-t border-border">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Eski key</TableHead>
+                      <TableHead>Sebep</TableHead>
+                      <TableHead>Yapan</TableHead>
+                      <TableHead className="text-right">Tarih</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.map((h) => (
+                      <TableRow key={h.id}>
+                        <TableCell className="font-mono text-xs text-foreground">
+                          {/* key-tipi ölü anahtar TAM (karantina, satışa dönmez); account maskeli. */}
+                          {h.oldValue ?? h.oldMasked}
+                        </TableCell>
+                        <TableCell className="text-sm text-foreground">{h.reason}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{h.actor}</TableCell>
+                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                          {new Date(h.createdAt).toLocaleString('tr-TR', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </details>
+          )}
         </div>
 
-        {sortedLines.map((l) => {
-          const lineAsg = asgByLine.get(l.id) ?? [];
-          const activeLine = lineAsg.filter(isActive);
-          const bonus = isBonusLine(l.remoteLineId);
-          // "Kalanları Ata" yalnız gerçekten eksik + işlenebilir satırda (held/canceled/bonus hariç).
-          const incomplete = l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
-          return (
-            <Card key={l.id} className="overflow-hidden">
-              {/* Ürün başlığı: ad + teslim durumu + (eksikse) Kalanları Ata */}
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="font-semibold text-foreground">
-                    {l.productName ?? (l.productId ? '—' : 'Ürün eşlenmemiş')}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {bonus ? 'Bonus lisans (ek teslimat)' : `kalem #${l.remoteLineId} · ${l.qty} adet`}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm tabular-nums text-muted-foreground">
-                    <strong className="text-foreground">
-                      {l.fulfilledQty}/{l.qty}
-                    </strong>{' '}
-                    teslim
-                  </span>
-                  {l.canceled ? <Badge variant="danger">İade/İptal</Badge> : <StatusBadge status={l.status} />}
-                  {incomplete && <CompleteLineButton lineId={l.id} orderId={order.id} />}
-                </div>
-              </div>
-              {/* Bu ürünün aktif anahtarları */}
-              <div>
-                {activeLine.length === 0 ? (
-                  <p className="px-4 py-3 text-sm text-muted-foreground">
-                    {lineAsg.length > 0
-                      ? 'Aktif lisans yok — anahtarlar iptal/değiştirilmiş (aşağıdaki geçmişe bakın).'
-                      : l.canceled
-                        ? 'İade/iptal edildi.'
-                        : 'Henüz lisans atanmadı.'}
-                  </p>
-                ) : (
-                  activeLine.map((a) => <LicenseRow key={a.id} a={a} orderId={order.id} />)
-                )}
-              </div>
+        {/* SAĞ (dar) rail — destek + teslimat mailleri + zaman çizelgesi */}
+        <div className="space-y-4">
+          {replacements.length > 0 && (
+            <Card
+              id="destek"
+              className={openReplacements > 0 ? 'scroll-mt-4 border-warning/50' : 'scroll-mt-4'}
+            >
+              <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
+                <CardTitle icon={LifeBuoy} className="text-sm">
+                  Destek Talepleri
+                  {openReplacements > 0 && (
+                    <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning">
+                      {openReplacements} açık
+                    </span>
+                  )}
+                </CardTitle>
+                <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                  <Link href="/support">Tümü</Link>
+                </Button>
+              </CardHeader>
+              <CardContent className="p-0">
+                <OrderReplacements replacements={replacements} orderId={order.id} />
+              </CardContent>
             </Card>
-          );
-        })}
-      </section>
+          )}
 
-      {/* Geçmiş / iptal edilen lisanslar — katlanır, sönük. */}
-      {terminalAsg.length > 0 && (
-        <details className="group rounded-xl border border-border bg-card">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
-            <Archive className="size-4" />
-            Geçmiş / iptal edilen lisanslar ({terminalAsg.length})
-            <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
-            <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
-          </summary>
-          <div className="border-t border-border">
-            {terminalAsg.map((a) => (
-              <div
-                key={a.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 opacity-80 first:border-t-0"
-              >
-                <span className="min-w-0 text-sm text-foreground">{a.productName ?? '—'}</span>
-                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                  {a.maskedPayload ||
-                    a.maskedFields?.map((f) => f.value).join(' / ') ||
-                    '—'}
-                </code>
-                <StatusBadge status={a.status} />
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
+          <Card>
+            <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
+              <CardTitle icon={Mail} className="text-sm">
+                Teslimat Mailleri
+              </CardTitle>
+              <ResendButton orderId={order.id} />
+            </CardHeader>
+            <CardContent>
+              {emails.length === 0 ? (
+                <EmptyState icon={Mail} title="Mail yok" description="Teslimat mailleri burada görünür." />
+              ) : (
+                <ul className="space-y-2.5 text-sm">
+                  {emails.map((m) => (
+                    <li key={m.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1 truncate text-foreground">{m.subject}</span>
+                      <StatusBadge status={m.status} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* Değişim geçmişi (eski anahtarlar) — katlanır referans. */}
-      {history.length > 0 && (
-        <details className="group rounded-xl border border-border bg-card">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
-            <RefreshCw className="size-4" />
-            Değişim geçmişi — eski anahtarlar ({history.length})
-            <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
-            <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
-          </summary>
-          <div className="border-t border-border">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Eski key</TableHead>
-                  <TableHead>Sebep</TableHead>
-                  <TableHead>Yapan</TableHead>
-                  <TableHead className="text-right">Tarih</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {history.map((h) => (
-                  <TableRow key={h.id}>
-                    <TableCell className="font-mono text-xs text-foreground">
-                      {/* key-tipi ölü anahtar TAM (karantina, satışa dönmez); account maskeli. */}
-                      {h.oldValue ?? h.oldMasked}
-                    </TableCell>
-                    <TableCell className="text-sm text-foreground">{h.reason}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{h.actor}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                      {new Date(h.createdAt).toLocaleString('tr-TR', {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      })}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </details>
-      )}
-
-      {/* ── Referans: Teslimat Mailleri + Zaman Çizelgesi (en altta, en düşük öncelik) ── */}
-      <div className="grid gap-5 md:grid-cols-2">
-        <Card>
-          <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-            <CardTitle icon={Mail}>Teslimat Mailleri</CardTitle>
-            <ResendButton orderId={order.id} />
-          </CardHeader>
-          <CardContent>
-            {emails.length === 0 ? (
-              <EmptyState icon={Mail} title="Mail yok" description="Teslimat mailleri burada görünür." />
-            ) : (
-              <ul className="space-y-2.5 text-sm">
-                {emails.map((m) => (
-                  <li key={m.id} className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 flex-1 truncate text-foreground">{m.subject}</span>
-                    <StatusBadge status={m.status} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle icon={History}>Zaman Çizelgesi</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {events.length === 0 ? (
-              <EmptyState icon={History} title="Kayıt yok" description="Sipariş olayları burada listelenir." />
-            ) : (
-              <ol className="relative max-h-80 space-y-4 overflow-y-auto border-l border-border pl-5">
-                {events.map((e) => (
-                  <li key={e.id} className="relative">
-                    <span className="absolute -left-[1.6rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
-                    <div className="text-sm font-medium text-foreground">{eventTypeLabel(e.type)}</div>
-                    {e.message && <div className="text-sm text-muted-foreground">{e.message}</div>}
-                    <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
-                      {new Date(e.createdAt).toLocaleString('tr-TR', {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      })}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle icon={History} className="text-sm">
+                Zaman Çizelgesi
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {events.length === 0 ? (
+                <EmptyState icon={History} title="Kayıt yok" description="Sipariş olayları burada listelenir." />
+              ) : (
+                <ol className="relative max-h-96 space-y-4 overflow-y-auto border-l border-border pl-5">
+                  {events.map((e) => (
+                    <li key={e.id} className="relative">
+                      <span className="absolute -left-[1.6rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
+                      <div className="text-sm font-medium text-foreground">{eventTypeLabel(e.type)}</div>
+                      {e.message && <div className="text-sm text-muted-foreground">{e.message}</div>}
+                      <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+                        {new Date(e.createdAt).toLocaleString('tr-TR', {
+                          dateStyle: 'short',
+                          timeStyle: 'short',
+                        })}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
