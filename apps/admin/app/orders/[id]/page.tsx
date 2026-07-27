@@ -1,9 +1,20 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { ArrowLeft, ShoppingCart, ListChecks, KeyRound, PackageCheck, CalendarClock, Mail, History, RefreshCw, LifeBuoy, Archive, ShieldAlert, Store } from 'lucide-react';
+import {
+  ArrowLeft,
+  ShoppingCart,
+  KeyRound,
+  Mail,
+  History,
+  RefreshCw,
+  LifeBuoy,
+  Archive,
+  ShieldAlert,
+  Store,
+  PackageCheck,
+} from 'lucide-react';
 import { apiGet, ApiError, type OrderDetail } from '../../../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { StatTile } from '../../../components/ui/stat-tile';
 import { StatusBadge, Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
@@ -22,78 +33,47 @@ import { OrderReplacements } from './order-replacements';
 
 type Assignment = OrderDetail['assignments'][number];
 
-/** Atama tablosu — aktif (aksiyonlu) ve geçmiş (aksiyonsuz, sönük) listelerde paylaşılır. */
-function AssignmentTable({
-  rows,
-  orderId,
-  showActions,
-}: {
-  rows: Assignment[];
-  orderId: string;
-  showActions: boolean;
-}) {
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead>Ürün</TableHead>
-          <TableHead>Lisans (maskeli)</TableHead>
-          <TableHead>Adet</TableHead>
-          <TableHead>Kullanım</TableHead>
-          <TableHead>Geçerlilik</TableHead>
-          <TableHead>Durum</TableHead>
-          {showActions && <TableHead className="text-right">Aksiyon</TableHead>}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((a) => {
-          const vu = fmtValidUntil(a.validUntil);
-          const isMulti = a.maxUses > 1;
-          return (
-            <TableRow key={a.id} className="align-top">
-              <TableCell className="font-medium text-foreground">
-                {a.productName ?? '—'}
-              </TableCell>
-              <TableCell>
-                <AssignmentLicenseCell
-                  assignmentId={a.id}
-                  kind={a.kind}
-                  maskedPayload={a.maskedPayload}
-                  maskedFields={a.maskedFields}
-                />
-              </TableCell>
-              <TableCell className="tabular-nums">{a.units}</TableCell>
-              <TableCell className="tabular-nums text-muted-foreground">
-                {isMulti ? `${a.useCount}/${a.maxUses} (kalan ${a.maxUses - a.useCount})` : '—'}
-              </TableCell>
-              <TableCell className={`text-xs ${vu.expired ? 'text-warning' : 'text-muted-foreground'}`}>
-                {vu.text}
-                {vu.expired && a.validUntil ? ' (doldu)' : ''}
-              </TableCell>
-              <TableCell>
-                <StatusBadge status={a.status} />
-              </TableCell>
-              {showActions && (
-                <TableCell className="text-right">
-                  <AssignmentActions assignmentId={a.id} orderId={orderId} status={a.status} />
-                </TableCell>
-              )}
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
-  );
-}
-
 /** ISO tarihi tr-TR biçimler; süresi geçmişse amber vurgu bilgisi döner. */
 function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
-  if (!iso) return { text: '—', expired: false };
+  if (!iso) return { text: '', expired: false };
   const d = new Date(iso);
   return {
     text: d.toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }),
     expired: d.getTime() < Date.now(),
   };
+}
+
+/** Tek aktif lisans satırı — ürün kartının içinde kompakt (ürün başlıkta olduğu için tekrar edilmez). */
+function LicenseRow({ a, orderId }: { a: Assignment; orderId: string }) {
+  const vu = fmtValidUntil(a.validUntil);
+  const isMulti = a.maxUses > 1;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-border px-4 py-2.5 first:border-t-0">
+      <div className="min-w-0 flex-1">
+        <AssignmentLicenseCell
+          assignmentId={a.id}
+          kind={a.kind}
+          maskedPayload={a.maskedPayload}
+          maskedFields={a.maskedFields}
+        />
+      </div>
+      <StatusBadge status={a.status} />
+      {isMulti && (
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {a.useCount}/{a.maxUses} kullanım
+        </span>
+      )}
+      {vu.text && (
+        <span className={`text-xs ${vu.expired ? 'text-warning' : 'text-muted-foreground'}`}>
+          {vu.text}
+          {vu.expired ? ' (doldu)' : ''}
+        </span>
+      )}
+      <div className="ml-auto">
+        <AssignmentActions assignmentId={a.id} orderId={orderId} status={a.status} />
+      </div>
+    </div>
+  );
 }
 
 export const dynamic = 'force-dynamic';
@@ -125,23 +105,39 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   }
 
   const { order, lines, assignments, events, emails, history, replacements } = data;
-  // Aktif/askıdaki lisanslar operatörün asıl ilgilendiği liste; iptal/değiştirilen/süresi-geçmiş
-  // olanlar karmaşa yaratmasın diye ayrı, sönük ve katlanır bir bölüme alınır (kullanıcı isteği).
-  const activeAsg = assignments.filter((a) => a.status === 'active' || a.status === 'suspended');
-  const terminalAsg = assignments.filter((a) => a.status !== 'active' && a.status !== 'suspended');
+
+  // Atamaları satır (ürün kalemi) bazında grupla → ürün-merkezli tek görünüm (Satırlar + Aktif
+  // Lisanslar birleşti; kullanıcı "ikisi çakışıyor, karışık" dedi). Aktif/askıda ürün kartında;
+  // iptal/değiştirilen/expired olanlar en altta katlanır "Geçmiş" bölümünde (karmaşa yaratmasın).
+  const asgByLine = new Map<string, Assignment[]>();
+  for (const a of assignments) {
+    const arr = asgByLine.get(a.lineId);
+    if (arr) arr.push(a);
+    else asgByLine.set(a.lineId, [a]);
+  }
+  const isActive = (a: Assignment) => a.status === 'active' || a.status === 'suspended';
+  const terminalAsg = assignments.filter((a) => !isActive(a));
+  // Bonus (sentetik) satırlar en sona; asıl ürün kalemleri önce.
+  const isBonusLine = (remoteLineId: string) => remoteLineId.startsWith('bonus:');
+  const sortedLines = [...lines].sort(
+    (x, y) => Number(isBonusLine(x.remoteLineId)) - Number(isBonusLine(y.remoteLineId)),
+  );
+
   const openReplacements = replacements.filter(
     (r) => r.status === 'open' || r.status === 'info_requested',
   ).length;
   const totalQty = lines.reduce((s, l) => s + l.qty, 0);
   const totalFulfilled = lines.reduce((s, l) => s + l.fulfilledQty, 0);
+  const activeCount = assignments.filter(isActive).length;
+  const fullyDelivered = totalFulfilled >= totalQty && totalQty > 0;
   const createdAt = new Date(order.createdAt).toLocaleString('tr-TR', {
     dateStyle: 'short',
     timeStyle: 'short',
   });
 
   return (
-    <div className="space-y-6">
-      {/* Başlık */}
+    <div className="space-y-5">
+      {/* ── Başlık + kompakt özet (büyük stat kartları kaldırıldı — yer tasarrufu) ── */}
       <div>
         <Button asChild variant="ghost" size="sm" className="-ml-2">
           <Link href="/orders">
@@ -168,15 +164,44 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     {order.siteDomain}
                   </span>
                 )}
+                <span aria-hidden>·</span>
+                <span>{createdAt}</span>
               </p>
             </div>
           </div>
           <StatusBadge status={order.status} className="mt-1" />
         </div>
+
+        {/* Tek satırlık ince özet şeridi */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm">
+          <span className="inline-flex items-center gap-1.5">
+            <PackageCheck className={`size-4 ${fullyDelivered ? 'text-success' : 'text-warning'}`} />
+            <span className="text-muted-foreground">Teslim</span>
+            <strong className="tabular-nums text-foreground">
+              {totalFulfilled}/{totalQty}
+            </strong>
+            <span className="text-xs text-muted-foreground">
+              {fullyDelivered ? 'tamamlandı' : 'kısmi/bekliyor'}
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <KeyRound className="size-4 text-muted-foreground" />
+            <strong className="tabular-nums text-foreground">{activeCount}</strong>
+            <span className="text-muted-foreground">aktif lisans</span>
+            {terminalAsg.length > 0 && (
+              <span className="text-xs text-muted-foreground">· {terminalAsg.length} geçmiş</span>
+            )}
+          </span>
+          {openReplacements > 0 && (
+            <Link href="#destek" className="inline-flex items-center gap-1.5 text-warning hover:underline">
+              <LifeBuoy className="size-4" />
+              <strong>{openReplacements}</strong> açık destek talebi
+            </Link>
+          )}
+        </div>
       </div>
 
-      {/* İnceleme kuyruğu uyarısı — held sipariş normal 'bekliyor' gibi görünmesin, operatör
-          neden teslim edilmediğini anlasın + doğru ekrana yönlensin (denetim bulgusu). */}
+      {/* İnceleme (held) uyarısı — teslimat neden durdu + doğru ekran. */}
       {order.heldForReview && (
         <div className="flex items-start gap-2.5 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3 text-sm">
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" />
@@ -185,77 +210,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <Link href="/review" className="font-medium text-primary underline-offset-2 hover:underline">
               İnceleme Kuyruğu
             </Link>
-            'ndan onaylayın veya reddedin. (Onaya kadar "Kalanları Ata" çalışmaz.)
+            'ndan onaylayın veya reddedin. (Onaya kadar teslimat yapılmaz.)
           </div>
         </div>
       )}
 
-      {/* Özet */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Satır" value={lines.length} icon={ListChecks} tone="neutral" />
-        <StatTile
-          label="Teslim"
-          value={`${totalFulfilled}/${totalQty}`}
-          icon={PackageCheck}
-          tone={totalFulfilled >= totalQty && totalQty > 0 ? 'success' : 'warning'}
-          hint={totalFulfilled >= totalQty ? 'tamamlandı' : 'kısmi/bekliyor'}
-        />
-        <StatTile label="Atama" value={assignments.length} icon={KeyRound} tone="accent" />
-        <StatTile label="Oluşturma" value={createdAt} icon={CalendarClock} tone="neutral" />
-      </div>
-
-      {/* Satırlar */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={ListChecks}>Satırlar</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead>Ürün</TableHead>
-                <TableHead>Adet</TableHead>
-                <TableHead>Teslim</TableHead>
-                <TableHead>Durum</TableHead>
-                <TableHead className="text-right">Aksiyon</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {lines.map((l) => (
-                <TableRow key={l.id}>
-                  <TableCell>
-                    <div className="font-medium text-foreground">
-                      {l.productName ?? (l.productId ? '—' : 'Ürün eşlenmemiş')}
-                    </div>
-                    <div className="text-xs text-muted-foreground">kalem #{l.remoteLineId}</div>
-                  </TableCell>
-                  <TableCell className="tabular-nums">{l.qty}</TableCell>
-                  <TableCell className="tabular-nums">
-                    {l.fulfilledQty}/{l.qty}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <StatusBadge status={l.status} />
-                      {l.canceled && <Badge variant="danger">İade/İptal</Badge>}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {/* Held/canceled satırda 'Kalanları Ata' no-op olurdu → butonu gösterme. */}
-                    {l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && (
-                      <CompleteLineButton lineId={l.id} orderId={order.id} />
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      {/* Değişim / Destek Talepleri (§13) — müşteri "Sorun Bildir" yaptıysa burada görünür +
-          bağlamında onaylanır (değiştir) / reddedilir. Açık talep varsa vurgulu. */}
+      {/* ── Değişim / Destek Talepleri (varsa) — üst öncelik, aksiyonlu ── */}
       {replacements.length > 0 && (
-        <Card className={openReplacements > 0 ? 'border-warning/50' : undefined}>
+        <Card id="destek" className={openReplacements > 0 ? 'scroll-mt-4 border-warning/50' : 'scroll-mt-4'}>
           <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle icon={LifeBuoy}>
               Değişim / Destek Talepleri
@@ -275,70 +237,136 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         </Card>
       )}
 
-      {/* Aktif lisanslar (aksiyonlu) */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={KeyRound}>Aktif Lisanslar</CardTitle>
-        </CardHeader>
-        <CardContent className={activeAsg.length === 0 ? '' : 'p-0'}>
-          {activeAsg.length === 0 ? (
-            <EmptyState
-              icon={KeyRound}
-              title="Aktif lisans yok"
-              description={
-                assignments.length > 0
-                  ? 'Tüm atamalar iptal/değiştirilmiş — aşağıdaki geçmişe bakın.'
-                  : 'Stok geldiğinde burada görünür.'
-              }
-            />
-          ) : (
-            <AssignmentTable rows={activeAsg} orderId={order.id} showActions />
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Ürünler ve Lisanslar (ANA bölüm) — her ürün kalemi + o ürünün teslim durumu +
+             anahtarları tek kartta (eski "Satırlar" + "Aktif Lisanslar" birleşti). ── */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-2 px-0.5">
+          <KeyRound className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Ürünler ve Lisanslar
+          </h2>
+        </div>
 
-      {/* Geçmiş / iptal edilen lisanslar — katlanır, sönük (karmaşa yaratmasın). */}
+        {sortedLines.map((l) => {
+          const lineAsg = asgByLine.get(l.id) ?? [];
+          const activeLine = lineAsg.filter(isActive);
+          const bonus = isBonusLine(l.remoteLineId);
+          // "Kalanları Ata" yalnız gerçekten eksik + işlenebilir satırda (held/canceled/bonus hariç).
+          const incomplete = l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
+          return (
+            <Card key={l.id} className="overflow-hidden">
+              {/* Ürün başlığı: ad + teslim durumu + (eksikse) Kalanları Ata */}
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-foreground">
+                    {l.productName ?? (l.productId ? '—' : 'Ürün eşlenmemiş')}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {bonus ? 'Bonus lisans (ek teslimat)' : `kalem #${l.remoteLineId} · ${l.qty} adet`}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm tabular-nums text-muted-foreground">
+                    <strong className="text-foreground">
+                      {l.fulfilledQty}/{l.qty}
+                    </strong>{' '}
+                    teslim
+                  </span>
+                  {l.canceled ? <Badge variant="danger">İade/İptal</Badge> : <StatusBadge status={l.status} />}
+                  {incomplete && <CompleteLineButton lineId={l.id} orderId={order.id} />}
+                </div>
+              </div>
+              {/* Bu ürünün aktif anahtarları */}
+              <div>
+                {activeLine.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-muted-foreground">
+                    {lineAsg.length > 0
+                      ? 'Aktif lisans yok — anahtarlar iptal/değiştirilmiş (aşağıdaki geçmişe bakın).'
+                      : l.canceled
+                        ? 'İade/iptal edildi.'
+                        : 'Henüz lisans atanmadı.'}
+                  </p>
+                ) : (
+                  activeLine.map((a) => <LicenseRow key={a.id} a={a} orderId={order.id} />)
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </section>
+
+      {/* Geçmiş / iptal edilen lisanslar — katlanır, sönük. */}
       {terminalAsg.length > 0 && (
         <details className="group rounded-xl border border-border bg-card">
-          <summary className="flex cursor-pointer items-center gap-2 px-5 py-3 text-sm font-medium text-muted-foreground marker:content-none">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
             <Archive className="size-4" />
             Geçmiş / iptal edilen lisanslar ({terminalAsg.length})
             <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
             <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
           </summary>
-          <div className="border-t border-border opacity-75">
-            <AssignmentTable rows={terminalAsg} orderId={order.id} showActions={false} />
+          <div className="border-t border-border">
+            {terminalAsg.map((a) => (
+              <div
+                key={a.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 opacity-80 first:border-t-0"
+              >
+                <span className="min-w-0 text-sm text-foreground">{a.productName ?? '—'}</span>
+                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                  {a.maskedPayload ||
+                    a.maskedFields?.map((f) => f.value).join(' / ') ||
+                    '—'}
+                </code>
+                <StatusBadge status={a.status} />
+              </div>
+            ))}
           </div>
         </details>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Timeline */}
-        <Card>
-          <CardHeader>
-            <CardTitle icon={History}>Zaman Çizelgesi</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {events.length === 0 ? (
-              <EmptyState icon={History} title="Kayıt yok" description="Sipariş olayları burada listelenir." />
-            ) : (
-              <ol className="relative space-y-4 border-l border-border pl-5">
-                {events.map((e) => (
-                  <li key={e.id} className="relative">
-                    <span className="absolute -left-[1.6rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
-                    <div className="text-sm font-medium text-foreground">{eventTypeLabel(e.type)}</div>
-                    {e.message && <div className="text-sm text-muted-foreground">{e.message}</div>}
-                    <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
-                      {new Date(e.createdAt).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}
-                    </div>
-                  </li>
+      {/* Değişim geçmişi (eski anahtarlar) — katlanır referans. */}
+      {history.length > 0 && (
+        <details className="group rounded-xl border border-border bg-card">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
+            <RefreshCw className="size-4" />
+            Değişim geçmişi — eski anahtarlar ({history.length})
+            <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
+            <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
+          </summary>
+          <div className="border-t border-border">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Eski key</TableHead>
+                  <TableHead>Sebep</TableHead>
+                  <TableHead>Yapan</TableHead>
+                  <TableHead className="text-right">Tarih</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.map((h) => (
+                  <TableRow key={h.id}>
+                    <TableCell className="font-mono text-xs text-foreground">
+                      {/* key-tipi ölü anahtar TAM (karantina, satışa dönmez); account maskeli. */}
+                      {h.oldValue ?? h.oldMasked}
+                    </TableCell>
+                    <TableCell className="text-sm text-foreground">{h.reason}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{h.actor}</TableCell>
+                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                      {new Date(h.createdAt).toLocaleString('tr-TR', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      })}
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </ol>
-            )}
-          </CardContent>
-        </Card>
+              </TableBody>
+            </Table>
+          </div>
+        </details>
+      )}
 
-        {/* Mailler */}
+      {/* ── Referans: Teslimat Mailleri + Zaman Çizelgesi (en altta, en düşük öncelik) ── */}
+      <div className="grid gap-5 md:grid-cols-2">
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle icon={Mail}>Teslimat Mailleri</CardTitle>
@@ -359,43 +387,34 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             )}
           </CardContent>
         </Card>
-      </div>
 
-      {/* Değişim geçmişi (§3/§7 "eski anahtarlar") — yalnız değişim olduysa görünür. */}
-      {history.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle icon={RefreshCw}>Değişim Geçmişi (eski anahtarlar)</CardTitle>
+            <CardTitle icon={History}>Zaman Çizelgesi</CardTitle>
           </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Eski key</TableHead>
-                  <TableHead>Sebep</TableHead>
-                  <TableHead>Yapan</TableHead>
-                  <TableHead className="text-right">Tarih</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {history.map((h) => (
-                  <TableRow key={h.id}>
-                    <TableCell className="font-mono text-xs text-foreground">
-                      {/* key-tipi ölü anahtar TAM (karantina, satışa dönmez); account maskeli. */}
-                      {h.oldValue ?? h.oldMasked}
-                    </TableCell>
-                    <TableCell className="text-sm text-foreground">{h.reason}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{h.actor}</TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                      {new Date(h.createdAt).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}
-                    </TableCell>
-                  </TableRow>
+          <CardContent>
+            {events.length === 0 ? (
+              <EmptyState icon={History} title="Kayıt yok" description="Sipariş olayları burada listelenir." />
+            ) : (
+              <ol className="relative max-h-80 space-y-4 overflow-y-auto border-l border-border pl-5">
+                {events.map((e) => (
+                  <li key={e.id} className="relative">
+                    <span className="absolute -left-[1.6rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
+                    <div className="text-sm font-medium text-foreground">{eventTypeLabel(e.type)}</div>
+                    {e.message && <div className="text-sm text-muted-foreground">{e.message}</div>}
+                    <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+                      {new Date(e.createdAt).toLocaleString('tr-TR', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      })}
+                    </div>
+                  </li>
                 ))}
-              </TableBody>
-            </Table>
+              </ol>
+            )}
           </CardContent>
         </Card>
-      )}
+      </div>
     </div>
   );
 }
