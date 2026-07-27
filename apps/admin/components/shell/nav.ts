@@ -3,6 +3,7 @@ import {
   Inbox,
   ShoppingCart,
   Boxes,
+  Link2,
   Globe,
   Users,
   LifeBuoy,
@@ -53,6 +54,7 @@ export const NAV: NavSection[] = [
     title: 'Envanter',
     items: [
       { label: 'Stok & Ürünler', href: '/stock', icon: Boxes },
+      { label: 'Ürün Eşleştirme', href: '/mappings', icon: Link2 },
       { label: 'Kanallar / Siteler', href: '/sites', icon: Globe },
     ],
   },

@@ -177,9 +177,20 @@ class Wpteslimat_Order_Sync {
             $refunded = abs((int) $order->get_qty_refunded_for_item($item_id));
             $net = max(0, $gross - $refunded);
             if ($net <= 0) continue;
+            // Mağaza ürün adı (opsiyonel, additive): panel eşlenmemiş ürünü isimle gösterir → operatör
+            // tek tıkla eşler (teslimatı ETKİLEMEZ). Kalem adı ($item->get_name()) varyasyon etiketini de
+            // içerir (ideal); boşsa ürün adına düş; panel 255 char'a sınırlar (burada da kırpılır).
+            $remote_name = trim((string) $item->get_name());
+            if ($remote_name === '') {
+                $remote_name = trim((string) $product->get_name());
+            }
+            $remote_name = function_exists('mb_substr')
+                ? mb_substr($remote_name, 0, 255)
+                : substr($remote_name, 0, 255);
             $line = [
                 'remoteLineId'    => (string) $item_id,
                 'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
+                'remoteName'      => $remote_name,
                 'qty'             => $net,
             ];
             if ($product->is_type('variation')) {

@@ -348,7 +348,7 @@ export class ProductsService {
     siteId: string;
     productId: string;
     remoteProductId: string;
-    remoteVariationId?: string;
+    remoteVariationId?: string | null;
     bundleQty?: number;
   }) {
     // Biçimi geçerli ama VAR OLMAYAN site/ürün id'si → ham Postgres FK ihlali (23503) →
@@ -361,26 +361,107 @@ export class ProductsService {
       .limit(1);
     if (!site) throw new NotFoundException('Site bulunamadı');
 
-    try {
-      const [row] = await this.db
+    // '0'/boş varyasyon = varyasyon yok (resolveMapping ile AYNI normalizasyon) → depoda null.
+    const variation =
+      input.remoteVariationId && input.remoteVariationId !== '0' ? input.remoteVariationId : null;
+
+    // KRİTİK: unique index (site, remote_product_id, remote_variation_id) Postgres'te NULL'ları
+    // AYRI sayar → aynı (site, ürün, varyasyonsuz) için İKİ eşleme eklenebilir (sessiz mükerrer,
+    // resolveMapping "en eski"i seçer). advisory-lock + app-düzeyi ön-kontrol ile kapatılır
+    // (D3 site-scoped upsert deseni; artık panel formu da güvenli). Kilit anahtarı normalize varyasyonu içerir.
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext(${`map:${input.siteId}:${input.remoteProductId}:${variation ?? ''}`}))`,
+      );
+      const existing = await tx
+        .select({ id: siteProductMappings.id })
+        .from(siteProductMappings)
+        .where(
+          and(
+            eq(siteProductMappings.siteId, input.siteId),
+            eq(siteProductMappings.remoteProductId, input.remoteProductId),
+            variation
+              ? eq(siteProductMappings.remoteVariationId, variation)
+              : isNull(siteProductMappings.remoteVariationId),
+          ),
+        )
+        .limit(1);
+      if (existing.length) {
+        throw new ConflictException('Bu site + mağaza ürün/varyasyon eşlemesi zaten kayıtlı');
+      }
+      const [row] = await tx
         .insert(siteProductMappings)
         .values({
           siteId: input.siteId,
           productId: input.productId,
           remoteProductId: input.remoteProductId,
-          remoteVariationId: input.remoteVariationId ?? null,
+          remoteVariationId: variation,
           bundleQty: input.bundleQty ?? 1,
         })
         .returning();
       return row!;
-    } catch (err) {
-      // Aynı (site, remote ürün, varyasyon) tekilliği (mappings_site_remote_uniq) →
-      // ham unique-violation (23505) 500 yerine anlamlı 409.
-      if (String(err).toLowerCase().includes('unique') || String(err).includes('23505')) {
-        throw new ConflictException('Bu site + remote ürün/varyasyon eşlemesi zaten kayıtlı');
-      }
-      throw err;
-    }
+    });
+  }
+
+  /**
+   * "Eşlenmemiş gelen ürünler" (§3): gerçek siparişlerde gelmiş AMA hâlâ aktif eşlemesi olmayan
+   * mağaza ürünleri — (site, mağaza ürün, varyasyon) bazında gruplanır, en son gelen ad + adet +
+   * son görülme ile. Operatör buradan ELLE ID yazmadan tek-tıkla eşler (typo riski biter).
+   * Yalnız 0022 sonrası siparişlerde remote_product_id dolu; öncekiler görünmez (geriye dönük zararsız).
+   */
+  async listUnmapped() {
+    const rows = await rawRows<{
+      site_id: string;
+      domain: string;
+      remote_product_id: string;
+      remote_variation_id: string | null;
+      name: string | null;
+      line_count: number;
+      order_count: number;
+      last_seen: string;
+    }>(
+      this.db,
+      sql`
+        SELECT o.site_id,
+               s.domain,
+               ol.remote_product_id,
+               NULLIF(NULLIF(ol.remote_variation_id, '0'), '') AS remote_variation_id,
+               MAX(ol.remote_name) AS name,
+               COUNT(*)::int AS line_count,
+               COUNT(DISTINCT o.id)::int AS order_count,
+               MAX(o.created_at) AS last_seen
+        FROM order_lines ol
+        JOIN orders o ON ol.order_id = o.id
+        JOIN sites s ON o.site_id = s.id
+        WHERE ol.product_id IS NULL
+          AND ol.canceled = false
+          AND ol.remote_product_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM site_product_mappings m
+            WHERE m.site_id = o.site_id
+              AND m.remote_product_id = ol.remote_product_id
+              AND m.active = true
+              AND (
+                m.remote_variation_id IS NULL
+                OR m.remote_variation_id = NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
+              )
+          )
+        GROUP BY o.site_id, s.domain, ol.remote_product_id,
+                 NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
+        ORDER BY last_seen DESC
+        LIMIT 500
+      `,
+    );
+    return rows.map((r) => ({
+      siteId: r.site_id,
+      siteDomain: r.domain,
+      remoteProductId: r.remote_product_id,
+      remoteVariationId: r.remote_variation_id,
+      remoteName: r.name,
+      lineCount: Number(r.line_count),
+      orderCount: Number(r.order_count),
+      lastSeen: r.last_seen,
+    }));
   }
 
   /** Eşlemeyi pasifleştir/etkinleştir (§3). Yoksa 404. */

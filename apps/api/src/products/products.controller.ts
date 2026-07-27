@@ -61,7 +61,9 @@ const CreateMappingBody = z.object({
   siteId: z.string().uuid(),
   productId: z.string().uuid(),
   remoteProductId: z.string().min(1),
-  remoteVariationId: z.string().optional(),
+  // "Eşlenmemiş gelen ürünler" tek-tıkla eşleme, varyasyonsuz ürün için null gönderebilir →
+  // nullish (service '0'/boş/null → null normalize eder). optional-only olsaydı null 400 yerdi.
+  remoteVariationId: z.string().nullish(),
   bundleQty: z.number().int().positive().optional(),
 });
 type CreateMappingBody = z.infer<typeof CreateMappingBody>;
@@ -102,6 +104,13 @@ export class ProductsController {
   @Post('mappings')
   createMapping(@Body(new ZodBody(CreateMappingBody)) body: CreateMappingBody) {
     return this.products.createMapping(body);
+  }
+
+  /** Eşlenmemiş gelen ürünler (§3): gerçek siparişlerde gelmiş ama aktif eşlemesi olmayan
+   *  mağaza ürünleri — buradan tek-tıkla eşle (elle ID yazma, typo riski yok). */
+  @Get('mappings/unmapped')
+  unmappedIncoming() {
+    return this.products.listUnmapped();
   }
 
   @Patch('mappings/:id')

@@ -18,6 +18,9 @@ export const CreateOrderLine = z.object({
   remoteProductId: z.string().min(1),
   // İstemciler varyasyonsuz üründe null gönderebilir — undefined/null ikisi de kabul.
   remoteVariationId: z.string().min(1).nullish(),
+  /** Mağaza ürün adı (opsiyonel — eski eklenti göndermez). Panel eşleştirme doğrulaması +
+   *  "eşlenmemiş gelen ürünler" ekranı için saklar; teslimat mantığını ETKİLEMEZ. */
+  remoteName: z.string().max(255).nullish(),
   qty: z.number().int().positive(),
   /** Ürün varsayılan politikasını sipariş bazında ezme (opsiyonel). */
   policyOverride: z.enum(['partial-auto', 'partial-approval', 'all-or-nothing']).optional(),

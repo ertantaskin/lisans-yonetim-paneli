@@ -74,6 +74,12 @@ export const orderLines = pgTable(
     // Eşlemesiz (unmapped) satırda null olabilir — sipariş kaybolmaz (§4).
     productId: uuid('product_id').references(() => products.id, { onDelete: 'restrict' }),
     remoteLineId: text('remote_line_id').notNull(),
+    // Mağaza ürün kimliği/varyasyonu/adı (sipariş push'unda gelir) — eşleştirme doğrulaması +
+    // "eşlenmemiş gelen ürünler" ekranı + izlenebilirlik için saklanır. Eski satırlarda/eski
+    // eklentide NULL (geriye dönük uyumlu; teslimat mantığını ETKİLEMEZ — atama resolveMapping'den).
+    remoteProductId: text('remote_product_id'),
+    remoteVariationId: text('remote_variation_id'),
+    remoteName: text('remote_name'),
     qty: integer('qty').notNull(),
     fulfilledQty: integer('fulfilled_qty').notNull().default(0),
     status: orderLineStatusEnum('status').notNull().default('pending'),

@@ -165,6 +165,26 @@ export interface SiteRow {
   webhookUrl: string | null;
 }
 
+/**
+ * GET /v1/admin/mappings/unmapped satırı (§3) — gerçek siparişlerde GELMİŞ ama aktif panel
+ * eşlemesi OLMAYAN mağaza ürünü. `remoteProductId`/`remoteVariationId` gerçek sipariş verisinden
+ * gelir → operatör tek tıkla eşlerken ID YAZMAZ (elle-ID typo riski ortadan kalkar).
+ */
+export interface UnmappedRow {
+  siteId: string;
+  siteDomain: string;
+  remoteProductId: string;
+  remoteVariationId: string | null;
+  /** Mağaza kalemindeki ürün adı; eski siparişlerde null olabilir. */
+  remoteName: string | null;
+  /** Bu mağaza ürünü için eşlenmemiş kalem sayısı. */
+  lineCount: number;
+  /** Bu mağaza ürününün geçtiği farklı sipariş sayısı. */
+  orderCount: number;
+  /** En son ne zaman bir siparişte görüldü (ISO). */
+  lastSeen: string;
+}
+
 export interface OrderDetail {
   order: OrderRow & {
     siteId: string;
