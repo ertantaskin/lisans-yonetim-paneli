@@ -10,6 +10,8 @@ Hedef: `root@167.233.108.12:/opt/lisans-yonetim-paneli` · URL'ler:
 
 | Tarih | Commit | Servis(ler) | Not | Sonuç |
 |---|---|---|---|---|
+| 2026-07-27 | 9d050a9 | api + admin | Tam rename (jetlisans→@lisans/wpteslimat) + panelden dağıtım yönetimi (/deployments, migration 0021) | /health 200 · entegrasyon 92/92 + yarış 2/2 |
+| 2026-07-27 | ecbc51b | admin | Panelden-dağıtım E2E kanıtı (runner claim→deploy→success) | /health 200 |
 | 2026-07-27 | 5c8dda8 | admin | Sürüm yönetim sistemi + /releases sayfası (deploy.sh ile) | /health 200 (auto-rollback'li) |
 | 2026-07-27 | 6dffa26 | admin | (docs) marka notu | — |
 | 2026-07-27 | 49cf534 | api + admin | Marka "WP Teslimat Eklentisi" (görünen ad) | /health 200 |
