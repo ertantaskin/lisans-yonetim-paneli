@@ -42,7 +42,12 @@ function fmt(ts: string | null): string {
  * verilmez — güvenlik).
  */
 export default async function DeploymentsPage() {
-  const [owner, health] = await Promise.all([isOwner(), getHealth()]);
+  // Savunmalı: sağlık/yetki çağrıları patlarsa sayfa çökmesin; getHealth null'a
+  // düşünce mevcut "Sağlık bilgisi alınamadı" fallback'i devreye girer.
+  const [owner, health] = await Promise.all([
+    isOwner().catch(() => false),
+    getHealth().catch(() => null),
+  ]);
   let rows: DeploymentRow[] = [];
   let error: string | null = null;
   try {

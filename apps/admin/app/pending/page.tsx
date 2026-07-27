@@ -41,7 +41,7 @@ export default async function DashboardPage() {
       <PageHeader
         icon={Inbox}
         title="Bekleyen Teslimatlar"
-        description="Stok bekleyen veya kısmen teslim edilmiş siparişler. Stok girince partial-auto olanlar kendiliğinden tamamlanır."
+        description="Stok bekleyen veya kısmen teslim edilmiş siparişler. Kısmi—otomatik politikalı siparişler, stok girince kendiliğinden tamamlanır."
       >
         <Button asChild variant="outline" size="sm">
           <Link href="/stock">

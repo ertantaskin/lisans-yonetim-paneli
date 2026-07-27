@@ -46,6 +46,74 @@ const SECRET_COLUMN_RE = new RegExp(`\\b(?:${SECRET_COLUMN_DENYLIST.join('|')})\
 const SECRET_COLUMN_SET = new Set<string>(SECRET_COLUMN_DENYLIST);
 
 /**
+ * Satır/kayıt SARMA fonksiyonları — TÜM satırı (sır kolonları dahil: password_hash/code_hash/
+ * api_key_hash/hmac_secret_enc/payload_enc…) sır-OLMAYAN bir takma ad altında tek JSON/hstore
+ * değerinde döndürerek HEM metin denylist'ini HEM dönen-kolon süzgecini atlar
+ * (`SELECT to_jsonb(t.*) AS rapor FROM admin_users t`). Bu ifadeleri metin düzeyinde reddet.
+ * Kelime-sınırlı → 'to_json_config' gibi masum adları yanlışlıkla yakalamaz.
+ */
+const ROW_WRAP_DENYLIST = [
+  'to_jsonb',
+  'to_json',
+  'row_to_json',
+  'jsonb_agg',
+  'json_agg',
+  'jsonb_build_object',
+  'json_build_object',
+  'jsonb_object',
+  'json_object',
+  'hstore',
+  'array_to_json',
+  // Denetim: eksik serialize vektörleri — TÜM satırı sır-OLMAYAN tek değere sarıp süzgeçleri atlar.
+  'array_agg',
+  'string_agg',
+  'xmlagg',
+  'to_record',
+  'table_to_xml',
+  'query_to_xml',
+  'schema_to_xml',
+  'database_to_xml',
+  'cursor_to_xml',
+  'xmlelement',
+  'xmlforest',
+] as const;
+const ROW_WRAP_RE = new RegExp(`\\b(?:${ROW_WRAP_DENYLIST.join('|')})\\b`, 'i');
+
+/**
+ * AUTH/kimlik tabloları — rapor akışının ASLA okumaya ihtiyacı yoktur ama scrypt parola hash'i
+ * (admin_users) ve bağlan-kodu hash'i/şifreli kimliği (site_connect_tokens) taşırlar. Sorgu bu
+ * tablo adlarından herhangi birine değinirse REDDEDİLİR → `SELECT t FROM admin_users t` (çıplak
+ * kayıt), `admin_users::text` gibi kolon-adı-yazmayan TÜM sızıntı vektörleri tek noktada kapanır
+ * (denylist genişletmesi her yeni PG fonksiyonuyla delinirdi; tablo-kapısı sağlam). İş raporları
+ * orders/assignments/products/license_items… üzerinde çalışır; bu tablolara ihtiyaç duymaz.
+ */
+const TABLE_DENYLIST = ['admin_users', 'site_connect_tokens'] as const;
+const TABLE_DENYLIST_RE = new RegExp(`\\b(?:${TABLE_DENYLIST.join('|')})\\b`, 'i');
+
+/**
+ * Skaler-OLMAYAN builtin dönüş tip OID'leri — bir kolon bu tiplerden döndüyse TÜM satırı tek değere
+ * sarmış olabilir (to_jsonb→jsonb, *_to_xml→xml, çıplak record). Enum'lar (typtype='e') builtin
+ * DEĞİL (OID ≥ 16384) → burada YOK, yanlış-pozitif üretmez; composite (typtype='c') pg_type ile ayrı denetlenir.
+ */
+const NONSCALAR_TYPE_OIDS = new Set<number>([
+  114, // json
+  199, // json[]
+  3802, // jsonb
+  3807, // jsonb[]
+  142, // xml
+  143, // xml[]
+  2249, // record (anonim composite)
+  2287, // record[]
+]);
+/**
+ * Wildcard sütun seçimi — nitelikli `alias.*` (örn. `t.*`, `admin_users.*`) VEYA çıplak `SELECT *`
+ * tüm kolonları (sır dahil) seçer. `count(*)`/`sum(*)` gibi toplama yıldızını YAKALAMAZ:
+ *   - nitelikli dal `\w+\s*\.\s*\*` nokta ister (count(* içinde nokta yok),
+ *   - çıplak dal yıldızın SELECT'ten hemen sonra (opsiyonel DISTINCT) gelmesini ister.
+ */
+const WILDCARD_RE = /\b\w+\s*\.\s*\*|\bselect\s+(?:distinct\s+)?\*/i;
+
+/**
  * ReadonlySqlService — doğal dilde rapor (§15 "salt-okunur DB rolü, üretilen SQL gösterilir")
  * için AI'nın ürettiği sorguyu GÜVENLE çalıştırır. Katmanlı güvence:
  *   1) Tek ifade (noktalı virgülle ifade zincirleme reddedilir).
@@ -75,6 +143,24 @@ export class ReadonlySqlService {
     if (SECRET_COLUMN_RE.test(q)) {
       throw new HttpException('Sorgu sır kolonlarına erişemez.', HttpStatus.BAD_REQUEST);
     }
+    // Satır/JSON-sarma bypass'i (savunma-derinliği): to_jsonb(t.*)/row_to_json(s)/jsonb_agg(a) gibi
+    // ifadeler TÜM satırı (sır kolonları dahil) sır-OLMAYAN bir takma ad altında tek JSON değerinde
+    // döndürerek HEM metin denylist'ini HEM dönen-kolon süzgecini atlar. Aynı şekilde `alias.*` /
+    // çıplak `SELECT *` tüm kolonları seçer. İkisini de metin düzeyinde reddet (count(*) etkilenmez).
+    if (ROW_WRAP_RE.test(q) || WILDCARD_RE.test(q)) {
+      throw new HttpException(
+        'Satır/JSON-sarma ifadeleri güvenlik için reddedilir.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    // AUTH/kimlik tablosu kapısı: rapor bu tablolara (scrypt hash / bağlan-kodu) ASLA erişmemeli →
+    // adları geçen sorgu reddedilir (çıplak-record/::text dahil TÜM sızıntı vektörlerini kapatır).
+    if (TABLE_DENYLIST_RE.test(q)) {
+      throw new HttpException(
+        'Sorgu kimlik/auth tablolarına erişemez.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     // Sorguyu bir CTE'ye sarıp dışa LIMIT MAX_ROWS+1 uygula: belleğe en fazla MAX_ROWS+1
     // satır gelir (kırpma tespiti için +1). q "WITH ... SELECT" olsa bile iç-içe WITH geçerli;
@@ -83,6 +169,7 @@ export class ReadonlySqlService {
 
     let rows: Record<string, unknown>[];
     let resultColumns: string[] = [];
+    let typeOids: number[] = [];
     try {
       const raw = await this.sql.begin(async (tx) => {
         // SALT-OKUNUR + zaman sınırı: yazma imkânsız, uzun sorgu kesilir.
@@ -91,10 +178,13 @@ export class ReadonlySqlService {
         return tx.unsafe(capped);
       });
       // postgres.js RowList satır YOKken bile kolon meta verisi (.columns) taşır → dönen
-      // gerçek kolon adlarını buradan alırız (metin eşleştirmeye bağlı kalmadan).
-      const meta = (raw as { columns?: Array<{ name?: unknown }> }).columns;
+      // gerçek kolon adlarını VE tip OID'lerini buradan alırız (metin eşleştirmeye bağlı kalmadan).
+      const meta = (raw as { columns?: Array<{ name?: unknown; type?: unknown }> }).columns;
       resultColumns = Array.isArray(meta)
         ? meta.map((c) => (typeof c?.name === 'string' ? c.name : '')).filter(Boolean)
+        : [];
+      typeOids = Array.isArray(meta)
+        ? meta.map((c) => Number(c?.type)).filter((n) => Number.isFinite(n))
         : [];
       rows = raw as unknown as Record<string, unknown>[];
     } catch (err) {
@@ -109,6 +199,29 @@ export class ReadonlySqlService {
     const leaked = resultColumns.find((c) => SECRET_COLUMN_SET.has(c.toLowerCase()));
     if (leaked) {
       throw new HttpException('Sorgu sır kolonlarına erişemez.', HttpStatus.BAD_REQUEST);
+    }
+
+    // Dönen TİP denetimi (denetim, sağlam katman): çıplak-record / JSON / XML dönen kolon TÜM satırı
+    // (sır kolonları dahil) tek değere sarabilir. (1) skaler-olmayan builtin tipleri (json/jsonb/xml/
+    // record) doğrudan reddet; (2) kullanıcı-tanımlı OID (≥16384) varsa pg_type ile composite (typtype
+    // 'c') / pseudo ('p') olanı reddet — enum (typtype 'e') MEŞRU, geçer (status/kind kolonları çalışır).
+    if (typeOids.some((oid) => NONSCALAR_TYPE_OIDS.has(oid))) {
+      throw new HttpException(
+        'Satır/kayıt tipli sonuç sütunu güvenlik için reddedilir.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    const userOids = [...new Set(typeOids.filter((oid) => oid >= 16384))];
+    if (userOids.length > 0) {
+      const kinds = (await this.sql`
+        SELECT typtype FROM pg_type WHERE oid = ANY(${userOids}::oid[])
+      `) as unknown as Array<{ typtype?: string }>;
+      if (kinds.some((k) => k.typtype === 'c' || k.typtype === 'p')) {
+        throw new HttpException(
+          'Satır/kayıt tipli sonuç sütunu güvenlik için reddedilir.',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
     }
 
     // Belleğe en fazla MAX_ROWS+1 satır geldi: +1 varsa gerçekten kırpıldı demektir.

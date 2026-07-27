@@ -32,6 +32,12 @@ class Wpteslimat_Order_List {
         add_filter('bulk_actions-woocommerce_page_wc-orders', [$this, 'add_bulk_action']);
         add_filter('handle_bulk_actions-woocommerce_page_wc-orders', [$this, 'handle_bulk'], 10, 3);
 
+        // Panel-durum filtresi (dropdown + sorgu) — klasik posts + HPOS.
+        add_action('restrict_manage_posts', [$this, 'render_status_filter_classic']);
+        add_action('pre_get_posts', [$this, 'filter_query_classic']);
+        add_action('woocommerce_order_list_table_restrict_manage_orders', [$this, 'render_status_filter_hpos']);
+        add_filter('woocommerce_order_list_table_prepare_items_query_args', [$this, 'filter_query_hpos']);
+
         add_action('admin_notices', [$this, 'bulk_notice']);
     }
 
@@ -172,6 +178,93 @@ class Wpteslimat_Order_List {
             'wpteslimat_bulk'   => $updated > 0 ? 'ok' : 'error',
             'wpteslimat_bulk_n' => $updated,
         ], $redirect);
+    }
+
+    // ─── Panel-durum filtresi (dropdown + sorgu) ───────────────────────────────
+
+    /** Filtrenin izin verdiği panel-durum enum'u (whitelist) → Türkçe etiket. */
+    private static function pstatus_options() {
+        return [
+            'unmapped'  => __('Eşlemesiz', 'wpteslimat'),
+            'pending'   => __('Bekleyen', 'wpteslimat'),
+            'partial'   => __('Kısmi', 'wpteslimat'),
+            'fulfilled' => __('Teslim edildi', 'wpteslimat'),
+            'revoked'   => __('İptal', 'wpteslimat'),
+        ];
+    }
+
+    /** URL'deki filtre değerini whitelist'le; geçersizse '' (enum dışı değer yok sayılır). */
+    private static function current_pstatus_filter() {
+        if (!isset($_GET['wpteslimat_pstatus'])) return '';
+        $val = sanitize_key(wp_unslash($_GET['wpteslimat_pstatus']));
+        return array_key_exists($val, self::pstatus_options()) ? $val : '';
+    }
+
+    /** Ortak <select> dropdown'ı (klasik + HPOS). Ekran zaten yetkili (sipariş listesi). */
+    private function render_status_dropdown() {
+        $current = self::current_pstatus_filter();
+        echo '<select name="wpteslimat_pstatus">';
+        echo '<option value="">' . esc_html__('Panel durumu (tümü)', 'wpteslimat') . '</option>';
+        foreach (self::pstatus_options() as $val => $label) {
+            echo '<option value="' . esc_attr($val) . '"' . selected($current, $val, false) . '>'
+                . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+    }
+
+    /** Klasik (posts) shop_order liste ekranında dropdown'ı çizer. */
+    public function render_status_filter_classic($post_type = '') {
+        global $typenow;
+        $pt = $post_type !== '' ? $post_type : $typenow;
+        if ($pt !== 'shop_order') return;
+        $this->render_status_dropdown();
+    }
+
+    /** HPOS sipariş liste ekranında dropdown'ı çizer. */
+    public function render_status_filter_hpos($order_type = '') {
+        // Aksiyon 'shop_order' tipiyle çağrılır; başka tip verilirse çizme (savunmacı).
+        if ($order_type !== '' && $order_type !== 'shop_order') return;
+        $this->render_status_dropdown();
+    }
+
+    /**
+     * Klasik ana sorguya `_wpteslimat_panel_status = <val>` meta filtresi ekler.
+     * Mevcut meta_query EZİLMEZ — yeni koşul AND ile eklenir.
+     */
+    public function filter_query_classic($query) {
+        if (!is_admin()) return;
+        if (!method_exists($query, 'is_main_query') || !$query->is_main_query()) return;
+        if ($query->get('post_type') !== 'shop_order') return;
+        $val = self::current_pstatus_filter();
+        if ($val === '') return;
+        $meta_query = $query->get('meta_query');
+        if (!is_array($meta_query)) $meta_query = [];
+        $meta_query[] = [
+            'key'     => '_wpteslimat_panel_status',
+            'value'   => $val,
+            'compare' => '=',
+        ];
+        $query->set('meta_query', $meta_query);
+    }
+
+    /**
+     * HPOS sorgu argümanlarına aynı meta filtresini ekler. HPOS OrdersTableQuery/wc_get_orders
+     * meta_query'yi destekler; DESTEKLEMEZSE bu anahtar sessizce yok sayılır (graceful no-op,
+     * hata YOK) — bu durumda filtre uygulanmaz ama ekran çalışmaya devam eder.
+     */
+    public function filter_query_hpos($query_args) {
+        if (!is_array($query_args)) return $query_args;
+        $val = self::current_pstatus_filter();
+        if ($val === '') return $query_args;
+        $meta_query = (isset($query_args['meta_query']) && is_array($query_args['meta_query']))
+            ? $query_args['meta_query'] : [];
+        $meta_query[] = [
+            'key'     => '_wpteslimat_panel_status',
+            'value'   => $val,
+            'compare' => '=',
+        ];
+        $query_args['meta_query'] = $meta_query;
+        return $query_args;
     }
 
     /** Toplu-aksiyon sonrası admin bildirimi. */

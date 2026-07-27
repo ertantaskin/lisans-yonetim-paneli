@@ -73,6 +73,12 @@ class Wpteslimat_Webhook {
             $status = isset($body['status']) ? sanitize_text_field($body['status']) : '';
             if ($status) {
                 $order->update_meta_data('_wpteslimat_status', $status);
+                // (Denetim) Sipariş listesi panel-durum FİLTRESİ `_wpteslimat_panel_status`'ı sorgular;
+                // bu meta normalde yalnız manuel toplu-poll ile yazılır. Webhook durumunu da aynı meta'ya
+                // aynala → geri-kanal ile teslim edilen (hiç poll edilmemiş) siparişler de filtrede görünür
+                // (aksi halde kolon "Teslim edildi" derken filtre onları eler = yanıltıcı eksik sonuç).
+                // Poll'ün yazdığı fulfilled/total sayaçlarına DOKUNMAZ (webhook onları taşımaz).
+                $order->update_meta_data('_wpteslimat_panel_status', $status);
                 // (§8 İnceleme Kuyruğu) Panel geri-kanal bir TERMİNAL/teslim durumu bildirdiyse
                 // (order.fulfilled/partially_fulfilled → fulfilled/partial, ya da revoked) inceleme
                 // SONUÇLANMIŞ demektir (held sipariş yalnız release SONRASI webhook üretir). Bayat

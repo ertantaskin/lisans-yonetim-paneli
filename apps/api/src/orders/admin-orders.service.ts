@@ -118,26 +118,51 @@ export class AdminOrdersService {
     return { payload: plain, fields };
   }
 
-  /** Geri alınabilir gizleme (§4). Müşteri görünümünde "inceleme altında". */
+  /**
+   * Geri alınabilir gizleme (§4). Müşteri görünümünde "inceleme altında".
+   *
+   * KRİTİK (denetim H1-sınıfı): YALNIZ active↔suspended geçişine izin verilir. Aksi halde bir
+   * revoked/replaced/expired atama `suspend=false` ile YENİDEN 'active' yapılabilir → iade edilmiş
+   * (karantina) veya değişimle geri alınmış (kusurlu) key MÜŞTERİYE TEKRAR teslim edilirdi
+   * (§2 "iade edilen hak dönmez" ihlali + over-deliver / reconcile Σunits≠fulfilledQty). Durum
+   * koşulu UPDATE WHERE'ine gömülü → atomik (eşzamanlı revoke ile yarışta da terminal atama
+   * yeniden aktifleşmez).
+   */
   async suspend(assignmentId: string, suspend: boolean, actor: string) {
     const [asg] = await this.db
-      .select()
+      .select({ status: assignments.status })
       .from(assignments)
       .where(eq(assignments.id, assignmentId))
       .limit(1);
     if (!asg) throw new NotFoundException('Atama bulunamadı');
+    if (asg.status !== 'active' && asg.status !== 'suspended') {
+      throw new BadRequestException(
+        'Yalnız aktif veya askıdaki atama askıya alınabilir/geri açılabilir',
+      );
+    }
 
-    await this.db
+    const target = suspend ? 'suspended' : 'active';
+    const updated = await this.db
       .update(assignments)
-      .set({ status: suspend ? 'suspended' : 'active' })
-      .where(eq(assignments.id, assignmentId));
+      .set({ status: target })
+      .where(
+        and(
+          eq(assignments.id, assignmentId),
+          inArray(assignments.status, ['active', 'suspended']),
+        ),
+      )
+      .returning({ id: assignments.id });
+    if (updated.length === 0) {
+      // Yarışta terminal duruma geçmiş (revoke/expire) → yeniden aktifleştirme reddedilir.
+      throw new BadRequestException('Atama durumu değişti; işlem uygulanamadı');
+    }
     await this.db.insert(auditLog).values({
       action: suspend ? 'suspend' : 'unsuspend',
       actor,
       targetType: 'assignment',
       targetId: assignmentId,
     });
-    return { assignmentId, status: suspend ? 'suspended' : 'active' };
+    return { assignmentId, status: target };
   }
 
   /**
@@ -720,6 +745,230 @@ export class AdminOrdersService {
     }
 
     return { orderId: order.id, revoked: totalRevoked, adjustedLines: adjusted };
+  }
+
+  // ─── §7 Meta box SITE-SCOPED operasyonlar (WP eklentisi HMAC ile çağırır) ───────────
+  // Mevcut reveal/replace/suspend/resend uçları ADMIN_TOKEN'lıdır (panel-içi). WP eklentisi
+  // bunları site HMAC secret'ıyla çağıramaz. Aşağıdaki sarmalayıcılar HmacGuard arkasından
+  // gelir: SİTE kimliği HMAC ile doğrulanır, ve HER işlem ÖNCE hedefin (atama/sipariş) çağıran
+  // siteye AİT olduğunu doğrular (çapraz-site erişim = 404, varlık sızmaz). actor = wp:kullanıcı@site.
+
+  /** Siparişin bu siteye ait olduğunu doğrula → panel iç id. Çapraz-site/eksik = 404. */
+  private async assertOrderInSite(remoteOrderId: string, siteId: string): Promise<{ orderId: string }> {
+    const [o] = await this.db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.siteId, siteId), eq(orders.remoteOrderId, remoteOrderId)))
+      .limit(1);
+    if (!o) throw new NotFoundException('Sipariş bulunamadı');
+    return { orderId: o.id };
+  }
+
+  /**
+   * Atamanın, verilen remoteOrderId'li VE bu siteye ait bir siparişe bağlı olduğunu doğrula.
+   * Çapraz-site atama id'si veya yanlış sipariş = 404 (varlık/başka-site sızmaz). → lineId döner.
+   */
+  private async assertAssignmentInSite(
+    remoteOrderId: string,
+    assignmentId: string,
+    siteId: string,
+  ): Promise<{ lineId: string; orderId: string; status: string }> {
+    const [a] = await this.db
+      .select({
+        lineId: assignments.lineId,
+        orderId: assignments.orderId,
+        status: assignments.status,
+      })
+      .from(assignments)
+      .innerJoin(orders, eq(assignments.orderId, orders.id))
+      .where(
+        and(
+          eq(assignments.id, assignmentId),
+          eq(orders.remoteOrderId, remoteOrderId),
+          eq(orders.siteId, siteId),
+        ),
+      )
+      .limit(1);
+    if (!a) throw new NotFoundException('Atama bulunamadı');
+    return { lineId: a.lineId, orderId: a.orderId, status: a.status };
+  }
+
+  /**
+   * §7 loglu reveal — site-scoped. Audit'e wp:kullanıcı@site düşer.
+   * Denetim: YALNIZ active/suspended atama gösterilebilir — revoked/expired(hide)/replaced key'in
+   * düz payload'ı reveal edilmez (getDeliveries savunma filtresiyle simetrik; karantina/gizleme
+   * yaşam döngüsü reveal yolunda da zorlanır).
+   */
+  async siteReveal(site: Site, remoteOrderId: string, assignmentId: string, actor: string) {
+    const a = await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
+    if (a.status !== 'active' && a.status !== 'suspended') {
+      throw new BadRequestException('Yalnız aktif veya askıdaki atama gösterilebilir');
+    }
+    return this.reveal(assignmentId, actor);
+  }
+
+  /** §7 askıya al/geri aç — site-scoped. */
+  async siteSuspend(
+    site: Site,
+    remoteOrderId: string,
+    assignmentId: string,
+    suspend: boolean,
+    actor: string,
+  ) {
+    await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
+    return this.suspend(assignmentId, suspend, actor);
+  }
+
+  /** §7 aynı üründen taze key ile değiştir (sebepli) — site-scoped. */
+  async siteReplace(
+    site: Site,
+    remoteOrderId: string,
+    assignmentId: string,
+    reason: string,
+    actor: string,
+  ) {
+    await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
+    return this.replaceAssignment(assignmentId, reason, actor);
+  }
+
+  /** §7 teslimat mailini tekrar gönder (60sn debounce) — site-scoped + audit izi. */
+  async siteResend(site: Site, remoteOrderId: string, actor: string) {
+    const { orderId } = await this.assertOrderInSite(remoteOrderId, site.id);
+    const r = await this.resend(orderId);
+    await this.db.insert(fulfillmentEvents).values({
+      orderId,
+      type: 'mail_resent',
+      message: `Teslimat maili tekrar gönderildi — ${actor}`,
+    });
+    return r;
+  }
+
+  /** §7 +1 bonus atama — site-scoped. Atamanın satırına bir ekstra key ekler + bonus maili. */
+  async siteBonus(site: Site, remoteOrderId: string, assignmentId: string, actor: string) {
+    const { lineId } = await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
+    const res = await this.fulfillment.bonusAssign(lineId, actor);
+    await this.db.insert(auditLog).values({
+      action: 'assign',
+      actor,
+      targetType: 'order',
+      targetId: res.orderId,
+      meta: { op: 'bonus', lineId, added: res.added },
+    });
+    // Bonus teslimat maili — best-effort (atama zaten commit; kuyruk hatası bonusu düşürmez).
+    try {
+      const [o] = await this.db.select().from(orders).where(eq(orders.id, res.orderId)).limit(1);
+      if (o) {
+        await this.mail.enqueueDelivery(
+          o.id,
+          o.customerEmail,
+          `Siparişinize ek lisans eklendi — ${o.remoteOrderId}`,
+        );
+      }
+    } catch {
+      /* best-effort */
+    }
+    return res;
+  }
+
+  /**
+   * §7 meta box görünümü — site-scoped, PAYLOAD-SIZINTISIZ. Sipariş durum matrisi + satırlar +
+   * atamalar (MASKELİ, assignmentId + status ile → aksiyon hedefi) + değişim geçmişi (eski key
+   * maskeli). Reveal AYRI/loglu uçtan gelir; buradan düz payload/licenseItemId DÖNMEZ.
+   */
+  async siteAdminView(site: Site, remoteOrderId: string) {
+    const [order] = await this.db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, remoteOrderId)))
+      .limit(1);
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+
+    const lines = await this.db
+      .select({
+        remoteLineId: orderLines.remoteLineId,
+        qty: orderLines.qty,
+        fulfilledQty: orderLines.fulfilledQty,
+        status: orderLines.status,
+        canceled: orderLines.canceled,
+        productName: products.name,
+      })
+      .from(orderLines)
+      .leftJoin(products, eq(orderLines.productId, products.id))
+      .where(eq(orderLines.orderId, order.id));
+
+    const asgRows = await this.db
+      .select({
+        id: assignments.id,
+        status: assignments.status,
+        units: assignments.units,
+        validUntil: assignments.validUntil,
+        deliveredAt: assignments.deliveredAt,
+        payloadEnc: licenseItems.payloadEnc,
+        licenseItemId: licenseItems.id,
+        itemMaxUses: licenseItems.maxUses,
+        itemUseCount: licenseItems.useCount,
+        productKind: products.kind,
+        payloadSchema: products.payloadSchema,
+      })
+      .from(assignments)
+      .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
+      .where(eq(assignments.orderId, order.id))
+      .orderBy(desc(assignments.deliveredAt));
+
+    const historyRows = await this.db
+      .select({
+        assignmentId: assignmentHistory.assignmentId,
+        reason: assignmentHistory.reason,
+        actor: assignmentHistory.actor,
+        createdAt: assignmentHistory.createdAt,
+        oldPayloadEnc: licenseItems.payloadEnc,
+        oldLicenseItemId: licenseItems.id,
+      })
+      .from(assignmentHistory)
+      .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
+      .leftJoin(licenseItems, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
+      .where(eq(assignments.orderId, order.id))
+      .orderBy(desc(assignmentHistory.createdAt));
+
+    return {
+      orderId: order.id,
+      remoteOrderId: order.remoteOrderId,
+      status: order.status,
+      held: order.heldForReview,
+      lines,
+      assignments: asgRows.map((a) => {
+        const plain = this.crypto.decrypt(
+          a.payloadEnc,
+          CryptoService.licenseItemAad(a.licenseItemId),
+        );
+        const masked = maskPayload(plain, a.productKind, a.payloadSchema);
+        // licenseItemId DÖNMEZ (site iç id'yi görmez) — yalnız assignmentId aksiyon hedefidir.
+        return {
+          id: a.id,
+          status: a.status,
+          units: a.units,
+          validUntil: a.validUntil,
+          deliveredAt: a.deliveredAt,
+          kind: a.productKind,
+          maskedPayload: masked.maskedPayload,
+          maskedFields: masked.maskedFields,
+          maxUses: a.itemMaxUses,
+          useCount: a.itemUseCount,
+        };
+      }),
+      history: historyRows.map((h) => ({
+        assignmentId: h.assignmentId,
+        reason: h.reason,
+        actor: h.actor,
+        createdAt: h.createdAt,
+        oldMasked:
+          h.oldPayloadEnc && h.oldLicenseItemId
+            ? mask(this.crypto.decrypt(h.oldPayloadEnc, CryptoService.licenseItemAad(h.oldLicenseItemId)))
+            : '—',
+      })),
+    };
   }
 
   // ─── İnceleme Kuyruğu (§8 held_for_review — dinamik kota) ──────────────────────────

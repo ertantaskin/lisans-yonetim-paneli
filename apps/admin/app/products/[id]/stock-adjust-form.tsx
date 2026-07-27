@@ -28,7 +28,7 @@ export function StockAdjustForm({ productId }: { productId: string }) {
         <Field label="İşlem türü" htmlFor="adj-action">
           <select id="adj-action" name="action" defaultValue="correct" className={`${selectClass} w-44`}>
             <option value="correct">{adjustmentActionLabel('correct')}</option>
-            <option value="void">{adjustmentActionLabel('void')} (void)</option>
+            <option value="void">{adjustmentActionLabel('void')}</option>
             <option value="damage">{adjustmentActionLabel('damage')}</option>
             <option value="recall">{adjustmentActionLabel('recall')}</option>
           </select>

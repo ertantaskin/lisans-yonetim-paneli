@@ -154,6 +154,12 @@ export class ReportsService {
       FROM assignments a
       JOIN order_lines ol ON ol.id = a.line_id
       JOIN products p ON p.id = ol.product_id
+      -- PERF: dış tarama 30 güne daraltılır — 7g/30g pencereleri zaten FILTER agregatında hesaplanıyor,
+      -- ama WHERE olmadan TÜM zamanların atamaları taranıyordu. LİSTEDE KALAN ürünlerin sold7d/sold30d/
+      -- dailyRate/daysRemaining DEĞERLERİ aynıdır (30g+ eski atamalar velocity'ye zaten 0 katkı verirdi).
+      -- SATIR KÜMESİ daralır: son 30 günde HİÇ satışı olmayan ürün artık listelenmez (bu bir "satış hızı/
+      -- tükenme" raporu — durağan ürün velocity'de anlamsız; düşük-stok/dashboard ayrı takip eder).
+      WHERE a.created_at >= now() - interval '30 days'
       GROUP BY p.id, p.sku
       ORDER BY sold30d DESC, p.sku ASC;
     `);

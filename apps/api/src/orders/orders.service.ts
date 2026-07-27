@@ -110,39 +110,69 @@ export class OrdersService {
       .limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
-    const rows = await this.db
-      .select({
-        assignmentId: assignments.id,
-        remoteLineId: orderLines.remoteLineId,
-        units: assignments.units,
-        validUntil: assignments.validUntil,
-        payloadEnc: licenseItems.payloadEnc,
-        licenseItemId: licenseItems.id,
-        productKind: products.kind,
-        payloadSchema: products.payloadSchema,
-        onExpiry: products.onExpiry,
-      })
-      .from(assignments)
-      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-      .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
-      .innerJoin(products, eq(orderLines.productId, products.id))
-      .where(
-        and(
-          eq(assignments.orderId, order.id),
-          eq(assignments.status, 'active'),
-          // #7 denetim (yarış savunması): iptal/iade edilmiş satırın (canceled) atamasını ASLA
-          // döndürme. release/reject yarışı stray bir aktif atama bıraksa bile reddedilen/iade
-          // edilen siparişte müşteri canlı key GÖRMEZ (satır canceled → filtrelenir).
-          eq(orderLines.canceled, false),
-          // Savunma amaçlı süre filtresi: expiry job gecikse bile onExpiry='hide'
-          // ürünün süresi geçmiş payload'ı SIZMAZ. 'keep' ürün süre sonrası da görünür.
-          or(
-            isNull(assignments.validUntil),
-            gt(assignments.validUntil, sql`now()`),
-            eq(products.onExpiry, 'keep'),
+    // PERF: order lookup'tan sonraki 4 sorgu birbirinden BAĞIMSIZ (aralarında veri bağımlılığı yok)
+    // → ardışık await yerine TEK Promise.all ile paralel çalıştır. Bu uç WP my-account/metabox
+    // render'ında 5sn timeout ile SENKRON çağrılıyor; round-trip'i 4→1 sıraya indirmek render
+    // bloklamasını düşürür. Sorgu şekilleri ve dönüş nesnesi AYNEN korunur (yalnız zamanlama değişir).
+    const [rows, mailStatus, aggRows, flagRows] = await Promise.all([
+      // (1) Aktif atama satırları — payload SQL seviyesinde okunur, canceled/expiry savunma filtreli.
+      this.db
+        .select({
+          assignmentId: assignments.id,
+          remoteLineId: orderLines.remoteLineId,
+          units: assignments.units,
+          validUntil: assignments.validUntil,
+          payloadEnc: licenseItems.payloadEnc,
+          licenseItemId: licenseItems.id,
+          productKind: products.kind,
+          payloadSchema: products.payloadSchema,
+          onExpiry: products.onExpiry,
+        })
+        .from(assignments)
+        .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+        .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+        .innerJoin(products, eq(orderLines.productId, products.id))
+        .where(
+          and(
+            eq(assignments.orderId, order.id),
+            eq(assignments.status, 'active'),
+            // #7 denetim (yarış savunması): iptal/iade edilmiş satırın (canceled) atamasını ASLA
+            // döndürme. release/reject yarışı stray bir aktif atama bıraksa bile reddedilen/iade
+            // edilen siparişte müşteri canlı key GÖRMEZ (satır canceled → filtrelenir).
+            eq(orderLines.canceled, false),
+            // Savunma amaçlı süre filtresi: expiry job gecikse bile onExpiry='hide'
+            // ürünün süresi geçmiş payload'ı SIZMAZ. 'keep' ürün süre sonrası da görünür.
+            or(
+              isNull(assignments.validUntil),
+              gt(assignments.validUntil, sql`now()`),
+              eq(products.onExpiry, 'keep'),
+            ),
           ),
         ),
-      );
+      // (2) Mail durumu (#32): siparişin EN GÜNCEL email_log satırının status'u (sent|failed|
+      // queued|sending|…). WP "Sorun mu var?" ipucu için — PAYLOAD/KEY sızmaz, yalnız durum. Yoksa null.
+      this.latestMailStatus(order.id),
+      // (3) §7 kısmi ilerleme: teslim/toplam BİRİM (satır toplamı, iptal satır hariç).
+      this.db
+        .select({
+          total: sql<number>`coalesce(sum(${orderLines.qty}), 0)`,
+          fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)`,
+        })
+        .from(orderLines)
+        .where(and(eq(orderLines.orderId, order.id), eq(orderLines.canceled, false))),
+      // (4) §7 durum bayrakları: tek geçişte suspended + expiredHidden (FILTER'lı).
+      this.db
+        .select({
+          suspended: sql<number>`count(*) filter (where ${assignments.status} = 'suspended')`,
+          expiredHidden: sql<number>`count(*) filter (where ${assignments.status} = 'active' and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now())`,
+        })
+        .from(assignments)
+        .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+        .innerJoin(products, eq(orderLines.productId, products.id))
+        .where(eq(assignments.orderId, order.id)),
+    ]);
+    const [agg] = aggRows;
+    const [flags] = flagRows;
 
     const now = Date.now();
     const deliveries: DeliveryItem[] = rows.map((r) => {
@@ -167,32 +197,6 @@ export class OrdersService {
       // key/code/custom (veya şeması bozuk account): düz string.
       return { ...base, payload: plain, fields: null };
     });
-
-    // Mail durumu (#32): siparişin EN GÜNCEL email_log satırının status'u (sent|failed|
-    // queued|sending|…). WP "Sorun mu var?" ipucu için — PAYLOAD/KEY sızmaz, yalnız durum.
-    // Kayıt yoksa null. Savunma-filtresi/expired mantığı yukarıda korunur.
-    const mailStatus = await this.latestMailStatus(order.id);
-
-    // §7 müşteri durum matrisi + kısmi ilerleme: teslim/toplam BİRİM (satır toplamı) + askı/
-    // süre-geçmiş-gizli bayrakları. İki hafif indeksli sorgu (biri satır toplamı, biri FILTER'lı
-    // tek geçişte suspended+expiredHidden) — teslimat okuması zaten tek-sipariş, ek yük ihmal edilir.
-    const [agg] = await this.db
-      .select({
-        total: sql<number>`coalesce(sum(${orderLines.qty}), 0)`,
-        fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)`,
-      })
-      .from(orderLines)
-      .where(and(eq(orderLines.orderId, order.id), eq(orderLines.canceled, false)));
-
-    const [flags] = await this.db
-      .select({
-        suspended: sql<number>`count(*) filter (where ${assignments.status} = 'suspended')`,
-        expiredHidden: sql<number>`count(*) filter (where ${assignments.status} = 'active' and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now())`,
-      })
-      .from(assignments)
-      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-      .innerJoin(products, eq(orderLines.productId, products.id))
-      .where(eq(assignments.orderId, order.id));
 
     // F4: `held` (heldForReview) alanı — WP eklentisi İnceleme Kuyruğu durumunu (my-account bildirimi/
     // metabox rozeti) bu bayraktan okur. Eklemeli; mevcut alanlar (status/mailStatus/deliveries) değişmez.

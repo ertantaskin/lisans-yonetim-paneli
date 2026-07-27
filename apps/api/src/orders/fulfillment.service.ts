@@ -1,4 +1,12 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import {
@@ -230,6 +238,96 @@ export class FulfillmentService {
     }
 
     return result;
+  }
+
+  /**
+   * +1 BONUS atama (§7 meta box "+1 bonus atama"). Referans satırın ürününden TEK ekstra key'i
+   * siparişe ekler — operatör jesti (ör. özür/telafi). Woo qty'sinden BAĞIMSIZ bir hediyedir.
+   *
+   * KRİTİK (denetim): bonus, referans satırın qty'sini ŞİŞİRMEZ. Bunun yerine AYRI, SENTETİK bir
+   * order_line'a (remoteLineId = `bonus:<uuid>` → Woo ASLA bu id'yi göndermez) konur. Böylece
+   * reconcileOrder (yalnız remoteLineId ile EŞLEŞEN satırları uzlaştırır) ve syncRefunds (yalnız
+   * gelen refund satırlarını işler) bonusu GÖRMEZ → sonraki ilgisiz bir Woo düzenlemesi/iadesi
+   * "fazlalık" sanıp bonusu SESSİZCE GERİ ALMAZ. Bonus satırı qty=fulfilled=added (fulfilled ≤ qty
+   * invaryantı + reconcile Σ tutar). İptal/iade edilmiş (canceled) referans satıra ve inceleme (held)
+   * siparişine bonus verilmez. Yan-etki maili çağıran (siteBonus) tarafında best-effort kuyruğa alınır.
+   */
+  async bonusAssign(
+    refLineId: string,
+    actor: string,
+  ): Promise<{ lineId: string; orderId: string; added: number }> {
+    return this.db.transaction(async (tx) => {
+      const [ref] = await tx
+        .select()
+        .from(orderLines)
+        .where(eq(orderLines.id, refLineId))
+        .limit(1)
+        .for('update');
+      if (!ref) throw new NotFoundException('Sipariş satırı bulunamadı');
+      if (ref.canceled) throw new BadRequestException('İptal/iade edilmiş satıra bonus verilemez');
+      if (!ref.productId) throw new BadRequestException('Ürünü eşlenmemiş satıra bonus verilemez');
+
+      const [ord] = await tx
+        .select({ held: orders.heldForReview })
+        .from(orders)
+        .where(eq(orders.id, ref.orderId))
+        .limit(1);
+      if (ord?.held) throw new BadRequestException('İnceleme altındaki siparişe bonus verilemez');
+
+      const product = await this.products.getById(ref.productId);
+      // Ön sipariş/stoksuz kapısı (§11): release_at gelecekteyse bonus atama yapılmaz.
+      if (
+        product.stockless &&
+        product.releaseAt &&
+        new Date(product.releaseAt).getTime() > Date.now()
+      ) {
+        throw new ConflictException('Bonus için stok yok (ön sipariş penceresi)');
+      }
+
+      const allocations = await allocate(tx, product, 1);
+      const added = allocations.reduce((s, a) => s + a.units, 0);
+      if (added < 1) {
+        await releaseAllocations(tx, allocations);
+        throw new ConflictException('Bonus için stok yok');
+      }
+
+      // Sentetik bonus satırı — Woo remoteLineId ile ÇAKIŞMAZ (reconcile/syncRefunds dokunmaz).
+      const [bonusLine] = await tx
+        .insert(orderLines)
+        .values({
+          orderId: ref.orderId,
+          productId: ref.productId,
+          remoteLineId: `bonus:${randomUUID()}`,
+          qty: added,
+          fulfilledQty: added,
+          status: 'fulfilled',
+        })
+        .returning({ id: orderLines.id });
+
+      const validUntil = product.validityDays
+        ? new Date(Date.now() + product.validityDays * 86_400_000)
+        : null;
+      for (const alloc of allocations) {
+        await tx.insert(assignments).values({
+          orderId: ref.orderId,
+          lineId: bonusLine!.id,
+          licenseItemId: alloc.licenseItemId,
+          units: alloc.units,
+          validUntil,
+          status: 'active',
+          deliveredAt: new Date(),
+        });
+      }
+
+      await tx.insert(fulfillmentEvents).values({
+        orderId: ref.orderId,
+        type: 'bonus_assigned',
+        message: `Bonus atama (+${added}) — ${actor}`,
+      });
+      await recomputeOrderStatus(tx, ref.orderId);
+
+      return { lineId: bonusLine!.id, orderId: ref.orderId, added };
+    });
   }
 
   /**

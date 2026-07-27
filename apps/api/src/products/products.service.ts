@@ -393,4 +393,135 @@ export class ProductsService {
     if (!row) throw new NotFoundException('Eşleme bulunamadı');
     return row;
   }
+
+  // ─── §7 WP ürün-eşleme kutusu (site-scoped, HMAC) ────────────────────────────────────
+  // WP ürün-düzenleme ekranındaki "Panel Eşlemesi" kutusu için hafif katalog + site-scoped
+  // eşleme CRUD. SIR YOK (yalnız ürün adı/sku/tip; fiyat/lisans DÖNMEZ). Tüm yazma/okuma
+  // ÇAĞIRAN SİTEYE scope'lu (controller CurrentSite.id geçirir) → başka sitenin eşlemesine dokunulmaz.
+
+  /** Eşleme kutusu ürün seçici: hafif katalog listesi (sır yok). */
+  async listForCatalog() {
+    return this.db
+      .select({
+        id: products.id,
+        name: products.name,
+        sku: products.sku,
+        kind: products.kind,
+        usageMode: products.usageMode,
+      })
+      .from(products)
+      .orderBy(asc(products.name))
+      .limit(500);
+  }
+
+  /** Bu sitenin eşlemeleri (ürün adıyla); opsiyonel remoteProductId filtresi (o Woo ürünü). */
+  async listSiteMappings(siteId: string, remoteProductId?: string) {
+    const where = remoteProductId
+      ? and(
+          eq(siteProductMappings.siteId, siteId),
+          eq(siteProductMappings.remoteProductId, remoteProductId),
+        )
+      : eq(siteProductMappings.siteId, siteId);
+    return this.db
+      .select({
+        id: siteProductMappings.id,
+        remoteProductId: siteProductMappings.remoteProductId,
+        remoteVariationId: siteProductMappings.remoteVariationId,
+        productId: siteProductMappings.productId,
+        productName: products.name,
+        productSku: products.sku,
+        bundleQty: siteProductMappings.bundleQty,
+        active: siteProductMappings.active,
+      })
+      .from(siteProductMappings)
+      .innerJoin(products, eq(siteProductMappings.productId, products.id))
+      .where(where)
+      .orderBy(asc(siteProductMappings.remoteProductId))
+      .limit(500);
+  }
+
+  /**
+   * Site-scoped eşleme UPSERT (§7 WP kutusu). (site, remoteProductId, varyasyon) varsa GÜNCELLE,
+   * yoksa EKLE. NULL-varyasyon güvenli (Postgres unique index NULL'ları ayrı sayar → onConflict
+   * fire etmez; bu yüzden elle select-then-write). Ürün yoksa 404 (FK 500 yerine anlamlı).
+   */
+  async upsertSiteMapping(input: {
+    siteId: string;
+    productId: string;
+    remoteProductId: string;
+    remoteVariationId?: string;
+    bundleQty?: number;
+  }) {
+    await this.getById(input.productId); // ürün yoksa 404
+    const variation =
+      input.remoteVariationId && input.remoteVariationId !== '0' ? input.remoteVariationId : null;
+
+    // Denetim (TOCTOU): select-then-write iki eşzamanlı çağrıda (site, remoteProductId, variation=null)
+    // için ÇİFT satır üretebilirdi — Postgres unique index NULL varyasyonu AYRI sayar, onConflict
+    // fire etmez. Advisory-xact-lock ile (site+remote+variation başına) serileştir → tek satır garanti.
+    const lockKey = `${input.siteId}:${input.remoteProductId}:${variation ?? ''}`;
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+
+      const [existing] = await tx
+        .select({ id: siteProductMappings.id })
+        .from(siteProductMappings)
+        .where(
+          and(
+            eq(siteProductMappings.siteId, input.siteId),
+            eq(siteProductMappings.remoteProductId, input.remoteProductId),
+            variation === null
+              ? isNull(siteProductMappings.remoteVariationId)
+              : eq(siteProductMappings.remoteVariationId, variation),
+          ),
+        )
+        .limit(1);
+
+      if (existing) {
+        const [row] = await tx
+          .update(siteProductMappings)
+          .set({ productId: input.productId, bundleQty: input.bundleQty ?? 1, active: true })
+          .where(eq(siteProductMappings.id, existing.id))
+          .returning();
+        return row!;
+      }
+      try {
+        const [row] = await tx
+          .insert(siteProductMappings)
+          .values({
+            siteId: input.siteId,
+            productId: input.productId,
+            remoteProductId: input.remoteProductId,
+            remoteVariationId: variation,
+            bundleQty: input.bundleQty ?? 1,
+          })
+          .returning();
+        return row!;
+      } catch (err) {
+        // Varyasyonlu yol: mappings_site_remote_uniq ihlali → ham 500 yerine anlamlı 409.
+        if (String(err).toLowerCase().includes('unique') || String(err).includes('23505')) {
+          throw new ConflictException('Bu site + remote ürün/varyasyon eşlemesi zaten kayıtlı');
+        }
+        throw err;
+      }
+    });
+  }
+
+  /** Bu sitenin (remoteProductId, varyasyon) eşlemesini sil (§7 "Eşlemeyi kaldır"). */
+  async deleteSiteMapping(siteId: string, remoteProductId: string, remoteVariationId?: string) {
+    const variation =
+      remoteVariationId && remoteVariationId !== '0' ? remoteVariationId : null;
+    await this.db
+      .delete(siteProductMappings)
+      .where(
+        and(
+          eq(siteProductMappings.siteId, siteId),
+          eq(siteProductMappings.remoteProductId, remoteProductId),
+          variation === null
+            ? isNull(siteProductMappings.remoteVariationId)
+            : eq(siteProductMappings.remoteVariationId, variation),
+        ),
+      );
+    return { deleted: true };
+  }
 }

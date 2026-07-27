@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 0.3.0
+Stable tag: 0.4.0
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,18 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 0.4.0 =
+* Meta box operasyon katmanı (§7): key bazında Göster (loglu, yalnız yönetici), Değiştir
+  (sebepli), Askıya al/Geri aç, +1 Bonus, Teslimat mailini tekrar gönder (60sn); değişim geçmişi.
+* Ürün ekranına "Panel Eşlemesi" kutusu (Woo ürünü → panel ürünü, adet başına key).
+* Sipariş listesine panel-durum filtresi (eşlemesiz/bekleyen/kısmi…).
+* WooCommerce Product Bundles / Composite: paket konteyneri atlanır, bileşenler eşlenir.
+* Tüm meta box/eşleme işlemleri site HMAC ile imzalı + klon/staging korumalı; audit'e wp:kullanıcı@site.
+
+= 0.3.0 =
+* Kısmi iade → satır revoke; tanılama sekmesi + admin bar sağlık göstergesi; müşteri ekranı
+  cilası (parola göster/gizle, ilerleme çubuğu, toplu .txt indirme, canlı tamamlama yoklaması).
 
 = 0.1.0 =
 * İlk sürüm: sipariş push, webhook alıcı, My Account teslimat, admin meta box.

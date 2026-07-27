@@ -7,9 +7,11 @@ import {
   initialPOFormState,
 } from '@/app/purchase-orders/actions';
 import type { PurchaseOrderRow } from '@/app/purchase-orders/queries';
-import { Input, Textarea, Label, selectClass } from './ui/input';
+import { Input, Textarea, selectClass } from './ui/input';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { Field, FieldRow } from './ui/field';
+import { supplyStatusLabel } from '../lib/labels';
 
 /** yyyy-mm-dd (input[type=date]) için ISO tarihi kırpar. */
 function toDateInput(iso: string | null): string {
@@ -45,9 +47,13 @@ export function POReceiveForm({ po }: { po: PurchaseOrderRow }) {
         Kalan: <span className="font-medium tabular-nums text-foreground">{remaining}</span> adet.
         Teslim alınca yeni parti oluşur (gerçek key girişi ayrıdır: Stok Import).
       </p>
-      <div className="flex flex-wrap gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="rc-qty">Teslim adedi</Label>
+      <FieldRow>
+        <Field
+          label="Teslim adedi"
+          htmlFor="rc-qty"
+          required
+          hint={`Bu teslimatta gelen adet. En fazla ${remaining} (kalan).`}
+        >
           <Input
             id="rc-qty"
             name="qty"
@@ -57,18 +63,20 @@ export function POReceiveForm({ po }: { po: PurchaseOrderRow }) {
             step={1}
             defaultValue={remaining}
             required
-            className="w-36"
           />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="rc-label">Parti etiketi</Label>
-          <Input id="rc-label" name="batchLabel" placeholder="ör. 2026-07-A" required className="w-48" />
-        </div>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="rc-notes">Not (ops.)</Label>
+        </Field>
+        <Field
+          label="Parti etiketi"
+          htmlFor="rc-label"
+          required
+          hint="Bu teslimatla oluşacak partinin adı — geri çekme/izleme için. Ör. 2026-07-A."
+        >
+          <Input id="rc-label" name="batchLabel" placeholder="ör. 2026-07-A" required />
+        </Field>
+      </FieldRow>
+      <Field label="Not (opsiyonel)" htmlFor="rc-notes" hint="Teslimatla ilgili serbest açıklama.">
         <Textarea id="rc-notes" name="notes" rows={2} className="max-w-lg" />
-      </div>
+      </Field>
       <Button type="submit" disabled={pending}>
         <PackageCheck /> {pending ? 'İşleniyor…' : 'Teslim Al'}
       </Button>
@@ -92,26 +100,23 @@ export function POUpdateForm({ po }: { po: PurchaseOrderRow }) {
   return (
     <form action={action} className="space-y-3 text-sm">
       <input type="hidden" name="id" value={po.id} />
-      <div className="flex flex-wrap gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="up-status">Durum</Label>
-          <select id="up-status" name="status" defaultValue={po.status} className={`${selectClass} w-48`}>
-            <option value="draft">taslak</option>
-            <option value="ordered">sipariş verildi</option>
-            <option value="partial">kısmi teslim</option>
-            <option value="received">teslim alındı</option>
-            <option value="cancelled">iptal</option>
+      <FieldRow>
+        <Field label="Durum" htmlFor="up-status" hint="Satın alma emrinin güncel aşaması.">
+          <select id="up-status" name="status" defaultValue={po.status} className={selectClass}>
+            <option value="draft">{supplyStatusLabel('draft')}</option>
+            <option value="ordered">{supplyStatusLabel('ordered')}</option>
+            <option value="partial">{supplyStatusLabel('partial')}</option>
+            <option value="received">{supplyStatusLabel('received')}</option>
+            <option value="cancelled">{supplyStatusLabel('cancelled')}</option>
           </select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="up-eta">ETA</Label>
-          <Input id="up-eta" name="eta" type="date" defaultValue={toDateInput(po.eta)} className="w-44" />
-        </div>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="up-notes">Not</Label>
+        </Field>
+        <Field label="Tahmini teslim tarihi (ETA)" htmlFor="up-eta" hint="Tedarikçinin öngördüğü teslim tarihi.">
+          <Input id="up-eta" name="eta" type="date" defaultValue={toDateInput(po.eta)} />
+        </Field>
+      </FieldRow>
+      <Field label="Not" htmlFor="up-notes" hint="Emirle ilgili serbest açıklama.">
         <Textarea id="up-notes" name="notes" defaultValue={po.notes ?? ''} rows={2} className="max-w-lg" />
-      </div>
+      </Field>
       <Button type="submit" variant="outline" disabled={pending}>
         <Save /> {pending ? 'Kaydediliyor…' : 'Güncelle'}
       </Button>

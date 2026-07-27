@@ -16,8 +16,9 @@ import {
   testConnectionAction,
   type TestConnectionResult,
 } from './actions';
-import { Input, Label, selectClass } from '../../../components/ui/input';
+import { Input, selectClass } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
+import { Field } from '../../../components/ui/field';
 import {
   Card,
   CardContent,
@@ -164,8 +165,12 @@ export function Wizard() {
           </CardHeader>
           <CardContent>
             <form onSubmit={onCreate} className="space-y-4">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="wz-domain">Domain</Label>
+              <Field
+                label="Domain"
+                htmlFor="wz-domain"
+                required
+                hint="Bağlanacak sitenin alan adı. Tek zorunlu alan budur."
+              >
                 <Input
                   id="wz-domain"
                   name="domain"
@@ -174,10 +179,13 @@ export function Wizard() {
                   autoFocus
                   className="max-w-sm"
                 />
-              </div>
+              </Field>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="wz-type">Kanal tipi</Label>
+              <Field
+                label="Kanal tipi"
+                htmlFor="wz-type"
+                hint="Sitenin satış kanalı türü. Çoğu kurulum WooCommerce'tir."
+              >
                 <select
                   id="wz-type"
                   name="type"
@@ -188,10 +196,13 @@ export function Wizard() {
                   <option value="marketplace">Pazar yeri</option>
                   <option value="reseller">Bayi</option>
                 </select>
-              </div>
+              </Field>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="wz-sender">Gönderen e-posta (ops.)</Label>
+              <Field
+                label="Gönderen e-posta (opsiyonel)"
+                htmlFor="wz-sender"
+                hint="Teslimat maillerinde görünecek gönderen adresi. Boş = panel varsayılanı."
+              >
                 <Input
                   id="wz-sender"
                   name="senderEmail"
@@ -199,10 +210,13 @@ export function Wizard() {
                   placeholder="satis@magazam.com"
                   className="max-w-sm"
                 />
-              </div>
+              </Field>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="wz-webhook">Geri kanal webhook URL (ops.)</Label>
+              <Field
+                label="Geri kanal webhook URL (opsiyonel)"
+                htmlFor="wz-webhook"
+                hint="Panelin sipariş durum bildirimlerini göndereceği WP eklenti adresi. Boş bırakırsanız 'Panele Bağlan' akışı bunu otomatik ayarlar."
+              >
                 <Input
                   id="wz-webhook"
                   name="webhookUrl"
@@ -210,10 +224,13 @@ export function Wizard() {
                   placeholder="webhook devre dışı"
                   className="max-w-sm"
                 />
-              </div>
+              </Field>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="wz-quota">Günlük satış kotası (ops.)</Label>
+              <Field
+                label="Günlük satış kotası (opsiyonel)"
+                htmlFor="wz-quota"
+                hint="Bir günde bu siteye izin verilen en fazla satış. Boş = limitsiz."
+              >
                 <Input
                   id="wz-quota"
                   name="salesDailyQuota"
@@ -223,20 +240,26 @@ export function Wizard() {
                   placeholder="limitsiz"
                   className="w-40"
                 />
-              </div>
+              </Field>
 
-              <label
+              <Field
+                label="Sandbox (test modu)"
                 htmlFor="wz-sandbox"
-                className="flex items-center gap-2 text-sm text-foreground/80"
+                hint="Açıkken teslimat mailleri gerçek müşteriye gitmez; entegrasyon denemesi için."
               >
-                <input
-                  id="wz-sandbox"
-                  name="sandbox"
-                  type="checkbox"
-                  className="size-4 rounded border-border accent-primary"
-                />
-                Sandbox (test modu) — mailler gerçek müşteriye gitmez
-              </label>
+                <label
+                  htmlFor="wz-sandbox"
+                  className="flex items-center gap-2 text-sm text-foreground/80"
+                >
+                  <input
+                    id="wz-sandbox"
+                    name="sandbox"
+                    type="checkbox"
+                    className="size-4 rounded border-border accent-primary"
+                  />
+                  Test modunu etkinleştir
+                </label>
+              </Field>
 
               {createErr && (
                 <Alert variant="destructive">

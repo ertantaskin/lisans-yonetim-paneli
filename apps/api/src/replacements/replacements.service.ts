@@ -74,6 +74,9 @@ export class ReplacementsService {
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
     let lineId: string | null = null;
+    // Yalnız bu siparişe ait olduğu DOĞRULANAN atama id'si saklanır; yabancı/bulunamayan
+    // referans (başka site/sipariş) DB'ye HİÇ yazılmaz → null kalır (lineId=null ile tutarlı).
+    let assignmentId: string | null = null;
     let withinWarranty = false;
 
     if (dto.assignmentId) {
@@ -91,8 +94,9 @@ export class ReplacementsService {
         .where(eq(assignments.id, dto.assignmentId))
         .limit(1);
 
-      // Yalnız bu siparişe ait atamayı bağla (siteler arası referans sızmaz).
+      // Yalnız bu siparişe ait atamayı bağla (siteler/siparişler arası referans sızmaz).
       if (asg && asg.orderId === order.id) {
+        assignmentId = dto.assignmentId;
         lineId = asg.lineId;
         if (asg.deliveredAt && asg.warrantyDays && asg.warrantyDays > 0) {
           withinWarranty = asg.deliveredAt.getTime() + asg.warrantyDays * DAY_MS >= Date.now();
@@ -106,7 +110,7 @@ export class ReplacementsService {
         siteId: site.id,
         orderId: order.id,
         lineId,
-        assignmentId: dto.assignmentId ?? null,
+        assignmentId,
         customerEmail: order.customerEmail,
         reason: dto.reason,
         status: 'open',

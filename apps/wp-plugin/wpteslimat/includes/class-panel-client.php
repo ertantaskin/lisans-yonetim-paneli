@@ -62,6 +62,17 @@ class Wpteslimat_Panel_Client {
             // değişmez, yalnızca WP→panel isteği loglarda izlenebilir olur.
             'X-Trace-Id'  => wp_generate_uuid4(),
         ];
+
+        // Audit attribution (§7 "actor: wp:kullanıcı@site"): meta box operasyon uçları bu başlıktan
+        // WP kullanıcısını audit_log.actor'a yazar. YALNIZ audit içindir — YETKİ site HMAC secret'ıyla
+        // sağlanır (başlık sahtelense de yetki değişmez). İmzaya GİRMEZ. Oturum yoksa (cron/sistem
+        // push) gönderilmez → panel 'admin'e düşer; createOrder gibi uçlar zaten header'ı yok sayar.
+        if (function_exists('wp_get_current_user')) {
+            $current = wp_get_current_user();
+            if ($current && $current->exists() && $current->user_login) {
+                $headers['X-Wp-Actor'] = $current->user_login;
+            }
+        }
         $args = [
             'method'  => $method,
             'headers' => $headers,

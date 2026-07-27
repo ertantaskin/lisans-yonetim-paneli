@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { CreateOrderRequest, type CreateOrderResponse } from '@lisans/shared';
 import { HmacGuard } from '../auth/hmac.guard';
 import { CurrentSite } from '../auth/current-site.decorator';
+import { WpActor } from '../auth/wp-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import type { Site } from '../db/schema';
 import { OrdersService } from './orders.service';
@@ -36,6 +37,11 @@ const BulkStatusRequest = z.object({
   remoteOrderIds: z.array(z.string().min(1)).max(100),
 });
 type BulkStatusRequest = z.infer<typeof BulkStatusRequest>;
+
+/** §7 meta box değiştir gövdesi — sebep zorunlu (audit + timeline). */
+const ReplaceBody = z.object({ reason: z.string().min(1).max(500) });
+/** §7 meta box askıya al/geri aç gövdesi. */
+const SuspendBody = z.object({ suspend: z.boolean() });
 
 /** Site-facing sipariş uçları (§4). HMAC imzalı. */
 @Controller('orders')
@@ -130,5 +136,100 @@ export class OrdersController {
       body.lines,
       body.reason ?? 'WooCommerce kısmi iade',
     );
+  }
+
+  // ─── §7 Meta box operasyon katmanı (site-scoped, HMAC imzalı) ───────────────────────
+  // WP meta box'ın key-bazında işlemleri. Her uç AdminOrdersService'te ÖNCE hedefin bu siteye
+  // ait olduğunu doğrular (çapraz-site = 404). actor = wp:<kullanıcı>@<site.domain> — kullanıcı
+  // parçası WP'den (x-wp-actor, yalnız audit), domain CurrentSite'tan (güvenilir). WP rol→scope
+  // (shop_manager reveal edemez) eklenti tarafında capability ile zorlanır; panel site-scope + audit sağlar.
+
+  /** Meta box görünümü: maskeli atamalar (assignmentId + status) + geçmiş — PAYLOAD YOK. */
+  @Get(':remoteOrderId/admin-view')
+  adminView(@CurrentSite() site: Site, @Param('remoteOrderId') remoteOrderId: string) {
+    return this.adminOrders.siteAdminView(site, remoteOrderId);
+  }
+
+  /** Loglu reveal (§17) — tam payload döner, audit'e wp:kullanıcı@site düşer. */
+  @Post(':remoteOrderId/assignments/:assignmentId/reveal')
+  @HttpCode(200)
+  mbReveal(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @Param('assignmentId') assignmentId: string,
+    @WpActor() wpUser: string,
+  ) {
+    return this.adminOrders.siteReveal(
+      site,
+      remoteOrderId,
+      assignmentId,
+      `wp:${wpUser}@${site.domain}`,
+    );
+  }
+
+  /** Aynı üründen taze key ile değiştir (sebepli + eski anahtar geçmişi). */
+  @Post(':remoteOrderId/assignments/:assignmentId/replace')
+  @HttpCode(200)
+  mbReplace(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Body(new ZodBody(ReplaceBody)) body: { reason: string },
+    @WpActor() wpUser: string,
+  ) {
+    return this.adminOrders.siteReplace(
+      site,
+      remoteOrderId,
+      assignmentId,
+      body.reason,
+      `wp:${wpUser}@${site.domain}`,
+    );
+  }
+
+  /** Askıya al / geri aç (geri alınabilir gizleme). */
+  @Post(':remoteOrderId/assignments/:assignmentId/suspend')
+  @HttpCode(200)
+  mbSuspend(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Body(new ZodBody(SuspendBody)) body: { suspend: boolean },
+    @WpActor() wpUser: string,
+  ) {
+    return this.adminOrders.siteSuspend(
+      site,
+      remoteOrderId,
+      assignmentId,
+      body.suspend,
+      `wp:${wpUser}@${site.domain}`,
+    );
+  }
+
+  /** +1 bonus atama (satıra ekstra key). */
+  @Post(':remoteOrderId/assignments/:assignmentId/bonus')
+  @HttpCode(200)
+  mbBonus(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @Param('assignmentId') assignmentId: string,
+    @WpActor() wpUser: string,
+  ) {
+    return this.adminOrders.siteBonus(
+      site,
+      remoteOrderId,
+      assignmentId,
+      `wp:${wpUser}@${site.domain}`,
+    );
+  }
+
+  /** Teslimat mailini tekrar gönder (60sn debounce). */
+  @Post(':remoteOrderId/resend')
+  @HttpCode(200)
+  mbResend(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @WpActor() wpUser: string,
+  ) {
+    return this.adminOrders.siteResend(site, remoteOrderId, `wp:${wpUser}@${site.domain}`);
   }
 }

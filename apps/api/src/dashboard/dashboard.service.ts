@@ -98,21 +98,21 @@ export class DashboardService {
    * TANIMLI ürünler (IS NOT NULL) değerlendirilir; available <= eşik olanlar sayılır.
    */
   private async lowStockCount(): Promise<number> {
+    // PERF: ürün-başına korele skalar alt-sorgu (her ürün için ayrı SELECT sum) yerine TEK geçiş —
+    // LEFT JOIN license_items + GROUP BY + HAVING (low-stock.service.checkLowStock ile aynı desen).
+    // available = coalesce(sum(max_uses-use_count) FILTER status='available'). GROUP BY p.id (PK) →
+    // HAVING içinde p.low_stock_threshold'a erişilebilir. Sonuç (düşük-stok ürün sayısı) AYNEN korunur.
     const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM (
-        SELECT
-          p.id,
-          p.low_stock_threshold AS threshold,
-          coalesce((
-            SELECT sum(li.max_uses - li.use_count)
-            FROM license_items li
-            WHERE li.product_id = p.id AND li.status = 'available'
-          ), 0) AS available
+        SELECT p.id
         FROM products p
+        LEFT JOIN license_items li ON li.product_id = p.id
         WHERE p.low_stock_threshold IS NOT NULL
-      ) t
-      WHERE t.available <= t.threshold;
+        GROUP BY p.id
+        HAVING coalesce(sum(li.max_uses - li.use_count) FILTER (WHERE li.status = 'available'), 0)
+          <= p.low_stock_threshold
+      ) t;
     `);
     return Number(rows[0]?.c ?? 0);
   }

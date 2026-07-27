@@ -149,6 +149,12 @@ class Wpteslimat_Order_Sync {
         foreach ($order->get_items() as $item_id => $item) {
             $product = $item->get_product();
             if (!$product) continue;
+            // WooCommerce Product Bundles / Composite: TÜM kalemler (konteyner + bileşen) push edilir.
+            // Teslimat kararı PANEL EŞLEMESİNE bırakılır — hangi seviye (konteyner VEYA bileşen) panel
+            // ürününe eşliyse O teslim edilir; eşlemesiz kalem panelde zararsız 'unmapped' satır olur
+            // (operatör görür/filtreler). Konteyneri KOŞULSUZ atlamak, konteynerin kendisi lisans
+            // taşıyorsa (ona eşliyse) SESSİZ EKSİK-TESLİMAT üretirdi → paralı müşteri sıfır lisans alırdı.
+            // Bu yüzden atlama YOK; yalnız varyasyon id'si (varsa) eklenir (panel string bekler).
             $line = [
                 'remoteLineId'    => (string) $item_id,
                 'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),

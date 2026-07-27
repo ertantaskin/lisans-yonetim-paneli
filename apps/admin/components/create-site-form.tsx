@@ -2,9 +2,10 @@
 import { useActionState } from 'react';
 import { Plus, TriangleAlert } from 'lucide-react';
 import { createSiteAction, type CreateSiteState } from '../app/sites/actions';
-import { Input, Label } from './ui/input';
+import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { Field, FieldRow } from './ui/field';
 
 const initial: CreateSiteState = { ok: false };
 
@@ -13,45 +14,61 @@ export function CreateSiteForm() {
 
   return (
     <div>
-      <form action={action} className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="cs-domain">Domain</Label>
-          <Input id="cs-domain" name="domain" placeholder="magazam.com" required className="w-56" />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="cs-sender">Gönderen e-posta (ops.)</Label>
-          <Input
-            id="cs-sender"
-            name="senderEmail"
-            type="email"
-            placeholder="satis@magazam.com"
-            className="w-56"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="cs-quota">Günlük satış kotası (ops.)</Label>
-          <Input
-            id="cs-quota"
-            name="salesDailyQuota"
-            type="number"
-            min={1}
-            step={1}
-            placeholder="limitsiz"
-            className="w-40"
-          />
-        </div>
-        <label
-          htmlFor="cs-sandbox"
-          className="flex h-9 items-center gap-2 text-sm text-foreground/80"
+      <form action={action} className="space-y-4">
+        <Field
+          label="Domain"
+          htmlFor="cs-domain"
+          required
+          hint="Bağlanacak WooCommerce/pazar yeri sitesinin alan adı."
         >
-          <input
-            id="cs-sandbox"
-            name="sandbox"
-            type="checkbox"
-            className="size-4 rounded border-border accent-primary"
-          />
-          Sandbox (test modu)
-        </label>
+          <Input id="cs-domain" name="domain" placeholder="magazam.com" required className="max-w-sm" />
+        </Field>
+
+        <FieldRow>
+          <Field
+            label="Gönderen e-posta (opsiyonel)"
+            htmlFor="cs-sender"
+            hint="Teslimat maillerinde görünecek gönderen adresi. Boş = panel varsayılanı."
+          >
+            <Input
+              id="cs-sender"
+              name="senderEmail"
+              type="email"
+              placeholder="satis@magazam.com"
+            />
+          </Field>
+          <Field
+            label="Günlük satış kotası (opsiyonel)"
+            htmlFor="cs-quota"
+            hint="Bir günde bu siteye izin verilen en fazla satış. Boş = limitsiz."
+          >
+            <Input
+              id="cs-quota"
+              name="salesDailyQuota"
+              type="number"
+              min={1}
+              step={1}
+              placeholder="limitsiz"
+            />
+          </Field>
+        </FieldRow>
+
+        <Field
+          label="Sandbox (test modu)"
+          htmlFor="cs-sandbox"
+          hint="Açıkken teslimat mailleri gerçek müşteriye gitmez; entegrasyon denemesi için."
+        >
+          <label htmlFor="cs-sandbox" className="flex items-center gap-2 text-sm text-foreground/80">
+            <input
+              id="cs-sandbox"
+              name="sandbox"
+              type="checkbox"
+              className="size-4 rounded border-border accent-primary"
+            />
+            Test modunu etkinleştir
+          </label>
+        </Field>
+
         <Button type="submit" disabled={pending}>
           <Plus /> {pending ? 'Oluşturuluyor…' : 'Site Oluştur'}
         </Button>

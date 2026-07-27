@@ -4,7 +4,6 @@ import { apiGet, type SiteRow } from '../../lib/api';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { PageHeader } from '../../components/ui/page-header';
-import { CreateSiteForm } from '../../components/create-site-form';
 import { SitesTable } from '../../components/sites-table';
 
 export const dynamic = 'force-dynamic';
@@ -27,13 +26,6 @@ export default async function SitesPage() {
           </Link>
         </Button>
       </PageHeader>
-
-      <Card className="mb-5 max-w-2xl p-5">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Globe className="size-4 text-muted-foreground" aria-hidden /> Yeni Site Bağla
-        </h2>
-        <CreateSiteForm />
-      </Card>
 
       {error ? (
         <Card className="p-6">

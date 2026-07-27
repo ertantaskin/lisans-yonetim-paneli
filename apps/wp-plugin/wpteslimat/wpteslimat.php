@@ -3,7 +3,7 @@
  * Plugin Name: WP Teslimat Eklentisi
  * Description: WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatları
  *              müşteriye gösterir. Lisans verisi WP'de TUTULMAZ — panel tek doğruluk kaynağı.
- * Version: 0.3.0
+ * Version: 0.4.0
  * Requires PHP: 7.4
  * Author: Lisans Paneli
  * Text Domain: wpteslimat
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WPTESLIMAT_VERSION', '0.3.0');
+define('WPTESLIMAT_VERSION', '0.4.0');
 define('WPTESLIMAT_DIR', plugin_dir_path(__FILE__));
 define('WPTESLIMAT_FILE', __FILE__);
 
@@ -38,6 +38,7 @@ require_once WPTESLIMAT_DIR . 'includes/class-order-list.php';
 require_once WPTESLIMAT_DIR . 'includes/class-webhook.php';
 require_once WPTESLIMAT_DIR . 'includes/class-my-account.php';
 require_once WPTESLIMAT_DIR . 'includes/class-admin-metabox.php';
+require_once WPTESLIMAT_DIR . 'includes/class-product-mapping.php';
 require_once WPTESLIMAT_DIR . 'includes/class-report-issue.php';
 require_once WPTESLIMAT_DIR . 'includes/class-updater.php';
 
@@ -51,6 +52,7 @@ function wpteslimat_init() {
     Wpteslimat_Webhook::instance();
     Wpteslimat_My_Account::instance();
     Wpteslimat_Admin_Metabox::instance();
+    Wpteslimat_Product_Mapping::instance();
     Wpteslimat_Report_Issue::instance();
     Wpteslimat_Updater::instance();
 

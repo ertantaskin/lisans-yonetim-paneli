@@ -62,17 +62,31 @@ export class CustomersService {
     const siteId = opts?.siteId?.trim();
 
     // Ana WHERE (orders alias o) — search + opsiyonel site süzgeci.
-    const searchCond = term ? sql`o.customer_email ILIKE ${'%' + term + '%'}` : null;
+    // PERF: aramayı SARGABLE yap — önek yolu lower(customer_email) LIKE lower(term)||'%'
+    // (orders_email_lower_idx fonksiyonel indeksi kullanılabilir) + contains ILIKE fallback ile OR.
+    // Önek ⊆ contains olduğundan birleşim = ESKİ contains davranışıyla AYNEN aynı eşleşme kümesi;
+    // yalnız planlayıcıya indeks yolu açılır (dönüş/eşleşme davranışı korunur).
+    const searchCond = term
+      ? sql`(lower(o.customer_email) LIKE lower(${term}) || '%' OR o.customer_email ILIKE ${'%' + term + '%'})`
+      : null;
     const siteCond = siteId ? sql`o.site_id = ${siteId}` : null;
     let whereClause = sql``;
     if (searchCond && siteCond) whereClause = sql`WHERE ${searchCond} AND ${siteCond}`;
     else if (searchCond) whereClause = sql`WHERE ${searchCond}`;
     else if (siteCond) whereClause = sql`WHERE ${siteCond}`;
 
-    // Alt-sorgu site kapsamı — atama/değişim sayıları da site süzgecine uymalı.
-    const asgSiteFilter = siteId ? sql`WHERE ord.site_id = ${siteId}` : sql``;
+    // Alt-sorgu site kapsamı — atama/değişim sayıları da site süzgecine uymalı. Artık ana WHERE
+    // değil, aşağıdaki `emails` kümesi filtresine EK koşul (AND) olarak bağlanır.
+    const asgSiteFilter = siteId ? sql`AND ord.site_id = ${siteId}` : sql``;
     const repSiteFilter = siteId ? sql`AND site_id = ${siteId}` : sql``;
 
+    // PERF: filtrelenmiş (search+siteId) e-posta kümesini önce CTE'ye (scoped_orders → emails) çıkar.
+    // Atama/değişim agregatları ARTIK TÜM tabloyu email bazında toplamıyor; yalnız bu kümeyi tarar
+    // (IN (SELECT email FROM emails)) — tek müşteri arandığında bile tam-tablo group-by yapılmıyordu.
+    // NOT (denetim): dış sorguya LIMIT KOYULMAZ. /customers arama İSTEMCİ-TARAFLI (customers-table.tsx
+    // filterFn); bir LIMIT, dönen ilk N dışındaki eski müşterileri aramada "yok" gösterirdi (sessiz
+    // veri kaybı). CTE optimizasyonu maliyeti zaten sınırlar; sıralamaya stabil ikincil anahtar (email)
+    // eklenir (eşit zaman damgasında deterministik). Sunucu-taraflı sayfalama gerekirse ayrı iş.
     const rows = await rawRows<{
       email: string;
       order_count: number;
@@ -83,11 +97,19 @@ export class CustomersService {
       sites: string[] | null;
       tags: string[] | null;
     }>(this.db, sql`
+      WITH scoped_orders AS (
+        SELECT o.id, o.site_id, o.created_at, lower(o.customer_email) AS email
+        FROM orders o
+        ${whereClause}
+      ),
+      emails AS (
+        SELECT DISTINCT email FROM scoped_orders
+      )
       SELECT
-        lower(o.customer_email) AS email,
-        COUNT(DISTINCT o.id)::int AS order_count,
-        MIN(o.created_at) AS first_order_at,
-        MAX(o.created_at) AS last_order_at,
+        so.email AS email,
+        COUNT(DISTINCT so.id)::int AS order_count,
+        MIN(so.created_at) AS first_order_at,
+        MAX(so.created_at) AS last_order_at,
         COALESCE(
           array_agg(DISTINCT st.domain) FILTER (WHERE st.domain IS NOT NULL),
           '{}'
@@ -95,25 +117,24 @@ export class CustomersService {
         COALESCE(a.assignment_count, 0)::int AS assignment_count,
         COALESCE(r.replacement_count, 0)::int AS replacement_count,
         COALESCE(c.tags, '{}')::text[] AS tags
-      FROM orders o
-      LEFT JOIN sites st ON st.id = o.site_id
+      FROM scoped_orders so
+      LEFT JOIN sites st ON st.id = so.site_id
       LEFT JOIN (
         SELECT lower(ord.customer_email) AS email, COUNT(asg.id) AS assignment_count
         FROM assignments asg
         JOIN orders ord ON ord.id = asg.order_id
-        ${asgSiteFilter}
+        WHERE lower(ord.customer_email) IN (SELECT email FROM emails) ${asgSiteFilter}
         GROUP BY lower(ord.customer_email)
-      ) a ON a.email = lower(o.customer_email)
+      ) a ON a.email = so.email
       LEFT JOIN (
         SELECT lower(customer_email) AS email, COUNT(*) AS replacement_count
         FROM replacement_requests
-        WHERE status = 'approved' ${repSiteFilter}
+        WHERE status = 'approved' AND lower(customer_email) IN (SELECT email FROM emails) ${repSiteFilter}
         GROUP BY lower(customer_email)
-      ) r ON r.email = lower(o.customer_email)
-      LEFT JOIN customers c ON c.email = lower(o.customer_email)
-      ${whereClause}
-      GROUP BY lower(o.customer_email), a.assignment_count, r.replacement_count, c.tags
-      ORDER BY MAX(o.created_at) DESC
+      ) r ON r.email = so.email
+      LEFT JOIN customers c ON c.email = so.email
+      GROUP BY so.email, a.assignment_count, r.replacement_count, c.tags
+      ORDER BY MAX(so.created_at) DESC, so.email ASC
     `);
 
     const items = rows.map((row) => {

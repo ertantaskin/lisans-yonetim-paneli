@@ -12,6 +12,7 @@ import { Input, Textarea } from './ui/input';
 import { Button } from './ui/button';
 import { Combobox } from './ui/combobox';
 import { Field } from './ui/field';
+import { productKindLabel } from '../lib/labels';
 
 const initial: ImportState = { ok: false };
 const previewInitial: PreviewState = { ok: false };
@@ -76,7 +77,7 @@ export function ImportStockForm({
               items={products.map((p) => ({
                 value: p.id,
                 label: p.name,
-                hint: `${p.sku} · ${p.kind}`,
+                hint: `${p.sku} · ${productKindLabel(p.kind)}`,
                 keywords: [p.sku, p.kind],
               }))}
               placeholder="— ürün seçin —"

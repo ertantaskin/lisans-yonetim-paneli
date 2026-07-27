@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Command } from 'cmdk';
 import { Search, CornerDownLeft, ShoppingCart, KeyRound } from 'lucide-react';
 import { NAV } from './nav';
+import { orderStatusLabel } from '../../lib/labels';
 
 /** GET /api/search yanıtı (server-taraflı proxy; ADMIN_TOKEN sızmaz). */
 interface SearchOrderHit {
@@ -163,8 +164,8 @@ export function CommandPalette() {
                   <ShoppingCart className="size-4 shrink-0" />
                   <span className="font-medium">#{o.remoteOrderId}</span>
                   <span className="truncate text-muted-foreground">{o.customerEmail}</span>
-                  <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
-                    {o.status}
+                  <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {orderStatusLabel(o.status)}
                   </span>
                 </Command.Item>
               ))}
