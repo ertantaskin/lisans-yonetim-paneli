@@ -25,7 +25,7 @@ err(){ printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; }
 
 [ -n "$VER" ] || { err "Kullanım: ./scripts/release-plugin.sh <sürüm> [\"changelog\"]"; exit 1; }
 echo "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { err "Sürüm SemVer olmalı (ör. 0.2.0)."; exit 1; }
-ADMIN_TOKEN="$(grep -E '^ADMIN_TOKEN=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"'"'\r' || true)"
+ADMIN_TOKEN="$(grep -E '^ADMIN_TOKEN=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r"' || true)"
 [ -n "$ADMIN_TOKEN" ] || { err "ADMIN_TOKEN .env'de bulunamadı — panele yayınlanamaz."; exit 1; }
 
 CUR="$(grep -m1 'Version:' "$PLUGIN_DIR/wpteslimat.php" | sed -E 's/.*Version:[[:space:]]*//' | tr -d '\r')"
