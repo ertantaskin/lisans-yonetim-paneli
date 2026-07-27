@@ -106,5 +106,16 @@ export const DeliveriesResponse = z.object({
   orderId: z.string().uuid(),
   status: OrderStatus,
   deliveries: z.array(DeliveryItem),
+  /** §8 İnceleme Kuyruğu — sipariş yönetici onayı bekliyor (WP "doğrulanıyor" bandı). */
+  held: z.boolean().optional(),
+  /** En güncel teslimat maili durumu (sent|failed|…); yoksa null (WP bounce bandı). */
+  mailStatus: z.string().nullable().optional(),
+  /** §7 müşteri durum matrisi — kısmi ilerleme göstergesi: teslim edilen / toplam BİRİM. */
+  fulfilled: z.number().int().nonnegative().optional(),
+  total: z.number().int().nonnegative().optional(),
+  /** §7 — bu siparişte askıya alınmış (suspended) atama var (müşteriye "inceleme altında"). */
+  suspended: z.boolean().optional(),
+  /** §7 — onExpiry='hide' ürünün süresi geçmiş ataması vardı (müşteriye "süreniz doldu"). */
+  expiredHidden: z.boolean().optional(),
 });
 export type DeliveriesResponse = z.infer<typeof DeliveriesResponse>;

@@ -632,6 +632,96 @@ export class AdminOrdersService {
     return { orderId: order.id, revoked, assignments: active.length };
   }
 
+  /**
+   * Site-facing KISMİ iade uzlaştırması (§2/§7 "kısmi iade → yalnız ilgili satır revoke").
+   * WooCommerce'te siparişin BAZI birimleri iade edilince (woocommerce_order_refunded) WP
+   * eklentisi satır-bazlı NET adedi (sipariş qty − iade edilen qty) gönderir. Panel her satırın
+   * qty'sini NET'e düşürür → autoComplete artık iade edilen birimi DOLDURMAZ (bedava-lisans
+   * H1-sınıfı kapanır) ve teslim edilmiş fazlalık birimleri geri alır (revokeExcess deseni;
+   * markLineCanceled=false — re-fill'i qty düşüşü engeller, satır ileride tekrar artarsa meşru
+   * doldurulabilir). TAM iade (sipariş 'refunded' → tüm satırlar net=0) revokeOrderForSite ile
+   * gider (terminal canceled). İdempotent: aynı net adetler tekrar gelirse fark yok → no-op.
+   */
+  async syncRefunds(
+    site: Site,
+    remoteOrderId: string,
+    lines: { remoteLineId: string; netQty: number }[],
+    reason: string,
+  ): Promise<{ orderId: string; revoked: number; adjustedLines: number }> {
+    const [order] = await this.db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, remoteOrderId)))
+      .limit(1);
+    if (!order) throw new NotFoundException('Sipariş bulunamadı');
+
+    const actor = `site:${site.domain}`;
+    let totalRevoked = 0;
+    let adjusted = 0;
+
+    for (const l of lines) {
+      const netQty = Math.max(0, Math.floor(l.netQty));
+      const [line] = await this.db
+        .select()
+        .from(orderLines)
+        .where(and(eq(orderLines.orderId, order.id), eq(orderLines.remoteLineId, l.remoteLineId)))
+        .limit(1);
+      if (!line || line.canceled) continue;
+      if (netQty >= line.qty) continue; // Bu satırda iade yok (refund yolu qty ARTIRMAZ).
+
+      // 1) Fazla teslim edilmiş birimleri geri al (fulfilled > netQty) — revokeExcess deseni:
+      // en yeni atamadan başlayarak `excess` birim karşılanana dek; tek→karantina, multi→kapasite.
+      const excess = line.fulfilledQty - netQty;
+      if (excess > 0) {
+        const active = await this.db
+          .select({ id: assignments.id, units: assignments.units })
+          .from(assignments)
+          .where(and(eq(assignments.lineId, line.id), eq(assignments.status, 'active')))
+          .orderBy(desc(assignments.createdAt));
+        let revoked = 0;
+        for (const a of active) {
+          if (revoked >= excess) break;
+          const need = excess - revoked;
+          if (a.units <= need) {
+            await this.revokeAssignment(a.id, reason, actor, false);
+            revoked += a.units;
+          } else {
+            await this.revokePartialUnits(a.id, need, reason, actor);
+            revoked += need;
+          }
+        }
+        totalRevoked += revoked;
+      }
+
+      // 2) qty'yi NET'e düşür (revoke sonrası taze fulfilled ile satır durumu yeniden).
+      const [fresh] = await this.db
+        .select({ fulfilledQty: orderLines.fulfilledQty })
+        .from(orderLines)
+        .where(eq(orderLines.id, line.id))
+        .limit(1);
+      const nf = fresh?.fulfilledQty ?? 0;
+      const lineStatus = nf >= netQty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+      await this.db
+        .update(orderLines)
+        .set({ qty: netQty, status: lineStatus })
+        .where(eq(orderLines.id, line.id));
+      adjusted++;
+    }
+
+    if (adjusted > 0) {
+      await this.db.transaction(async (tx) => {
+        await recomputeOrderStatus(tx, order.id);
+        await tx.insert(fulfillmentEvents).values({
+          orderId: order.id,
+          type: 'revoked',
+          message: `Kısmi iade uzlaştırıldı — ${adjusted} satır, ${totalRevoked} birim geri alındı (${reason})`,
+        });
+      });
+    }
+
+    return { orderId: order.id, revoked: totalRevoked, adjustedLines: adjusted };
+  }
+
   // ─── İnceleme Kuyruğu (§8 held_for_review — dinamik kota) ──────────────────────────
   /**
    * İnceleme kuyruğu listesi (§8): dinamik kota eşiğini aşıp held_for_review'e alınmış

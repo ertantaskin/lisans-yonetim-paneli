@@ -173,9 +173,40 @@ export class OrdersService {
     // Kayıt yoksa null. Savunma-filtresi/expired mantığı yukarıda korunur.
     const mailStatus = await this.latestMailStatus(order.id);
 
+    // §7 müşteri durum matrisi + kısmi ilerleme: teslim/toplam BİRİM (satır toplamı) + askı/
+    // süre-geçmiş-gizli bayrakları. İki hafif indeksli sorgu (biri satır toplamı, biri FILTER'lı
+    // tek geçişte suspended+expiredHidden) — teslimat okuması zaten tek-sipariş, ek yük ihmal edilir.
+    const [agg] = await this.db
+      .select({
+        total: sql<number>`coalesce(sum(${orderLines.qty}), 0)`,
+        fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)`,
+      })
+      .from(orderLines)
+      .where(and(eq(orderLines.orderId, order.id), eq(orderLines.canceled, false)));
+
+    const [flags] = await this.db
+      .select({
+        suspended: sql<number>`count(*) filter (where ${assignments.status} = 'suspended')`,
+        expiredHidden: sql<number>`count(*) filter (where ${assignments.status} = 'active' and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now())`,
+      })
+      .from(assignments)
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
+      .where(eq(assignments.orderId, order.id));
+
     // F4: `held` (heldForReview) alanı — WP eklentisi İnceleme Kuyruğu durumunu (my-account bildirimi/
     // metabox rozeti) bu bayraktan okur. Eklemeli; mevcut alanlar (status/mailStatus/deliveries) değişmez.
-    return { orderId: order.id, status: order.status, held: order.heldForReview, mailStatus, deliveries };
+    return {
+      orderId: order.id,
+      status: order.status,
+      held: order.heldForReview,
+      mailStatus,
+      deliveries,
+      fulfilled: Number(agg?.fulfilled ?? 0),
+      total: Number(agg?.total ?? 0),
+      suspended: Number(flags?.suspended ?? 0) > 0,
+      expiredHidden: Number(flags?.expiredHidden ?? 0) > 0,
+    };
   }
 
   /** Siparişin en güncel teslimat maili durumu (#32) — yoksa null. */

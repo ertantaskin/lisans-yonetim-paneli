@@ -25,6 +25,115 @@ class Wpteslimat_Settings {
         add_action('admin_init', [$this, 'register']);
         add_action('admin_post_wpteslimat_connect', [$this, 'handle_connect']);
         add_action('admin_notices', [$this, 'clone_notice']);
+        // §7 admin bar sağlık göstergesi — her yönetici sayfasında panel bağlantı rozeti.
+        add_action('admin_bar_menu', [$this, 'admin_bar_health'], 100);
+    }
+
+    /**
+     * §7 ADMIN BAR SAĞLIK GÖSTERGESİ: panel bağlanabilirliğini (yeşil/kırmızı) üst-barda gösterir.
+     * Her istekte panele gitmemek için sonuç 60sn transient'te cache'lenir. is_clone/yapılandırılmamış
+     * durumda uyarı rengi. Tıklandığında Tanılama sekmesine gider.
+     */
+    public function admin_bar_health($bar) {
+        if (!current_user_can('manage_woocommerce') && !current_user_can('manage_options')) return;
+        if (!self::is_configured()) {
+            $bar->add_node([
+                'id'    => 'wpteslimat_health',
+                'title' => '⚠ ' . esc_html__('Teslimat: yapılandırılmadı', 'wpteslimat'),
+                'href'  => admin_url('options-general.php?page=wpteslimat'),
+            ]);
+            return;
+        }
+        if (self::is_clone()) {
+            $bar->add_node([
+                'id'    => 'wpteslimat_health',
+                'title' => '⚠ ' . esc_html__('Teslimat: klon/staging (pasif)', 'wpteslimat'),
+                'href'  => admin_url('options-general.php?page=wpteslimat'),
+            ]);
+            return;
+        }
+        $ok = get_transient('wpteslimat_health_ok');
+        if ($ok === false) {
+            $res = Wpteslimat_Panel_Client::get('/v1/health', 4);
+            $ok = (isset($res['code']) && $res['code'] === 200 && isset($res['body']['status']) && $res['body']['status'] === 'ok') ? '1' : '0';
+            set_transient('wpteslimat_health_ok', $ok, 60);
+        }
+        $green = ($ok === '1');
+        $bar->add_node([
+            'id'    => 'wpteslimat_health',
+            'title' => ($green ? '🟢 ' : '🔴 ') . esc_html__('Teslimat', 'wpteslimat'),
+            'href'  => admin_url('options-general.php?page=wpteslimat&wpteslimat_diag=1'),
+            'meta'  => ['title' => $green ? __('Panel bağlantısı sağlıklı', 'wpteslimat') : __('Panele ulaşılamıyor — tanılamayı çalıştırın', 'wpteslimat')],
+        ]);
+    }
+
+    /**
+     * §7 TANILAMA: panel bağlantısı + HMAC kimlik + geri-kanal webhook erişilebilirliği (Cloudflare/
+     * WAF) + saat kayması + sürüm. Ayarlar sayfasında ?wpteslimat_diag=1 ile çalıştırılır (canlı,
+     * her sayfa yükünde DEĞİL). Her kontrol yeşil/kırmızı + kısa açıklama döner. SIR göstermez.
+     */
+    private static function run_diagnostics() {
+        $checks = [];
+
+        // 1) Panel bağlantısı (public /v1/health).
+        $h = Wpteslimat_Panel_Client::get('/v1/health', 5);
+        $hcode = isset($h['code']) ? (int) $h['code'] : 0;
+        $hbody = isset($h['body']) && is_array($h['body']) ? $h['body'] : [];
+        $hok = ($hcode === 200 || $hcode === 503) && !empty($hbody['status']);
+        $checks[] = [
+            'label' => __('Panel bağlantısı', 'wpteslimat'),
+            'ok'    => $hok && ($hbody['status'] === 'ok'),
+            'detail'=> $hok
+                ? sprintf('%s · DB %s · Redis %s', $hbody['status'],
+                    (!empty($hbody['checks']['db']) ? '✓' : '✗'),
+                    (!empty($hbody['checks']['redis']) ? '✓' : '✗'))
+                : sprintf(__('ulaşılamadı (HTTP %d)', 'wpteslimat'), $hcode),
+        ];
+
+        // 2) HMAC kimlik doğrulama — imzalı boş bulk-status (200 [] = kimlik OK, 401 = imza/anahtar hatalı).
+        $auth = Wpteslimat_Panel_Client::post('/v1/orders/bulk-status', ['remoteOrderIds' => []]);
+        $acode = isset($auth['code']) ? (int) $auth['code'] : 0;
+        $checks[] = [
+            'label' => __('HMAC kimlik doğrulama', 'wpteslimat'),
+            'ok'    => ($acode >= 200 && $acode < 300),
+            'detail'=> ($acode >= 200 && $acode < 300)
+                ? __('geçerli (api_key + imza doğru)', 'wpteslimat')
+                : sprintf(__('reddedildi (HTTP %d) — api_key/hmac_secret veya saat kayması', 'wpteslimat'), $acode),
+        ];
+
+        // 3) Geri-kanal webhook erişilebilirliği (Cloudflare/WAF). Kendi webhook URL'ine imzasız POST →
+        //    401 invalid_signature = ERİŞİLEBİLİR (panel→WP yolu açık); 403/timeout/HTML = WAF/CDN blokluyor.
+        $wurl = rest_url('wpteslimat/v1/webhook');
+        $wp_res = wp_remote_post($wurl, ['timeout' => 6, 'body' => '{}', 'headers' => ['Content-Type' => 'application/json']]);
+        if (is_wp_error($wp_res)) {
+            $checks[] = ['label' => __('Webhook erişilebilirliği', 'wpteslimat'), 'ok' => false,
+                'detail' => __('ulaşılamadı: ', 'wpteslimat') . $wp_res->get_error_message()];
+        } else {
+            $wcode = (int) wp_remote_retrieve_response_code($wp_res);
+            // 401 = ulaşılabilir + işliyor (imza reddi beklenir); 200 (duplicate/ok) da erişilebilir.
+            $reachable = in_array($wcode, [200, 400, 401], true);
+            $checks[] = ['label' => __('Webhook erişilebilirliği', 'wpteslimat'), 'ok' => $reachable,
+                'detail' => $reachable
+                    ? sprintf(__('erişilebilir (HTTP %d)', 'wpteslimat'), $wcode)
+                    : sprintf(__('BLOKLU (HTTP %d) — Cloudflare/WAF geri-kanal webhook\'u engelliyor olabilir', 'wpteslimat'), $wcode)];
+        }
+
+        // 4) Saat kayması — panel /health "time" (ISO) ile yerel saat farkı. HMAC ±300sn penceresi
+        //    tıkanmadan uyar: >60sn sarı, >240sn kırmızı (imza reddinin kritik ipucu).
+        if (!empty($hbody['time'])) {
+            $skew = abs(time() - (int) strtotime((string) $hbody['time']));
+            $checks[] = ['label' => __('Saat kayması', 'wpteslimat'), 'ok' => ($skew <= 60),
+                'detail' => sprintf(__('~%d sn%s', 'wpteslimat'), $skew,
+                    $skew > 240 ? __(' — KRİTİK: sunucu saatini NTP ile eşitleyin', 'wpteslimat')
+                    : ($skew > 60 ? __(' — dikkat: saat sapması artıyor', 'wpteslimat') : ''))];
+        }
+
+        // 5) Sürüm.
+        $checks[] = ['label' => __('Sürüm', 'wpteslimat'), 'ok' => true,
+            'detail' => sprintf(__('eklenti v%s · panel v%s', 'wpteslimat'),
+                WPTESLIMAT_VERSION, !empty($hbody['version']) ? $hbody['version'] : '—')];
+
+        return $checks;
     }
 
     public static function panel_url() {
@@ -136,6 +245,31 @@ class Wpteslimat_Settings {
                     <strong style="color:#c0392b">✗ Eksik</strong>
                 <?php endif; ?>
             </p>
+
+            <hr>
+            <h2><?php esc_html_e('Tanılama', 'wpteslimat'); ?></h2>
+            <?php if (isset($_GET['wpteslimat_diag'])): ?>
+                <?php $diag = self::run_diagnostics(); ?>
+                <table class="widefat" style="max-width:680px">
+                    <tbody>
+                    <?php foreach ($diag as $c): ?>
+                        <tr>
+                            <td style="width:24px"><?php echo $c['ok'] ? '🟢' : '🔴'; ?></td>
+                            <td style="width:200px"><strong><?php echo esc_html($c['label']); ?></strong></td>
+                            <td><?php echo esc_html($c['detail']); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <p><a href="<?php echo esc_url(admin_url('options-general.php?page=wpteslimat&wpteslimat_diag=1')); ?>" class="button"><?php esc_html_e('Yeniden çalıştır', 'wpteslimat'); ?></a></p>
+            <?php else: ?>
+                <p><?php esc_html_e('Panel bağlantısı, HMAC kimlik, webhook erişilebilirliği (Cloudflare/WAF), saat kayması ve sürümü canlı test eder.', 'wpteslimat'); ?></p>
+                <?php if ($configured): ?>
+                    <a href="<?php echo esc_url(admin_url('options-general.php?page=wpteslimat&wpteslimat_diag=1')); ?>" class="button button-secondary"><?php esc_html_e('Tanılamayı çalıştır', 'wpteslimat'); ?></a>
+                <?php else: ?>
+                    <p><em><?php esc_html_e('Önce panele bağlanın.', 'wpteslimat'); ?></em></p>
+                <?php endif; ?>
+            <?php endif; ?>
 
             <hr>
             <h2>Panele Bağlan (tek seferlik kod)</h2>

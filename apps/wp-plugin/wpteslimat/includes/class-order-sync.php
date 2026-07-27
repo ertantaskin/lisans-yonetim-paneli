@@ -29,15 +29,21 @@ class Wpteslimat_Order_Sync {
         // (#16) Sipariş kalemleri düzenlenip kaydedilince (yalnız item değişimi) — daha önce
         // panele iletilmiş siparişi güncel adetlerle yeniden uzlaştır. Guard sonsuz döngüyü keser.
         add_action('woocommerce_saved_order_items', [$this, 'enqueue_resync'], 20, 2);
+        // (§2/§7) KISMİ iade → yalnız iade edilen birimleri geri al. woocommerce_order_refunded
+        // hem kısmi hem tam iadede ateşlenir; sync_refund tam iadeyi (net=0) mevcut revoke yoluna
+        // devreder, kısmiyi satır-bazlı refund ucuna gönderir.
+        add_action('woocommerce_order_refunded', [$this, 'enqueue_refund'], 20, 2);
 
         // Arka plan iş işleyicileri (Action Scheduler async) — asıl panel çağrısı burada koşar.
         add_action('wpteslimat_async_push', [$this, 'push'], 10, 1);
         add_action('wpteslimat_async_revoke', [$this, 'revoke'], 10, 1);
         add_action('wpteslimat_async_resync', [$this, 'resync_items'], 10, 1);
+        add_action('wpteslimat_async_refund', [$this, 'sync_refund'], 10, 1);
 
         // Retry (başarısız işlerin tekrarı; Action Scheduler yoksa wp-cron).
         add_action('wpteslimat_retry_push', [$this, 'push'], 10, 1);
         add_action('wpteslimat_retry_revoke', [$this, 'revoke'], 10, 1);
+        add_action('wpteslimat_retry_refund', [$this, 'sync_refund'], 10, 1);
     }
 
     /**
@@ -57,6 +63,11 @@ class Wpteslimat_Order_Sync {
     public function enqueue_resync($order_id, $items = null) {
         if (self::$syncing) return;
         $this->enqueue_or_run('wpteslimat_async_resync', 'resync_items', $order_id);
+    }
+
+    /** Kısmi/tam iade uzlaştırmasını arka plana al (refund admin isteğini bloklamaz). */
+    public function enqueue_refund($order_id, $refund_id = null) {
+        $this->enqueue_or_run('wpteslimat_async_refund', 'sync_refund', $order_id);
     }
 
     /**
@@ -256,6 +267,68 @@ class Wpteslimat_Order_Sync {
             as_schedule_single_action(time() + 300, 'wpteslimat_retry_revoke', [$order_id], 'wpteslimat');
         } else {
             wp_schedule_single_event(time() + 300, 'wpteslimat_retry_revoke', [$order_id]);
+        }
+    }
+
+    /**
+     * (§2/§7) Kısmi iade uzlaştırması: satır-bazlı NET adet (sipariş qty − iade edilen qty).
+     * Tam iade (net=0) → mevcut revoke() (terminal, idempotent). Kısmi → /refund ucu: panel qty'yi
+     * düşürür + fazla teslim edilmiş birimi geri alır → autoComplete iade edileni DOLDURMAZ (bedava
+     * lisans kapanır). Klon/yapılandırma guard'lı; başarısızlıkta retry.
+     */
+    public function sync_refund($order_id) {
+        if (!Wpteslimat_Settings::is_configured()) return;
+        if (Wpteslimat_Settings::is_clone()) return;
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+        // Panele hiç iletilmemiş sipariş → uzlaştırılacak atama yok.
+        if ($order->get_meta('_wpteslimat_pushed') !== 'yes') return;
+
+        $lines = [];
+        $total_net = 0;
+        $total_ordered = 0;
+        foreach ($order->get_items() as $item_id => $item) {
+            if (!$item->get_product()) continue;
+            $qty = (int) $item->get_quantity();
+            // get_qty_refunded_for_item NEGATİF döner (iade edilen adet) → abs ile net hesapla.
+            $refunded = abs((int) $order->get_qty_refunded_for_item($item_id));
+            $net = max(0, $qty - $refunded);
+            $total_net    += $net;
+            $total_ordered += $qty;
+            $lines[] = ['remoteLineId' => (string) $item_id, 'netQty' => $net];
+        }
+        if (empty($lines)) return;
+
+        // Hiç iade yok → no-op (hook başka nedenle ateşlenmiş olabilir).
+        if ($total_net >= $total_ordered) return;
+
+        // Tam iade (hiç net kalmadı) → terminal revoke yoluna devret (idempotent; _wpteslimat_revoked).
+        if ($total_net === 0) {
+            $this->revoke($order_id);
+            return;
+        }
+
+        // Kısmi iade → satır-bazlı /refund ucu.
+        $body = ['reason' => 'WooCommerce kısmi iade', 'lines' => $lines];
+        $res = Wpteslimat_Panel_Client::post(
+            '/v1/orders/' . rawurlencode((string) $order_id) . '/refund',
+            $body
+        );
+        $this->log($order_id, 'refund', $body, $res);
+        if (in_array($res['code'], [200, 404], true)) {
+            $revoked = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
+            $order->add_order_note(sprintf('Teslimat: kısmi iade uzlaştırıldı (%d birim geri alındı).', $revoked));
+            $order->save();
+        } else {
+            $this->schedule_refund_retry($order_id);
+        }
+    }
+
+    private function schedule_refund_retry($order_id) {
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action(time() + 300, 'wpteslimat_retry_refund', [$order_id], 'wpteslimat');
+        } else {
+            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_refund', [$order_id]);
         }
     }
 

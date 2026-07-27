@@ -13,6 +13,24 @@ import { SalesQuotaExceededException } from './sales-quota.exception';
 /** Site-facing revoke gövdesi — reason opsiyonel (WP iade/iptal sebebi). */
 const RevokeOrderRequest = z.object({ reason: z.string().min(1).max(500).optional() });
 
+/**
+ * Site-facing KISMİ iade gövdesi (§2/§7). WP eklentisi satır-bazlı NET adedi (sipariş qty −
+ * iade edilen qty) gönderir; netQty=0 = o satır tamamen iade (qty→0, tüm birim revoke).
+ */
+const SyncRefundsRequest = z.object({
+  reason: z.string().min(1).max(500).optional(),
+  lines: z
+    .array(
+      z.object({
+        remoteLineId: z.string().min(1),
+        netQty: z.number().int().nonnegative(),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+type SyncRefundsRequest = z.infer<typeof SyncRefundsRequest>;
+
 /** Site-facing toplu durum gövdesi (#33) — en fazla 100 remote sipariş id (payload dönmez). */
 const BulkStatusRequest = z.object({
   remoteOrderIds: z.array(z.string().min(1)).max(100),
@@ -90,6 +108,27 @@ export class OrdersController {
       site,
       remoteOrderId,
       body.reason ?? 'WooCommerce iade/iptal',
+    );
+  }
+
+  /**
+   * KISMİ iade uzlaştırması (§2/§7 "kısmi iade → yalnız ilgili satır revoke"). WooCommerce'te
+   * siparişin bazı birimleri iade edilince (woocommerce_order_refunded) WP eklentisi satır-bazlı
+   * NET adedi gönderir; panel qty'yi düşürür + fazla teslim edilmiş birimleri geri alır (autoComplete
+   * artık iade edileni doldurmaz). Payload/key DÖNMEZ. @HttpCode(200): idempotent (WP tekrar denemez).
+   */
+  @Post(':remoteOrderId/refund')
+  @HttpCode(200)
+  refund(
+    @CurrentSite() site: Site,
+    @Param('remoteOrderId') remoteOrderId: string,
+    @Body(new ZodBody(SyncRefundsRequest)) body: SyncRefundsRequest,
+  ) {
+    return this.adminOrders.syncRefunds(
+      site,
+      remoteOrderId,
+      body.lines,
+      body.reason ?? 'WooCommerce kısmi iade',
     );
   }
 }
