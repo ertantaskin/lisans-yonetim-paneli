@@ -728,6 +728,35 @@ eşleşiyor?".
   dedup 409) · PHP-lint temiz · migration 0022 prod (api boot auto-migrate) · /health 200 v1.0.0 · unmapped route 200 ·
   eklenti v0.6.0 panele publish (201). migration 0000-0022.
 
+**PROAKTİF KATALOG SENKRONU + EŞLEME DEĞİŞTİR/KALDIR (commit b4ca486→10c20d9, CANLI + eklenti v0.7.0 + migration 0023):**
+Kullanıcı "reaktif (sipariş gelince eşle) saçma — mevcut ürünleri sipariş BEKLEMEDEN adıyla seçip eşleyebilmeliyim;
+ayrıca eşlediğim ürünü değiştirebilmeli/kaldırabilmeliyim; OTOMATİK EŞLEŞTİRME OLMAMALI (güvenlik) — elle seçeyim"
+dedi. **Migration 0023** `site_remote_products` (mağaza ürün katalog SNAPSHOT'ı; ad/sku/tip/varyasyon — **SIR YOK**;
+eşlemeler AYRI `site_product_mappings` tablosunda → katalog yenilense de kopmaz).
+- **Katalog senkronu (WP→panel):** site-facing HMAC `POST /v1/site-mappings/catalog` — WP eklentisi mağazanın
+  yayınlanmış ürünlerini TAM SNAPSHOT (delete+insert) gönderir. `remoteProductId/remoteVariationId` collect_lines
+  ile BİREBİR türetilir (basit→get_id; variable→parent + her varyasyon) → katalog satırı sipariş satırıyla eşleşir.
+  **Yalnız LİSTE gelir — otomatik eşleştirme ASLA yok; eşleme %100 elle (güvenlik).**
+- **Panel proaktif eşleme (/mappings):** `GET /catalog/summary` (site picker: ürün sayısı+son senkron) + `GET /catalog?
+  siteId=` (katalog + her ürünün eşleme durumu; DISTINCT ON = resolveMapping mantığı, varyasyon-özel>ürün-seviyesi,
+  eşlenmemiş üstte). "Site Kataloğu" bölümü → site seç → TÜM ürünleri adıyla gör → sipariş beklemeden tek-tıkla eşle.
+- **Eşleme DEĞİŞTİR/KALDIR:** `updateMapping` artık `{active?,productId?,bundleQty?}` kısmi güncelleme (productId→remap;
+  (site,remote,varyasyon) anahtarı sabit → unique çakışma yok, lock gerekmez); yeni `DELETE /mappings/:id` (404 idempotent).
+  Katalog eşli satırında **Değiştir** (MapProductSheet edit modu, mevcut ürün ön-seçili) + onaylı **Kaldır**. Kaldırınca
+  ürün çözülmez (unmapped→pending, yanlış teslim YOK). listCatalog `mappingId` döner.
+- **Tarama/tazeleme modeli (kullanıcı kararı: en stabil):** POLLING YOK; **olay-güdümlü** — WP `woocommerce_new/update/
+  trash_product` → Action Scheduler ~3dk debounce+dedup (editör bloklanmaz) + WP manuel "Ürünleri Panele Aktar" butonu.
+  **WP yük optimizasyonu:** run_sync katalog HASH'ini saklar; değişmediyse (yalnız stok/fiyat düzenlemesi) push'u ATLAR →
+  gereksiz HTTP+yeniden-yazma yok. Manuel buton hash'i yok sayar (zorla tazele/kurtarma).
+- **Adversaryel denetim (deploy-ÖNCESİ, 4-lens/9-ajan → 4 CONFIRMED low, 1 REFUTED; hepsi düzeltildi):** [advisory-lock]
+  syncCatalog eşzamanlı aynı-site snapshot'ı serileştirmiyordu (çift satır/23505→500) → `pg_advisory_xact_lock(catalog:<siteId>)`
+  (upsertSiteMapping deseni) · [boş-wipe] boş dizi kataloğu SİLİYORDU (uzunluk kontrolü DELETE'ten önceye alındı → boş=no-op) ·
+  [limit] listCatalog LIMIT 2000<5000 kabul → LIMIT 5000 · [sayfa-boşalma] geçersiz ?site= tüm /mappings'i boşaltıyordu →
+  katalog fetch ayrı try/catch + UUID guard · [WP 413] (refuted-security) büyük katalog gövde sınırını aşarsa anlamlı mesaj.
+- **Doğrulama:** typecheck api+admin temiz · admin build · **dev E2E** (gerçek WP collector→HMAC push→snapshot; summary/catalog/
+  unmapped; proaktif eşle 201→dedup 409; **varyasyon çözümü** parent→ürün-seviyesi/501→varyasyon-özel/502→fallback;
+  remap 200; delete 200→404; **boş-push no-op** 3→3 satır wipe YOK) · migration 0023 prod boot auto-migrate.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

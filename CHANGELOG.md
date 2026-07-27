@@ -14,6 +14,23 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Proaktif katalog senkronu + eşleme Değiştir/Kaldır (migration 0023 · eklenti v0.7.0)
+- **Proaktif eşleme:** Yeni `site_remote_products` katalog snapshot tablosu (ad/sku/tip — **SIR YOK**;
+  eşlemeler ayrı tabloda, kopmaz). WP eklentisi mağazanın yayınlanmış ürünlerini panele iter
+  (`POST /v1/site-mappings/catalog`, HMAC, tam snapshot). Panelde **/mappings → "Site Kataloğu"**:
+  site seç → mağazanın TÜM ürünlerini adıyla gör → **sipariş beklemeden** tek-tıkla panel ürününe eşle.
+  `GET /catalog/summary` + `GET /catalog?siteId=` (eşleme durumu resolveMapping mantığıyla).
+- **OTOMATİK EŞLEŞTİRME YOK (güvenlik):** katalog senkronu yalnız ürün LİSTESİNİ getirir; hangi panel
+  ürünüyle eşleşeceğine ASLA karışmaz. Eşleme %100 elle — operatör seçer.
+- **Eşlemeyi Değiştir/Kaldır:** `PATCH /mappings/:id` artık hedef panel ürününü değiştirir (remap) +
+  bundle; yeni `DELETE /mappings/:id`. Katalog eşli satırında **Değiştir** + onaylı **Kaldır**.
+- **Tazeleme modeli:** polling YOK; olay-güdümlü (ürün eklen/sil/düzenle → ~3dk debounce) + WP manuel
+  buton. **WP yük optimizasyonu:** katalog değişmediyse (yalnız stok/fiyat edit'i) push atlanır (hash-skip).
+- **Adversaryel denetim (deploy-öncesi, 9 ajan → 4 düzeltme):** syncCatalog advisory-lock (eşzamanlı
+  snapshot çift-satır/500 kapandı); boş dizi artık kataloğu SİLMEZ (no-op); listCatalog LIMIT 2000→5000;
+  geçersiz ?site= tüm sayfayı boşaltmıyor. **Migration 0023.** dev E2E tam yeşil (varyasyon çözümü,
+  remap, delete, boş-push wipe-yok dahil).
+
 ### Sipariş detayı + destek akışı UX/correctness dalgası (kullanıcı geri bildirimi + 4-lens denetim / 23 bulgu)
 - **Sipariş detayı (/orders/[id]):** aktif lisanslar ile iptal/değiştirilen/expired atamalar ayrıldı
   (katlanır "Geçmiş" bölümü); her satır+atamada ürün adı (ham Woo kalem id yerine); başlıkta siparişin
