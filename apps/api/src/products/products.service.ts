@@ -5,6 +5,7 @@ import { rawRows } from '../db/raw-query';
 import {
   products,
   siteProductMappings,
+  siteRemoteProducts,
   sites,
   licenseItems,
   type NewProduct,
@@ -484,6 +485,135 @@ export class ProductsService {
       .returning();
     if (!row) throw new NotFoundException('Eşleme bulunamadı');
     return row;
+  }
+
+  // ─── Mağaza ürün kataloğu senkronu (§3 — panelde PROAKTİF eşleme) ────────────────────
+
+  /**
+   * Katalog senkronu (site-facing HMAC): WP eklentisi sitenin yayınlanmış ürünlerini (ad/sku/tip/
+   * varyasyon) gönderir → panel snapshot'ı YENİLER (delete+insert, atomik). Eşlemeler
+   * (site_product_mappings) AYRI tablo → katalog yenilense de kopmaz. SIR YOK. Amaç: operatör
+   * sipariş beklemeden mağaza ürününü ADIYLA seçip eşlesin (elle ham ID yazmasın).
+   */
+  async syncCatalog(
+    siteId: string,
+    items: Array<{
+      remoteProductId: string;
+      remoteVariationId?: string | null;
+      name: string;
+      sku?: string | null;
+      kind?: string | null;
+    }>,
+  ): Promise<{ synced: number }> {
+    return this.db.transaction(async (tx) => {
+      await tx.delete(siteRemoteProducts).where(eq(siteRemoteProducts.siteId, siteId));
+      if (!items.length) return { synced: 0 };
+      const seen = new Set<string>();
+      const rows = items
+        .map((it) => {
+          const variation =
+            it.remoteVariationId && it.remoteVariationId !== '0' ? it.remoteVariationId : null;
+          return {
+            siteId,
+            remoteProductId: it.remoteProductId,
+            remoteVariationId: variation,
+            name: it.name.slice(0, 500),
+            sku: it.sku ? it.sku.slice(0, 120) : null,
+            kind: it.kind ? it.kind.slice(0, 40) : null,
+          };
+        })
+        // unique index NULL'ı ayrı sayar → delete+insert içinde mükerrer (product,variation) çift
+        // satırı INSERT'i patlatmasın diye app-düzeyi dedup (ilk kazanır).
+        .filter((r) => {
+          const k = `${r.remoteProductId}::${r.remoteVariationId ?? ''}`;
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      for (let i = 0; i < rows.length; i += 500) {
+        await tx.insert(siteRemoteProducts).values(rows.slice(i, i + 500));
+      }
+      return { synced: rows.length };
+    });
+  }
+
+  /** Sitelerin katalog özeti (picker için): aktif ürün sayısı + son senkron; katalog yoksa 0. */
+  async catalogSummary() {
+    const rows = await rawRows<{
+      site_id: string;
+      domain: string;
+      product_count: number;
+      last_synced_at: string | null;
+    }>(
+      this.db,
+      sql`
+        SELECT s.id AS site_id, s.domain,
+               COUNT(rp.id)::int AS product_count,
+               MAX(rp.synced_at) AS last_synced_at
+        FROM sites s
+        LEFT JOIN site_remote_products rp ON rp.site_id = s.id AND rp.active = true
+        GROUP BY s.id, s.domain
+        ORDER BY s.domain
+      `,
+    );
+    return rows.map((r) => ({
+      siteId: r.site_id,
+      domain: r.domain,
+      productCount: Number(r.product_count),
+      lastSyncedAt: r.last_synced_at,
+    }));
+  }
+
+  /**
+   * Bir sitenin senkron kataloğu + her ürünün EŞLEME DURUMU (eşli → panel ürün adı + bundle; yoksa
+   * null). Eşli mantığı resolveMapping ile aynı (varyasyon-özel VEYA ürün-seviyesi; en spesifik
+   * tercih — DISTINCT ON). Eşlenmemiş ÜSTTE. Panelde proaktif eşleme ekranını besler.
+   */
+  async listCatalog(siteId: string) {
+    const rows = await rawRows<{
+      remote_product_id: string;
+      remote_variation_id: string | null;
+      name: string;
+      sku: string | null;
+      kind: string | null;
+      synced_at: string;
+      mapped_product_id: string | null;
+      bundle_qty: number | null;
+      mapped_product_name: string | null;
+    }>(
+      this.db,
+      sql`
+        SELECT * FROM (
+          SELECT DISTINCT ON (rp.id)
+                 rp.id,
+                 rp.remote_product_id, rp.remote_variation_id, rp.name, rp.sku, rp.kind, rp.synced_at,
+                 m.product_id AS mapped_product_id, m.bundle_qty, p.name AS mapped_product_name
+          FROM site_remote_products rp
+          LEFT JOIN site_product_mappings m
+            ON m.site_id = rp.site_id
+           AND m.remote_product_id = rp.remote_product_id
+           AND m.active = true
+           AND (m.remote_variation_id IS NULL OR m.remote_variation_id = rp.remote_variation_id)
+          LEFT JOIN products p ON p.id = m.product_id
+          WHERE rp.site_id = ${siteId} AND rp.active = true
+          ORDER BY rp.id, (m.remote_variation_id IS NOT NULL) DESC
+        ) t
+        ORDER BY (t.mapped_product_id IS NOT NULL), t.name
+        LIMIT 2000
+      `,
+    );
+    return rows.map((r) => ({
+      remoteProductId: r.remote_product_id,
+      remoteVariationId: r.remote_variation_id,
+      name: r.name,
+      sku: r.sku,
+      kind: r.kind,
+      syncedAt: r.synced_at,
+      mapped: r.mapped_product_id !== null,
+      mappedProductId: r.mapped_product_id,
+      mappedProductName: r.mapped_product_name,
+      bundleQty: r.bundle_qty,
+    }));
   }
 
   // ─── §7 WP ürün-eşleme kutusu (site-scoped, HMAC) ────────────────────────────────────

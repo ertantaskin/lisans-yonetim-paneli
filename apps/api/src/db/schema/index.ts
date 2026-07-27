@@ -19,6 +19,7 @@ export * from './savedViews';
 export * from './pluginReleases';
 export * from './deployments';
 export * from './mappings';
+export * from './siteRemoteProducts';
 export * from './events';
 export * from './mail';
 export * from './outbox';

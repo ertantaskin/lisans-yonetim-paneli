@@ -322,6 +322,8 @@ class Wpteslimat_Settings {
                 <?php endif; ?>
             <?php endif; ?>
 
+            <?php Wpteslimat_Catalog_Sync::render_settings_section(); ?>
+
             <hr>
             <h2>Panele Bağlan (tek seferlik kod)</h2>
             <p>Panel yönetim arayüzünden aldığınız <strong>tek kullanımlık bağlan kodunu</strong> girin;

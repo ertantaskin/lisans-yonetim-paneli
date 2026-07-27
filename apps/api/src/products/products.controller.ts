@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AccountPayloadSchema } from '@lisans/shared';
 import { AdminGuard } from '../auth/admin.guard';
@@ -111,6 +121,18 @@ export class ProductsController {
   @Get('mappings/unmapped')
   unmappedIncoming() {
     return this.products.listUnmapped();
+  }
+
+  /** Site katalog özeti (proaktif eşleme picker'ı): ürün sayısı + son senkron. */
+  @Get('catalog/summary')
+  catalogSummary() {
+    return this.products.catalogSummary();
+  }
+
+  /** Bir sitenin senkron kataloğu + eşleme durumu — panelde PROAKTİF eşleme ekranı (§3). */
+  @Get('catalog')
+  catalog(@Query('siteId', new ParseUUIDPipe()) siteId: string) {
+    return this.products.listCatalog(siteId);
   }
 
   @Patch('mappings/:id')

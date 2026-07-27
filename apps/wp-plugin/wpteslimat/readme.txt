@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 0.6.0
+Stable tag: 0.7.0
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,11 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 0.7.0 =
+* Mağaza ürün kataloğu panele senkronlanır (Ayarlar → "Ürünleri Panele Aktar" + ürün kaydında
+  otomatik) — panelde ürünleri sipariş beklemeden, adıyla proaktif eşlemek için. Sır göndermez
+  (ad/sku/tip).
 
 = 0.6.0 =
 * Sipariş satırlarına mağaza ürün adı (remoteName) eklendi — panelde eşlenmemiş ürünleri isimle

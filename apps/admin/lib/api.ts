@@ -185,6 +185,43 @@ export interface UnmappedRow {
   lastSeen: string;
 }
 
+/**
+ * GET /v1/admin/catalog/summary satırı — proaktif eşleme site seçici kaynağı. Her sitenin
+ * senkronlanmış katalog özeti (kaç ürün + son senkron). `productCount === 0` → o sitenin
+ * kataloğu henüz WordPress'ten çekilmemiş (operatöre senkron ipucu gösterilir).
+ */
+export interface CatalogSummaryRow {
+  siteId: string;
+  domain: string;
+  productCount: number;
+  /** Kataloğun en son ne zaman senkronlandığı (ISO); hiç senkron yoksa null. */
+  lastSyncedAt: string | null;
+}
+
+/**
+ * GET /v1/admin/catalog?siteId=<uuid> satırı — bir mağazanın senkronlanmış ürünü + panel
+ * eşleme durumu (eşlenmemişler önce). `remoteProductId`/`remoteVariationId` katalog verisinden
+ * gelir → proaktif eşlemede operatör ID YAZMAZ (sipariş beklemeden, elle-ID typo riski yok).
+ */
+export interface CatalogRow {
+  remoteProductId: string;
+  remoteVariationId: string | null;
+  /** Mağaza ürün adı (operatör NEYİ eşlediğini ada göre görür). */
+  name: string;
+  sku: string | null;
+  /** Mağaza ürün türü (ör. WooCommerce simple/variable) — küçük rozet; null olabilir. */
+  kind: string | null;
+  /** Bu ürünün en son senkronlandığı an (ISO). */
+  syncedAt: string;
+  /** Panelde aktif bir eşlemesi var mı. */
+  mapped: boolean;
+  mappedProductId: string | null;
+  /** Eşliyse panel ürün adı (ham UUID yerine operatör dostu). */
+  mappedProductName: string | null;
+  /** Eşleme paket adedi (1 mağaza siparişi = N lisans); null/1 = tekil. */
+  bundleQty: number | null;
+}
+
 export interface OrderDetail {
   order: OrderRow & {
     siteId: string;
