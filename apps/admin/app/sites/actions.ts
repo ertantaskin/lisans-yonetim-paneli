@@ -82,6 +82,19 @@ export async function updateSiteAction(
     // Geri kanal webhook hedefi (§2) — boş = temizle (webhook devre dışı, null).
     const webhookRaw = String(formData.get('webhookUrl') || '').trim();
     const webhookUrl: string | null = webhookRaw ? webhookRaw : null;
+    // Mağaza admin sipariş bağlantısı şablonu — SALT YÖNLENDİRME (panel bu adrese bağlanmaz).
+    // Boş = temizle → site tipinden türetilsin. Şablon {orderId} içermeli, aksi halde her
+    // sipariş aynı adrese giderdi (sessiz yanlış bağlantı).
+    const tplRaw = String(formData.get('adminOrderUrlTemplate') || '').trim();
+    if (tplRaw) {
+      if (!/^https?:\/\//i.test(tplRaw)) {
+        return { ok: false, error: 'Mağaza sipariş bağlantısı http:// veya https:// ile başlamalı' };
+      }
+      if (!tplRaw.includes('{orderId}')) {
+        return { ok: false, error: 'Mağaza sipariş bağlantısı {orderId} yer tutucusu içermeli' };
+      }
+    }
+    const adminOrderUrlTemplate: string | null = tplRaw ? tplRaw : null;
     // Sandbox (test modu) — checkbox işaretliyse true.
     const sandbox = formData.get('sandbox') != null;
     // Dinamik satış kotası (§8) — checkbox işaretliyse true.
@@ -106,6 +119,7 @@ export async function updateSiteAction(
         sandbox,
         senderEmail,
         webhookUrl,
+        adminOrderUrlTemplate,
         dynamicQuotaEnabled,
         reviewMultiplier,
       },

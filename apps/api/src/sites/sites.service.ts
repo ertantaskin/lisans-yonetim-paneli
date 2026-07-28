@@ -25,6 +25,12 @@ export interface SiteDetail {
     senderEmail: string | null;
     /** Geri kanal webhook hedefi (§2) — null = webhook devre dışı. SIR değil. */
     webhookUrl: string | null;
+    /**
+     * Mağaza yönetim paneli sipariş bağlantısı şablonu (`{orderId}` yer tutucusu).
+     * SALT YÖNLENDİRME — panel bu adrese bağlanmaz, yalnız tıklanabilir bağlantı üretir.
+     * null → site tipinden türetilir (WooCommerce: webhook/domain origin + wc-orders).
+     */
+    adminOrderUrlTemplate: string | null;
     salesDailyQuota: number | null;
     /** Dinamik kota (§8) açık mı — açıksa eşik aşımında sipariş held_for_review'e alınır. */
     dynamicQuotaEnabled: boolean;
@@ -165,6 +171,7 @@ export class SitesService {
       sandbox?: boolean;
       senderEmail?: string | null;
       webhookUrl?: string | null;
+      adminOrderUrlTemplate?: string | null;
       status?: 'active' | 'suspended';
     },
   ): Promise<PublicSite> {
@@ -179,6 +186,10 @@ export class SitesService {
     if (input.senderEmail !== undefined) patch.senderEmail = input.senderEmail;
     // Geri kanal webhook hedefi (§2) — null = temizle (webhook sessizce atlanır).
     if (input.webhookUrl !== undefined) patch.webhookUrl = input.webhookUrl;
+    // Mağaza admin sipariş bağlantısı şablonu (SALT YÖNLENDİRME; boş string → null = türet).
+    if (input.adminOrderUrlTemplate !== undefined) {
+      patch.adminOrderUrlTemplate = input.adminOrderUrlTemplate || null;
+    }
     if (input.status !== undefined) patch.status = input.status;
 
     const [row] = await this.db.update(sites).set(patch).where(eq(sites.id, id)).returning();
@@ -388,6 +399,7 @@ export class SitesService {
         status: site.status,
         senderEmail: site.senderEmail,
         webhookUrl: site.webhookUrl,
+        adminOrderUrlTemplate: site.adminOrderUrlTemplate,
         salesDailyQuota: site.salesDailyQuota,
         dynamicQuotaEnabled: site.dynamicQuotaEnabled,
         reviewMultiplier: site.reviewMultiplier,

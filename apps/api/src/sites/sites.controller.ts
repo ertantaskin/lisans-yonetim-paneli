@@ -25,6 +25,21 @@ const UpdateSiteBody = z.object({
   senderEmail: z.string().email().nullable().optional(),
   // Geri kanal webhook hedefi (§2) — null = temizle (webhook devre dışı).
   webhookUrl: z.string().url().nullable().optional(),
+  /**
+   * Mağaza yönetim paneli sipariş bağlantısı şablonu — `{orderId}` yer tutucusuyla.
+   * SALT YÖNLENDİRME: panel bu adrese OTOMATİK BAĞLANMAZ, veri çekmez; yalnız operatörün
+   * tıklayacağı bağlantıyı üretir (kullanıcı isteği: "sadece url yönlendirme, otomatik
+   * bağlantı olmayacak — güvenlikten dolayı"). Boş/null → site tipinden türetilir.
+   * http/https ZORUNLU (javascript:/data: reddedilir); `{orderId}` içermeli.
+   */
+  adminOrderUrlTemplate: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => /^https?:\/\//i.test(v), 'http:// veya https:// ile başlamalı')
+    .refine((v) => v.includes('{orderId}'), '{orderId} yer tutucusu içermeli')
+    .nullable()
+    .optional(),
   // Yaşam döngüsü (§8): 'suspended' → HMAC auth reddedilir (findForAuth active şartı).
   status: z.enum(['active', 'suspended']).optional(),
 });

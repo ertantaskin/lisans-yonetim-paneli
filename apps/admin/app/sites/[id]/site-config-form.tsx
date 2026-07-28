@@ -26,6 +26,7 @@ export function SiteConfigForm({
   sandbox,
   senderEmail,
   webhookUrl,
+  adminOrderUrlTemplate,
   dynamicQuotaEnabled,
   reviewMultiplier,
 }: {
@@ -34,6 +35,8 @@ export function SiteConfigForm({
   sandbox: boolean;
   senderEmail: string | null;
   webhookUrl: string | null;
+  /** Mağaza admin sipariş bağlantısı şablonu — SALT YÖNLENDİRME (otomatik bağlantı yok). */
+  adminOrderUrlTemplate: string | null;
   dynamicQuotaEnabled: boolean;
   reviewMultiplier: number;
 }) {
@@ -146,6 +149,20 @@ export function SiteConfigForm({
               />
             </Field>
           </FieldRow>
+          <Field
+            label="Mağaza sipariş bağlantısı (şablon)"
+            htmlFor="sc-order-url"
+            hint="Panelden mağaza yönetim paneline tıklanabilir bağlantı üretir. {orderId} yer tutucusunu kullanın. Boş bırakılırsa site tipinden türetilir. Panel bu adrese BAĞLANMAZ, veri çekmez — sadece yönlendirir."
+          >
+            <Input
+              id="sc-order-url"
+              name="adminOrderUrlTemplate"
+              type="url"
+              defaultValue={adminOrderUrlTemplate ?? ''}
+              placeholder="https://magazam.com/wp-admin/admin.php?page=wc-orders&action=edit&id={orderId}"
+              className="w-full"
+            />
+          </Field>
         </FormSection>
 
         <FormSection

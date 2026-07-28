@@ -182,6 +182,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               sandbox={site.sandbox}
               senderEmail={site.senderEmail}
               webhookUrl={site.webhookUrl}
+              adminOrderUrlTemplate={site.adminOrderUrlTemplate ?? null}
               dynamicQuotaEnabled={site.dynamicQuotaEnabled}
               reviewMultiplier={site.reviewMultiplier}
             />

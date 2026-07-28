@@ -16,6 +16,11 @@ export interface SiteDetail {
     status: string;
     senderEmail: string | null;
     webhookUrl: string | null;
+    /**
+     * Mağaza yönetim paneli sipariş bağlantısı şablonu (`{orderId}`). SALT YÖNLENDİRME —
+     * panel bu adrese bağlanmaz. Opsiyonel: eski API sürümü bu alanı döndürmeyebilir.
+     */
+    adminOrderUrlTemplate?: string | null;
     salesDailyQuota: number | null;
     sandbox: boolean;
     /** Dinamik satış kotası (§8): açıksa sabit kota yerine 30g-ort × çarpan eşiği uygulanır. */
