@@ -14,6 +14,54 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### İş istasyonu partisi — bekleyen satır çözümü, lisans envanteri, canlı akış, destek yazışma (migration 0024 + 0025)
+
+**Bekleyen satır ("eşledim ama sipariş hâlâ eşlenmemiş görünüyor")**
+- Kök neden: teslimat motoru satırları `product_id` üzerinden tarar; eşlemesiz satırda o alan
+  NULL'dır → eşleme SONRADAN kurulunca eski satırlar hiçbir sweep'e girmez, "Kalanları Ata"
+  no-op döner. Yeni `pending-lines` servisi mevcut eşlemeyi **geriye dönük uygular** ve normal
+  atama makinesinden geçirir (advisory-lock + `FOR UPDATE` + `product_id` hâlâ NULL re-check).
+- **Otomatik eşleştirme YOK:** hiçbir eşleme oluşturulmaz/tahmin edilmez; yalnız operatörün elle
+  kurduğu aktif eşleme uygulanır. İptal (`canceled`) satır ASLA bağlanmaz; incelemedeki (held)
+  sipariş bağlansa da teslim edilmez.
+- Eşleme oluşturulduğunda otomatik (best-effort) çalışır ve "N satır bağlandı, M teslim edildi"
+  diye raporlar. `/mappings` → **"Eşleme Bekleyen Sipariş Satırları"** paneli; sipariş detayında
+  satır başına **"neden bekliyor" tanısı** + tek-tık aksiyon.
+
+**Yeni ekranlar/özellikler**
+- **Lisans envanteri:** `GET/PATCH/DELETE /v1/admin/license-items` — arama/filtre/25-50-100 sunucu
+  sayfalama; ürün detayında ve `/stock` "Son Eklenen Lisanslar" bölümünde. Teslim edilen kalemde
+  panel siparişi + **mağaza yönetim paneli bağlantısı** (SALT YÖNLENDİRME — panel o adrese
+  bağlanmaz, veri çekmez; şablon `sites.admin_order_url_template`, http(s) + `{orderId}` zorunlu).
+- **Canlı iş istasyonu:** tek hafif `GET /v1/admin/live` (ETag/304) + tek paylaşılan poller
+  (15 sn, gizli sekmede DURUR, üstel geri çekilme, oturum bitince giriş ekranına gider).
+  Bildirim çanı (varsayılan ses KAPALI; WebAudio ile üretilir — dosya/ağ isteği yok) + canlı
+  genel bakış akışı. SSE bilinçli tercih EDİLMEDİ.
+- **Destek:** admin↔müşteri yazışması (iç not müşteriye gitmez), suistimal sayacı, karar Sheet
+  içinde; sipariş detayında talep kartı. **Karantina:** CSV dışa aktarma + filtreler; menüde
+  Envanter altına taşındı.
+- **WP eklentisi:** işlemi yapan kullanıcı (arka plan işlerinde tetikleyen yönetici), "İptal"
+  yerine **"Değiştirildi"** + sebep, ürün kalemi altında lisans kartları, `held` rozeti.
+
+**Denetim (5 lens / 32 ajan, bul→çekişmeli doğrula → 23 doğrulanmış bulgu; hepsi düzeltildi)**
+- **[YÜKSEK]** Destek yazışması HİÇ açılmıyordu: API `{messages:[...]}` sarmalı döndürürken
+  istemci düz dizi sanıyordu → `.map is not a function` → ekran error boundary'ye düşüyordu.
+- **[ORTA] bundleQty çift ölçekleme → bedava lisans** ve **ölçek kaybı → canlı anahtar geri
+  alınıyor**: ölçek her tüketicide canlı eşlemeden türetiliyordu. **0025** `order_lines.bundle_qty`
+  (teslimat anındaki ölçek anlık görüntüsü) + ortak `resolveLineScale`; çözülemezse qty'ye
+  DOKUNULMAZ. 3 regresyon testi.
+- **[ORTA]** Karantina listesi düz metin anahtarları toplu döndürüyor ama `reveal` audit
+  yazmıyordu (§17 değişmezi) → per-view audit kaydı.
+- **[ORTA/perf]** `lowStockCount` her poll'da `license_items`'ı tam tarıyordu (status filtresi
+  JOIN'e taşındı + 60 sn önbellek + tek-uçuş); envanter listesi count+rows tek sorguya; status
+  parametresi cast'lendi (kolon cast'i index'i öldürüyordu); `assigned_desc` LATERAL yerine
+  kolondan. **0025**: 5 sıcak-yol index'i.
+- **[ORTA]** `consumeMultiUseCapacity` `assigned_at` yazmıyordu → MAK/multi'de teslim tarihi hep boş.
+- **[DÜŞÜK ×16]** replaceAssignment advisory-lock · pending-lines `orderCount` çift sayımı +
+  `truncated` · `:id` ParseUUIDPipe · site-facing yazışma okuma hız sınırı · WP: panel `replaced`
+  bayrağı yetkili, aktör işe bağlandı (kalıcı meta kaldırıldı), `held` rozeti, kontrast (AA), ağ
+  hatası mesajı · UI: sessiz 200-kayıt kırpması, CSV'de kişisel veri ayrımı, dürüst sonuç raporu.
+
 ### Proaktif katalog senkronu + eşleme Değiştir/Kaldır (migration 0023 · eklenti v0.7.0)
 - **Proaktif eşleme:** Yeni `site_remote_products` katalog snapshot tablosu (ad/sku/tip — **SIR YOK**;
   eşlemeler ayrı tabloda, kopmaz). WP eklentisi mağazanın yayınlanmış ürünlerini panele iter

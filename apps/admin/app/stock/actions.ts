@@ -110,6 +110,12 @@ export interface ResolvePendingSummary {
   noMapping: number;
   skipped: number;
   truncated: boolean;
+  /**
+   * Satır başına sonuç açıklaması. Panel "hiç satır bağlanmadı" durumunda GERÇEK sebebi
+   * göstermek için ilk kaydın `message`'ını okur (nötr "rapor" kutusu yerine dürüst uyarı).
+   * Opsiyonel: eski API sürümü bu alanı döndürmeyebilir.
+   */
+  details?: Array<{ lineId: string; outcome: string; message: string }>;
 }
 
 /** Ürün oluşturma — useActionState uyumlu; doğrulama hatası (ör. multi⇒maxUses, account⇒schema)

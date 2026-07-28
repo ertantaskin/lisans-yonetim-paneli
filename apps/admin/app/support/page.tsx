@@ -2,7 +2,7 @@ import { LifeBuoy, TriangleAlert } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { SupportTable } from '../../components/support-table';
-import { getReplacements, type ReplacementRow } from './queries';
+import { getSupportQueue, type SupportQueueData } from './queries';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,10 +12,10 @@ export const dynamic = 'force-dynamic';
  * (onayla = değişim / bilgi iste / reddet).
  */
 export default async function SupportPage() {
-  let replacements: ReplacementRow[] = [];
+  let queue: SupportQueueData | null = null;
   let error: string | null = null;
   try {
-    replacements = await getReplacements();
+    queue = await getSupportQueue();
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -38,7 +38,20 @@ export default async function SupportPage() {
           </div>
         </Alert>
       ) : (
-        <SupportTable replacements={replacements} />
+        <div className="space-y-4">
+          {/* Liste sunucu üst sınırına dayandıysa DÜRÜSTÇE söyle — sessiz kırpma "kuyruk boş"
+              izlenimi verip açık talebi gözden kaçırtır (denetim bulgusu). */}
+          {queue?.notice && (
+            <Alert variant="warning">
+              <TriangleAlert />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>Liste eksik olabilir</AlertTitle>
+                <AlertDescription>{queue.notice}</AlertDescription>
+              </div>
+            </Alert>
+          )}
+          <SupportTable replacements={queue?.rows ?? []} />
+        </div>
       )}
     </div>
   );
