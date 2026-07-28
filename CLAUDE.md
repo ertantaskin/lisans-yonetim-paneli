@@ -807,6 +807,65 @@ verdi. 5 backend + 6 UI + 3 düzeltme işçisi + 32-ajanlı çekişmeli denetim 
   prod deploy.sh (rollback'li) → **/health 200 v1.0.0**, 0024+0025 uygulandı, 12 yeni rota mapped, boot hatası 0 ·
   eklenti v0.8.0 panele publish (201). migration 0000-0025.
 
+**EŞLENMEMİŞ GÖRÜNÜRLÜK + GECİKME + KARANTİNA + MAĞAZA URL (commit d18e442, CANLI + migration 0026 +
+eklenti v0.9.0):** Kullanıcı 4 şikâyet bildirdi; hepsinin kök nedeni dev'de GERÇEK veriyle ÖLÇÜLDÜ
+(tahmin yok). 3 dalga paralel işçi + 5 lensli çekişmeli denetim (23 ajan → 32 doğrulanmış bulgu).
+- **[1] Eşlenmemiş sipariş görünmüyor — İKİ ayrı sebep.** (a) Kayıp sipariş `wc-on-hold` (havale/EFT)
+  idi; eklenti yalnız `processing`/`completed` dinliyordu → panele HİÇ push edilmedi. Ödenmemiş
+  sipariş yine TESLİM EDİLMEZ (§2, değişmedi) ama mağaza listesinde **"Panele iletilmedi — ödeme
+  bekleniyor"** etiketi + filtresi eklendi (sessiz kayıp bitti). (b) `GET /v1/admin/pending` yalnız
+  `pending`/`partial` filtreliyordu → `unmapped` sipariş "Bekleyen Teslimatlar"da HİÇ görünmüyordu;
+  artık dahil (ayrı limitler 200+100 → eşlemesiz sel eski siparişi pencereden düşürmüyor) + satır
+  başına `hasUnmappedLine` + tek-tık "Eşleştir". **`unmappedOrders` SATIR-tabanlı oldu**
+  (`product_id IS NULL AND canceled=false AND status IN ('pending','partial')`) — eski sayaç yalnız
+  `orders.status='unmapped'` sayıyordu, o da ancak satırların HEPSİ eşlemesizse yazılıyor ve
+  `recomputeOrderStatus` hiç üretmiyordu → **çok kalemli siparişte tek eşlemesiz kalem kaçıyordu**.
+  Sayaç artık `/mappings` + `/pending` ile AYNI yüklem (üç ekran çelişmez). **ALARM TASARIMI:** pano
+  kırmızı bandı GERÇEK TALEPTEN (`unmappedOrders`) türetilir; `unmappedCatalogProducts` **BİLGİ**
+  sayacıdır ("eşlenmemiş ≠ eşlenmesi gereken" — katalog mağazanın lisans taşımayan ürünlerini de
+  taşır; ondan alarm üretmek hiç sönmeyen bant + operatörü TEHLİKELİ catch-all eşlemeye iten baskı
+  demekti). Varyasyon EBEVEYN satırı sayımdan+rozetten çıkarıldı (SQL üç-değerli mantık: varyasyon-özel
+  eşleme ebeveyne asla eşleşmez).
+- **[2] Gecikme — ÖLÇÜLDÜ: 41 sn → 0,6 sn.** Sipariş 13:07:22 `processing`, panele 13:08:03 düştü;
+  geçmişte 12/27/30/65/75 sn. Kaynağın TAMAMI WP: Action Scheduler async loopback dispatch'i
+  güvenilmez, iş wp-cron dakikalık kuyruğuna düşüyor, wp-cron ancak sayfa isteğinde koşuyor.
+  **Panel suçsuz** (API 9-16 ms). Çözüm: iş, yanıt gönderildikten SONRA aynı istekte koşar
+  (`fastcgi_finish_request` → `litespeed_finish_request` → ikisi de yoksa SINIRLI satır-içi:
+  1 iş / 2 sn / yalnız push+revoke); AS güvenlik ağı KORUNUR. **REST DIŞLANMAZ** — WooCommerce'in
+  varsayılan blok checkout'u (Store API) REST'tir, dışlansaydı düzeltme en yaygın yolda çalışmazdı;
+  yalnız CLI + cron dışlanır. Atomik iş kilidi (`INSERT IGNORE`, `add_option` atomik DEĞİL) +
+  satır-içi iş bitince kuyruktaki ikizin `as_unschedule_action` ile iptali (çift `/refund` + yanıltıcı
+  "0 birim geri alındı" notu bitti). **Kilit alınamazsa SESSİZ VAZGEÇME YOK** → yeniden planlanır
+  (takılı kilit AS ağını yutup siparişi KALICI kaybettirebiliyordu; TTL 300→60 sn).
+- **[3] Karantina:** sunucu-taraflı süzgeç (durum · **tarih SQL'de** · tedarikçi · ürün · arama);
+  `truncated` HAM SQL satır sayısından (eskiden süzme sonrasına bakıyordu → tam da liste eksikken
+  uyarı kayboluyordu); indirme kapsam (görünen/tümü) + biçim (CSV/TXT) seçimli; KVKK ayrımı korundu
+  ve "İç denetim" uyarısı artık **CSV'de de** var; arama debounce + önceden hesaplanmış hay string.
+- **[4] "Mağaza panelinde aç" URL'i:** origin `sites.webhook_url`'den türetiliyordu — o adres
+  makineden-makineye ve İÇ hostname olabilir (gerçek veri: `http://wordpress/wp-admin/...`); ayrıca
+  HPOS yolu TAHMİN ediliyordu (HPOS kapalı + alt-dizin kurulumunda yanlış). Artık link YALNIZ
+  mağazanın kendi bildirdiği şablonla üretilir (eklenti HPOS'u tespit edip `admin_url()` ile şablonu
+  katalog senkronuyla bildirir; aktivasyon/güncelleme/günlük heartbeat tetikleri eklendi). Şablon
+  yoksa **link GÖSTERİLMEZ** ("ya doğru olmalı ya hiç link olmamalı"). `buildStoreAdminUrl` TEK
+  dosyaya toplandı (iki farklı kopya vardı) + iç/özel hostname reddi + `user:pass@host` reddi.
+  **migration 0026** (additive) `sites.admin_order_url_template_manual` = şablon KAYNAĞI: elle giriş
+  senkronla ezilmez, otomatik değer de kolonu kalıcı kilitlemez.
+- **Yol boyunca kapatılan diğer bulgular:** `syncRefunds` KİLİTSİZ/transaction'sız read-modify-write'tı
+  → eşzamanlı iki iade bayat `fulfilledQty` ile GEREKENDEN FAZLA atamayı geri alabiliyordu (müşterinin
+  iade ETMEDİĞİ canlı anahtarlar ölür + partial-auto taze stokla doldurur = lisans yanması); artık
+  advisory-lock (`hashtext(order.id)` — diğer sipariş-kapsamlı yazarlarla AYNI ad alanı) + tek tx +
+  `FOR UPDATE`, tüm satır kilitleri döngüden ÖNCE (ABBA yok) · katalog hash'i `admin_url()` şemasına
+  duyarlıydı (proxy arkasında her tetikte tam katalog DELETE+INSERT) → normalize · `hostMatchesSiteDomain`
+  ÜST alan adını kabul ediyordu (çok kiracılıda komşu siteye link yazdırma) → yalnız aynı/alt alan adı ·
+  `store-admin-url.test.ts` HİÇBİR vitest config'ine girmiyordu (`passWithNoTests` yüzünden sessizce
+  0 test) → `src/orders/` altına taşındı, 14 test koşuyor.
+- **Doğrulama:** typecheck api+admin+shared temiz · admin build · api birim **45/45** · VPS izole test
+  DB **entegrasyon 124/124 + yarış 3/3** · PHP-lint **12/12** · **dev E2E ölçümlü** (mod_php'de 41 sn →
+  0,6 sn, sipariş `fulfilled`; unmapped sipariş `/pending`'de `hasUnmappedLine:true`; üç sayaç tutarlı;
+  `storeAdminUrl` önce `null` → katalog senkronundan sonra doğru HPOS linki, status `accepted`) ·
+  prod migration 0026 (tracking 27) · `/v1/health` 200 v1.0.0 · eklenti v0.9.0 publish 201.
+  migration 0000-0026.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
