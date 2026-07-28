@@ -6,6 +6,32 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Türkçe-duyarlı küçültme (tr-TR) — arama/filtre karşılaştırmalarının TEK kaynağı.
+ *
+ * NEDEN: JS'in varsayılan `toLowerCase()`'i Türkçe'yi bilmez. "İ" harfini `i` + birleşen
+ * nokta (U+0307) çiftine indirir, "I"yı da `i` yapar. Sonuç: operatör "ihsan" yazınca
+ * "İhsan" kaydı, "ışık" yazınca "IŞIK" kaydı BULUNAMAZ — üstelik sessizce (boş liste,
+ * hata yok). `toLocaleLowerCase('tr-TR')` doğru eşleri üretir: "İ"→"i", "I"→"ı".
+ *
+ * KULLANIM: karşılaştırmanın HER İKİ tarafına da uygulanmalıdır (yalnız hedefe
+ * uygulanırsa sorgudaki büyük harf yine tutmaz) — `includesTr` bunu garanti eder.
+ */
+export function lowerTr(value: unknown): string {
+  return value == null ? '' : String(value).toLocaleLowerCase('tr-TR');
+}
+
+/**
+ * Türkçe-duyarlı "içeriyor mu" — tablo arama/filtre (`filterFn`) fonksiyonlarında kullanılır.
+ * TanStack'in yerleşik `includesString` süzgeci ham `toLowerCase()` kullandığı için
+ * TÜRKÇE KAYITLARDA BOZUKTUR; onun yerine bu yardımcı çağrılır.
+ */
+export function includesTr(haystack: unknown, needle: unknown): boolean {
+  const q = lowerTr(needle).trim();
+  if (!q) return true; // boş sorgu = süzme yok
+  return lowerTr(haystack).includes(q);
+}
+
 /** ISO tarihi tr-TR biçimler. */
 export function formatDate(iso: string | null | undefined, withTime = true): string {
   if (!iso) return '—';

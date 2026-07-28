@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ArrowRight, Globe, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { CustomerRow } from '../app/customers/queries';
+import { includesTr } from '../lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { DataTable } from './data-table/data-table';
@@ -29,7 +30,9 @@ const emailColumn: ColumnDef<CustomerRow> = {
       {row.original.email}
     </Link>
   ),
-  filterFn: 'includesString',
+  // Türkçe-duyarlı arama: yerleşik 'includesString' ham `toLowerCase()` kullandığı için
+  // "İsmail@…" gibi e-postalar aranınca sessizce bulunamıyordu (bkz. `includesTr`).
+  filterFn: (row, _id, value) => includesTr(row.original.email, value),
 };
 
 /** Site kolonu — yalnız global (site-süzgeçsiz) görünümde gösterilir. */

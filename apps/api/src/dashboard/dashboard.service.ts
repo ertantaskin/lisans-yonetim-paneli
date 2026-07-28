@@ -3,6 +3,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
 
 /** Genel-bakış son sipariş satırı (özet — sır/payload YOK). */
 export interface DashboardRecentOrder {
@@ -33,6 +34,15 @@ export interface LiveOrderRow {
   status: string;
   /** §8 inceleme kuyruğunda mı (held_for_review) — teslimat manuel onay bekliyor. */
   held: boolean;
+  /**
+   * Siparişin EŞLEMESİ OLMAYAN aktif satırı var mı (operatör /mappings'te eşleme kurmalı).
+   *
+   * Yüklem admin-orders.pending() ile BİREBİR AYNIDIR (ürün bağlanmamış + iptal DEĞİL + satır
+   * durumu pending/partial) → canlı akış ile Bekleyen Teslimatlar ekranı aynı siparişi farklı
+   * işaretlemez. Sipariş `status` alanına BAKILMAZ: kısmen teslim edilmiş karma siparişte
+   * status 'partial' olur ama satırlardan biri hâlâ eşlemesiz olabilir.
+   */
+  hasUnmappedLine: boolean;
   lineCount: number;
   fulfilledLines: number;
   createdAt: string;
@@ -194,8 +204,22 @@ function toIso(value: Date | string): string {
  * yeni tablo/migration yok. KPI'lar tek doğruluk kaynağından (panel) türetilir.
  */
 export interface DashboardSummary {
-  /** Teslim bekleyen sipariş satırı (order_lines.status IN pending|partial). */
+  /**
+   * EŞLEMESİ OLAN ve teslim bekleyen sipariş satırı (stok bekliyor).
+   *
+   * TANIM DÜZELTİLDİ: eskiden düz `status IN ('pending','partial')` sayılıyordu → (a) İPTAL
+   * (canceled) satırlar da sayılıyordu; iade/iptal edilmiş satır ASLA teslim edilmez (§2), yani
+   * sayaç kalıcı olarak şişip hiçbir doğru işlemle sıfırlanmıyordu, (b) eşlemesiz (product_id
+   * NULL) satırlar da bu kovaya giriyordu → genel-bakış "bekleyen" sayısı, canlı şeridin
+   * pendingLines/unmappedLines ayrımıyla çelişiyordu (operatör "hangisi doğru" diye soruyordu).
+   * Artık canlı şeritle AYNI yüklem ve AYNI yüklemeden (liveCounters) gelir.
+   */
   pendingLines: number;
+  /**
+   * EŞLEMESİ OLMAYAN bekleyen satır (operatör /mappings'te eşleme kurmalı) — canlı şeritteki
+   * `unmappedLines` ile AYNI değer (aynı sorgudan okunur).
+   */
+  unmappedLines: number;
   /** Bugün (yerel gün başı, sunucu TZ) oluşturulan sipariş sayısı. */
   todayOrders: number;
   /**
@@ -279,58 +303,49 @@ export class DashboardService {
     return this.counterCached(this.unmappedCatalogSlot, () => this.unmappedCatalogProducts());
   }
 
-  /** Tüm KPI bloklarını paralel toplayıp tek özet nesnesi döndürür. */
+  /**
+   * Tüm KPI bloklarını paralel toplayıp tek özet nesnesi döndürür.
+   *
+   * TUTARLILIK: satır/talep sayaçları canlı şeritle AYNI yüklemeden (liveCounters) gelir —
+   * genel-bakış, canlı iş istasyonu ve /mappings ekranı ARTIK çelişemez (üçü de tek SQL
+   * tanımını paylaşır). Eskiden burada ayrı, YÜKLEMİ FARKLI (iptal/eşlemesiz satırları da
+   * sayan) sorgular vardı.
+   */
   async summary(): Promise<DashboardSummary> {
     const [
-      pendingLines,
+      counters,
       todayOrders,
-      unmappedOrders,
       unmappedCatalogProducts,
       lowStockCount,
-      openReplacements,
       openSecurityEvents,
       totalAvailableStock,
       recentOrders,
     ] = await Promise.all([
-      this.pendingLines(),
+      // pendingLines + unmappedLines + unmappedOrders + openSupport TEK sorguda (canlı ile ortak).
+      this.liveCounters(),
       this.todayOrders(),
-      this.unmappedOrders(),
       // Canlı uçla AYNI önbellek (aşağıdaki lowStock ile aynı gerekçe).
       this.unmappedCatalogProductsCached(),
       // Canlı uçla AYNI önbelleği paylaşır → genel-bakış ile canlı şerit aynı sayıyı gösterir
       // (iki ayrı hesap iki farklı değer üretip "sayı zıplıyor" izlenimi vermesin).
       this.lowStockCountCached(),
-      this.openReplacements(),
       this.openSecurityEvents(),
       this.totalAvailableStock(),
       this.recentOrders(),
     ]);
     return {
-      pendingLines,
+      pendingLines: counters.pendingLines,
+      unmappedLines: counters.unmappedLines,
       todayOrders,
-      unmappedOrders,
+      unmappedOrders: counters.unmappedOrders,
       unmappedCatalogProducts,
       lowStockCount,
-      openReplacements,
+      // Canlı şeritteki "açık destek" ile AYNI tanım (open + info_requested) — tek sorgudan.
+      openReplacements: counters.openSupport,
       openSecurityEvents,
       totalAvailableStock,
       recentOrders,
     };
-  }
-
-  /**
-   * Eşlemesiz satırı olan sipariş sayısı (operatör uyarısı, §3/§4). Tanım canlı şeritle
-   * ORTAK (UNMAPPED_ORDERS_COUNT) → iki ekran asla farklı sayı göstermez.
-   *
-   * ÖNBELLEKSİZ (bilinçli): sorgu `order_lines_pending_product_idx` kısmi index'inden
-   * karşılanır ve GERÇEK talebi ölçen alarm sayacıdır — bayat gösterilmemeli. Ağır olan
-   * (ve bu yüzden önbelleklenen) sayaç katalog taramasıdır, bu değil.
-   */
-  private async unmappedOrders(): Promise<number> {
-    const rows = await rawRows<{ c: number }>(this.db, sql`
-      SELECT ${UNMAPPED_ORDERS_COUNT} AS c;
-    `);
-    return Number(rows[0]?.c ?? 0);
   }
 
   /**
@@ -391,15 +406,9 @@ export class DashboardService {
     return Number(rows[0]?.c ?? 0);
   }
 
-  /** Teslim bekleyen satır sayısı (pending + partial). */
-  private async pendingLines(): Promise<number> {
-    const rows = await rawRows<{ c: number }>(this.db, sql`
-      SELECT count(*)::int AS c
-      FROM order_lines
-      WHERE status IN ('pending', 'partial');
-    `);
-    return Number(rows[0]?.c ?? 0);
-  }
+  // NOT: "bekleyen satır" ve "açık destek talebi" sayaçları ARTIK burada AYRI sorgu değildir —
+  // liveCounters() içinde, canlı şeritle AYNI yüklemle toplanır (bkz. summary()). Ayrı tutuldukları
+  // sürece yüklemler sessizce ayrışıyordu (iptal/eşlemesiz satır farkı) ve iki ekran çelişiyordu.
 
   /** Bugün (gün başından itibaren) oluşturulan sipariş sayısı. */
   private async todayOrders(): Promise<number> {
@@ -412,9 +421,9 @@ export class DashboardService {
   }
 
   /**
-   * Düşük stok ürünü sayısı. available = status='available' license_item'ların
-   * (max_uses - use_count) toplamı (products.service.list ile aynı). Yalnız eşiği
-   * TANIMLI ürünler (IS NOT NULL) değerlendirilir; available <= eşik olanlar sayılır.
+   * Düşük stok ürünü sayısı. available = status='available' VE stok ömrü DOLMAMIŞ
+   * license_item'ların (max_uses - use_count) toplamı (products.service.list ile aynı).
+   * Yalnız eşiği TANIMLI ürünler (IS NOT NULL) değerlendirilir; available <= eşik olanlar sayılır.
    */
   private async lowStockCount(): Promise<number> {
     // PERF: ürün-başına korele skalar alt-sorgu (her ürün için ayrı SELECT sum) yerine TEK geçiş —
@@ -430,6 +439,11 @@ export class DashboardService {
     // ANLAM DEĞİŞMEZ: LEFT JOIN olduğu için eşleşen 'available' satırı OLMAYAN ürün de listede
     // kalır (li.* NULL → sum NULL → coalesce 0 ≤ eşik → düşük stok sayılır, eskisi gibi).
     // available = Σ(max_uses − use_count) KAPASİTE mantığı (MAK/multi) aynen korunur.
+    //
+    // notExpiredCond('li'): stok ömrü (expires_at) DOLMUŞ kalem atama sorgusunda (assign.ts)
+    // ZATEN dışlanır — burada sayılırsa alarm GEÇ kalır (panel "eşiğin üstündesin" der, gerçekte
+    // atanabilir stok yoktur). Koşulun TEK KAYNAĞI assignment/assign.ts; JOIN ON'da kalması
+    // kısmi index kullanımını da bozmaz (yalnız ek bir satır süzgeci).
     const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM (
@@ -438,20 +452,11 @@ export class DashboardService {
         LEFT JOIN license_items li
           ON li.product_id = p.id
          AND li.status = 'available'
+         AND ${notExpiredCond('li')}
         WHERE p.low_stock_threshold IS NOT NULL
         GROUP BY p.id
         HAVING coalesce(sum(li.max_uses - li.use_count), 0) <= p.low_stock_threshold
       ) t;
-    `);
-    return Number(rows[0]?.c ?? 0);
-  }
-
-  /** Açık değişim/garanti talebi (open + info_requested). RAW SQL (şema import edilmez). */
-  private async openReplacements(): Promise<number> {
-    const rows = await rawRows<{ c: number }>(this.db, sql`
-      SELECT count(*)::int AS c
-      FROM replacement_requests
-      WHERE status IN ('open', 'info_requested');
     `);
     return Number(rows[0]?.c ?? 0);
   }
@@ -469,12 +474,19 @@ export class DashboardService {
     return Number(rows[0]?.c ?? 0);
   }
 
-  /** Toplam anlık atanabilir stok (available kapasite toplamı). */
+  /**
+   * Toplam anlık atanabilir stok (available kapasite toplamı).
+   *
+   * notExpiredCond(): stok ömrü dolmuş kalem atanamaz (assign.ts aynı koşulu uygular) →
+   * genel-bakış KPI'ı "var olmayan stok" göstermesin. Alias verilmedi: tablo sorguda
+   * takma adsız `license_items` olarak geçiyor.
+   */
   private async totalAvailableStock(): Promise<number> {
     const rows = await rawRows<{ total: number }>(this.db, sql`
       SELECT coalesce(sum(max_uses - use_count), 0)::int AS total
       FROM license_items
-      WHERE status = 'available';
+      WHERE status = 'available'
+        AND ${notExpiredCond()};
     `);
     return Number(rows[0]?.total ?? 0);
   }
@@ -580,6 +592,10 @@ export class DashboardService {
    * En yeni N sipariş + mağaza alan adı + satır sayaçları. Önce orders_created_idx ile
    * yalnız N satır seçilir, sonra LATERAL ile o N sipariş için satır agregasyonu yapılır
    * → tüm order_lines taranmaz (poll sıcak yolu ucuz kalır).
+   *
+   * `has_unmapped_line` AYNI LATERAL bloğunda üretilir (ek sorgu/N+1 YOK): sayaçlar zaten o
+   * siparişin satırlarını okuyor. Yüklem admin-orders.pending() ile birebir aynı olmalıdır —
+   * iki ekran aynı siparişi farklı işaretlemesin (bkz. LiveOrderRow.hasUnmappedLine).
    */
   private async liveOrders(limit: number): Promise<LiveOrderRow[]> {
     const rows = await rawRows<{
@@ -590,6 +606,7 @@ export class DashboardService {
       customer_email: string;
       status: string;
       held_for_review: boolean;
+      has_unmapped_line: boolean;
       line_count: number;
       fulfilled_lines: number;
       created_at: Date | string;
@@ -601,6 +618,7 @@ export class DashboardService {
              o.customer_email,
              o.status::text AS status,
              o.held_for_review,
+             coalesce(l.has_unmapped_line, false) AS has_unmapped_line,
              coalesce(l.line_count, 0) AS line_count,
              coalesce(l.fulfilled_lines, 0) AS fulfilled_lines,
              o.created_at
@@ -615,13 +633,21 @@ export class DashboardService {
       LEFT JOIN sites s ON s.id = o.site_id
       LEFT JOIN LATERAL (
         SELECT count(*)::int AS line_count,
-               (count(*) FILTER (WHERE ol.status = 'fulfilled'))::int AS fulfilled_lines
+               (count(*) FILTER (WHERE ol.status = 'fulfilled'))::int AS fulfilled_lines,
+               -- admin-orders.pending() ile BİREBİR aynı yüklem: ürün bağlanmamış (product_id
+               -- NULL) + iptal DEĞİL + satır hâlâ iş bekliyor (pending/partial).
+               bool_or(
+                 ol.product_id IS NULL
+                 AND ol.canceled = false
+                 AND ol.status IN ('pending', 'partial')
+               ) AS has_unmapped_line
         FROM order_lines ol
         WHERE ol.order_id = o.id
       ) l ON true
       ORDER BY o.created_at DESC, o.id DESC;
     `);
 
+    // Anahtar sırası SABİT (ETag determinizmi) — yeni alan sona değil, tip sırasına göre eklenir.
     return rows.map((r) => ({
       id: r.id,
       remoteOrderId: r.remote_order_id,
@@ -630,6 +656,7 @@ export class DashboardService {
       customerEmail: r.customer_email,
       status: r.status,
       held: r.held_for_review === true,
+      hasUnmappedLine: r.has_unmapped_line === true,
       lineCount: Number(r.line_count ?? 0),
       fulfilledLines: Number(r.fulfilled_lines ?? 0),
       createdAt: toIso(r.created_at),

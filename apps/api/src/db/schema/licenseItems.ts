@@ -61,6 +61,12 @@ export const licenseItems = pgTable(
       .where(sql`${t.status} = 'available'`),
     // Son 5 hane araması.
     index('license_items_suffix_idx').on(t.payloadSuffixHash),
+    // Envanter ekranı sıcak yolları (0025 — elle yazılmıştı, şemaya taşındı ki `db:generate`
+    // bir daha drift üretmesin). id tiebreak: sayfalar arasında satır yer değiştirmesin.
+    index('license_items_created_idx').on(t.createdAt.desc(), t.id.desc()),
+    index('license_items_status_created_idx').on(t.status, t.createdAt.desc()),
+    index('license_items_assigned_idx').on(sql`${t.assignedAt} DESC NULLS LAST`),
+    index('license_items_batch_idx').on(t.batchId),
   ],
 );
 

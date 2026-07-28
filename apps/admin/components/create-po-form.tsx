@@ -2,13 +2,20 @@
 import { useActionState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
-import { createPurchaseOrderAction, initialPOFormState } from '@/app/purchase-orders/actions';
+import { createPurchaseOrderAction, type POFormState } from '@/app/purchase-orders/actions';
 import type { SupplierOption } from '@/app/purchase-orders/queries';
 import type { ProductRow } from '@/lib/api';
 import { Input, Textarea, selectClass } from './ui/input';
 import { Button } from './ui/button';
 import { Combobox } from './ui/combobox';
 import { Field, FormSection, FieldRow } from './ui/field';
+
+/**
+ * useActionState başlangıç durumu — 'use server' dosyasından obje export EDİLEMEZ
+ * (Next 15 SWC "can only export async functions, found object" ile action chunk'ını
+ * patlatır), bu yüzden tüketici istemci bileşeninde yerel sabit olarak durur.
+ */
+const initialPOFormState: POFormState = { ok: false };
 
 /**
  * Satın alma emri oluşturma formu (§12). Tedarikçi + ürün seçimi, adet, birim maliyet,

@@ -2,6 +2,7 @@
 import { useActionState } from 'react';
 import { UploadCloud } from 'lucide-react';
 import { publishRelease, type PublishState } from './actions';
+import { MAX_ZIP_LABEL } from './zip-limit';
 import { Field } from '../../components/ui/field';
 import { Input, Textarea } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
@@ -27,10 +28,15 @@ export function PublishForm() {
       >
         <Textarea id="changelog" name="changelog" rows={3} placeholder="Klon guard düzeltmesi, marka güncellemesi…" />
       </Field>
+      {/*
+        Tavan metni ELLE YAZILMAZ: sınır `zip-limit.ts` içindeki MAX_ZIP_BYTES'tan türetilir.
+        (Daha önce burada "En çok 5 MB." yazıyordu ama gerçek tavan 700 KB'a inmişti → kullanıcı
+        reddedilen yüklemeyi anlayamıyordu. Artık sabit değişince bu ipucu da değişir.)
+      */}
       <Field
         label="Eklenti paketi (.zip)"
         htmlFor="zip"
-        hint="scripts/release-plugin.sh ile üretilen zip önerilir; kök klasör 'wpteslimat/' olmalı. En çok 5 MB."
+        hint={`scripts/release-plugin.sh ile üretilen zip önerilir; kök klasör 'wpteslimat/' olmalı. En çok ${MAX_ZIP_LABEL}.`}
       >
         <Input id="zip" type="file" name="zip" accept=".zip" required />
       </Field>

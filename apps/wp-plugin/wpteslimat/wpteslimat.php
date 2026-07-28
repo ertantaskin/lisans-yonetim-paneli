@@ -3,7 +3,7 @@
  * Plugin Name: WP Teslimat Eklentisi
  * Description: WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatları
  *              müşteriye gösterir. Lisans verisi WP'de TUTULMAZ — panel tek doğruluk kaynağı.
- * Version: 0.9.0
+ * Version: 0.9.1
  * Requires PHP: 7.4
  * Author: Lisans Paneli
  * Text Domain: wpteslimat
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 //           eşlemek için. Sır göndermez (yalnız ad/sku/tip); additive.
 // = 0.6.0 = Sipariş satırlarına mağaza ürün adı (remoteName) eklendi — panelde eşlenmemiş
 //           ürünleri isimle görüp tek tıkla eşlemek için (teslimatı etkilemez, additive).
-define('WPTESLIMAT_VERSION', '0.9.0');
+define('WPTESLIMAT_VERSION', '0.9.1');
 define('WPTESLIMAT_DIR', plugin_dir_path(__FILE__));
 define('WPTESLIMAT_FILE', __FILE__);
 
@@ -93,6 +93,46 @@ function wpteslimat_do_prune_queue() {
         $wpdb->prepare("DELETE FROM `$table` WHERE created_at < ( NOW() - INTERVAL %d DAY )", 30)
     );
 }
+
+/**
+ * Klon/staging koruması TABAN ÇİZGİSİ (§7) — AKIŞTAN BAĞIMSIZ kurulur.
+ *
+ * NEDEN: taban çizgisi (`wpteslimat_bound_home`) yalnız (a) aktivasyon hook'unda ve (b) "Panele
+ * Bağlan" akışında yazılıyordu. WP eklenti GÜNCELLEMESİ aktivasyonu TETİKLEMEZ (bu eklenti kendi
+ * güncelleyicisini taşır) ve sabit-tabanlı/el ile kurulumlar connect akışına hiç girmez → zaten
+ * kurulu sitelerde option BOŞ kalır, `Wpteslimat_Settings::is_clone()` güvenli varsayılan olarak
+ * KALICI false döner ve klon/staging kopya canlı müşterinin lisansını revoke/tüketebilir. Bu proje
+ * bu hatayı DAHA ÖNCE yaşadı (712e328) — koruma bir kez daha akışa bağlı bırakılmamalı.
+ *
+ * DAVRANIŞ: option BOŞSA mevcut `home_url()` yazılır; DOLUYSA ASLA üzerine yazılmaz (gerçek
+ * bağlama / "bu adrese yeniden bağla" sıfırlaması korunur). Sabit (WPTESLIMAT_BOUND_HOME) tanımlıysa
+ * taban çizgisi zaten wp-config'ten okunur (Settings::bound_home önceliği) → option'a hiç dokunulmaz.
+ *
+ * NEDEN `init` (plugins_loaded DEĞİL): `home_url()` filtrelenebilir (çoklu dil/multisite eklentileri
+ * filtrelerini yükleme sırasında/`after_setup_theme`'de kaydeder). Taban çizgisini plugins_loaded'da
+ * yazsaydık ham değer kaydedilir, is_clone() ise daha geç hook'larda FİLTRELENMİŞ değeri görürdü →
+ * yanlış-pozitif "klon" ile siparişler sessizce durabilirdi. init'te iki taraf aynı değeri görür.
+ * Prune-cron'un init'te yeniden kurulması deseniyle aynı mantık: kurulum akışına güvenme, her
+ * yüklemede eksikse tamamla (option dolu olduğunda tek autoload'lı get_option — maliyetsiz).
+ */
+function wpteslimat_ensure_bound_home() {
+    // Sabit tanımlı → taban çizgisi wp-config'ten gelir; option yazmak anlamsız (ve kafa karıştırır).
+    if (defined('WPTESLIMAT_BOUND_HOME') && WPTESLIMAT_BOUND_HOME) {
+        return;
+    }
+    // DOLU → dokunma. Bu, gerçek bağlanma anını (ve rebind'i) koruyan tek kuraldır.
+    if (get_option('wpteslimat_bound_home', '') !== '') {
+        return;
+    }
+    $home = home_url();
+    if (!is_string($home) || $home === '') {
+        return; // Belirsizken dokunma: adres çözülemediyse yanlış taban çizgisi yazma.
+    }
+    update_option('wpteslimat_bound_home', $home);
+}
+// Yapılandırma durumundan BAĞIMSIZ: taban çizgisi kimlik bilgileri gelmeden ÖNCE de kurulmalı ki
+// panel bağlantısı sonradan yapılan kurulumlarda koruma ilk andan itibaren doğru adrese dayansın.
+add_action('init', 'wpteslimat_ensure_bound_home', 20);
 
 /**
  * İstek kuyruğu log tablosunu oluşturur (30 gün budanır — DB şişmesin, §7).
@@ -171,12 +211,9 @@ function wpteslimat_activate() {
     // Klon/staging koruması TABAN ÇİZGİSİ (§7): bu sitenin home_url'ini bir kez sabitle.
     // Aktivasyon PROD'da kurulumda çalışır; DB staging'e klonlandığında (aynı wp-config → aynı
     // api_key/hmac_secret) klon bu PROD URL'ini devralır → is_clone() staging'de doğru şekilde true
-    // döner. Böylece "Panele Bağlan" akışına GİRMEYEN sabit-tabanlı/el ile kurulumlarda da koruma
-    // etkin olur (önceden yalnız connect akışı bound_home yazıyordu → önerilen güvenli kurulumda
-    // korumanın kalıcı no-op olması giderildi). Yalnız yoksa yaz — mevcut bağlanmayı EZME.
-    if (get_option('wpteslimat_bound_home', '') === '') {
-        update_option('wpteslimat_bound_home', home_url());
-    }
+    // döner. Ortak yardımcı: yalnız BOŞSA yazar, doluysa ASLA ezmez. (Aktivasyon TEK yol değildir —
+    // güncelleme aktivasyonu tetiklemediğinden aynı yardımcı `init`'te de çalışır, yukarı bkz.)
+    wpteslimat_ensure_bound_home();
     update_option('wpteslimat_schema', WPTESLIMAT_VERSION);
 }
 register_activation_hook(__FILE__, 'wpteslimat_activate');

@@ -71,6 +71,10 @@ services:
       REDIS_URL: ${REDIS_URL}
       MASTER_KEY: ${MASTER_KEY}
       ADMIN_TOKEN: ${ADMIN_TOKEN}
+      # WP eklenti güncelleyicisinin indireceği .zip mutlak URL tabanı (§16). BOŞSA istek
+      # host'undan türetilir (tek Caddy arkasında yeterli); CDN/çoklu-proxy topolojisinde
+      # gerçek dış API URL'i verilir. GEÇİRİLMEZSE .env'e yazmak sessizce ETKİSİZ kalırdı.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-}
       # İlk admin bootstrap (§8) — admin_users boşsa açılışta owner oluşturur. Opsiyonel.
       ADMIN_SEED_EMAIL: ${ADMIN_SEED_EMAIL:-}
       ADMIN_SEED_PASSWORD: ${ADMIN_SEED_PASSWORD:-}
@@ -88,12 +92,20 @@ services:
       # aktif; boşsa bildirim no-op (env-gated). Bot: @BotFather, chat id: @userinfobot.
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      # Günlük digest (§16) sabit-eşik kritik alarm sınırları. Boş bırakılırsa kod içi
+      # varsayılan kullanılır (5 / 20 / 5). GEÇİRİLMEZSE .env'deki değer sessizce ETKİSİZDİ.
+      DIGEST_FAILED_OUTBOX_THRESHOLD: ${DIGEST_FAILED_OUTBOX_THRESHOLD:-}
+      DIGEST_SECURITY_EVENTS_THRESHOLD: ${DIGEST_SECURITY_EVENTS_THRESHOLD:-}
+      DIGEST_LOW_STOCK_THRESHOLD: ${DIGEST_LOW_STOCK_THRESHOLD:-}
       # AI-destekli operasyon (§15) — env-gated, VARSAYILAN KAPALI. AI_ENABLED=true VE
       # ANTHROPIC_API_KEY set EDİLİRSE aktif (öneri/rapor uçları); boşsa AI kapalı, sistem
       # AI'sız tam çalışır. Model opsiyonel (varsayılan claude-opus-4-8).
       AI_ENABLED: ${AI_ENABLED:-false}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-opus-4-8}
+      # Anthropic API taban URL'i (opsiyonel; boşsa https://api.anthropic.com). Proxy/gateway
+      # kurulumları için. GEÇİRİLMEZSE .env'e yazmak sessizce ETKİSİZ kalırdı.
+      AI_BASE_URL: ${AI_BASE_URL:-}
       # Sentry hata izleme (§16) — env-gated, VARSAYILAN KAPALI. SENTRY_DSN boşsa SDK init
       # edilmez (tam no-op). DSN kullanıcı sırrıdır. SENTRY_ENVIRONMENT opsiyonel (yoksa NODE_ENV).
       SENTRY_DSN: ${SENTRY_DSN:-}

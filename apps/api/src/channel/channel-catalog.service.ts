@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { licenseItems, products, siteProductMappings } from '../db/schema';
+import { notExpiredCond } from '../assignment/assign';
 
 /**
  * Reseller/marketplace katalog kalemi (§10) — SALT-OKUNUR.
@@ -39,9 +40,14 @@ export class ChannelCatalogService {
   /**
    * Verilen siteye AKTİF eşlenmiş ürünlerin katalog+stok görünümü. Her satır bir eşleme
    * kaydıdır (reseller birden çok remote ürünü aynı panel ürününe eşleyebilir). availableStock,
-   * products.list agregasyonunu birebir aynalar: status='available' license_items üzerinden
-   * (max_uses − use_count) toplamı; partial index (license_items_available_idx) kullanılır.
+   * products.list agregasyonunu birebir aynalar: status='available' + stok ömrü DOLMAMIŞ
+   * license_items üzerinden (max_uses − use_count) toplamı; partial index
+   * (license_items_available_idx) kullanılır.
    * LEFT JOIN korunur → stoksuz eşleme de availableStock=0 / inStock=false ile listede kalır.
+   *
+   * notExpiredCond: bu uç DIŞ tüketiciye (bayi/pazar yeri) stok-durumu bildirir — atama
+   * sorgusuyla (assign.ts) hizalı olmazsa bayi "stokta" görüp sipariş açar, panel teslim
+   * edemez. Yanlış inStock=true üretmemek, sayaç tutarlılığından da önce gelir.
    */
   async catalogForSite(siteId: string): Promise<ChannelCatalogItem[]> {
     const rows = await this.db
@@ -62,7 +68,12 @@ export class ChannelCatalogService {
       .innerJoin(products, eq(products.id, siteProductMappings.productId))
       .leftJoin(
         licenseItems,
-        and(eq(licenseItems.productId, products.id), eq(licenseItems.status, 'available')),
+        and(
+          eq(licenseItems.productId, products.id),
+          eq(licenseItems.status, 'available'),
+          // Drizzle sorgu kurucusu tabloyu takma adsız basar → alias = tablo adı.
+          notExpiredCond('license_items'),
+        ),
       )
       .where(and(eq(siteProductMappings.siteId, siteId), eq(siteProductMappings.active, true)))
       // Mapping + ürün PK'larıyla grupla — diğer kolonlar bu PK'lara fonksiyonel bağımlı.

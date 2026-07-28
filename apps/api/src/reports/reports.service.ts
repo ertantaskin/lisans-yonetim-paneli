@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
 
 /** Ürün başına anlık stok satırı (products.service.list mantığı). */
 export interface StockByProduct {
@@ -94,8 +95,11 @@ export class ReportsService {
 
   /**
    * Ürün başına anlık 'available' stok (products.service.list ile AYNI mantık:
-   * status='available' license_item'ların (max_uses - use_count) toplamı). Stoksuz
-   * ürün de LEFT JOIN → coalesce 0 ile listede kalır.
+   * status='available' + stok ömrü DOLMAMIŞ license_item'ların (max_uses - use_count)
+   * toplamı). Stoksuz ürün de LEFT JOIN → coalesce 0 ile listede kalır.
+   *
+   * notExpiredCond('li'): süresi geçmiş kalem atanamaz (assign.ts) → raporun "kullanılabilir
+   * stok" kolonu paneldeki diğer sayaçlarla (dashboard/ürün listesi/düşük stok) AYNI sayıyı verir.
    */
   private async stock(): Promise<ReportsOverview['stock']> {
     const list = await rawRows<{
@@ -111,7 +115,7 @@ export class ReportsService {
         coalesce(sum(li.max_uses - li.use_count), 0)::int AS available
       FROM products p
       LEFT JOIN license_items li
-        ON li.product_id = p.id AND li.status = 'available'
+        ON li.product_id = p.id AND li.status = 'available' AND ${notExpiredCond('li')}
       GROUP BY p.id, p.sku, p.name
       ORDER BY p.name ASC;
     `);
@@ -149,7 +153,10 @@ export class ReportsService {
         coalesce((
           SELECT sum(li.max_uses - li.use_count)
           FROM license_items li
-          WHERE li.product_id = p.id AND li.status = 'available'
+          -- notExpiredCond('li'): stok() ve atama sorgusuyla AYNI küme. Süresi geçmiş kalem
+          -- burada sayılırsa "tükenme tahmini" (daysRemaining) olduğundan uzun çıkar → operatör
+          -- tedariki geç yapar.
+          WHERE li.product_id = p.id AND li.status = 'available' AND ${notExpiredCond('li')}
         ), 0)::int AS available
       FROM assignments a
       JOIN order_lines ol ON ol.id = a.line_id

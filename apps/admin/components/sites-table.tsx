@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Ban, CircleCheck, KeyRound, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
 import type { SiteRow } from '../lib/api';
+import { includesTr } from '../lib/utils';
 import { siteTypeLabel } from '../lib/labels';
 import { rotateSecretAction, setSiteStatusAction } from '../app/sites/actions';
 import { StatusBadge } from './ui/badge';
@@ -32,7 +33,10 @@ const baseColumns: ColumnDef<SiteRow>[] = [
         {row.original.domain}
       </Link>
     ),
-    filterFn: 'includesString',
+    // TanStack'in yerleşik 'includesString' süzgeci ham `toLowerCase()` kullanır ve
+    // Türkçe'de bozuktur (İ/I) → Türkçe-duyarlı karşılaştırma. Domain'de IDN/Türkçe
+    // karakter bulunabildiği için burada da geçerli.
+    filterFn: (row, _id, value) => includesTr(row.original.domain, value),
   },
   {
     accessorKey: 'type',

@@ -47,6 +47,17 @@ const nextConfig: NextConfig = {
   // Monorepo ortak paketi Next tarafında transpile edilir.
   transpilePackages: ['@lisans/shared'],
   eslint: { ignoreDuringBuilds: true },
+  // Server Action gövde tavanı. Varsayılan 1 MB'tır ve aşıldığında Next OPAK bir hata
+  // fırlatır (kullanıcı ne olduğunu anlamaz). /releases sürüm yayınlama formu dosya
+  // yüklediği için tavanı 2 MB'a çekiyoruz: yanlış/büyük dosya seçen kullanıcı artık
+  // Next'in opak hatası yerine action'ın kendi TÜRKÇE mesajını görüyor
+  // ("Zip çok büyük: … En çok 700 KB").
+  // NOT: GERÇEK sınır yine API tarafındaki Fastify bodyLimit'idir (1 MiB,
+  // apps/api/src/main.ts) — bu yüzden releases/actions.ts 700 KB'ta keser; buradaki
+  // 2 MB yalnız "anlaşılır hata verebilmek" için bırakılan paydır, gerçek kapasite değil.
+  experimental: {
+    serverActions: { bodySizeLimit: '2mb' },
+  },
   // Tüm rotalara güvenlik başlıkları uygula.
   async headers() {
     return [

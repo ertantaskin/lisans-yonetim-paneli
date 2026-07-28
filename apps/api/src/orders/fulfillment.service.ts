@@ -21,7 +21,7 @@ import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
-import { releaseAllocations } from '../assignment/assign';
+import { notExpiredCond, releaseAllocations } from '../assignment/assign';
 import { recomputeOrderStatus } from './order-status';
 
 export interface CompleteResult {
@@ -32,6 +32,15 @@ export interface CompleteResult {
   added: number;
   fulfilledAfter: number;
   status: string;
+  /**
+   * BU turda OLUŞTURULAN atama id'leri (added=0 ise boş dizi).
+   *
+   * Soyağacı (assignment_history) için gereklidir: `recordReplacementLineage` eskiden "satırın EN
+   * YENİ aktif ataması"nı tahmin ediyordu → aynı satırda eşzamanlı iki değişimde soyağacı YANLIŞ
+   * atamaya bağlanabiliyordu. Çağıran artık kendi ürettiği atamanın id'sini KESİN bilir.
+   * Opsiyonel (mevcut tüketicileri kırmaz); ana yolda her zaman doldurulur.
+   */
+  createdAssignmentIds?: string[];
 }
 
 @Injectable()
@@ -48,13 +57,27 @@ export class FulfillmentService {
   /**
    * Bir sipariş satırının kalanını (veya N adedini) atar (§5, §13 "Kalanları/N Adet Ata").
    * Turlar idempotent değil ama stok kadar atar; stok yoksa added=0.
+   *
+   * `exec` (değişim atomikliği): VERİLMEZSE davranış birebir eskisi gibidir — kendi transaction'ını
+   * açar, commit eder ve yan etkileri (teslimat maili + geri-kanal webhook) kendisi tetikler.
+   * DIŞ BİR TRANSACTION verilirse (`revokeAssignment`'ın `exec` sözleşmesiyle aynı):
+   *   - çekirdek o tx içinde SAVEPOINT olarak koşar → revoke + yeniden atama TEK atomik birim olur
+   *     (added=0'da çağıran throw edip rollback yaparsa REVOKE DA GERİ ALINIR → müşteri anahtarı canlı kalır),
+   *   - yan etkiler ÇALIŞTIRILMAZ; çağıran COMMIT'ten SONRA `emitCompletionEffects(result)` çağırmalıdır.
+   *     (Aksi halde ayrı bağlantıdan okunan `orders` satırı henüz commit EDİLMEMİŞ durumu görür →
+   *     yanlış webhook olayı; rollback olursa da olmamış bir teslimat için mail/webhook giderdi.)
    */
   async completeLine(
     lineId: string,
     maxUnits?: number,
     isReplacement = false,
+    exec?: Database,
   ): Promise<CompleteResult> {
-    const result = await this.db.transaction(async (tx) => {
+    // Dış tx verildiyse yan etkiler ÇAĞIRANA bırakılır (commit sonrası). Kök db açıkça geçilirse
+    // (tx değil) eski yol korunur — sözleşme "açık transaction mı" sorusuna bakar.
+    const deferEffects = exec !== undefined && exec !== this.db;
+    const runner = exec ?? this.db;
+    const result = await runner.transaction(async (tx) => {
       // Satırı kilitle — eşzamanlı tamamlamalar (admin çift-tık, iki stok import'u,
       // çoğaltılmış API replica'ları) serileşir; aşırı teslimat (fazla key) önlenir.
       const [line] = await tx
@@ -135,16 +158,22 @@ export class FulfillmentService {
       const validUntil = product.validityDays
         ? new Date(Date.now() + product.validityDays * 86_400_000)
         : null;
+      // Oluşan atama id'leri sonuca taşınır → soyağacı "en yeni aktif atama" TAHMİNİNE muhtaç kalmaz.
+      const createdAssignmentIds: string[] = [];
       for (const alloc of allocations) {
-        await tx.insert(assignments).values({
-          orderId: line.orderId,
-          lineId: line.id,
-          licenseItemId: alloc.licenseItemId,
-          units: alloc.units,
-          validUntil,
-          status: 'active',
-          deliveredAt: new Date(),
-        });
+        const [ins] = await tx
+          .insert(assignments)
+          .values({
+            orderId: line.orderId,
+            lineId: line.id,
+            licenseItemId: alloc.licenseItemId,
+            units: alloc.units,
+            validUntil,
+            status: 'active',
+            deliveredAt: new Date(),
+          })
+          .returning({ id: assignments.id });
+        if (ins) createdAssignmentIds.push(ins.id);
       }
 
       const fulfilledAfter = line.fulfilledQty + added;
@@ -180,11 +209,22 @@ export class FulfillmentService {
         added,
         fulfilledAfter,
         status,
+        createdAssignmentIds,
       };
     });
 
-    // Yeni atama yapıldıysa teslimat/güncelleme mailini kuyruğa al (§6). Atama zaten commit
-    // edildi; yan-etkiler best-effort — kuyruk/DB hatası teslimatı DÜŞÜRMEZ.
+    if (!deferEffects) await this.emitCompletionEffects(result);
+    return result;
+  }
+
+  /**
+   * `completeLine` yan etkileri (teslimat/güncelleme maili + geri-kanal webhook) — COMMIT SONRASI.
+   *
+   * Kendi transaction'ını açan çağrılarda otomatik tetiklenir; DIŞ transaction geçen çağıranlar
+   * (değişim akışları) commit'ten sonra KENDİLERİ çağırır. Hiç throw etmez: mail/webhook
+   * best-effort'tur, teslimatı DÜŞÜRMEZ.
+   */
+  async emitCompletionEffects(result: CompleteResult): Promise<void> {
     // KRİTİK: mail ve webhook AYRI try/catch (createOrder deseni). webhook.emit outbox_events
     // satırını queue.add'den ÖNCE yazar → mail enqueue hatası webhook'u ENGELLEMEMELİ; aksi halde
     // 'order.fulfilled' olayı ne WP'ye gider ne /ops dead-letter'dan replay edilebilir (kalıcı kayıp).
@@ -236,8 +276,48 @@ export class FulfillmentService {
         }
       }
     }
+  }
 
-    return result;
+  /**
+   * Bir sipariş satırının ürününde ŞU AN atanabilir (available + kapasitesi kalan) lisans SATIRI
+   * sayısı. Değişim akışlarının hem ÖN-kontrolü hem de "added=0 gerçekten stok yok muydu?"
+   * SONRASI ayrımı için TEK KAYNAK (aynı sorgu iki yerde kopyalanmasın).
+   *
+   * DİKKAT: eşzamanlı bir atama tarafından `FOR UPDATE SKIP LOCKED` ile KİLİTLENMİŞ satırlar bu
+   * sayımda HÂLÂ görünür (kendi anlık görüntümüzde 'available'dırlar) — istenen budur: added=0
+   * gelmesine rağmen sayı > 0 ise sebep "stok yok" değil ÇEKİŞMEDİR ("tekrar deneyin").
+   *
+   * KÜME EŞİTLİĞİ — ZORUNLU İNVARYANT (regresyon dersi): bu sayımın seçtiği küme, GERÇEK atama
+   * sorgularının (assignment/assign.ts) seçtiği kümeyle BİREBİR aynı olmalıdır. Aksi halde sayım
+   * "stok var" der, atama 0 döner ve çağıran (admin replace / replacements.approve) bunu ÇEKİŞME
+   * sanıp SONSUZ "eşzamanlı işlem sürüyor, tekrar deneyin" döngüsü üretir → operatör değişimi
+   * hiç tamamlayamaz. Koşullar tek tek atama sorgusundan kopyalanmıştır:
+   *   · status='available'                      (her iki atama sorgusu)
+   *   · notExpiredCond()                        (stok ömrü dolmuş kalem ATANAMAZ — bu koşul
+   *     agregasyonlara eklenirken burada UNUTULMUŞTU; sonsuz döngünün kök nedeni buydu)
+   *   · use_count < max_uses  ⟺  consumeMultiUseCapacity'nin `use_count + 1 <= max_uses`i
+   *     (tamsayıda özdeş). Tek kullanımlıkta da doğru: assignAvailableSingleUse use_count'a
+   *     DOKUNMAZ, releaseAllocations GREATEST(0, …) ile 0'da tutar → available tek-kullanım
+   *     kaleminde daima use_count=0 < max_uses=1. Yani tek-kullanım davranışı birebir korunur.
+   * Kasıtlı TEK fark: FOR UPDATE SKIP LOCKED yoktur (yukarıdaki "çekişme" ayrımı bunu ister).
+   *
+   * `exec`: dış transaction verilebilir (revoke sonrası KENDİ tx'imizin etkisini görmek için).
+   */
+  async allocatableCountForLine(lineId: string, exec: Database = this.db): Promise<number> {
+    const [row] = await exec
+      .select({ n: sql<number>`count(*)::int` })
+      .from(licenseItems)
+      .innerJoin(orderLines, eq(orderLines.id, lineId))
+      .where(
+        and(
+          eq(licenseItems.productId, orderLines.productId),
+          eq(licenseItems.status, 'available'),
+          // Drizzle sorgu kurucusu tabloyu takma adsız basar → alias = tablo adı.
+          notExpiredCond('license_items'),
+          sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
+        ),
+      );
+    return Number(row?.n ?? 0);
   }
 
   /**
@@ -385,14 +465,28 @@ export class FulfillmentService {
     return completedLines;
   }
 
-  /** Ürün başına anlık 'available' kapasite (single: satır; multi: kalan max_uses−use_count). */
+  /**
+   * Ürün başına anlık SATILABİLİR kapasite (single: satır; multi: kalan max_uses−use_count).
+   *
+   * `StockService.availableCount` ile AYNI kavram, AYNI yüklem: status='available' +
+   * notExpiredCond (tek kaynak assignment/assign.ts). Süre koşulu buradan eksik kalırsa
+   * autoCompleteProduct'ın erken-çıkış kontrolü "stok var" sanır → gerçekte atanamayan
+   * (süresi geçmiş) kapasite yüzünden bekleyen TÜM satırlar boşuna taranır (satır başına bir
+   * transaction) ve süpürme asla durmaz.
+   */
   private async productAvailableCount(productId: string): Promise<number> {
     const [row] = await this.db
       .select({
         count: sql<number>`coalesce(sum(${licenseItems.maxUses} - ${licenseItems.useCount}), 0)`,
       })
       .from(licenseItems)
-      .where(and(eq(licenseItems.productId, productId), eq(licenseItems.status, 'available')));
+      .where(
+        and(
+          eq(licenseItems.productId, productId),
+          eq(licenseItems.status, 'available'),
+          notExpiredCond('license_items'),
+        ),
+      );
     return Number(row?.count ?? 0);
   }
 
@@ -411,6 +505,8 @@ export class FulfillmentService {
       added: 0,
       fulfilledAfter: fulfilled,
       status,
+      // Atama yapılmadı → soyağacı bağlanacak taze atama YOK (çağıran boş diziyi güvenle okur).
+      createdAssignmentIds: [],
     };
   }
 }

@@ -2,6 +2,23 @@ import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
+
+/**
+ * ANAHTAR-BAŞI MALİYETİ KULLANIMA ORANLA (denetim bulgusu).
+ *
+ * `unit_cost_cents` (PO birim maliyeti / license_items snapshot'ı) BİR ANAHTARIN maliyetidir,
+ * bir KULLANIMIN değil. Çok kullanımlık (multi/MAK) üründe kapasite birimini bu tutarla
+ * çarpmak maliyeti max_uses KATI şişiriyordu: 500 kullanımlık, 10 ₺'ye alınmış bir MAK
+ * anahtarı stok değerlemede 5.000 ₺ görünüyor, aynı raporda tedarik harcaması 10 ₺ diyordu
+ * (aynı ekranda çelişen iki sayı → operatör hangisine güveneceğini bilemiyordu).
+ *
+ * Doğrusu: birim × (anahtar maliyeti / anahtarın toplam kapasitesi).
+ * Tek kullanımda max_uses=1 olduğundan sonuç DEĞİŞMEZ (birebir geriye dönük uyumlu).
+ * `GREATEST(max_uses, 1)` sıfıra bölmeye karşı savunmadır (NULL max_uses'te de 1 döner).
+ */
+const PRORATED_COST = (units: string, cost: string, maxUses: string) =>
+  sql.raw(`(${cost}::numeric * ${units} / GREATEST(${maxUses}, 1))`);
 
 /** Tedarikçi bazında harcama satırı (para birimi başına AYRI). */
 export interface CostBySupplier {
@@ -32,12 +49,23 @@ export interface CostByProduct {
  * Mevcut stok değerleme satırı (para birimi başına). Maliyeti PO'ya bağlanamayan
  * (batch_id NULL / PO yok / PO cost NULL) kapasite uncoveredUnits olarak AYRI sayılır
  * (currency='' satırı) — sessiz sıfırlanmaz.
+ *
+ * `valuedCents` kapasiteyi ANAHTAR başına maliyete ORANLAR (bkz. PRORATED_COST) — MAK
+ * kapasitesi anahtar maliyetiyle çarpılıp raporu şişirmez.
  */
 export interface CostValuation {
   currency: string;
   valuedCents: number;
   valuedUnits: number;
   uncoveredUnits: number;
+  /**
+   * status='available' AMA stok ömrü (expires_at) dolmuş kapasite — ATANAMAZ, bu yüzden
+   * valuedUnits/uncoveredUnits'e GİRMEZ. Sessizce kaybolmasın diye ayrı raporlanır
+   * (fiilen zayi: "elimizde duruyor ama satılamıyor").
+   */
+  expiredUnits: number;
+  /** expiredUnits'in oranlanmış parasal karşılığı (maliyeti bağlanabilenler için). */
+  expiredCents: number;
 }
 
 /**
@@ -207,33 +235,52 @@ export class CostsService {
 
   /**
    * Mevcut stok değerleme: available license_items → batch_id → batches →
-   * purchase_orders.unit_cost_cents ile birim maliyet × kalan kapasite
+   * purchase_orders.unit_cost_cents ile ORANLANMIŞ birim maliyet × kalan kapasite
    * (max_uses - use_count), para birimine göre gruplu. Maliyeti bağlanamayan
    * (batch_id NULL / PO yok / PO cost NULL) kapasite uncoveredUnits olarak AYRI
    * sayılır (bilinmeyen para birimi = '' satırı); sessiz sıfırlanmaz.
+   *
+   * İki düzeltme (denetim):
+   *  1. Parasal toplam artık ANAHTAR başına oranlanır (PRORATED_COST) — MAK'ta max_uses
+   *     katı şişme yok; tek kullanımda sonuç birebir aynı.
+   *  2. Stok ömrü dolmuş (expires_at ≤ now) kalemler atama sorgusunda ZATEN dışlanıyor →
+   *     "değerlenen satılabilir stok"a girmezler; `expiredUnits/expiredCents` olarak ayrı
+   *     raporlanır (notExpiredCond — atama yoluyla TEK KAYNAK).
    */
   private async valuation(): Promise<CostValuation[]> {
+    const remaining = 'GREATEST(li.max_uses - li.use_count, 0)';
+    const cost = PRORATED_COST(remaining, 'po.unit_cost_cents', 'li.max_uses');
+    const fresh = notExpiredCond('li');
     const list = await rawRows<{
       currency: string;
       valued_cents: number;
       valued_units: number;
       uncovered_units: number;
+      expired_units: number;
+      expired_cents: number;
     }>(this.db, sql`
       SELECT
         coalesce(po.currency, '') AS currency,
         coalesce(
-          sum((li.max_uses - li.use_count) * po.unit_cost_cents)
-            FILTER (WHERE po.unit_cost_cents IS NOT NULL),
+          round(sum(${cost}) FILTER (WHERE po.unit_cost_cents IS NOT NULL AND ${fresh})),
           0
         )::bigint AS valued_cents,
         coalesce(
-          sum(li.max_uses - li.use_count) FILTER (WHERE po.unit_cost_cents IS NOT NULL),
+          sum(${sql.raw(remaining)}) FILTER (WHERE po.unit_cost_cents IS NOT NULL AND ${fresh}),
           0
         )::int AS valued_units,
         coalesce(
-          sum(li.max_uses - li.use_count) FILTER (WHERE po.unit_cost_cents IS NULL),
+          sum(${sql.raw(remaining)}) FILTER (WHERE po.unit_cost_cents IS NULL AND ${fresh}),
           0
-        )::int AS uncovered_units
+        )::int AS uncovered_units,
+        coalesce(
+          sum(${sql.raw(remaining)}) FILTER (WHERE NOT ${fresh}),
+          0
+        )::int AS expired_units,
+        coalesce(
+          round(sum(${cost}) FILTER (WHERE po.unit_cost_cents IS NOT NULL AND NOT ${fresh})),
+          0
+        )::bigint AS expired_cents
       FROM license_items li
       LEFT JOIN batches b ON b.id = li.batch_id
       LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
@@ -246,16 +293,24 @@ export class CostsService {
       valuedCents: Number(r.valued_cents),
       valuedUnits: Number(r.valued_units),
       uncoveredUnits: Number(r.uncovered_units),
+      expiredUnits: Number(r.expired_units),
+      expiredCents: Number(r.expired_cents),
     }));
   }
 
   /**
-   * Fire/zayiat: stock_adjustments (action void/damage/recall) miktarı × ilgili birim
-   * maliyet. Birim maliyet license_item_id → batches → purchase_orders üzerinden
+   * Fire/zayiat: stock_adjustments (action void/damage/recall) miktarı × ilgili ORANLANMIŞ
+   * birim maliyet. Birim maliyet license_item_id → batches → purchase_orders üzerinden
    * bağlanır (FK yok, RAW join). Maliyeti bağlanamayan olaylar uncoveredEvents olarak
    * AYRI sayılır. qty defansif olarak abs() ile alınır. Para birimine göre gruplu.
+   *
+   * ORANLAMA (denetim): `sa.qty` MAK/multi'de KALAN KAPASİTE'dir (voidLicenseItem ve
+   * supply-ops recall bu şekilde yazar) — anahtar sayısı değil. Anahtar başına maliyetle
+   * doğrudan çarpmak zayiatı max_uses katı gösteriyordu; artık kapasite oranı kadar
+   * yazılır (tek kullanımda qty=1, max_uses=1 → sonuç değişmez).
    */
   private async wastage(): Promise<CostWastage[]> {
+    const wastedCost = PRORATED_COST('abs(sa.qty)', 'po.unit_cost_cents', 'li.max_uses');
     const list = await rawRows<{
       currency: string;
       wasted_cents: number;
@@ -265,7 +320,7 @@ export class CostsService {
       SELECT
         coalesce(po.currency, '') AS currency,
         coalesce(
-          sum(abs(sa.qty) * po.unit_cost_cents) FILTER (WHERE po.unit_cost_cents IS NOT NULL),
+          round(sum(${wastedCost}) FILTER (WHERE po.unit_cost_cents IS NOT NULL)),
           0
         )::bigint AS wasted_cents,
         count(*) FILTER (WHERE po.unit_cost_cents IS NOT NULL)::int AS events,
@@ -293,8 +348,14 @@ export class CostsService {
    * (PO sonradan değişse bile teslim maliyeti sabit). Para birimi snapshot'tan (cost_currency)
    * alınır ve AYRI gruplanır. Snapshot NULL olan atamalar uncoveredUnits olarak AYRI
    * sayılır (currency='' satırı) — sessiz sıfırlanmaz.
+   *
+   * ORANLAMA (denetim): `a.units` KULLANIM birimidir; MAK anahtarında bir atama 500'lük
+   * kapasitenin yalnız birkaç birimini tüketir. Anahtar maliyetini units ile doğrudan
+   * çarpmak COGS'u anahtarın TAM maliyeti kadar (hatta katı) gösteriyordu; artık tüketilen
+   * kapasite oranı yazılır (tek kullanımda units=1, max_uses=1 → sonuç birebir aynı).
    */
   private async deliveredCogs(): Promise<CostDeliveredCogs[]> {
+    const cogs = PRORATED_COST('a.units', 'li.unit_cost_cents', 'li.max_uses');
     const list = await rawRows<{
       currency: string;
       cogs_cents: number;
@@ -304,7 +365,7 @@ export class CostsService {
       SELECT
         coalesce(li.cost_currency, '') AS currency,
         coalesce(
-          sum(a.units * li.unit_cost_cents) FILTER (WHERE li.unit_cost_cents IS NOT NULL),
+          round(sum(${cogs}) FILTER (WHERE li.unit_cost_cents IS NOT NULL)),
           0
         )::bigint AS cogs_cents,
         coalesce(

@@ -132,21 +132,32 @@ class Wpteslimat_My_Account {
         }
 
         if (empty($deliveries)) {
-            if (in_array($status, ['fulfilled', 'partial', 'revoked'], true)) {
-                self::clear_held($order);
-            }
-            $held_local = ($order->get_meta('_wpteslimat_held_for_review') === 'yes');
-            $show_review = $held_local && (
-                $panel_held === true ||
-                ($panel_held === null && $status === 'pending')
-            );
-            // suspended/expired zaten yukarıda bant olarak gösterildi → burada tekrar genel mesaj basma.
-            if ($show_review) {
+            if (!$fetch_ok) {
+                // Panele ULAŞILAMADI. Bunu "henüz teslimat yok" ile AYNI göstermek, teslim EDİLMİŞ
+                // siparişi kalıcı "hazırlanıyor" ekranında kilitliyordu (müşteri lisansını göremiyor,
+                // destek yükü). Durumu dürüstçe ayır: geçici erişim sorunu olduğunu söyle. Aşağıdaki
+                // yoklama script'i bu durumda da basılır → panel toparlayınca sayfa kendini yeniler.
+                // Sır CACHE'LENMEZ (§7): burada yerel kopya tutulmaz, yalnız yeniden denenir.
                 echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
-                    esc_html__('Siparişiniz güvenlik incelemesindedir. Onaylandığında lisansınız burada görünecek ve e-posta ile bildirilecektir.', 'wpteslimat') .
+                    esc_html__('Lisans bilgileriniz şu an görüntülenemiyor, birazdan tekrar deneyin. Bu sayfa hazır olduğunda kendiliğinden güncellenecektir.', 'wpteslimat') .
                     '</div>';
-            } elseif (!$suspended && !$expired_h) {
-                echo '<p>' . esc_html($this->status_message($status)) . '</p>';
+            } else {
+                if (in_array($status, ['fulfilled', 'partial', 'revoked'], true)) {
+                    self::clear_held($order);
+                }
+                $held_local = ($order->get_meta('_wpteslimat_held_for_review') === 'yes');
+                $show_review = $held_local && (
+                    $panel_held === true ||
+                    ($panel_held === null && $status === 'pending')
+                );
+                // suspended/expired zaten yukarıda bant olarak gösterildi → burada tekrar genel mesaj basma.
+                if ($show_review) {
+                    echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
+                        esc_html__('Siparişiniz güvenlik incelemesindedir. Onaylandığında lisansınız burada görünecek ve e-posta ile bildirilecektir.', 'wpteslimat') .
+                        '</div>';
+                } elseif (!$suspended && !$expired_h) {
+                    echo '<p>' . esc_html($this->status_message($status)) . '</p>';
+                }
             }
         } else {
             self::clear_held($order);
@@ -213,7 +224,10 @@ class Wpteslimat_My_Account {
         // §7 canlı tamamlama yoklaması: sipariş HENÜZ TAMAMLANMADIYSA (pending/partial/held) küçük bir
         // script durum özetini periyodik yoklar, ilerleyince sayfayı yeniler (payload JS'e girmez).
         $incomplete = in_array($status, ['pending', 'partial', 'unmapped', ''], true) || $panel_held === true;
-        if ($fetch_ok && $incomplete) {
+        // Panel erişilemezken de yokla (eskiden `$fetch_ok &&` bunu engelliyordu): teslim edilmiş
+        // sipariş geçici bir kesintide "görüntülenemiyor" ekranında KİLİTLENMESİN — panel toparlayınca
+        // yoklama status/count değişimini görüp sayfayı yeniler. Yoklama payload TAŞIMAZ (§7).
+        if (!$fetch_ok || $incomplete) {
             $this->print_poll_script($order, count($deliveries), $status);
         }
         $this->print_ui_script();
@@ -350,8 +364,33 @@ class Wpteslimat_My_Account {
         $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
         $deliveries = (isset($body['deliveries']) && is_array($body['deliveries'])) ? $body['deliveries'] : [];
 
+        // Panel yanıtı 2xx DEĞİLSE (erişilemedi / 5xx / 401) elimizde teslimat YOKTUR. Eskiden bu
+        // durumda BOŞ bir .txt HTTP 200 ile servis ediliyor ve siparişe "0 lisans indirdi" diye
+        // YANLIŞ audit notu düşüyordu (müşteri boş dosya alıyor, operatör yanıltıcı iz görüyor).
+        // Dosya ÜRETME, not YAZMA — anlaşılır Türkçe mesajla 503 dön (geçici hata, tekrar denenebilir).
+        $fetch_ok = isset($res['code']) && $res['code'] >= 200 && $res['code'] < 300;
+        if (!$fetch_ok) {
+            if (!headers_sent()) {
+                header('Retry-After: 60');
+            }
+            wp_die(
+                esc_html__('Lisans bilgileriniz şu an alınamadı, birazdan tekrar deneyin. Sorun sürerse destek ekibimizle iletişime geçin.', 'wpteslimat'),
+                '',
+                ['response' => 503]
+            );
+        }
+        // 2xx ama teslimat yok (henüz atanmamış/iptal edilmiş): boş dosya + yanıltıcı not üretme.
+        if (empty($deliveries)) {
+            wp_die(
+                esc_html__('Bu siparişte indirilebilecek lisans bulunmuyor. Teslimat hazırlandığında bu sayfada görünecektir.', 'wpteslimat'),
+                '',
+                ['response' => 404]
+            );
+        }
+
         // §7 "loglu" şartı: indirmeyi sipariş notuna (görünür audit izi) yaz. Panel migration'ı
         // gerektirmeden operatör timeline'da görür; sır/payload NOTA GİRMEZ (yalnız adet).
+        // Not YALNIZ gerçekten teslimat varken yazılır (yukarıdaki iki kapı geçildiyse).
         $order->add_order_note(sprintf(
             /* translators: %d = indirilen lisans adedi */
             __('Müşteri %d lisansı .txt olarak indirdi.', 'wpteslimat'),

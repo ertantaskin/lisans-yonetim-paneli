@@ -71,9 +71,17 @@ gereği istek (panel) ile çalıştırma (host) ayrıdır. Sayfada canlı sürü
 ```bash
 apt-get install -y jq                      # gerekli (JSON)
 crontab -e
-# şu satırı ekle (dakikada bir bekleyen isteği kontrol eder, flock ile tek örnek):
-* * * * * flock -n /tmp/wpteslimat-deploy-runner.lock /opt/lisans-yonetim-paneli/scripts/deploy-runner.sh >> /var/log/deploy-runner.log 2>&1
+# şu satırı ekle (dakikada bir bekleyen isteği kontrol eder):
+* * * * * /opt/lisans-yonetim-paneli/scripts/deploy-runner.sh >> /var/log/deploy-runner.log 2>&1
 ```
+
+> **Cron satırına `flock` EKLEME.** Runner tek-örnek kilidini kendi içinde alır
+> (`/tmp/wpteslimat-deploy-runner.self.lock`). Dış `flock` sarmalayıcısı eklersen ikinci bir
+> kilit katmanı oluşur; eskiden bu iki katman AYNI dosyada olduğu için runner kendi kendini
+> kilitliyor ve dağıtım isteği hiç koşmadan 'pending'de kalıyordu. Eski satırı kullanan bir
+> kurulum varsa yukarıdakiyle **değiştir** (kilit dosyaları artık ayrı olduğundan eski satır
+> da kilitlenmez, ama tek doğru kurulum budur).
+
 Runner `ADMIN_TOKEN`'ı repo kökündeki `.env`'den okur; API'ye `X-Admin-Token` ile bağlanır.
 Aynı anda yalnız bir aktif dağıtım olur; runner çökerse 30dk'dan eski "running" kaydı otomatik
 "failed" olur (kilit açılır). İlk kez bu özelliği yayına almak için A adımını (SSH+deploy.sh) bir

@@ -135,6 +135,24 @@ function orderBadge(o: LiveOrder): StatusMeta {
   }
 }
 
+/**
+ * Eşleme uyarısının ipucu metni. Siparişin BÜTÜNÜYLE mi yoksa yalnız BİR KALEMİNİN mi
+ * eşlemesiz olduğunu ayırır — çok kalemli siparişte "sipariş eşlenmemiş" demek yanlış olur
+ * (diğer kalemler teslim edilmiş olabilir). Satır sayacı ("N/M satır") bu satırda uyarı
+ * metnine yerini bıraktığı için bilgi kaybolmasın diye ipucuna taşınır.
+ */
+function unmappedHint(o: LiveOrder): string {
+  return [
+    o.status === 'unmapped'
+      ? 'Bu siparişteki mağaza ürünü panel ürününe bağlı değil — eşleme yapılana kadar teslim edilemez.'
+      : 'Bu siparişte en az bir kalem panel ürününe bağlı değil — o kalem(ler) eşleme yapılana kadar teslim edilemez.',
+    o.lineCount > 0 ? `${o.lineCount} satırın ${o.fulfilledLines} tanesi teslim edildi.` : null,
+    'Siparişi açıp eşlemeyi yapın.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 /** Destek/değişim talebi durumu → rozet (etiketler `supportStatusLabel`). */
 function supportBadge(status: string): StatusMeta {
   switch (status) {
@@ -527,9 +545,18 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
           {orders.map((o) => {
             const meta = orderBadge(o);
             const Icon = meta.icon;
-            // Eşlenmemiş sipariş akışta KAYBOLMAMALI (operatör şikâyeti): satır kalıcı uyarı
-            // tonuyla vurgulanır ve "N/M satır" sayacı yerine yapılacak iş yazılır.
-            const unmapped = o.status === 'unmapped';
+            // Eşleme bekleyen sipariş akışta KAYBOLMAMALI (operatör şikâyeti): satır kalıcı
+            // uyarı tonuyla vurgulanır ve "N/M satır" sayacı yerine yapılacak iş yazılır.
+            //
+            // İKİ KAYNAK: (a) sipariş BÜTÜNÜYLE eşlemesizse durum 'unmapped' olur;
+            // (b) çok kalemli siparişte tek kalem eşlemesizse durum 'pending'/'partial'
+            // kalır ve yalnız `hasUnmappedLine` bunu söyler. Yukarıdaki KPI sayacı
+            // (`stats.unmappedOrders`) SATIR tabanlı olduğu için (b) işaretlenmezse
+            // "sayaç 1 diyor ama listede işaretli satır yok" çelişkisi doğuyordu.
+            //
+            // SAVUNMACI: alan eski API sürümünde hiç gelmeyebilir (`?? false`) → o durumda
+            // davranış bugünküyle birebir aynı kalır (yalnız durum='unmapped' işaretlenir).
+            const unmapped = o.status === 'unmapped' || (o.hasUnmappedLine ?? false);
             return (
               <FeedRow
                 key={o.id}
@@ -556,7 +583,7 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
                 {unmapped ? (
                   <span
                     className="hidden shrink-0 text-[11px] font-medium text-destructive sm:inline"
-                    title="Mağaza ürünü panel ürününe eşlenmediği için bu sipariş teslim edilemiyor. Siparişi açıp eşlemeyi yapın."
+                    title={unmappedHint(o)}
                   >
                     Eşleştirme gerekiyor
                   </span>

@@ -22,11 +22,13 @@ import {
   licenseItems,
   orderLines,
   orders,
+  products,
   purchaseOrders,
   stockAdjustments,
   type NewLicenseItem,
   type Product,
 } from '../db/schema';
+import { notExpiredCond } from '../assignment/assign';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 import { buildStoreAdminUrl } from '../orders/store-admin-url';
@@ -56,13 +58,24 @@ export type ImportItem = { payload: string | Record<string, unknown>; expiresAt?
 export interface StockPreview {
   /** İstenen giriş adedi (birim). */
   count: number;
-  /** Bu ürün için bekleyen (pending/partial) satır sayısı. */
+  /** Bu ürün için bekleyen (pending/partial, iptal olmayan, incelemede olmayan) satır sayısı. */
   pendingLines: number;
-  /** Bekleyen toplam birim = Σ(qty - fulfilled_qty). */
+  /** Bekleyen TOPLAM birim = Σ(qty - fulfilled_qty) — otomatik dolacak + dolmayacak birlikte. */
   pendingUnits: number;
-  /** Bu giriş kaç bekleyen birimi tamamlar = min(count, pendingUnits). */
+  /**
+   * Stok girişiyle OTOMATİK dolacak birim (efektif politika partial-auto + ön sipariş
+   * penceresi kapalı). `wouldFill`/`remainingAfter` bu sayıdan türetilir.
+   */
+  autoUnits: number;
+  /**
+   * Otomatik DOLMAYACAK bekleyen birim (all-or-nothing / partial-approval satırlar, ya da
+   * ön sipariş penceresi açıkken tüm bekleyen talep). Elle "Kalanları Ata"/onay gerekir —
+   * önizleme bunu "karşılanacak talep" diye SAYMAZ (yanlış vaat vermez).
+   */
+  manualUnits: number;
+  /** Bu giriş kaç bekleyen birimi OTOMATİK tamamlar = min(count, autoUnits). */
   wouldFill: number;
-  /** Bekleyen karşılandıktan sonra artan stok = max(count - pendingUnits, 0). */
+  /** Otomatik dolacaklar karşılandıktan sonra artan stok = max(count - autoUnits, 0). */
   remainingAfter: number;
 }
 
@@ -137,6 +150,14 @@ export interface LicenseInventoryRow {
   unitCostCents: number | null;
   costCurrency: string | null;
   createdAt: Date;
+  /** Stok ömrü bitiş anı (FEFO). null = süresiz. `validUntil` (müşteri lisansı) DEĞİLDİR. */
+  expiresAt: Date | null;
+  /**
+   * Stok ömrü DOLMUŞ mu (expires_at ≤ now)? true ise kalem `status='available'` görünse bile
+   * ATANAMAZ — hiçbir stok toplamına girmez (products/stock/dashboard hepsi notExpiredCond
+   * uygular). UI ham durumun yanında bunu göstermeli ki liste ile sayaçlar çelişmesin.
+   */
+  expired: boolean;
   delivered: LicenseInventoryDelivery | null;
 }
 
@@ -184,6 +205,9 @@ interface LicenseItemRawRow {
   unit_cost_cents: number | null;
   cost_currency: string | null;
   created_at: Date;
+  expires_at: Date | null;
+  /** Sunucu tarafında `NOT notExpiredCond` ile hesaplanır (istemci saatine GÜVENİLMEZ). */
+  is_expired: boolean;
   assignment_id: string | null;
   assignment_status: string | null;
   units: number | null;
@@ -238,10 +262,10 @@ export class StockService {
     const accountSchema = this.resolveAccountSchema(product);
     const keyRegex = this.compileKeyFormat(product);
 
-    // COGS maliyet anlık-görüntüsü (§12, D17): parti verilmişse o partinin PO'sundan
-    // birim maliyet + para birimini salt-okunur çek. Her yeni satıra snapshot yazılır
-    // (import anında sabitlenir, sonradan değişmez). Parti yoksa / PO maliyeti yoksa null.
-    const costSnapshot = await this.resolveBatchCost(batchId);
+    // Parti (batch) DOĞRULAMASI + COGS maliyet anlık-görüntüsü — tek okumada.
+    // Parti verilmişse ait olduğu ürün ve durumu ÖNCE doğrulanır (aksi halde stok yanlış
+    // ürünün ya da geri çağrılmış bir partinin altına yazılabiliyordu — bkz. resolveBatchForImport).
+    const costSnapshot = await this.resolveBatchForImport(productId, batchId);
 
     const rejections: ImportRejection[] = [];
     const values: NewLicenseItem[] = [];
@@ -355,25 +379,57 @@ export class StockService {
   }
 
   /**
-   * COGS snapshot kaynağı (§12, D17): verilen partinin PO'sundan birim maliyet +
-   * para birimini salt-okunur çeker. Parti yoksa, partinin PO bağı yoksa veya PO'da
-   * birim maliyet tanımlı değilse null döner (kayıt snapshot'sız kalır → "uncovered").
-   * Import davranışını DEĞİŞTİRMEZ; yalnız iki opsiyonel snapshot alanı besler.
+   * Parti DOĞRULAMASI + COGS snapshot kaynağı (§12, D17) — tek okuma.
+   *
+   * DOĞRULAMA (denetim bulgusu): `batchId` şimdiye kadar HİÇ doğrulanmıyordu; şemada da
+   * license_items.batch_id için FK yok (bilinçli — migration eklemiyoruz). Sonuç: var olmayan
+   * bir parti id'si sessizce yazılabiliyor, BAŞKA ürünün partisine stok girilebiliyor
+   * (maliyet/zayi/karne raporları o ürüne yazılır) ve GERİ ÇAĞRILMIŞ (recalled/voided) bir
+   * partiye taze anahtar eklenebiliyordu — recall süpürmesi zaten geçtiği için bu anahtarlar
+   * "geri çağrılmış parti"nin altında SATILABİLİR kalıyordu. Artık:
+   *   · parti yok            → 404,
+   *   · parti başka ürüne ait→ 400 (ürün/parti uyuşmazlığı sessizce kabul edilmez),
+   *   · parti aktif değil    → 409 (recalled/voided partiye stok eklenmez).
+   *
+   * SNAPSHOT: partinin PO'sundan birim maliyet + para birimi kopyalanır (import anında
+   * sabitlenir, sonradan değişmez). PO bağı yoksa ya da maliyet tanımsızsa null döner
+   * (kayıt snapshot'sız kalır → maliyet raporunda "kapsanamayan"). PO join'i LEFT'tir:
+   * PO'suz elle parti artık DOĞRULAMADAN geçer ama maliyetsiz kalır (eskiden innerJoin
+   * olduğu için bu satır zaten null dönüyordu — davranış aynı).
    */
-  private async resolveBatchCost(
+  private async resolveBatchForImport(
+    productId: string,
     batchId?: string,
   ): Promise<{ unitCostCents: number; costCurrency: string } | null> {
     if (!batchId) return null;
     const [row] = await this.db
       .select({
+        batchProductId: batches.productId,
+        batchStatus: batches.status,
+        batchLabel: batches.label,
         unitCostCents: purchaseOrders.unitCostCents,
         costCurrency: purchaseOrders.currency,
       })
       .from(batches)
-      .innerJoin(purchaseOrders, eq(purchaseOrders.id, batches.purchaseOrderId))
+      .leftJoin(purchaseOrders, eq(purchaseOrders.id, batches.purchaseOrderId))
       .where(eq(batches.id, batchId))
       .limit(1);
-    if (!row || row.unitCostCents == null) return null;
+
+    if (!row) throw new NotFoundException('Parti (batch) bulunamadı.');
+    if (row.batchProductId !== productId) {
+      throw new BadRequestException(
+        `Seçilen parti (${row.batchLabel}) başka bir ürüne ait — stok bu partiye yazılamaz. ` +
+          'Doğru ürünün partisini seçin ya da partisiz içe aktarın.',
+      );
+    }
+    if (row.batchStatus !== 'active') {
+      throw new ConflictException(
+        `Parti (${row.batchLabel}) aktif değil (durum: ${row.batchStatus}) — stok eklenemez. ` +
+          'Geri çağrılmış/iptal edilmiş partiye eklenen anahtarlar recall süpürmesine yakalanmaz. ' +
+          'Yeni bir parti açın ya da partisiz içe aktarın.',
+      );
+    }
+    if (row.unitCostCents == null || row.costCurrency == null) return null;
     return { unitCostCents: row.unitCostCents, costCurrency: row.costCurrency };
   }
 
@@ -438,23 +494,44 @@ export class StockService {
    * "Onayla ve Dağıt" önizleme (§13): bu ürüne N birim stok girilirse bekleyen
    * (pending/partial) talebin ne kadarının kapanacağını gösterir. Salt-okunur;
    * import/atama mantığını TETİKLEMEZ — yalnız mevcut açık satırları toplar.
+   *
+   * TESLİMAT POLİTİKASI (denetim bulgusu): stok girişi yalnız `autoCompleteProduct` FIFO
+   * süpürmesini tetikler ve o süpürme SADECE efektif politikası `partial-auto` olan satırları
+   * doldurur (all-or-nothing ve partial-approval satırlar elle onay/atama bekler). Önizleme
+   * bu filtreyi uygulamadığı için "N bekleyen birimi tamamlar" YANLIŞ VAAT veriyordu:
+   * operatör stoğu giriyor, satırlar bekliyor kalıyordu. Artık iki sayı AYRI raporlanır —
+   * `autoUnits` (otomatik dolacak) ve `manualUnits` (elle iş gerektiren); wouldFill/
+   * remainingAfter YALNIZ autoUnits'ten türetilir. Filtreler autoCompleteProduct ile birebir:
+   * iptal (canceled) satır yok, incelemedeki (held_for_review) sipariş yok,
+   * coalesce(policy_override, product.fulfillment_policy) = 'partial-auto'.
    */
   async preview(productId: string, count: number): Promise<StockPreview> {
     // Ürün gerçekten var mı? (yoksa 404 — sessiz sıfır göstermeyiz)
-    await this.products.getById(productId);
+    const product = await this.products.getById(productId);
+
+    // Ön sipariş/stoksuz kapısı (§11): release_at gelecekteyse autoCompleteProduct erken
+    // çıkar (stok girse bile HİÇBİR satır dolmaz) → otomatik dolacak birim SIFIRdır.
+    const preorderWindowOpen = Boolean(
+      product.stockless && product.releaseAt && new Date(product.releaseAt).getTime() > Date.now(),
+    );
 
     const [row] = await this.db
       .select({
-        // Açık satır sayısı.
+        // Açık satır sayısı (politikadan bağımsız TOPLAM açık talep).
         lines: sql<number>`count(*)`,
         // Bekleyen birim: qty - fulfilled_qty (negatif olamaz, coalesce güvenliği).
         units: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.fulfilledQty}, 0)), 0)`,
+        // Bunun otomatik dolacak kısmı — efektif politika partial-auto olan satırlar.
+        autoUnits: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.fulfilledQty}, 0))
+          FILTER (WHERE coalesce(${orderLines.policyOverride}, ${products.fulfillmentPolicy}) = 'partial-auto'), 0)`,
       })
       .from(orderLines)
       // autoCompleteProduct ("Onayla ve Dağıt" import) ile AYNI filtreler: iptal/iade
       // satırları (canceled) ve incelemedeki (held_for_review) siparişleri oto-tamamlamaz →
       // önizleme de bunları 'karşılanacak talep' saymamalı (yanıltıcı wouldFill düzelir).
       .innerJoin(orders, eq(orderLines.orderId, orders.id))
+      // Efektif politikayı okuyabilmek için ürün join'i (satır override > ürün).
+      .innerJoin(products, eq(orderLines.productId, products.id))
       .where(
         and(
           eq(orderLines.productId, productId),
@@ -466,21 +543,42 @@ export class StockService {
 
     const pendingLines = Number(row?.lines ?? 0);
     const pendingUnits = Number(row?.units ?? 0);
+    // Ön sipariş penceresi açıkken hiçbir satır otomatik dolmaz → tümü "elle".
+    const autoUnits = preorderWindowOpen ? 0 : Number(row?.autoUnits ?? 0);
+    const manualUnits = Math.max(pendingUnits - autoUnits, 0);
     const safeCount = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
-    const wouldFill = Math.min(safeCount, pendingUnits);
-    const remainingAfter = Math.max(safeCount - pendingUnits, 0);
+    const wouldFill = Math.min(safeCount, autoUnits);
+    const remainingAfter = Math.max(safeCount - autoUnits, 0);
 
-    return { count: safeCount, pendingLines, pendingUnits, wouldFill, remainingAfter };
+    return {
+      count: safeCount,
+      pendingLines,
+      pendingUnits,
+      autoUnits,
+      manualUnits,
+      wouldFill,
+      remainingAfter,
+    };
   }
 
-  /** Ürün başına anlık 'available' stok (single: satır sayısı; multi: kalan kapasite). */
+  /**
+   * Ürün başına anlık SATILABİLİR stok (single: satır sayısı; multi: kalan kapasite).
+   * notExpiredCond ile atama sorgusuyla HİZALI: stok ömrü (expires_at) dolmuş kalemler
+   * atanamadıkları için sayılmaz — aksi halde panel var olmayan stok gösterirdi.
+   */
   async availableCount(productId: string): Promise<number> {
     const [row] = await this.db
       .select({
         count: sql<number>`coalesce(sum(${licenseItems.maxUses} - ${licenseItems.useCount}), 0)`,
       })
       .from(licenseItems)
-      .where(and(eq(licenseItems.productId, productId), eq(licenseItems.status, 'available')));
+      .where(
+        and(
+          eq(licenseItems.productId, productId),
+          eq(licenseItems.status, 'available'),
+          notExpiredCond('license_items'),
+        ),
+      );
     return Number(row?.count ?? 0);
   }
 
@@ -502,6 +600,11 @@ export class StockService {
    * kimlik-doğrulamalı olduğu için lisans TAM görünür, bu yüzden her LİSTE görüntülemesi
    * TEK 'reveal' audit kaydına düşer (per-satır değil). Audit yazımı best-effort'tur:
    * hata okuma yolunu düşürmez (sipariş detayı deseni).
+   *
+   * TUTARLILIK: 'available' süzgeci stok TOPLAMLARIYLA (availableCount / products.list /
+   * düşük-stok) AYNI yüklemi kullanır — bkz. aşağıdaki status fragmanı. Her satır ayrıca
+   * `expired` bayrağı taşır: `status='available'` görünüp stok ömrü dolmuş kalem hiçbir
+   * satılabilir toplamda yoktur, listede de bu bayrakla ayırt edilir.
    */
   async listLicenseItems(
     params: ListLicenseItemsParams = {},
@@ -525,11 +628,29 @@ export class StockService {
     // ve tip çıkarımı yine sürücüden bağımsız/deterministik kalır.
     // Bilinmeyen değerde Postgres 22P02 (→500) atmasın diye enum listesi önce uygulamada
     // doğrulanır; geçersiz statü ESKİSİYLE AYNI sonucu verir: boş liste (`false` → 0 satır).
+    //
+    // SATILABİLİR ("available") TANIMI — TEK YÜKLEM (regresyon düzeltmesi): stok toplamları
+    // (products.list availableStock, ürün detayı, stock.availableCount, düşük-stok…) süresi
+    // GEÇMİŞ kalemleri saymıyor; envanter listesi ise ham `status='available'` süzüyordu →
+    // aynı ürün için sayaç "7", "Satılabilir" filtreli liste "12" satır gösteriyordu. Artık
+    // envanter de atama yolunun koşulunu (notExpiredCond, tek kaynak assignment/assign.ts)
+    // uygular; iki farklı yüklem KALMADI.
+    //
+    // Süresi dolmuş kalemler KAYBOLMAZ (operatörün görmesi gerekir): filtresiz listede
+    // (`expired` bayrağıyla) durur ve 'expired' süzgeciyle DOĞRUDAN listelenir. `status='expired'`
+    // enum değerini hiçbir kod yazmıyor (atama süresi AYRI kavram: assignments.status) — bu
+    // yüzden 'expired' süzgeci "stok ömrü dolmuş" kalemleri gösterir; ikisi OR'lanır ki ileride
+    // enum değeri kullanılırsa da liste eksilmesin.
     if (status) {
       conds.push(
-        (LICENSE_ITEM_STATUSES as readonly string[]).includes(status)
-          ? sql`li.status = ${status}::license_item_status`
-          : sql`false`,
+        !(LICENSE_ITEM_STATUSES as readonly string[]).includes(status)
+          ? sql`false`
+          : status === 'available'
+            ? sql`(li.status = ${status}::license_item_status AND ${notExpiredCond('li')})`
+            : status === 'expired'
+              ? sql`(li.status = ${status}::license_item_status
+                     OR (li.status = 'available' AND NOT ${notExpiredCond('li')}))`
+              : sql`li.status = ${status}::license_item_status`,
       );
     }
     // Site süzgeci: lisansın HERHANGİ bir ataması bu siteye aitse listede kalır (lateral
@@ -585,10 +706,9 @@ export class StockService {
     //  · atama geri alınıp kalem 'available'a DÖNDÜYSE (all-or-nothing rollback / adet düşürme)
     //    li.assigned_at NULL'lanır → kalem artık sona düşer. Doğrusu da budur: kalem teslim
     //    edilmiş değildir. ('quarantined' olan iade/değişim kalemlerinde assigned_at KORUNUR.)
-    //  · MULTI/MAK kalemlerde kapasite düşümü (consumeMultiUseCapacity) assigned_at YAZMAZ →
-    //    bu kalemler teslim edilmiş olsalar bile NULLS LAST ile sona düşer. Merkezî not:
-    //    kalıcı çözüm assign.ts'te kapasite düşümüne `assigned_at = now()` eklemektir (bu
-    //    işçinin dosyası değil); o eklendiği anda sıralama MAK için de kendiliğinden düzelir.
+    //  · MULTI/MAK kapasite düşümü artık `assigned_at = COALESCE(assigned_at, now())` yazıyor
+    //    (assign.ts, consumeMultiUseCapacity) → MAK kalemleri de sıralamada doğru yerde çıkar.
+    //    Damga İLK teslimi gösterir; sonraki kapasite düşümleri onu kaydırmaz.
     const orderBy =
       params.sort === 'created_asc'
         ? sql`li.created_at ASC, li.id ASC`
@@ -634,6 +754,11 @@ export class StockService {
           li.unit_cost_cents          AS unit_cost_cents,
           li.cost_currency            AS cost_currency,
           li.created_at               AS created_at,
+          li.expires_at               AS expires_at,
+          -- "Satılabilir mi?" kararı SUNUCUDA verilir (now() DB saatidir) ve stok
+          -- toplamlarıyla AYNI yüklemden türetilir → liste ile sayaçlar asla ayrışmaz.
+          (NOT ${notExpiredCond('li')})
+                                      AS is_expired,
           d.assignment_id             AS assignment_id,
           d.assignment_status         AS assignment_status,
           d.units                     AS units,
@@ -764,6 +889,9 @@ export class StockService {
       unitCostCents: r.unit_cost_cents == null ? null : Number(r.unit_cost_cents),
       costCurrency: r.cost_currency,
       createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      // Sunucudan gelen karar (istemci saati/zaman dilimi HESABA KATILMAZ).
+      expired: r.is_expired === true,
       delivered:
         r.assignment_id && r.order_id && r.site_id
           ? {
@@ -842,8 +970,8 @@ export class StockService {
    * iptal 409 verir (asla teslim edilmiş anahtar void'lenmez).
    *
    * STOK SAYIMI: availableCount/products.list Σ(max_uses − use_count) WHERE status='available'
-   * hesapladığı için 'voided' kalem otomatik düşer; MULTI'de KALAN kapasite düşer (fire
-   * miktarı stock_adjustments.qty'ye de aynı şekilde yazılır → maliyet/zayi raporu doğru).
+   * AND notExpiredCond hesapladığı için 'voided' kalem otomatik düşer; MULTI'de KALAN kapasite
+   * düşer (fire miktarı stock_adjustments.qty'ye de aynı şekilde yazılır → maliyet/zayi doğru).
    */
   async voidLicenseItem(id: string, reason: string, actor: string) {
     const trimmed = (reason ?? '').trim();

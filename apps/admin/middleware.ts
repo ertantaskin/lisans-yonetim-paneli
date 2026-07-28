@@ -52,7 +52,25 @@ export async function middleware(req: NextRequest) {
   return NextResponse.redirect(url);
 }
 
-// Statik dosyalar ve dahili yollar hariç her istek gate'ten geçer.
+/**
+ * Gate kapsamı: Next'in kendi ürettiği statik varlıklar ve favicon DIŞINDA her istek
+ * oturum kapısından geçer.
+ *
+ * DARALTILDI (denetim bulgusu): eskiden desen ".svg/.png/.jpg/…" ile BİTEN TÜM yolları
+ * muaf tutuyordu. Muafiyet UZANTIYA bakıyordu, dizine değil — yani ileride eklenecek
+ * `/reports/export.svg` ya da `/api/qr/site.png` gibi HERHANGİ bir rota, adı öyle bittiği
+ * için sessizce korumasız kalırdı (uzantı = yetki kararı: kırılgan). Artık muafiyet üç
+ * SABİT yola indirildi. `public/` şu an boş; oraya statik dosya eklenirse ya `_next`
+ * üzerinden `import` edilmeli ya da buraya AÇIKÇA sabit bir önek (ör. `assets/`)
+ * eklenmelidir — uzantı temelli genel muafiyet geri getirilmemelidir.
+ *
+ * OTURUM AKIŞI KORUNUR: `/login`, `/api/login`, `/api/logout` bu desene GİRER (yani
+ * middleware onlar için de çalışır) — tıpkı eskisi gibi, çünkü hiçbiri yukarıdaki üç
+ * yoldan biri değil ve eski desende de uzantıyla bitmiyorlardı. Bu yollara özgü muafiyet
+ * zaten fonksiyonun İÇİNDE (yukarıda) yapılıyor: auth kapalıyken `/login` → `/pending`
+ * yönlendirmesi, auth açıkken üçü de `NextResponse.next()` ile gate'ten muaf. Yani giriş
+ * POST'u bounce olmaz, davranış birebir aynı kalır.
+ */
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 };

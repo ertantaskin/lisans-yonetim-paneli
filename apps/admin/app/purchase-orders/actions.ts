@@ -3,14 +3,20 @@ import { revalidatePath } from 'next/cache';
 import { apiPost, apiSend } from '@/lib/api';
 import { getActor } from '@/lib/session';
 
+/**
+ * DİKKAT: Bu dosya 'use server' modülüdür — Next 15 SWC buraya
+ * `ensureServerEntryExports` enjekte eder ve async fonksiyon OLMAYAN bir export
+ * görürse "can only export async functions, found object" fırlatıp TÜM action
+ * chunk'ını patlatır (bkz. commit 9b81c9b, stock-adjust-form). Bu yüzden burada
+ * YALNIZ `export async function` ve `export type/interface` bulunabilir.
+ * Başlangıç durumu objeleri tüketici istemci bileşenlerinde yerel sabit tutulur.
+ */
 export interface POFormState {
   ok: boolean;
   error?: string;
   /** Oluşturma başarısında yeni emir id'si (yönlendirme için). */
   id?: string;
 }
-
-const initial: POFormState = { ok: false };
 
 /** eta metnini (yyyy-mm-dd) ISO'ya çevirir; boşsa undefined. */
 function etaToIso(raw: string): string | undefined {
@@ -129,5 +135,3 @@ export async function receivePurchaseOrderAction(
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
   }
 }
-
-export { initial as initialPOFormState };

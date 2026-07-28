@@ -4,7 +4,7 @@ import { PackageCheck, Save, TriangleAlert, CheckCircle2 } from 'lucide-react';
 import {
   receivePurchaseOrderAction,
   updatePurchaseOrderAction,
-  initialPOFormState,
+  type POFormState,
 } from '@/app/purchase-orders/actions';
 import type { PurchaseOrderRow } from '@/app/purchase-orders/queries';
 import { Input, Textarea, selectClass } from './ui/input';
@@ -12,6 +12,13 @@ import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Field, FieldRow } from './ui/field';
 import { supplyStatusLabel } from '../lib/labels';
+
+/**
+ * useActionState başlangıç durumu — 'use server' dosyasından obje export EDİLEMEZ
+ * (Next 15 SWC "can only export async functions, found object" ile action chunk'ını
+ * patlatır), bu yüzden tüketici istemci bileşeninde yerel sabit olarak durur.
+ */
+const initialPOFormState: POFormState = { ok: false };
 
 /** yyyy-mm-dd (input[type=date]) için ISO tarihi kırpar. */
 function toDateInput(iso: string | null): string {

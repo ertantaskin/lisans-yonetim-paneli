@@ -4,12 +4,18 @@ import { Save, Plus, X } from 'lucide-react';
 import {
   createSupplierAction,
   updateSupplierAction,
-  initialSupplierFormState,
   type SupplierFormState,
 } from '@/app/suppliers/actions';
 import type { SupplierRow } from '@/app/suppliers/queries';
 import { Input, Textarea, Label } from './ui/input';
 import { Button } from './ui/button';
+
+/**
+ * useActionState başlangıç durumu — 'use server' dosyasından obje export EDİLEMEZ
+ * (Next 15 SWC "can only export async functions, found object" ile action chunk'ını
+ * patlatır), bu yüzden tüketici istemci bileşeninde yerel sabit olarak durur.
+ */
+const initialSupplierFormState: SupplierFormState = { ok: false };
 
 /**
  * Tedarikçi formu (§12) — çift modlu:

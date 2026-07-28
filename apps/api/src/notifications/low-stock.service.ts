@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
 import { NotificationsService } from './notifications.service';
 
 export const LOW_STOCK_QUEUE = 'low-stock';
@@ -23,7 +24,7 @@ type LowStockRow = {
 /**
  * Düşük stok tespiti (§12). low_stock_threshold IS NOT NULL ürünler için anlık
  * 'available' stok (products.service.list() ile AYNI mantık: max_uses - use_count,
- * status='available' filtreli) eşiğin altına inince 'low_stock' bildirimi üretir.
+ * status='available' + stok ömrü DOLMAMIŞ filtreli) eşiğin altına inince 'low_stock' bildirimi üretir.
  * Son 12 saatte aynı ürün için bildirim varsa DEDUPE ile tekrar üretmez (spam yok).
  */
 @Injectable()
@@ -58,13 +59,19 @@ export class LowStockService implements OnModuleInit {
     // FILTER status='available'). GROUP BY p.id (pk) → HAVING p.low_stock_threshold'a erişebilir.
     // Dedupe (son 12 saatte aynı ürün için 'low_stock' bildirimi) ANA sorguya NOT EXISTS ile
     // gömülü → döngü-içi ürün-başına sorgu (N+1) YOK: tek tarama zaten dedupe'lu satırlar döner.
+    //
+    // notExpiredCond('li'): stok ömrü (expires_at) DOLMUŞ kalem atama sorgusunda (assign.ts)
+    // dışlanır; alarm sayımına girerse eşik "aşılmış" görünür ve DÜŞÜK STOK UYARISI HİÇ/GEÇ
+    // üretilir (operatör stok var sanır, siparişler pending'e düşer). Yüklem, atama yolunun tek
+    // kaynağıdır (assignment/assign.ts) — kopyalanmaz.
     const rows = await rawRows<LowStockRow>(this.db, sql`
       SELECT
         p.id AS product_id,
         p.sku AS sku,
         p.name AS name,
         p.low_stock_threshold AS threshold,
-        COALESCE(SUM(li.max_uses - li.use_count) FILTER (WHERE li.status = 'available'), 0)::int
+        COALESCE(SUM(li.max_uses - li.use_count)
+          FILTER (WHERE li.status = 'available' AND ${notExpiredCond('li')}), 0)::int
           AS available
       FROM products p
       LEFT JOIN license_items li ON li.product_id = p.id
@@ -76,7 +83,10 @@ export class LowStockService implements OnModuleInit {
             AND n.created_at > now() - (${DEDUPE_WINDOW_HOURS} * interval '1 hour')
         )
       GROUP BY p.id
-      HAVING COALESCE(SUM(li.max_uses - li.use_count) FILTER (WHERE li.status = 'available'), 0)
+      -- HAVING süzgeci SELECT'teki ifadenin BİREBİR aynısı olmalı (aksi halde bildirimde yazan
+      -- "kalan stok" ile eşik karşılaştırması farklı kümeden gelirdi).
+      HAVING COALESCE(SUM(li.max_uses - li.use_count)
+        FILTER (WHERE li.status = 'available' AND ${notExpiredCond('li')}), 0)
         <= p.low_stock_threshold;
     `);
 

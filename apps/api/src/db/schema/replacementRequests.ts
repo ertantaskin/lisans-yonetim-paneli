@@ -56,6 +56,8 @@ export const replacementRequests = pgTable(
   (t) => [
     index('replacement_requests_status_idx').on(t.status),
     index('replacement_requests_email_idx').on(t.customerEmail),
+    // Destek kuyruğu + canlı akış sıcak yolu (0025 — elle yazılmıştı, şemaya taşındı).
+    index('replacement_requests_created_idx').on(t.createdAt.desc(), t.id.desc()),
   ],
 );
 

@@ -31,6 +31,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # 'use server' dosyaları YALNIZ async fonksiyon export edebilir (Next 15). İhlal
+      # ÇALIŞMA ANINDA patlar — `next build` YAKALAMAZ — ve o sayfadaki HER server action
+      # bozulur (bu hata iki kez üretime çıktı, bkz. commit 9b81c9b). Tip tabanlı tarayıcı
+      # build'den ÖNCE koşar: hızlı ve net başarısızlık verir.
+      - name: 'use server' export denetimi
+        run: pnpm check:use-server
+
       - name: Build
         run: pnpm build
 

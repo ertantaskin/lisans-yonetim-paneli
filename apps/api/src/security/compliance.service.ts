@@ -8,6 +8,13 @@ export interface AnonymizeResult {
   anonymizedOrders: number;
   anonymizedReplacements: number;
   anonymizedEmails: number;
+  /**
+   * Maskelenen güvenlik olayı (security_events) sayısı. Suistimal/anomali kayıtları
+   * `subject` kolonunda MÜŞTERİ E-POSTASI tutar (replacements.recordAbuseEvent) → KVKK
+   * kapsamında maskelenmeleri ŞART. Rapor bu yüzden ayrı sayaç döndürür (dürüst rapor:
+   * "PII maskelendi" derken hangi kümelerin maskelendiği görünür olsun).
+   */
+  anonymizedSecurityEvents: number;
   redactedEmail: string;
 }
 
@@ -71,12 +78,40 @@ export class ComplianceService {
       `);
       const anonymizedEmails = emailRows.length;
 
+      // security_events de PII taşır (§9/§15) — suistimal/anomali kayıtlarında `subject`
+      // MÜŞTERİ E-POSTASIDIR (replacements.recordAbuseEvent) ve /security ekranında düz
+      // gösterilir. ATLANIRSA anonymize "PII maskelendi" der ama e-posta panelde durmaya
+      // devam eder (denetim bulgusu). subject TAM eşleşmede maskelenir; `detail` serbest
+      // metninde geçen adres de best-effort değiştirilir (bazı kayıtlar adresi cümle içinde
+      // taşıyabilir). Eşleşme e-posta kolonlarıyla AYNI kuralla: lower() normalize.
+      //
+      // KAPSAM NOTU (bilinçli): `meta` jsonb'ye DOKUNULMAZ — mevcut yazarların meta'sı yalnız
+      // sayaç/eşik/scope taşır (PII yok). Yeni bir yazar meta'ya PII koyarsa burası da
+      // güncellenmeli (jsonb metin değişimi tip güvenliğini bozabileceğinden şimdi eklenmedi).
+      const securityRows = await rawRows<{ id: string }>(tx, sql`
+        UPDATE security_events
+        SET subject = CASE WHEN lower(subject) = ${normalized} THEN ${redacted} ELSE subject END,
+            detail = replace(replace(detail, ${original}, ${redacted}), ${normalized}, ${redacted})
+        WHERE lower(subject) = ${normalized}
+           -- strpos + AÇIK cast (LIKE değil): e-postada geçebilen '_' / '%' karakterleri
+           -- joker gibi davranıp YANLIŞ satır maskelemesin; ::text belirsiz parametre
+           -- tipini (unknown) de kesinleştirir.
+           OR strpos(lower(detail), ${normalized}::text) > 0
+        RETURNING id;
+      `);
+      const anonymizedSecurityEvents = securityRows.length;
+
       // customers profil satırını sil (kalıcı meta — etiket/not — PII taşır).
       await tx.execute(sql`DELETE FROM customers WHERE lower(email) = ${normalized};`);
 
       // KVKK silme isteği kritik aksiyon → audit'e düş (§9). Ham e-posta LOGLANMAZ; yalnız maske.
       // 'anonymize' değeri audit_action enum'unda mevcut (enums.ts, migration 0010).
-      const auditMeta = JSON.stringify({ anonymizedOrders, anonymizedReplacements, anonymizedEmails });
+      const auditMeta = JSON.stringify({
+        anonymizedOrders,
+        anonymizedReplacements,
+        anonymizedEmails,
+        anonymizedSecurityEvents,
+      });
       await tx.execute(sql`
         INSERT INTO audit_log (action, actor, target_type, target_id, meta)
         VALUES ('anonymize', ${actor}, 'customer', ${redacted}, ${auditMeta}::jsonb);
@@ -84,9 +119,15 @@ export class ComplianceService {
 
       this.logger.warn(
         `KVKK anonimleştirme: ${anonymizedOrders} sipariş + ${anonymizedReplacements} değişim + ` +
-          `${anonymizedEmails} mail kaydı maskelendi (aktör=${actor})`,
+          `${anonymizedEmails} mail + ${anonymizedSecurityEvents} güvenlik kaydı maskelendi (aktör=${actor})`,
       );
-      return { anonymizedOrders, anonymizedReplacements, anonymizedEmails, redactedEmail: redacted };
+      return {
+        anonymizedOrders,
+        anonymizedReplacements,
+        anonymizedEmails,
+        anonymizedSecurityEvents,
+        redactedEmail: redacted,
+      };
     });
   }
 }

@@ -7,7 +7,15 @@
 #
 # KURULUM (VPS'te, bir kez): host cron'una dakikada bir ekle —
 #   crontab -e →
-#   * * * * * flock -n /tmp/wpteslimat-deploy-runner.lock /opt/lisans-yonetim-paneli/scripts/deploy-runner.sh >> /var/log/deploy-runner.log 2>&1
+#   * * * * * /opt/lisans-yonetim-paneli/scripts/deploy-runner.sh >> /var/log/deploy-runner.log 2>&1
+#
+# Cron satırında DIŞ `flock` SARMALAYICISI KULLANMA — betik kilidini KENDİ alır (aşağıda).
+# Neden: flock kilidi "açık dosya tanımına" (open file description) bağlıdır; dış flock ile
+# betiğin kendi `exec 9>` açılışı AYNI dosyanın İKİ AYRI tanımıdır ve birbiriyle ÇAKIŞIR.
+# İkisi aynı dosyaya kurulduğunda betik kendi kendini kilitliyor, `flock -n 9` başarısız oluyor
+# ve runner sessizce çıkıyordu → panelden istenen dağıtım HİÇ koşmuyor, istek 'pending'de kalıyordu.
+# (Kilit dosyası ayrıca dış sarmalayıcının kullandığı addan AYRI tutuldu: eski crontab satırı
+# hâlâ duruyorsa bile self-deadlock oluşmaz, tek-örnek güvencesi yine sağlanır.)
 #
 # Gerektirir: jq, curl, git, docker (deploy.sh için). ADMIN_TOKEN repo kökündeki .env'den okunur.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -16,8 +24,9 @@ cd "$(dirname "$0")/.."   # repo kökü (/opt/lisans-yonetim-paneli)
 
 API_BASE="${DEPLOY_RUNNER_API:-https://api.167-233-108-12.sslip.io}"
 
-# Tek örnek güvencesi (cron flock kullanmasa bile).
-exec 9>/tmp/wpteslimat-deploy-runner.lock
+# Tek örnek güvencesi — kilit BETİĞİN KENDİSİNE ait (kurulum talimatından bağımsız çalışır).
+# Dosya adı bilinçli olarak dokümandaki eski dış-flock adından FARKLI (yukarıdaki nota bak).
+exec 9>/tmp/wpteslimat-deploy-runner.self.lock
 if ! flock -n 9; then exit 0; fi
 
 command -v jq >/dev/null 2>&1 || { echo "deploy-runner: jq gerekli (apt install jq)"; exit 1; }

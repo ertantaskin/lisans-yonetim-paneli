@@ -9,10 +9,10 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
-import { assignments, licenseItems, orderLines, orders, products, type Site } from '../db/schema';
+import { assignments, orderLines, orders, products, type Site } from '../db/schema';
 // Bu modül henüz index.ts barrel'ına eklenmedi (orkestratör ekler) → doğrudan dosyadan al.
 import {
   replacementMessages,
@@ -24,7 +24,7 @@ import { securityEvents, type SecurityEvent } from '../db/schema/securityEvents'
 import { RateLimitService } from '../common/rate-limit.service';
 import { MailService } from '../mail/mail.service';
 import { AdminOrdersService } from '../orders/admin-orders.service';
-import { FulfillmentService } from '../orders/fulfillment.service';
+import { FulfillmentService, type CompleteResult } from '../orders/fulfillment.service';
 import { recordReplacementLineage } from '../orders/assignment-history';
 
 const DAY_MS = 86_400_000;
@@ -356,25 +356,54 @@ export class ReplacementsService {
   /**
    * Değişimi onayla: eski atamayı geri al + yenisini ata (§13). MEVCUT makine:
    * revokeAssignment (eskiyi karantina/kapasite iadesi) + completeLine(lineId, 1).
-   * Stok yoksa (added=0) 409 döner ve talep 'approved' YAPILMAZ.
+   * Stok yoksa (added=0) 409 döner, talep 'approved' YAPILMAZ ve REVOKE DA GERİ ALINIR
+   * (tek transaction) → müşterinin mevcut anahtarı canlı kalır.
    */
   async approve(id: string, actor: string): Promise<ReplacementRequest> {
-    // Yazışmaya "onaylandı" sistem satırı, transaction COMMIT'inden SONRA eklenir (aşağıda):
-    // tx İÇİNDE best-effort try/catch güvenli değildir (hatalı ifade tx'i 25P02 ile zehirler) →
-    // yazışma kaydı ASLA onayı geri almaz. Kritik yol (advisory-lock + revoke + completeLine) aynen korundu.
-    const updated = await this.approveTx(id, actor);
+    // Yazışmaya "onaylandı" sistem satırı + müşteri bildirimi + teslimat maili/webhook, transaction
+    // COMMIT'inden SONRA çalışır (aşağıda): tx İÇİNDE best-effort try/catch güvenli değildir (hatalı
+    // ifade tx'i 25P02 ile zehirler) ve rollback edilen bir onay için bildirim gitmemelidir.
+    // Kritik yol (advisory-lock + revoke + completeLine) TEK transaction'da atomik koşar.
+    const { updated, completion } = await this.approveTx(id, actor);
+
+    // 1) Teslimat/güncelleme maili + geri-kanal webhook — completeLine dış tx ile çağrıldığı için
+    // yan etkilerini KENDİ tetiklemedi; sözleşme gereği commit sonrası burada tetiklenir.
+    await this.fulfillment.emitCompletionEffects(completion).catch((e: unknown) => {
+      this.logger.warn(`Değişim sonrası teslimat yan etkileri tetiklenemedi (${id}): ${errText(e)}`);
+    });
+    // 2) Müşteriye "değişim onaylandı" bildirimi (reject/requestInfo ile simetri). Best-effort +
+    // SIRSIZ (yalnız durum) — SMTP hatası onayı BOZMAZ. Eskiden sonuç TAMAMEN yutuluyordu
+    // (`.catch(() => {})`): kuyruğa alınamayan bildirim hiçbir yerde iz bırakmıyordu.
+    await this.enqueueNotice(
+      `Değişim onayı bildirimi (${id})`,
+      updated.orderId,
+      updated.customerEmail,
+      'approved',
+      '',
+    );
     await this.recordSystemMessage(id, 'Değişim talebi onaylandı, yeni lisans atandı.', actor);
     return updated;
   }
 
-  /** approve()'un TOCTOU-korumalı çekirdeği (davranış değişmedi; yalnız ayrı metoda alındı). */
-  private async approveTx(id: string, actor: string): Promise<ReplacementRequest> {
+  /**
+   * approve()'un TOCTOU-korumalı ve ATOMİK çekirdeği.
+   *
+   * ATOMİKLİK (denetim bulgusu): revoke + completeLine ARTIK dış tx'te (SAVEPOINT) koşar. Eskiden
+   * ikisi de kendi transaction'ında bağımsız COMMIT ediyordu → added<=0'da atılan 409 eski anahtarı
+   * KARANTİNADA bırakıyor, müşteri lisansını kaybediyordu (satır canceled/held ise KALICI).
+   * Şimdi throw ⇒ tüm tx rollback ⇒ eski atama aynen aktif kalır.
+   *
+   * Kilit edinim sırası diğer yollarla TUTARLIDIR (ABBA deadlock açılmaz):
+   *   advisory('replacement:<id>') → replacement_requests → assignments → order_lines → orders.
+   */
+  private async approveTx(
+    id: string,
+    actor: string,
+  ): Promise<{ updated: ReplacementRequest; completion: CompleteResult }> {
     // TOCTOU koruması: çift-tık/eşzamanlı onayda ikinci çağrı talebi kilitsiz okuyup revoke'u
     // no-op görüyor → completeLine added=0 → SAHTE "Değişim için stok yok" 409. Talep id'sine bağlı
     // pg_advisory_xact_lock + FOR UPDATE re-read ile serileştir (orders.service held-release deseni):
     // ikinci çağrı kilidi bekler, terminal durumu görüp 'Talep zaten çözülmüş' ile erken çıkar.
-    // revoke/completeLine mevcut imzalarıyla this.db kullanıyor (tx almıyor); advisory-lock zaten
-    // eşzamanlı approve()'ları dışladığı için bu güvenli — kilit statü kararını serileştirir.
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'replacement:' + id}))`);
       // Kilit altında YENİDEN oku (FOR UPDATE) → statü kararı serileşir.
@@ -394,6 +423,23 @@ export class ReplacementsService {
         throw new BadRequestException('Talep bir atama/satıra bağlı değil');
       }
 
+      // ATAMANIN DURUMU (denetim bulgusu): aynı atamaya İKİNCİ bir talep açılmış olabilir (ilk
+      // değişim yapıldı → atama artık 'revoked'/terminal). Eskiden bu hâl doğrudan revoke no-op'una
+      // ve added=0 → YANILTICI "Değişim için stok yok" 409'una düşüyordu. FOR UPDATE ile kilitle
+      // (kilit sırası: replacement_requests → assignments → order_lines → orders) ve AÇIK mesajla reddet.
+      const [asg] = await tx
+        .select({ status: assignments.status })
+        .from(assignments)
+        .where(eq(assignments.id, req.assignmentId))
+        .limit(1)
+        .for('update');
+      if (!asg) throw new NotFoundException('Talebe bağlı atama bulunamadı');
+      if (asg.status !== 'active') {
+        throw new ConflictException(
+          'Bu lisans zaten değiştirilmiş/iptal edilmiş — yeni bir değişim uygulanamaz.',
+        );
+      }
+
       // Çok-kullanımlı (MAK) ürünlerde otomatik değişim ANLAMLI DEĞİL: revoke kapasiteyi aynı
       // paylaşımlı anahtara iade eder → completeLine onu tekrar seçer (no-op, aynı kusurlu key).
       // Sessizce "onaylandı" demek yerine açıkça reddet; MAK sorunları elle işlenir (audit bulgusu).
@@ -410,48 +456,50 @@ export class ReplacementsService {
       }
 
       // 0) Stok ön-kontrolü: satırın ürününde uygun stok YOKSA eskiyi REVOKE ETMEDEN 409 dön.
-      // (revoke→completeLine sırası zorunlu; ama stok baştan yoksa müşteriyi boşta bırakmayalım —
-      // bu kontrol tamamen izin-verici; completeLine daha katı olsa bile mevcut revoke-sonrası-409
-      // davranışına düşeriz, asla daha kötü değil.)
-      const [avail] = await tx
-        .select({ n: sql<number>`count(*)::int` })
-        .from(licenseItems)
-        .innerJoin(orderLines, eq(orderLines.id, req.lineId))
-        .where(
-          and(
-            eq(licenseItems.productId, orderLines.productId),
-            eq(licenseItems.status, 'available'),
-            sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
-          ),
-        );
-      if (!avail || Number(avail.n) <= 0) {
+      // (revoke→completeLine sırası zorunlu; ama stok baştan yoksa boşuna revoke/rollback yapmayalım.)
+      // TEK KAYNAK: fulfillment.allocatableCountForLine — aynı sayım aşağıdaki "added=0 neden?"
+      // ayrımında da kullanılır (iki kopya sorgu sapmasın).
+      if ((await this.fulfillment.allocatableCountForLine(req.lineId, tx)) <= 0) {
         throw new ConflictException('Değişim için stok yok');
       }
 
       // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
       // markLineCanceled=false: hemen ardından completeLine ile MEŞRU yeniden-atama yapılacak;
       // satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok". (Iade DEĞİL, değişim.)
+      // tx GEÇİLİR: aynı bağlantıda SAVEPOINT olarak koşar → aşağıdaki throw revoke'u da geri alır.
       // Revoke sonucundan eski key id'sini al (soyağacı için).
       const revoked = await this.adminOrders.revokeAssignment(
         req.assignmentId,
         'replacement',
         actor,
         false,
+        tx,
       );
 
-      // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi).
-      const res = await this.fulfillment.completeLine(req.lineId, 1, true);
+      // 2) Yenisini ata — satırın açılan yerine 1 birim (atomik atama makinesi), AYNI tx'te.
+      const res = await this.fulfillment.completeLine(req.lineId, 1, true, tx);
       if (res.added <= 0) {
-        // Stok yok: talep açık kalır (approved yapılmaz), 409.
-        throw new ConflictException('Değişim için stok yok');
+        // added=0 "stok yok" DEMEK DEĞİLDİR: allocate FOR UPDATE SKIP LOCKED kullanır → eşzamanlı
+        // bir atama satırları kilitlediyse stok VARKEN de 0 döner (fulfillment.service belgeliyor).
+        // Operatöre gerçeği söyle; her iki hâlde de tx ROLLBACK olur → revoke geri alınır, müşterinin
+        // anahtarı canlı kalır ve talep 'approved' YAPILMAZ.
+        const stillAvailable = await this.fulfillment.allocatableCountForLine(req.lineId, tx);
+        throw new ConflictException(
+          stillAvailable > 0
+            ? 'Lisans şu anda atanamadı (eşzamanlı işlem sürüyor) — lütfen tekrar deneyin.'
+            : 'Değişim için stok yok',
+        );
       }
 
       // Soyağacı (§3 "eski anahtarlar"): eski→yeni assignment_history + yeni atama id'si (tek yerde).
-      const newAssignmentId = await recordReplacementLineage(this.db, {
+      // Yeni atama id'si completeLine sonucundan KESİN gelir — "satırın en yeni aktif ataması"
+      // tahmini, aynı satırda eşzamanlı ikinci bir değişimde YANLIŞ atamaya bağlanabiliyordu.
+      const newAssignmentId = await recordReplacementLineage(tx, {
         lineId: req.lineId,
         oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
         reason: 'replacement',
         actor,
+        newAssignmentId: res.createdAssignmentIds?.[0] ?? null,
       });
 
       const [updated] = await tx
@@ -466,45 +514,35 @@ export class ReplacementsService {
         .where(eq(replacementRequests.id, id))
         .returning();
 
-      // Müşteriye "değişim onaylandı" bildirimi (reject/requestInfo ile simetri). Best-effort +
-      // SIRSIZ (yalnız durum) — SMTP hatası onayı BOZMAZ (teslimat maili ayrıca completeLine'da gider).
-      await this.mail
-        .enqueueReplacementNotice(updated!.orderId, updated!.customerEmail, 'approved', '')
-        .catch(() => {});
-
-      return updated!;
+      return { updated: updated!, completion: res };
     });
   }
 
   /** Reddet — çözüm notuyla kapat + müşteriye durum bildirimi (yalnız durum+not, sırsız). */
   async reject(id: string, note: string, actor: string): Promise<ReplacementRequest> {
-    const req = await this.getOrThrow(id);
-    // Idempotent koruma: terminal (approved/rejected) durumdaki talep yeniden kapatılamaz.
-    if (req.status !== 'open' && req.status !== 'info_requested') {
-      throw new ConflictException('Talep zaten çözülmüş');
-    }
-    const [updated] = await this.db
-      .update(replacementRequests)
-      .set({
-        status: 'rejected',
-        resolutionNote: note,
-        resolvedBy: actor,
-        resolvedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(replacementRequests.id, id))
-      .returning();
+    // approve() ile AYNI serileştirme (denetim bulgusu): eskiden kilitsiz oku-değiştir-yaz idi →
+    // eşzamanlı onay + ret yarışında ret, 'approved' durumunu EZEBİLİYORDU (lisans değişti ama
+    // talep 'rejected' göründü). Aynı advisory anahtar ('replacement:<id>') approve/reject/
+    // requestInfo'yu tek sıraya dizer; ayrıca UPDATE'e statü koşulu gömülüdür (0 satır → 409).
+    const updated = await this.transitionStatus(id, {
+      status: 'rejected',
+      resolutionNote: note,
+      resolvedBy: actor,
+      resolvedAt: new Date(),
+      updatedAt: new Date(),
+    });
 
-    // Bildirim best-effort (SMTP hatası talebi bozmaz).
-    await this.mail.enqueueReplacementNotice(
-      updated!.orderId,
-      updated!.customerEmail,
+    // Bildirim best-effort (SMTP hatası talebi bozmaz) — kuyruğa alınamazsa SESSİZ kalmaz (warn).
+    await this.enqueueNotice(
+      `Talep reddi bildirimi (${id})`,
+      updated.orderId,
+      updated.customerEmail,
       'rejected',
       note,
     );
     // Yazışmaya sistem satırı: talebin neden kapandığı thread'de de görünsün (best-effort).
     await this.recordSystemMessage(id, `Talep reddedildi. Gerekçe: ${note}`, actor);
-    return updated!;
+    return updated;
   }
 
   /**
@@ -514,27 +552,67 @@ export class ReplacementsService {
    * izlenebilirlik/imza tutarlılığı için ileri taşınır (opsiyonel, mevcut çağıranları kırmaz).
    */
   async requestInfo(id: string, note: string, actor?: string): Promise<ReplacementRequest> {
-    const req = await this.getOrThrow(id);
-    // Idempotent koruma: terminal (approved/rejected) durumdaki talepten bilgi istenemez.
-    if (req.status !== 'open' && req.status !== 'info_requested') {
-      throw new ConflictException('Talep zaten çözülmüş');
-    }
-    const [updated] = await this.db
-      .update(replacementRequests)
-      .set({ status: 'info_requested', resolutionNote: note, updatedAt: new Date() })
-      .where(eq(replacementRequests.id, id))
-      .returning();
+    // reject() ile aynı serileştirme — eşzamanlı onayın 'approved' durumunu ezmesi kapatıldı.
+    const updated = await this.transitionStatus(id, {
+      status: 'info_requested',
+      resolutionNote: note,
+      updatedAt: new Date(),
+    });
 
-    await this.mail.enqueueReplacementNotice(
-      updated!.orderId,
-      updated!.customerEmail,
+    await this.enqueueNotice(
+      `Ek bilgi talebi bildirimi (${id})`,
+      updated.orderId,
+      updated.customerEmail,
       'info_requested',
       note,
     );
     // "Bilgi istendi" DURUM aksiyonu; sorunun metni yazışmada da görünür (admin mesajı olarak
     // AYRICA yazılmaz — çift kayıt olmasın diye tek sistem satırı).
     await this.recordSystemMessage(id, `Müşteriden ek bilgi istendi: ${note}`, actor);
-    return updated!;
+    return updated;
+  }
+
+  /**
+   * ATAMA GEREKTİRMEYEN durum geçişleri (reject / requestInfo) için ortak, YARIŞA KAPALI yol.
+   *
+   * approve() deseni: advisory-lock (aynı anahtar → onay/ret/bilgi-iste tek sıraya girer) +
+   * FOR UPDATE re-read + UPDATE'e gömülü statü koşulu (0 satır ⇒ 409). Böylece "oku → karar ver →
+   * yaz" arasında araya giren bir onay EZİLMEZ. Atama/stok makinesine DOKUNMAZ (yalnız statü).
+   */
+  private async transitionStatus(
+    id: string,
+    values: Partial<typeof replacementRequests.$inferInsert> & {
+      status: ReplacementRequest['status'];
+    },
+  ): Promise<ReplacementRequest> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'replacement:' + id}))`);
+      const [req] = await tx
+        .select()
+        .from(replacementRequests)
+        .where(eq(replacementRequests.id, id))
+        .limit(1)
+        .for('update');
+      if (!req) throw new NotFoundException('Değişim talebi bulunamadı');
+      // Idempotent koruma: terminal (approved/rejected) durumdaki talep yeniden kapatılamaz.
+      if (req.status !== 'open' && req.status !== 'info_requested') {
+        throw new ConflictException('Talep zaten çözülmüş');
+      }
+      const [updated] = await tx
+        .update(replacementRequests)
+        .set(values)
+        .where(
+          and(
+            eq(replacementRequests.id, id),
+            inArray(replacementRequests.status, ['open', 'info_requested']),
+          ),
+        )
+        .returning();
+      // Savunma derinliği: kilide rağmen (ör. gelecekte kilitsiz bir yol eklenirse) durum
+      // değişmişse sessizce EZME — 409 at.
+      if (!updated) throw new ConflictException('Talep zaten çözülmüş');
+      return updated;
+    });
   }
 
   /* ============================================================================================
@@ -619,13 +697,26 @@ export class ReplacementsService {
    * - STATÜ DEĞİŞTİRMEZ: 'open' talebe müşteriye yazmak onu 'info_requested' YAPMAZ. Durum
    *   geçişi ayrı, bilinçli bir aksiyondur (POST :id/request-info) — mesaj yazmak yanlışlıkla
    *   talebin durumunu (ve müşteriye giden durum dilini) değiştirmemeli.
-   * - internal=false ise müşteriye bildirim maili gider (best-effort; SMTP hatası mesajı YUTMAZ).
+   * - internal=false ise müşteriye bildirim maili KUYRUĞA ALINIR (best-effort; SMTP hatası
+   *   mesajı YUTMAZ). Yanıttaki bayrak "gönderildi" DEĞİL "kuyruğa alındı" anlamındadır —
+   *   gerçek gönderim sonucu email_log satırındadır (sent/failed) ve /ops dead-letter'da görünür.
    */
   async addAdminMessage(
     requestId: string,
     input: { body: string; internal?: boolean },
     actor: string,
-  ): Promise<{ message: ReplacementMessageRow; notified: boolean }> {
+  ): Promise<{
+    message: ReplacementMessageRow;
+    /**
+     * Bildirim KUYRUĞA ALINDI mı? (iç not ise false — mail hiç üretilmez.)
+     * DİKKAT: "müşteriye ulaştı" GARANTİSİ DEĞİLDİR; gerçek gönderim durumu email_log'dadır.
+     */
+    notificationQueued: boolean;
+    /** Kuyruğa alınamadıysa insan-okur sebep (sır içermez); aksi halde tanımsız. */
+    notificationError?: string;
+    /** @deprecated Eski alan adı — `notificationQueued` ile AYNI değeri taşır (kontrat kırılmasın). */
+    notified: boolean;
+  }> {
     const req = await this.getScopedOrThrow(requestId);
     const body = input.body.trim();
     if (!body) throw new BadRequestException('Mesaj boş olamaz');
@@ -638,23 +729,30 @@ export class ReplacementsService {
       internal,
     });
 
-    let notified = false;
+    let queued = false;
+    let notificationError: string | undefined;
     if (!internal) {
       // Mevcut değişim-bildirimi mekanizması yeniden kullanılır (ayrı şablon YOK, §doc):
       // status='message' → MailService.replacementHeadline default dalına düşer
       // ("Talebinizin durumu güncellendi.") + mesaj gövdesi "Not:" olarak eklenir. SIR İÇERMEZ.
-      notified = await this.mail
-        .enqueueReplacementNotice(req.orderId, req.customerEmail, 'message', body)
-        .then(() => true)
-        .catch((e: unknown) => {
-          this.logger.warn(
-            `Destek yanıtı bildirimi gönderilemedi (request=${requestId}): ${errText(e)}`,
-          );
-          return false;
-        });
+      //
+      // BAYRAK KAYNAĞI (denetim bulgusu): enqueueReplacementNotice artık ASLA fırlatmaz, sonucu
+      // `{ queued }` ile döndürür → eski `.then(() => true)` deseni kuyruğa ALINAMAYAN bildirimde
+      // de DAİMA true veriyordu (yanlış "bildirildi"). Bayrak yalnız dönen `queued` alanından
+      // türetilir (enqueueNotice tek nokta: warn + sebep).
+      const res = await this.enqueueNotice(
+        `Destek yanıtı bildirimi (request=${requestId})`,
+        req.orderId,
+        req.customerEmail,
+        'message',
+        body,
+      );
+      queued = res.queued;
+      notificationError = res.error;
     }
 
-    return { message, notified };
+    // `notified` geriye dönük alias'tır; anlamı "kuyruğa alındı"dır (bkz. dönüş tipi dokümanı).
+    return { message, notificationQueued: queued, notificationError, notified: queued };
   }
 
   /**
@@ -705,6 +803,40 @@ export class ReplacementsService {
       internal: false,
     });
     return { message };
+  }
+
+  /**
+   * Müşteriye giden DURUM bildirimini kuyruğa alır — TEK NOKTA (onay/ret/bilgi-iste/cevap).
+   *
+   * `MailService.enqueueReplacementNotice` sözleşme gereği ASLA fırlatmaz; sonucu `{ queued }`
+   * ile döndürür. Bayrağı promise'in ÇÖZÜLMESİNDEN türetmek (eski `.then(() => true)` deseni)
+   * kuyruğa ALINAMAYAN bildirimi "bildirildi" gibi gösteriyordu — bildirim sessizce kayboluyordu
+   * (denetim bulgusu). Burada sonuç OKUNUR; başarısızlık logger.warn ile görünür olur ve çağıran
+   * admin aksiyonu (onay/ret) BOZULMAZ (best-effort, §13).
+   *
+   * ANLAM SINIRI: dönen `queued=true` yalnız "kuyruğa alındı" demektir — "müşteriye ulaştı"
+   * DEĞİL. Gerçek gönderim sonucu email_log satırındadır (sent/failed) ve başarısızsa /ops
+   * "Başarısız İşler" ekranında görünür.
+   */
+  private async enqueueNotice(
+    context: string,
+    orderId: string,
+    toEmail: string,
+    status: string,
+    note?: string | null,
+  ): Promise<{ queued: boolean; error?: string }> {
+    const res = await this.mail
+      .enqueueReplacementNotice(orderId, toEmail, status, note)
+      // Sözleşme dışı (beklenmeyen) bir hata da admin aksiyonunu bozmamalı — ikinci savunma hattı.
+      .catch((e: unknown) => ({ queued: false, emailLogId: null, error: errText(e) }));
+    if (res.queued !== true) {
+      const reason = res.error ?? 'bilinmeyen sebep';
+      this.logger.warn(
+        `${context}: müşteri bildirimi KUYRUĞA ALINAMADI (order=${orderId}): ${reason}`,
+      );
+      return { queued: false, error: reason };
+    }
+    return { queued: true };
   }
 
   /** Sistem satırı (durum değişimi izi). Best-effort: yazışma kaydı asıl aksiyonu ASLA bozmaz. */
@@ -826,11 +958,6 @@ export class ReplacementsService {
    */
   private emailKey(email: string): string {
     return createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 24);
-  }
-
-  /** Site kapsamı GEREKTİRMEYEN admin yolu (kapsamlı sürüme delege eder — tek sorgu, tek 404 dili). */
-  private async getOrThrow(id: string): Promise<ReplacementRequest> {
-    return this.getScopedOrThrow(id);
   }
 
   /**

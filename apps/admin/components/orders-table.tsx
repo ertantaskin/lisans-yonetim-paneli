@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ArrowRight, Ban, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { OrderRow } from '../lib/api';
-import { fmtDateTime } from '../lib/utils';
+import { fmtDateTime, includesTr } from '../lib/utils';
 import { StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { DataTable } from './data-table/data-table';
@@ -17,14 +17,11 @@ const columns: ColumnDef<OrderRow>[] = [
     meta: { title: 'Sipariş No' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Sipariş No" />,
     cell: ({ row }) => <span className="font-medium tabular-nums">{row.original.remoteOrderId}</span>,
-    // Arama: sipariş no VEYA müşteri e-postası
-    filterFn: (row, _id, value) => {
-      const q = String(value).toLowerCase();
-      return (
-        row.original.remoteOrderId.toLowerCase().includes(q) ||
-        row.original.customerEmail.toLowerCase().includes(q)
-      );
-    },
+    // Arama: sipariş no VEYA müşteri e-postası. Türkçe-duyarlı karşılaştırma (`includesTr`):
+    // ham `toLowerCase()` ile "İ"/"I" içeren e-postalar (İsim.Soyisim@…) bulunamıyordu.
+    filterFn: (row, _id, value) =>
+      includesTr(row.original.remoteOrderId, value) ||
+      includesTr(row.original.customerEmail, value),
   },
   {
     accessorKey: 'customerEmail',

@@ -55,6 +55,7 @@ import {
   type PayloadField,
 } from '@lisans/shared';
 import { CryptoService } from '../crypto/crypto.service';
+import { notExpiredCond } from '../assignment/assign';
 import { REDIS } from '../redis/redis.module';
 import { MailService } from '../mail/mail.service';
 
@@ -276,19 +277,34 @@ export class AdminOrdersService {
     // için 409 atılıyor ve müşteri lisansını KALICI kaybediyordu. Aynı ürün üzerindeki
     // değişimleri advisory-lock ile serileştir (replacements.approve deseni). Kilit ÖNCE alınır,
     // ön-kontrol ve revoke+atama kilit altında koşar.
-    return this.db.transaction(async (tx) => {
+    //
+    // ATOMİKLİK (denetim bulgusu): revoke ve completeLine ARTIK bu tx'i (`tx`) kullanır — eskiden
+    // ikisi de KENDİ transaction'ında bağımsız commit ediyordu, bu yüzden added=0'da atılan 409
+    // eski anahtarı KARANTİNADA bırakıyordu (müşteri lisansını kaybediyordu). Tek tx içinde
+    // throw ⇒ rollback ⇒ revoke da geri alınır ⇒ müşterinin anahtarı CANLI kalır.
+    const { result, completion } = await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'replace:' + assignmentId}))`);
-      return this.replaceAssignmentLocked(assignmentId, reason, actor);
+      return this.replaceAssignmentLocked(assignmentId, reason, actor, tx);
     });
+    // Yan etkiler (teslimat maili + geri-kanal webhook) COMMIT SONRASI: tx içinde tetiklenselerdi
+    // ayrı bağlantıdan henüz commit EDİLMEMİŞ sipariş durumu okunur (yanlış webhook olayı) ve
+    // rollback halinde OLMAMIŞ bir teslimat duyurulmuş olurdu.
+    await this.fulfillment.emitCompletionEffects(completion);
+    return result;
   }
 
   /**
-   * `replaceAssignment` çekirdeği — ÇAĞIRAN advisory-lock'u almış olmalıdır.
-   * revoke/completeLine mevcut imzalarıyla `this.db` kullanır (tx almaz); kilit eşzamanlı
-   * değişimleri dışladığı için bu güvenlidir (approve() ile aynı gerekçe).
+   * `replaceAssignment` çekirdeği — ÇAĞIRAN advisory-lock'u almış ve `tx`'i geçmiş olmalıdır.
+   * TÜM okuma/yazmalar (revoke + completeLine + soyağacı + audit) AYNI transaction'da koşar;
+   * herhangi bir aşamada throw ⇒ hepsi geri alınır. Yan etkiler çağırana (commit sonrası) bırakılır.
    */
-  private async replaceAssignmentLocked(assignmentId: string, reason: string, actor: string) {
-    const [row] = await this.db
+  private async replaceAssignmentLocked(
+    assignmentId: string,
+    reason: string,
+    actor: string,
+    tx: Database,
+  ) {
+    const [row] = await tx
       .select({
         status: assignments.status,
         lineId: assignments.lineId,
@@ -312,42 +328,51 @@ export class AdminOrdersService {
     }
 
     // Stok ön-kontrolü: eskiyi REVOKE ETMEDEN önce uygun available stok var mı? (replacements deseni)
-    const [avail] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(licenseItems)
-      .where(
-        and(
-          eq(licenseItems.productId, row.productId!),
-          eq(licenseItems.status, 'available'),
-          sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
-        ),
-      );
-    if (!avail || Number(avail.n) <= 0) {
+    // TEK KAYNAK: fulfillment.allocatableCountForLine (aynı sayım "added=0" ayrımında da kullanılır).
+    if ((await this.fulfillment.allocatableCountForLine(row.lineId, tx)) <= 0) {
       throw new ConflictException('Değişim için stok yok');
     }
 
     // 1) Eskiyi geri al — markLineCanceled=false (iade DEĞİL; satır yeniden atanabilir kalır).
-    await this.revokeAssignment(assignmentId, reason, actor, false);
-    // 2) Taze key ata (atomik atama makinesi).
-    const res = await this.fulfillment.completeLine(row.lineId, 1, true);
+    // tx GEÇİLİR → SAVEPOINT olarak koşar; sonraki bir throw revoke'u da geri alır.
+    const revoked = await this.revokeAssignment(assignmentId, reason, actor, false, tx);
+    if ('already' in revoked) {
+      // Yarışta başka bir yol (iade/eşzamanlı değişim) atamayı zaten geri almış → değişim uygulanmaz.
+      throw new ConflictException('Atama durumu değişti; değişim uygulanmadı');
+    }
+    // 2) Taze key ata (atomik atama makinesi) — AYNI tx içinde.
+    const res = await this.fulfillment.completeLine(row.lineId, 1, true, tx);
     if (res.added <= 0) {
-      throw new ConflictException('Değişim için stok yok');
+      // added=0 "stok yok" DEMEK DEĞİLDİR: allocate FOR UPDATE SKIP LOCKED kullanır → eşzamanlı bir
+      // atama satırları kilitlediyse stok VARKEN de 0 döner. Operatöre GERÇEĞİ söyle.
+      const stillAvailable = await this.fulfillment.allocatableCountForLine(row.lineId, tx);
+      throw new ConflictException(
+        stillAvailable > 0
+          ? 'Lisans şu anda atanamadı (eşzamanlı işlem sürüyor) — lütfen tekrar deneyin.'
+          : 'Değişim için stok yok',
+      );
     }
     // 3) Soyağacı: eski→yeni assignment_history + newAssignmentId (§3 "eski anahtarlar").
-    const newAssignmentId = await recordReplacementLineage(this.db, {
+    // Yeni atama id'si completeLine sonucundan KESİN gelir (satırın "en yeni aktif ataması"
+    // tahmini eşzamanlı ikinci bir değişimde yanlış atamayı seçebilirdi).
+    const newAssignmentId = await recordReplacementLineage(tx, {
       lineId: row.lineId,
       oldLicenseItemId: row.licenseItemId,
       reason,
       actor,
+      newAssignmentId: res.createdAssignmentIds?.[0] ?? null,
     });
-    await this.db.insert(auditLog).values({
+    await tx.insert(auditLog).values({
       action: 'replace',
       actor,
       targetType: 'assignment',
       targetId: assignmentId,
       meta: { op: 'admin_replace', oldLicenseItemId: row.licenseItemId, newAssignmentId, reason },
     });
-    return { oldAssignmentId: assignmentId, newAssignmentId, status: 'replaced' as const };
+    return {
+      result: { oldAssignmentId: assignmentId, newAssignmentId, status: 'replaced' as const },
+      completion: res,
+    };
   }
 
   /** Teslimat mailini tekrar gönder — 60sn debounce (§13). Kim tetikledi audit'e düşer. */
@@ -508,10 +533,16 @@ export class AdminOrdersService {
           productStockless: products.stockless,
           productReleaseAt: products.releaseAt,
           // MULTI/MAK dahil kapasite: Σ(max_uses − use_count) (products.list ile AYNI semantik).
+          //
+          // notExpiredCond('li'): atama sorgusu (assign.ts) stok ömrü dolmuş kalemi ZATEN
+          // dışlar. Bu sayı sipariş detayındaki "neden bekliyor" tanısını (diagnosePendingReason:
+          // no_stock / all_or_nothing) besliyor — süresi geçmiş kalemler sayılırsa panel
+          // "stok var" der ama "Kalanları Ata" 0 atar (operatör yanlış yönlendirilir).
           availableStock: sql<number>`(
             select coalesce(sum(li.max_uses - li.use_count), 0)::int
             from license_items li
             where li.product_id = ${orderLines.productId} and li.status = 'available'
+              and ${notExpiredCond('li')}
           )`,
         })
         .from(orderLines)

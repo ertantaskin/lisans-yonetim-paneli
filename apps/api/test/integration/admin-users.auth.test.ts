@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import Redis from 'ioredis';
 import { HttpException } from '@nestjs/common';
@@ -18,27 +18,38 @@ import { makeDb, tagPrefix, type Db } from './_helpers';
  *  (c) setDisabled → mevcut oturum (eski tokenVersion) validateSession'da null; pasif hesap her ver'de null.
  *  (d) resetPassword → tokenVersion +1 (eski oturum geçersiz); yeni parola çalışır, eskisi null.
  *  (e) BİLİNMEYEN kimlik kimlik-dizesi kovasında sayılır (varlık sızdırmadan hız-limitli); farklı
- *      bilinmeyen kimlik BAĞIMSIZ kova (per-identifier).
+ *      bilinmeyen kimlik BAĞIMSIZ kova (per-identifier). Aşırı uzun kimlik hiç kova AÇMAZ.
  *
- * scrypt GERÇEK (hashPassword/verifyPassword) — kullanıcı create ile oluşturulur, doğrulama gerçek
- * hash'e karşı koşar. Rate-limit gerçek Redis (REDIS_URL) gerektirir. admin_users cleanupByTag KAPSAMAZ
- * → tag'li e-postalar afterAll'da elle silinir; dokunulan Redis anahtarları da temizlenir.
+ * scrypt GERÇEK (hashPassword/verifyPassword — artık ASENKRON) — kullanıcı create ile oluşturulur,
+ * doğrulama gerçek hash'e karşı koşar. Rate-limit gerçek Redis (REDIS_URL) gerektirir. admin_users
+ * cleanupByTag KAPSAMAZ → tag'li e-postalar afterAll'da elle silinir; dokunulan Redis anahtarları da
+ * temizlenir.
+ *
+ * NOT: kimlik-dizesi kovası artık HAM identifier ile değil sha256 ÖZETİYLE kurulur
+ * (`authfail:h:<sha256hex>`) → anahtar uzunluğu sabit, e-posta (PII) Redis'e düz yazılmaz.
  */
 
 const MAX_FAILS = 10;
+const MAX_IDENTIFIER_LEN = 200; // servis + controller ile aynı üst sınır
 const tag = randomUUID().slice(0, 8);
 let db: Db;
 let end: () => Promise<void>;
 let redis: Redis;
 let svc: AdminUsersService;
 
+/** Servisle BİREBİR aynı kimlik-dizesi kova anahtarı (sha256 özetli). */
+function idKeyOf(identifier: string): string {
+  const normalized = identifier.trim().toLowerCase();
+  return `authfail:h:${createHash('sha256').update(normalized).digest('hex')}`;
+}
+
 /** Temizlenecek Redis anahtarları (authfail:*). */
 const redisKeys = new Set<string>();
 function trackKeysFor(opts: { id?: string; email?: string; username?: string; identifier?: string }) {
   if (opts.id) redisKeys.add(`authfail:id:${opts.id}`);
-  if (opts.email) redisKeys.add(`authfail:${opts.email.toLowerCase()}`);
-  if (opts.username) redisKeys.add(`authfail:${opts.username.toLowerCase()}`);
-  if (opts.identifier) redisKeys.add(`authfail:${opts.identifier.toLowerCase()}`);
+  if (opts.email) redisKeys.add(idKeyOf(opts.email));
+  if (opts.username) redisKeys.add(idKeyOf(opts.username));
+  if (opts.identifier) redisKeys.add(idKeyOf(opts.identifier));
 }
 
 let userSeq = 0;
@@ -106,7 +117,7 @@ describe('AdminUsersService auth (lockout / oturum geçersizleme / enumeration)'
 
     // Hesap-kimliği kovası tam MAX_FAILS; e-posta KİMLİK-DİZESİ kovası ARTMADI (enumeration sızmaz).
     expect(Number(await redis.get(`authfail:id:${u.id}`))).toBe(MAX_FAILS);
-    expect(await redis.get(`authfail:${u.email.toLowerCase()}`)).toBeNull();
+    expect(await redis.get(idKeyOf(u.email))).toBeNull();
 
     // (b) kilit penceresinde DOĞRU parola bile 429 (kova kontrolü parola doğrulamadan önce).
     await expect429(() => svc.verifyCredentials(u.email, u.password));
@@ -156,8 +167,9 @@ describe('AdminUsersService auth (lockout / oturum geçersizleme / enumeration)'
     for (let i = 0; i < MAX_FAILS; i++) {
       expect(await svc.verifyCredentials(ghost, 'whatever9!')).toBeNull();
     }
-    // Sayaç kimlik-dizesi kovasında (varlık sızdırmadan).
-    expect(Number(await redis.get(`authfail:${ghost}`))).toBe(MAX_FAILS);
+    // Sayaç kimlik-dizesi kovasında (varlık sızdırmadan) — anahtar sha256 ÖZETLİ, ham e-posta değil.
+    expect(Number(await redis.get(idKeyOf(ghost)))).toBe(MAX_FAILS);
+    expect(await redis.get(`authfail:${ghost}`)).toBeNull(); // ham (PII) anahtar YAZILMAZ
     // Kilitli: bir sonraki deneme 429.
     await expect429(() => svc.verifyCredentials(ghost, 'whatever9!'));
 
@@ -165,5 +177,12 @@ describe('AdminUsersService auth (lockout / oturum geçersizleme / enumeration)'
     const ghost2 = `${tagPrefix(tag)}-ghost2@example.test`;
     trackKeysFor({ identifier: ghost2 });
     expect(await svc.verifyCredentials(ghost2, 'whatever9!')).toBeNull();
+  });
+
+  it('(f) aşırı uzun kimlik: kova AÇILMAZ (Redis şişirilemez), scrypt maliyeti ödenmez', async () => {
+    const huge = `${'a'.repeat(MAX_IDENTIFIER_LEN + 1)}@example.test`;
+    expect(await svc.verifyCredentials(huge, 'whatever9!')).toBeNull();
+    // Kimlik-dizesi kovası hiç oluşturulmadı → 900 sn TTL'li çöp anahtar birikmez.
+    expect(await redis.get(idKeyOf(huge))).toBeNull();
   });
 });

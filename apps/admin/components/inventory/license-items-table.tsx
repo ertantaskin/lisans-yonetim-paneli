@@ -5,6 +5,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
   ExternalLink,
   Eye,
@@ -41,13 +42,19 @@ import { LicenseItemActions, statusLabel } from './license-item-actions';
 /** Sayfa boyutu seçenekleri — API bu üç değere kırpar (kullanıcının açık isteği). */
 const PAGE_SIZES = [25, 50, 100] as const;
 
-const STATUS_OPTIONS = [
+/**
+ * Durum süzgeci. ETİKETLER TEK KAYNAKTAN (`lib/labels` → statusLabel) gelir — burada yalnız
+ * hangi durumların sunulacağı seçilir; ham enum kullanıcıya ÇIKMAZ.
+ * 'expired' = STOK ÖMRÜ dolmuş kalem (API bu süzgeci `status='expired'` VEYA `expires_at ≤ now`
+ * olarak yorumlar) — "stokta görünüp satılamayan" kalemleri tek listede toplar.
+ */
+const STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '', label: 'Tümü' },
-  { value: 'available', label: 'Stokta' },
-  { value: 'assigned', label: 'Teslim edilen' },
-  { value: 'quarantined', label: 'Karantinada' },
-  { value: 'voided', label: 'Geçersiz kılındı' },
-] as const;
+  ...['available', 'assigned', 'expired', 'quarantined', 'voided'].map((v) => ({
+    value: v,
+    label: statusLabel(v),
+  })),
+];
 
 const SORT_OPTIONS = [
   { value: 'created_desc', label: 'En yeni' },
@@ -70,6 +77,25 @@ const STATUS_VARIANT: Record<string, 'success' | 'neutral' | 'warning' | 'danger
 
 /** Gizli alan maskesi — uzunluk/biçim sızdırmayan sabit gövde (§8 mask deseni). */
 const MASK = '••••••';
+
+/** Hâlâ "satılabilir" görünen durumlar — stok ömrü dolmuşsa UYARI tonu bunlarda gösterilir. */
+const SELLABLE_STATUS = new Set(['available', 'reserved']);
+
+/**
+ * GLUE — stok ömrü alanlarının SAVUNMACI okunması.
+ *
+ * API satırda `expired: boolean` + `expiresAt` döndürür (stock.service.LicenseInventoryRow);
+ * admin tarafındaki tip (`app/stock/license-actions.ts`) bu partide DEĞİŞMEDİĞİ için alanlar
+ * tipte yok → burada dar bir cast ile okunur. Alan gelmezse (api/admin deploy sapması, eski
+ * sürüm) hiçbir şey gösterilmez: bugünkü davranış aynen korunur, ekran KIRILMAZ.
+ *
+ * NOT: `expired` istemci saatine göre HESAPLANMAZ — sunucudan gelir (tek doğruluk kaynağı).
+ */
+function stockExpiry(row: LicenseInventoryRow): { expired: boolean; expiresAt: string | null } {
+  const r = row as unknown as { expired?: unknown; expiresAt?: unknown };
+  const expiresAt = typeof r.expiresAt === 'string' && r.expiresAt.trim() ? r.expiresAt : null;
+  return { expired: r.expired === true, expiresAt };
+}
 
 /**
  * Lisans envanteri tablosu — ürün detayında (`productId` verilir) ve /stock genel
@@ -305,9 +331,7 @@ export function LicenseItemsTable({
                   </TableCell>
 
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[row.status] ?? 'neutral'}>
-                      {statusLabel(row.status)}
-                    </Badge>
+                    <StatusCell row={row} />
                   </TableCell>
 
                   <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
@@ -429,6 +453,54 @@ function ToolbarSelect({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+/**
+ * Durum hücresi — kalemin ham durumu + STOK ÖMRÜ işareti.
+ *
+ * NEDEN AYRI İŞARET: bir kalem `status='available'` (yani "Stokta") görünürken stok ömrü
+ * (`expiresAt`) dolmuş olabilir; API bu kalemi HİÇBİR stok toplamına katmaz ve ATAMAZ. Yalnız
+ * "Stokta" yazmak liste ile sayaçları çelişkili gösterir ("stokta görünüyor ama satılmıyor").
+ * Ton: satılabilir görünen durumda UYARI (operatör aksiyon almalı — yenile/geçersiz kıl),
+ * teslim edilmiş/ölü kayıtta NÖTR (yalnız bilgi, aksiyon gerekmez).
+ *
+ * Etiketler `lib/labels.ts` tek-kaynağından gelir; ham enum/İngilizce sızmaz.
+ */
+function StatusCell({ row }: { row: LicenseInventoryRow }) {
+  const { expired, expiresAt } = stockExpiry(row);
+  // Durumu zaten "Süresi doldu" olan kayıtta ikinci bir işaret gürültüdür.
+  const showExpiredFlag = expired && row.status !== 'expired';
+  const dateHint = expiresAt
+    ? `Stok ömrü ${fmtDateTime(expiresAt)} tarihinde doldu — bu kalem satılamaz/atanamaz.`
+    : 'Stok ömrü doldu — bu kalem satılamaz/atanamaz.';
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Badge variant={STATUS_VARIANT[row.status] ?? 'neutral'}>{statusLabel(row.status)}</Badge>
+
+      {showExpiredFlag &&
+        (SELLABLE_STATUS.has(row.status) ? (
+          <Badge variant="warning" title={dateHint}>
+            <Clock aria-hidden />
+            Süresi dolmuş
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground" title={dateHint}>
+            süresi dolmuş
+          </span>
+        ))}
+
+      {/* Henüz dolmamış ömür: FEFO sırasını anlamak için tarih ipucu (sessiz sürpriz olmasın). */}
+      {!expired && expiresAt && (
+        <span
+          className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+          title="Stok ömrü bitiş tarihi (FEFO: en erken bitecek kalem önce atanır)"
+        >
+          ömür bitişi {fmtDateTime(expiresAt)}
+        </span>
+      )}
     </div>
   );
 }

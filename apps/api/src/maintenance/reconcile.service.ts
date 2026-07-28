@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
@@ -18,8 +19,15 @@ const SWEEP_EVERY_MS = 15 * 60 * 1000;
 
 /**
  * Kritik bildirim (Telegram) dedupe penceresi (saat). Mutabakat İHLALLERİ DÜZELTİLMEZ (§16) →
- * kalıcı bir ihlal her 15dk sweep'te aksi halde ~96 özdeş kritik alarm üretir. low-stock ile
- * aynı desen: bu pencerede 'reconcile_violation' bildirimi varsa create/Telegram push atlanır.
+ * kalıcı bir ihlal her 15dk sweep'te aksi halde ~96 özdeş kritik alarm üretir.
+ *
+ * DİKKAT — dedupe ARTIK "türe bakmadan sustur" DEĞİL, İHLAL PARMAK İZİNE bağlıdır
+ * (bkz. violationFingerprint). Eskiden pencere içindeki HERHANGİ bir 'reconcile_violation'
+ * bildirimi yeni alarmları 12 saat boyunca susturuyordu → ilk (belki önemsiz) sayaç sapmasından
+ * sonra ortaya çıkan YENİ bir ÇİFTE SATIŞ ihlali panelde/Telegram'da 12 saat HİÇ görünmüyordu.
+ * Artık yalnız AYNI ihlal kümesi susturulur; küme değişirse (yeni ihlal, yeni kayıt, tür
+ * değişimi) pencere içinde de yeni kritik alarm üretilir.
+ *
  * logger.error dedupe'a TABİ DEĞİL — her sweep'te çalışır (gözlemlenebilirlik korunur).
  */
 const NOTIFY_DEDUPE_WINDOW_HOURS = 12;
@@ -58,6 +66,34 @@ export interface ReconcileReport {
   /** Denetlenen kayıt sayısı (üç denetimin nüfus toplamı). */
   checked: number;
   violations: ReconcileViolation[];
+}
+
+/** İhlalin kimliği: tür + ihlal eden kaydın id'si (sayaç DEĞERLERİ hariç — aşağıya bakın). */
+function violationKey(v: ReconcileViolation): string {
+  switch (v.check) {
+    case 'multi_capacity':
+      return `multi_capacity:${v.licenseItemId}`;
+    case 'single_occupancy':
+      return `single_occupancy:${v.licenseItemId}`;
+    case 'line_fulfillment':
+      return `line_fulfillment:${v.lineId}`;
+  }
+}
+
+/**
+ * İhlal KÜMESİNİN parmak izi (sha256, kısa). Dedupe bunun üzerinden yapılır: küme aynıysa
+ * pencere boyunca tek alarm, küme değiştiyse (yeni/kaybolan ihlal, yeni tür) hemen yeni alarm.
+ *
+ * Sıralama deterministiktir (sort) → aynı ihlaller farklı SQL satır sırasında gelse bile aynı
+ * parmak izi üretilir (aksi halde her sweep "yeni küme" sanılıp dedupe hiç çalışmazdı).
+ *
+ * SAYAÇ DEĞERLERİ (use_count/fulfilled_qty…) BİLİNÇLİ OLARAK DIŞARIDA: aynı bozuk kaydın sayacı
+ * her satışta bir artarsa parmak izi de değişir ve dedupe yine spam'e dönerdi. Kimlik kümesi
+ * değiştiği an — ki YENİ bir çifte satış her zaman yeni bir id ekler — alarm zaten üretilir.
+ */
+function violationFingerprint(violations: ReconcileViolation[]): string {
+  const keys = violations.map(violationKey).sort();
+  return createHash('sha256').update(keys.join('|'), 'utf8').digest('hex').slice(0, 32);
 }
 
 /**
@@ -127,10 +163,17 @@ export class ReconcileService implements OnModuleInit {
    * gövdesi meta'yı taşımaz). payload/e-posta/key ASLA konmaz. Best-effort: bildirim hatası yutulur
    * (mutabakat çıktısı zaten döndürülür + kritik loglandı).
    *
-   * DEDUPE (low-stock deseni): sweep her 15dk çalışır ve ihlalleri DÜZELTMEZ → kalıcı bir ihlal
-   * dedupe olmadan ~96 özdeş kritik Telegram alarmı/gün üretir. Son NOTIFY_DEDUPE_WINDOW_HOURS
-   * saatte 'reconcile_violation' bildirimi VARSA create/Telegram push atlanır. logger.error yine
-   * her sweep'te çalışır (reconcile() içinde) — yalnız bildirim/Telegram kadansı kısılır.
+   * DEDUPE (parmak-izi bazlı): sweep her 15dk çalışır ve ihlalleri DÜZELTMEZ → kalıcı bir ihlal
+   * dedupe olmadan ~96 özdeş kritik Telegram alarmı/gün üretir. Bu yüzden pencerede AYNI PARMAK
+   * İZLİ ('reconcile_violation' + meta.fingerprint) bildirim varsa create/Telegram push atlanır.
+   * Küme DEĞİŞİRSE (yeni ihlal eklendi/çıktı, tür değişti) parmak izi de değişir → pencere içinde
+   * de alarm üretilir; yani yeni bir çifte-satış ihlali ASLA 12 saat gizlenmez.
+   *
+   * NEDEN "kapasite/çifte-satış ihlallerinde dedupe'u tamamen atla" DEĞİL: o yaklaşım kalıcı tek
+   * bir ihlalde günde ~96 özdeş kritik alarm üretip alarm körlüğü yaratırdı. Parmak izi, aranan
+   * güvenceyi (YENİ ihlal hemen görünür) spam üretmeden sağlar.
+   *
+   * logger.error yine her sweep'te çalışır (reconcile() içinde) — yalnız bildirim/Telegram kadansı kısılır.
    */
   private async notify(checked: number, violations: ReconcileViolation[]): Promise<void> {
     // Denetim başına kırılım (özet mesaj + meta için).
@@ -141,19 +184,25 @@ export class ReconcileService implements OnModuleInit {
     };
     for (const v of violations) byCheck[v.check] += 1;
 
+    const fingerprint = violationFingerprint(violations);
+
     try {
-      // Dedupe penceresi kontrolü: yakın zamanda aynı türde bildirim varsa Telegram spam'i önle.
+      // Dedupe penceresi kontrolü: yakın zamanda AYNI parmak izli bildirim varsa Telegram spam'i önle.
+      // meta->>'fingerprint' karşılaştırması: parmak izi taşımayan ESKİ kayıtlar eşleşmez → sürüm
+      // geçişinden sonraki ilk sweep bir kez alarm üretebilir (bilinçli, güvenli yön).
       const recent = await rawRows<{ exists: boolean }>(this.db, sql`
         SELECT EXISTS (
           SELECT 1 FROM notifications
           WHERE type = 'reconcile_violation'
             AND created_at > now() - (${NOTIFY_DEDUPE_WINDOW_HOURS} * interval '1 hour')
+            AND meta->>'fingerprint' = ${fingerprint}
         ) AS exists;
       `);
       if (recent[0]?.exists) {
         this.logger.warn(
-          `Mutabakat bildirimi dedupe: son ${NOTIFY_DEDUPE_WINDOW_HOURS} saatte 'reconcile_violation' ` +
-            `bildirimi zaten var — kritik alarm/Telegram push atlandı (logger.error her sweep'te sürüyor)`,
+          `Mutabakat bildirimi dedupe: son ${NOTIFY_DEDUPE_WINDOW_HOURS} saatte AYNI ihlal kümesi ` +
+            `(fingerprint=${fingerprint.slice(0, 8)}) zaten bildirildi — kritik alarm/Telegram push ` +
+            `atlandı (logger.error her sweep'te sürüyor; küme değişirse yeni alarm üretilir)`,
         );
         return;
       }
@@ -168,7 +217,8 @@ export class ReconcileService implements OnModuleInit {
           `Kapasite aşımı=${byCheck.multi_capacity}, sayaç sapması=${byCheck.line_fulfillment}, ` +
           `tek-kullanım çift atama=${byCheck.single_occupancy}.`,
         // meta yalnız DB'de saklanır (Telegram'a gitmez) → kök-neden için iç kayıt id'leri + sayaçlar.
-        meta: { checked, total: violations.length, byCheck, violations },
+        // fingerprint dedupe anahtarıdır: bir sonraki sweep bu değerle karşılaştırma yapar.
+        meta: { checked, total: violations.length, byCheck, violations, fingerprint },
       });
     } catch (err) {
       this.logger.warn(

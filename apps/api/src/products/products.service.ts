@@ -9,6 +9,7 @@ import {
 import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
 import {
   products,
   siteProductMappings,
@@ -22,13 +23,22 @@ import {
 /** Ürün detay sayfası (§13) — salt-okunur agregasyon, mevcut tablolardan türetilir. */
 export interface ProductDetail {
   product: Product;
-  /** license_items status kırılımı. available = kalan kapasite (Σ max_uses−use_count), diğerleri satır sayısı. */
+  /**
+   * license_items status kırılımı. available = SATILABİLİR kalan kapasite
+   * (Σ max_uses−use_count, yalnız süresi GEÇMEMİŞ kalemler), diğerleri satır sayısı.
+   */
   stock: {
     available: number;
     assigned: number;
     revoked: number;
     expired: number;
     voided: number;
+    /**
+     * status='available' AMA stok ömrü (expires_at) dolmuş → ATANAMAZ kapasite.
+     * `available` toplamından HARİÇtir; sessizce kaybolmasın diye ayrı raporlanır
+     * (operatör "stok neden düştü?" sorusunun cevabını panelde görür).
+     */
+    expiredAvailable: number;
   };
   batches: Array<{ id: string; label: string; status: string; qtyReceived: number }>;
   purchaseOrders: Array<{
@@ -70,6 +80,54 @@ export interface ProductDetail {
   }>;
 }
 
+/**
+ * Bir (usage_mode, max_uses) çiftinin ANAHTAR BAŞINA kapasitesi.
+ * single → her zaman 1 (max_uses kavramı yoktur); multi → max_uses (yoksa 1).
+ */
+function capacityOf(usageMode: Product['usageMode'], maxUses: number | null | undefined): number {
+  if (usageMode !== 'multi') return 1;
+  const n = maxUses ?? 1;
+  return n > 0 ? n : 1;
+}
+
+/** `productCapacityChange` sonucu — güncellemenin kapasiteye etkisi. */
+export interface CapacityChange {
+  currentCapacity: number;
+  nextCapacity: number;
+  /**
+   * true → yeni kapasite mevcudun ALTINDA (multi→single dahil). YALNIZ bu durumda stok
+   * denetimi yapılır; kapasite ARTIŞI ve kapasiteye dokunmayan düzenlemeler serbesttir.
+   */
+  reduced: boolean;
+}
+
+/**
+ * Ürün güncellemesinin ANAHTAR KAPASİTESİNE etkisini hesaplar (saf fonksiyon — birim testli).
+ *
+ * NEDEN yalnız DÜŞÜŞ önemli (denetim/re-doğrulama dersi): `license_items.max_uses` import
+ * anında ürün kapasitesinden kopyalanan bir ANLIK GÖRÜNTÜdür; ürün satırını güncellemek
+ * mevcut kalemlerin kapasitesini değiştirmez. Bu yüzden:
+ *  · kapasite ARTIRMA (MAK 500 → 800) mevcut anahtarları BOZMAZ — yeni importlar daha
+ *    büyük kapasiteyle gelir, eskiler aynen 500 kalır → serbest olmalıdır,
+ *  · `usage_mode` değişmeden yapılan düzenlemeler (ad/eşik/politika) kapasiteye dokunmaz,
+ *  · single → multi de kapasiteyi ARTIRIR (1 → N) → serbesttir,
+ *  · ama kapasite DÜŞÜRME ve multi → single, stokta duran yüksek kapasiteli anahtarların
+ *    kalan kullanım hakkını temsil edilemez hale getirir (allocate() single dalına düşer ve
+ *    anahtarın TAMAMINI tek birim sayar → anahtar başına N−1 kullanım KALICI kaybolur).
+ */
+export function productCapacityChange(
+  current: Pick<Product, 'usageMode' | 'maxUses'>,
+  patch: Pick<Partial<NewProduct>, 'usageMode' | 'maxUses'>,
+): CapacityChange {
+  const nextUsageMode = patch.usageMode ?? current.usageMode;
+  // patch'te ANAHTAR YOK → kolon değişmez; anahtar VAR ama null → temizlenir.
+  const nextMaxUses = patch.maxUses === undefined ? (current.maxUses ?? null) : (patch.maxUses ?? null);
+
+  const currentCapacity = capacityOf(current.usageMode, current.maxUses);
+  const nextCapacity = capacityOf(nextUsageMode, nextMaxUses);
+  return { currentCapacity, nextCapacity, reduced: nextCapacity < currentCapacity };
+}
+
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
@@ -93,13 +151,75 @@ export class ProductsService {
     if (Object.keys(patch).length === 0) {
       throw new NotFoundException('Güncellenecek alan yok');
     }
-    const [row] = await this.db
-      .update(products)
-      .set({ ...patch, updatedAt: new Date() })
-      .where(eq(products.id, id))
-      .returning();
-    if (!row) throw new NotFoundException('Ürün bulunamadı');
-    return row;
+    return this.db.transaction(async (tx) => {
+      // Mevcut ürünü KİLİTLE: karar (mod/kapasite değişiyor mu + canlı lisans var mı) ile
+      // yazma arasında ikinci bir düzenleme araya giremesin.
+      const [current] = await tx
+        .select()
+        .from(products)
+        .where(eq(products.id, id))
+        .limit(1)
+        .for('update');
+      if (!current) throw new NotFoundException('Ürün bulunamadı');
+
+      // ── Kapasite koruması (§2/§11, denetim bulgusu — DARALTILMIŞ) ──────────────────
+      // usage_mode / max_uses, license_items satırlarının KAPASİTE anlamını belirler:
+      //  · single → allocate() anahtarın TAMAMINI 'assigned' yapar (kapasite = 1),
+      //  · multi  → use_count += units (kalan kapasite = max_uses − use_count).
+      //
+      // Guard YALNIZ gerçekten veri bozan geçişte devreye girer: kapasite DÜŞÜREN değişiklik
+      // (MAK 500 → 100) ve multi → single. Bu iki durumda stokta duran YÜKSEK kapasiteli
+      // anahtarların kalan kullanım hakkı temsil edilemez hale gelir (anahtar başına N−1
+      // kullanım KALICI kaybolur, panel ise license_items.max_uses'ten hesapladığı için bir
+      // süre ŞİŞİK stok gösterir). Kapasite ARTIRMA (500 → 800), single → multi ve
+      // usage_mode'a dokunmayan düzenlemeler MEŞRUDUR ve engellenmez — `license_items.max_uses`
+      // import anında yazılan bir anlık görüntüdür; ürünü güncellemek eski kalemleri değiştirmez.
+      const change = productCapacityChange(current, patch);
+
+      if (change.reduced) {
+        // Yalnız KAPASİTESİ KAYBOLACAK canlı kalemler sayılır:
+        //  · ölü satırlar (voided/revoked/replaced/quarantined/expired) atamaya girmez,
+        //  · tükenmiş (use_count >= max_uses) kalemde kaybedilecek kapasite YOKTUR,
+        //  · yeni kapasiteye SIĞAN kalemler (max_uses <= nextCapacity) etkilenmez.
+        // → ürünü sonsuza dek kilitlemeyiz; yalnız gerçek veri kaybı reddedilir.
+        const [row] = await rawRows<{ n: number; max_cap: number }>(tx, sql`
+          SELECT count(*)::int AS n, coalesce(max(max_uses), 0)::int AS max_cap
+          FROM license_items
+          WHERE product_id = ${id}
+            AND status IN ('available', 'assigned', 'suspended')
+            AND max_uses > ${change.nextCapacity}
+            AND use_count < max_uses;
+        `);
+        const live = Number(row?.n ?? 0);
+        if (live > 0) {
+          const maxCap = Number(row?.max_cap ?? 0);
+          throw new ConflictException(
+            `Stokta kapasitesi ${change.nextCapacity} üstünde olan ${live} canlı lisans kaydı var ` +
+              `(en yükseği ${maxCap} kullanım); kapasiteyi ${change.currentCapacity} → ` +
+              `${change.nextCapacity} düşürmek bu anahtarların kalan kullanım hakkını yok eder. ` +
+              'Kapasiteyi ARTIRMAK serbesttir. Düşürmek için: önce bu kalemleri tüketin ya da ' +
+              'Envanter ekranından iptal edin; alternatif olarak yeni kapasiteyle YENİ bir ürün ' +
+              'açıp site eşlemesini ona taşıyın.',
+          );
+        }
+      }
+
+      // Tek kullanımlığa geçirilen üründe `max_uses` kavramı YOKTUR → bayat 500 değeri
+      // kolonda bırakmayız (ileride mod tekrar 'multi' yapılırsa sessizce eski kapasiteyi
+      // diriltir). Yalnız operatör bu modu AÇIKÇA gönderdiğinde uygulanır; kapasitesi
+      // kaybolacak canlı kalem varsa zaten yukarıdaki 409'a takılmıştır. Kapasite modeliyle
+      // TUTARLI: capacityOf(single, *) = 1, yani bu temizlik kapasiteyi değiştirmez.
+      const set: Partial<NewProduct> =
+        patch.usageMode === 'single' ? { ...patch, maxUses: null } : { ...patch };
+
+      const [row] = await tx
+        .update(products)
+        .set({ ...set, updatedAt: new Date() })
+        .where(eq(products.id, id))
+        .returning();
+      if (!row) throw new NotFoundException('Ürün bulunamadı');
+      return row;
+    });
   }
 
   async list(): Promise<Array<Product & { availableStock: number }>> {
@@ -108,6 +228,10 @@ export class ProductsService {
     // partial index (license_items_available_idx: product_id,created_at WHERE
     // status='available') kullanılır; assigned/revoked/expired satırlar taranmaz.
     // LEFT JOIN korunur → stoksuz ürün de NULL→coalesce 0 ile listede kalır.
+    //
+    // notExpiredCond(): stok ömrü dolmuş kalemler ATANAMAZ (assign.ts aynı koşulu uygular);
+    // toplamda sayılırlarsa panel var olmayan stok gösterir ve düşük-stok alarmı geç kalır.
+    // Koşulun TEK KAYNAĞI assignment/assign.ts — kopya yok.
     const rows = await this.db
       .select({
         product: products,
@@ -117,7 +241,11 @@ export class ProductsService {
       .from(products)
       .leftJoin(
         licenseItems,
-        and(eq(licenseItems.productId, products.id), eq(licenseItems.status, 'available')),
+        and(
+          eq(licenseItems.productId, products.id),
+          eq(licenseItems.status, 'available'),
+          notExpiredCond('license_items'),
+        ),
       )
       .groupBy(products.id);
 
@@ -218,27 +346,45 @@ export class ProductsService {
   }
 
   /**
-   * license_items status kırılımı. available = kalan kapasite (Σ max_uses−use_count,
+   * license_items status kırılımı. available = SATILABİLİR kalan kapasite (Σ max_uses−use_count,
    * products.list/reports ile AYNI semantik); assigned/revoked/expired/voided = satır sayısı.
+   *
+   * Kapasite toplamı atama koşuluyla (notExpiredCond) HİZALI: stok ömrü dolmuş kalemler
+   * atanamadıkları için 'available' toplamına GİRMEZ; kaybolmasınlar diye `expiredAvailable`
+   * olarak ayrı raporlanır.
    */
   private async detailStock(id: string): Promise<ProductDetail['stock']> {
-    const list = await rawRows<{ status: string; cnt: number; remaining: number }>(this.db, sql`
+    const list = await rawRows<{
+      status: string;
+      cnt: number;
+      remaining: number;
+      expired_remaining: number;
+    }>(this.db, sql`
       SELECT
         status,
         count(*)::int AS cnt,
-        coalesce(sum(max_uses - use_count), 0)::int AS remaining
+        coalesce(sum(max_uses - use_count) FILTER (WHERE ${notExpiredCond()}), 0)::int AS remaining,
+        coalesce(sum(max_uses - use_count) FILTER (WHERE NOT ${notExpiredCond()}), 0)::int
+          AS expired_remaining
       FROM license_items
       WHERE product_id = ${id}
       GROUP BY status;
     `);
-    const by: Record<string, { cnt: number; remaining: number }> = {};
-    for (const r of list) by[r.status] = { cnt: Number(r.cnt), remaining: Number(r.remaining) };
+    const by: Record<string, { cnt: number; remaining: number; expiredRemaining: number }> = {};
+    for (const r of list) {
+      by[r.status] = {
+        cnt: Number(r.cnt),
+        remaining: Number(r.remaining),
+        expiredRemaining: Number(r.expired_remaining),
+      };
+    }
     return {
       available: by['available']?.remaining ?? 0,
       assigned: by['assigned']?.cnt ?? 0,
       revoked: by['revoked']?.cnt ?? 0,
       expired: by['expired']?.cnt ?? 0,
       voided: by['voided']?.cnt ?? 0,
+      expiredAvailable: by['available']?.expiredRemaining ?? 0,
     };
   }
 

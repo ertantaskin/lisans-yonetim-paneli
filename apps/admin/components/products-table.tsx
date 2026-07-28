@@ -3,7 +3,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ArrowRight, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { cn } from '../lib/utils';
+import { cn, includesTr } from '../lib/utils';
 import type { ProductRow } from '../lib/api';
 import { productKindLabel, productTypeSummary, fulfillmentPolicyLabel } from '../lib/labels';
 import { Button } from './ui/button';
@@ -25,12 +25,10 @@ const columns: ColumnDef<ProductRow>[] = [
         {row.original.name}
       </Link>
     ),
-    filterFn: (row, _id, value) => {
-      const q = String(value).toLowerCase();
-      return (
-        row.original.name.toLowerCase().includes(q) || row.original.sku.toLowerCase().includes(q)
-      );
-    },
+    // Arama: ürün adı VEYA SKU. Türkçe-duyarlı karşılaştırma (`includesTr`) — ham
+    // `toLowerCase()` ile "İşletim"/"IŞIK" gibi kayıtlar aranınca bulunamıyordu.
+    filterFn: (row, _id, value) =>
+      includesTr(row.original.name, value) || includesTr(row.original.sku, value),
   },
   {
     accessorKey: 'sku',

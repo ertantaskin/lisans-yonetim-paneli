@@ -1,6 +1,6 @@
 import { BadRequestException, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { AdminGuard } from '../auth/admin.guard';
-import { OpsService, type DeadLetterRow, type ReplayKind } from './ops.service';
+import { OpsService, type DeadLetterPage, type ReplayKind } from './ops.service';
 
 /** Admin: ops/dead-letter — başarısız outbox + mail listesi ve replay (§16). */
 @Controller('admin/ops')
@@ -8,10 +8,18 @@ import { OpsService, type DeadLetterRow, type ReplayKind } from './ops.service';
 export class OpsController {
   constructor(private readonly ops: OpsService) {}
 
-  /** Başarısız geri-kanal olayları + mail logları (birleşik, DESC, limit 100). */
+  /**
+   * Başarısız geri-kanal olayları + mail logları (birleşik, updated_at DESC, satır sınırlı).
+   *
+   * Yanıt servisin TEK listeleme metodunun sonucunu OLDUĞU GİBİ yayınlar:
+   * `{ items, total, truncated, limit }`. `items` dışındaki alanlar kırpılma görünürlüğü
+   * içindir — arıza anında yüzlerce başarısız webhook birikirse operatör "listede
+   * görünmeyen kayıt replay edilemez" tuzağına düşmesin (§16). Alanları sarmalayıp
+   * kırpmak (eski `{ items }` yanıtı) bu bilgiyi ekrana ulaşmadan yok ediyordu.
+   */
   @Get('dead-letter')
-  async deadLetter(): Promise<{ items: DeadLetterRow[] }> {
-    return { items: await this.ops.deadLetter() };
+  async deadLetter(): Promise<DeadLetterPage> {
+    return this.ops.deadLetterPage();
   }
 
   /** İlgili dead-letter kaydını yeniden kuyruğa alır (kind: outbox|email). */

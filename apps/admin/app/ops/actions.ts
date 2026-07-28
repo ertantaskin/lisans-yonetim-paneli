@@ -1,16 +1,28 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost } from '../../lib/api';
+import { ApiError, apiPost } from '../../lib/api';
 import { getActor } from '../../lib/session';
 
 export interface ReplayState {
   ok: boolean;
   error?: string;
+  /**
+   * true → istek teknik olarak başarısız DEĞİL, KURALEN reddedildi (API 400): kayıt
+   * teslimat maili değil / siparişe bağlı değil. UI bunu "hata" yerine "yapılamaz"
+   * dili ile gösterebilir. Sessiz 400 bırakılmaz — gerekçe `error` alanındadır.
+   */
+  blocked?: boolean;
 }
 
 /**
  * Dead-letter kaydını yeniden kuyruğa alır (POST /v1/admin/ops/replay/:kind/:id).
  * Başarılıysa liste tazelenir (durum pending/queued'e döner).
+ *
+ * GÜVENLİK (§16): yalnız TESLİMAT maili ve webhook olayı replay edilebilir. Bir durum/
+ * bildirim maili teslimat işi olarak yeniden kuyruğa alınsaydı worker siparişin TÜM aktif
+ * atamalarını çözüp müşteriye anahtarları gönderirdi. Kural API'de uygulanır (tek kaynak);
+ * burada 400 yanıtı AÇIK gerekçeyle yüzeye çıkarılır — `replayable=false` satırlarda ekran
+ * aksiyonu zaten kapatır, bu dal ikinci savunma hattıdır (bayat sayfa/eş zamanlı değişim).
  */
 export async function replayAction(kind: 'outbox' | 'email', id: string): Promise<ReplayState> {
   try {
@@ -18,6 +30,10 @@ export async function replayAction(kind: 'outbox' | 'email', id: string): Promis
     revalidatePath('/ops');
     return { ok: true };
   } catch (e) {
+    if (e instanceof ApiError && (e.status === 400 || e.status === 404)) {
+      // API'nin insan-okur gerekçesi (ops.service.replayBlockReason) doğrudan gösterilir.
+      return { ok: false, blocked: true, error: e.message };
+    }
     return { ok: false, error: e instanceof Error ? e.message : 'Yeniden gönderilemedi' };
   }
 }

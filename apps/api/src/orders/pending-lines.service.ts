@@ -11,6 +11,7 @@ import {
   sites,
 } from '../db/schema';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from './fulfillment.service';
 import { recomputeOrderStatus } from './order-status';
@@ -521,6 +522,11 @@ export class PendingLinesService {
     );
 
     // Ürün başına anlık kapasite (multi/MAK: Σ max_uses−use_count) — tek grup sorgusu.
+    //
+    // notExpiredCond('license_items'): atama sorgusuyla (assign.ts) AYNI küme. Bu sayı TANIYA
+    // girdi olur ("stok hazır — Kalanları Ata" vs "stok yetersiz"); süresi geçmiş kalemler
+    // sayılırsa tanı "stok var" der, teslimat 0 atar ve operatör yanlış yönlendirilir.
+    // (Drizzle sorgu kurucusu tabloyu takma adsız basar → alias = tablo adı.)
     const productIds = [...new Set(rows.map((r) => r.product_id).filter((v): v is string => !!v))];
     const stock = new Map<string, number>();
     if (productIds.length > 0) {
@@ -531,7 +537,11 @@ export class PendingLinesService {
         })
         .from(licenseItems)
         .where(
-          and(inArray(licenseItems.productId, productIds), eq(licenseItems.status, 'available')),
+          and(
+            inArray(licenseItems.productId, productIds),
+            eq(licenseItems.status, 'available'),
+            notExpiredCond('license_items'),
+          ),
         )
         .groupBy(licenseItems.productId);
       for (const a of agg) stock.set(a.productId, Number(a.available));

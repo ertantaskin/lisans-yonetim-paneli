@@ -1,7 +1,13 @@
 'use client';
-import { RotateCw, TriangleAlert } from 'lucide-react';
-import { Button } from '../../components/ui/button';
+import { ErrorState } from '../../components/ui/error-state';
 
+/**
+ * Başarısız işler (/ops) route hata sınırı. Ortak gövde/redaksiyon:
+ * components/ui/error-state.tsx.
+ *
+ * NOT: başlık sayfanın kendi başlığıyla ("Başarısız İşler", app/ops/page.tsx + nav.ts)
+ * hizalandı — burada kalan "Dead-letter" ham jargonu UX temizliğinden geriye kalmıştı.
+ */
 export default function Error({
   error,
   reset,
@@ -9,18 +15,5 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
-      <span className="flex size-12 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--destructive)_12%,transparent)] text-destructive">
-        <TriangleAlert className="size-6" />
-      </span>
-      <h1 className="text-lg font-semibold text-foreground">Dead-letter yüklenemedi</h1>
-      <p className="max-w-md text-sm text-muted-foreground">
-        {error.message || 'Beklenmeyen bir hata oluştu.'}
-      </p>
-      <Button onClick={reset} variant="outline" className="mt-2">
-        <RotateCw /> Tekrar dene
-      </Button>
-    </div>
-  );
+  return <ErrorState error={error} reset={reset} title="Başarısız işler yüklenemedi" />;
 }

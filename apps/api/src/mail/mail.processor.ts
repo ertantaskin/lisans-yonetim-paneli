@@ -1,4 +1,4 @@
-import { Inject } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
@@ -16,13 +16,35 @@ import {
   products,
   sites,
 } from '../db/schema';
-import { MAIL_QUEUE, type DeliveryJob } from './mail.service';
+import {
+  MAIL_DELIVERY_JOB,
+  MAIL_NOTICE_JOB,
+  MAIL_QUEUE,
+  MailService,
+  type DeliveryJob,
+  type ReplacementNoticeJob,
+} from './mail.service';
 import { createMailTransport } from './mail.transport';
 import { TemplatesService, render } from './templates.service';
 
-/** BullMQ worker — teslimat maili gönderimi (§6). Redis kuyruğundan asenkron. */
+/** Kuyruktan gelebilecek iş gövdeleri (iş adına göre ayrışır — bkz. process). */
+type MailJobData = DeliveryJob | ReplacementNoticeJob;
+
+/**
+ * BullMQ worker — 'mail' kuyruğunun TEK tüketicisi (§6). Redis kuyruğundan asenkron.
+ *
+ * Kuyrukta İKİ AYRI iş türü taşınır ve gövdeleri tamamen farklıdır:
+ *  - MAIL_DELIVERY_JOB  → siparişin aktif atamalarını çözer, LİSANS ANAHTARLARINI gönderir,
+ *  - MAIL_NOTICE_JOB    → değişim/destek DURUM bildirimi; gövde enqueue anında hazırdır, SIRSIZ.
+ *
+ * DERS (regresyon): iş adları eklenirken bu dallanma UNUTULDUĞU için bildirim işleri teslimat
+ * gövdesi sanılıp 'Sipariş bulunamadı' ile başarısız oluyordu → müşteri "talebiniz onaylandı"
+ * mailini HİÇ almıyordu. İş adı sabitleri TEK KAYNAKTAN (mail.service) okunur; hem üretici
+ * (MailService.enqueue*) hem tüketici (burası) hem /ops replay'i aynı sabitleri kullanır.
+ */
 @Processor(MAIL_QUEUE)
 export class MailProcessor extends WorkerHost {
+  private readonly logger = new Logger(MailProcessor.name);
   private transporter: Transporter | null = null;
 
   constructor(
@@ -30,6 +52,7 @@ export class MailProcessor extends WorkerHost {
     private readonly crypto: CryptoService,
     private readonly templates: TemplatesService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
   ) {
     super();
   }
@@ -42,8 +65,45 @@ export class MailProcessor extends WorkerHost {
     return this.transporter;
   }
 
-  async process(job: Job<DeliveryJob>): Promise<void> {
-    const { orderId, emailLogId } = job.data;
+  /**
+   * Kuyruk girişi — İŞ ADINA GÖRE DALLANIR. Gövde tipleri kesişmediği için ad = tek ayraç.
+   * Bilinmeyen ad SESSİZCE GEÇİLMEZ (aşağıda gerekçe: sessiz 'completed' = kayıp mail).
+   */
+  async process(job: Job<MailJobData>): Promise<void> {
+    switch (job.name) {
+      case MAIL_DELIVERY_JOB:
+        // Teslimat işi: davranış AYNEN korunur (payload çözümü + şablon + sandbox).
+        return this.processDelivery(job.data as DeliveryJob);
+      case MAIL_NOTICE_JOB:
+        // Bildirim işi: worker HİÇBİR ŞEY çözmez (atama/payload okumaz) — konu/gövde işin
+        // kendi içinden gelir, teslimat şablonu KULLANILMAZ → lisans anahtarı sızma yüzeyi yok.
+        return this.mail.sendNoticeJob(job.data as ReplacementNoticeJob);
+      default:
+        return this.processUnknown(job);
+    }
+  }
+
+  /**
+   * Tanınmayan iş adı — HATA FIRLATILIR (sessiz 'completed' YASAK).
+   *
+   * Sessiz geçilseydi: iş başarılı sayılır, email_log satırı sonsuza dek 'queued' kalır ve
+   * /ops dead-letter listesinde GÖRÜNMEZ → mail kaybı fark edilmez (bu görevi doğuran regresyonun
+   * ta kendisi). Fırlatmak BullMQ retry/dead-letter zincirini devreye sokar; log kaydı da düşer.
+   */
+  private async processUnknown(job: Job<MailJobData>): Promise<never> {
+    const message = `Bilinmeyen mail işi adı: '${String(job.name)}' (job=${job.id ?? '-'})`;
+    this.logger.error(message);
+    // email_log'u da 'failed' işaretle (best-effort): kayıt /ops dead-letter'da yüzeye çıksın.
+    const emailLogId = (job.data as Partial<DeliveryJob> | undefined)?.emailLogId;
+    if (typeof emailLogId === 'string' && emailLogId.length > 0) {
+      await this.setStatus(emailLogId, 'failed', message).catch(() => undefined);
+    }
+    throw new Error(message);
+  }
+
+  /** Teslimat maili (MAIL_DELIVERY_JOB) — siparişin aktif atamalarını çözüp gönderir. */
+  private async processDelivery(data: DeliveryJob): Promise<void> {
+    const { orderId, emailLogId } = data;
 
     // Idempotency: bu log zaten gönderildiyse retry'da tekrar GÖNDERME (mükerrer mail engeli).
     const [existing] = await this.db

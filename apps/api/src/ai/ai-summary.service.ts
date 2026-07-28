@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
 import { AiService } from './ai.service';
 
 /**
@@ -18,8 +19,9 @@ export interface DailyMetrics {
   /** Başarısız (veya askıda kalıp denemesi tükenmiş) webhook outbox olayı sayısı. */
   failedOutbox: number;
   /**
-   * Atanabilir kalan KAPASİTE (Σ max_uses−use_count, status='available'). MULTI/MAK
-   * ürünlerde satır sayısı DEĞİL — products.service/channel-catalog ile aynı semantik.
+   * Atanabilir kalan KAPASİTE (Σ max_uses−use_count, status='available' + stok ömrü
+   * DOLMAMIŞ). MULTI/MAK ürünlerde satır sayısı DEĞİL — products.service/channel-catalog
+   * ile aynı semantik.
    */
   availableStock: number;
 }
@@ -104,8 +106,11 @@ export class AiSummaryService {
         (SELECT count(*) FROM outbox_events
            WHERE status = 'failed'
               OR (status = 'pending' AND created_at < now() - interval '15 minutes'))::int AS failed_outbox,
+        -- notExpiredCond(): stok ömrü dolmuş kalem atanamaz (assign.ts) → günlük özet/AI
+        -- yorumu "var olmayan stok" görüp yanlış "stok yeterli" değerlendirmesi yapmasın;
+        -- sayı dashboard/rapor/düşük-stok ile AYNI olsun. Tablo takma adsız → alias yok.
         (SELECT coalesce(sum(max_uses - use_count), 0) FROM license_items
-           WHERE status = 'available')::int AS available_stock;
+           WHERE status = 'available' AND ${notExpiredCond()})::int AS available_stock;
     `);
     const r = rows[0];
     return {

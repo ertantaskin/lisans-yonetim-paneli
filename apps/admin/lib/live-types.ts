@@ -19,6 +19,19 @@ export interface LiveOrder {
   lineCount: number;
   fulfilledLines: number;
   createdAt: string;
+  /**
+   * Bu siparişte panel ürününe BAĞLANMAMIŞ en az bir aktif satır var mı
+   * (`product_id IS NULL AND canceled = false`).
+   *
+   * NEDEN AYRI BİR ALAN: sipariş DURUMU ('unmapped') ancak sipariş BÜTÜNÜYLE eşlemesizse
+   * o değeri alır. Çok kalemli siparişte tek kalem eşlemesiz kalırsa durum 'pending'/'partial'
+   * olur ve satır listede işaretsiz görünürdü — oysa `stats.unmappedOrders` sayacı SATIR
+   * tabanlıdır: sayaç "1" derken listede işaretli satır olmuyordu (sayaç ↔ liste çelişkisi).
+   *
+   * OPSİYONEL: api/admin dağıtım sapmasında (eski API sürümü) alan hiç gelmeyebilir →
+   * okurken `?? false`; o durumda bugünkü davranış (yalnız durum='unmapped') birebir korunur.
+   */
+  hasUnmappedLine?: boolean;
 }
 
 export interface LiveSupport {

@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { BarChart3, MoreHorizontal, Pencil, Power, PowerOff, TriangleAlert } from 'lucide-react';
 import type { SupplierRow } from '@/app/suppliers/queries';
 import { setSupplierActiveAction } from '@/app/suppliers/actions';
+import { includesTr } from '../lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -95,7 +96,9 @@ export function SuppliersTable({ suppliers }: { suppliers: SupplierRow[] }) {
             {row.original.name}
           </Link>
         ),
-        filterFn: 'includesString',
+        // Tedarikçi adları Türkçe: yerleşik 'includesString' ham `toLowerCase()` kullandığı
+        // için "İstanbul Yazılım"/"IŞIK Bilişim" aranınca bulunamıyordu (bkz. `includesTr`).
+        filterFn: (row, _id, value) => includesTr(row.original.name, value),
       },
       {
         accessorKey: 'contact',

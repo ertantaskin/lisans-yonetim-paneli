@@ -59,13 +59,41 @@ type CreateProductBody = z.infer<typeof CreateProductBody>;
 // Opsiyonel alanlar ayrıca .nullable(): admin bir alanı boşaltıp kaydedince (explicit null)
 // kolon TEMİZLENİR (unset); alan hiç yoksa değişmez. CREATE (CreateProductBody) etkilenmez —
 // yalnız güncelleme yolu null'ı "temizle" olarak kabul eder.
-const UpdateProductBody = ProductObject.partial().extend({
-  validityDays: z.number().int().positive().nullable().optional(),
-  warrantyDays: z.number().int().nonnegative().nullable().optional(),
-  lowStockThreshold: z.number().int().nonnegative().nullable().optional(),
-  keyFormat: z.string().nullable().optional(),
-  releaseAt: z.string().datetime().nullable().optional(),
-});
+//
+// KRİTİK (denetim bulgusu): bu şema CREATE'in refine'larını TAŞIMIYORDU (.partial() ZodEffects'i
+// düşürür) → MAK kapasitesi SESSİZCE kaybolabiliyordu. Senaryo: max_uses=500 MAK ürünü stokta
+// 10 anahtarla dururken operatör "Tek kullanımlık"a çevirir; form single modda `maxUses` alanını
+// GÖNDERMEZ → ürünün max_uses'i 500 KALIR, ama atama artık single dalına düşer ve anahtarın
+// TAMAMINI 'assigned' yapar → anahtar başına 499 birim kapasite KALICI kaybolur (panel hâlâ
+// şişik "available" gösterir). Refine'ların eşdeğeri aşağıda; asıl güvenlik kapısı ise
+// products.update() içindeki "bu üründe lisans varken usage_mode/max_uses değişmez" 409'udur
+// (yalnız gövde doğrulaması yeterli değil — mevcut stoğu şema göremez).
+const UpdateProductBody = ProductObject.partial()
+  .extend({
+    validityDays: z.number().int().positive().nullable().optional(),
+    warrantyDays: z.number().int().nonnegative().nullable().optional(),
+    lowStockThreshold: z.number().int().nonnegative().nullable().optional(),
+    keyFormat: z.string().nullable().optional(),
+    releaseAt: z.string().datetime().nullable().optional(),
+  })
+  // CREATE ile AYNI kural: multi (MAK) ise kapasite >1 olmalı. Kısmi gövdede yalnız
+  // `usageMode` GÖNDERİLDİĞİNDE denetlenir (alan yoksa mod değişmiyor demektir).
+  .refine((b) => b.usageMode !== 'multi' || (b.maxUses != null && b.maxUses > 1), {
+    message: "usageMode='multi' için maxUses > 1 zorunlu (kapasiteyi de gönderin)",
+    path: ['maxUses'],
+  })
+  // Ters yön: single'a dönerken kapasite ya hiç gönderilmez ya da 1'e indirilir. Böylece
+  // "single ürün ama max_uses=500" tutarsız durumu gövde seviyesinde de oluşamaz.
+  .refine((b) => b.usageMode !== 'single' || b.maxUses == null || b.maxUses === 1, {
+    message: "usageMode='single' ürün için maxUses 1 olmalı (ya da hiç gönderilmemeli)",
+    path: ['maxUses'],
+  })
+  // CREATE ile AYNI kural: hesap ürününde alan şeması zorunlu (yapılandırılmış payload
+  // yaptırımı buna bağlı — kind='account' gönderilip şema düşürülürse import/teslimat kırılır).
+  .refine((b) => b.kind !== 'account' || (b.payloadSchema != null && b.payloadSchema.length > 0), {
+    message: "kind='account' için payloadSchema zorunlu",
+    path: ['payloadSchema'],
+  });
 type UpdateProductBody = z.infer<typeof UpdateProductBody>;
 
 const CreateMappingBody = z.object({

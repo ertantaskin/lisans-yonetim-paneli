@@ -7,6 +7,7 @@ import { stockAdjustments, type StockAdjustment } from '../db/schema/stockAdjust
 import { AdminOrdersService } from '../orders/admin-orders.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 import { recordReplacementLineage } from '../orders/assignment-history';
+import { notExpiredCond } from '../assignment/assign';
 
 /** Toplu değiştirme (§13) özet sonucu. */
 export interface BulkReplaceResult {
@@ -74,6 +75,14 @@ export class SupplyOpsService {
   /**
    * Parti listesi — tedarikçi adı + ürün sku/ad JOIN; batch_id sayımı ile satılmamış
    * (available) / satılmış (available olmayan) adet. RAW SQL (batches W1'in dosyası).
+   *
+   * BİLİNÇLİ İSTİSNA (G1 — "available" hizalaması buraya UYGULANMAZ): aşağıdaki iki sayaç
+   * "atanabilir stok" DEĞİL, "satılmış mı" ikili ayrımıdır ve `recallBatch`'in geri çekmede
+   * VOID edeceği kümeyle eşleşmek zorundadır (recall, süresi geçmiş available kalemi de
+   * void eder — doğrusu budur). Buraya `notExpiredCond` eklenirse ekran "3 satılmamış" der,
+   * geri çekme 5 kalem void eder; ayrıca iki kova (available / <> available) tüm partiyi
+   * bölmeyi bırakır (süresi geçmiş kalemler hiçbir kovaya girmez). Atanabilir stok sayısı
+   * ürün ekranlarından (products.list / stock.availableCount) okunur.
    */
   async listBatches(): Promise<BatchRow[]> {
     const list = await rawRows<{
@@ -268,12 +277,27 @@ export class SupplyOpsService {
 
       // 0) Stok ön-kontrolü: satırın ürününde uygun (available + kapasiteli) stok YOKSA
       // eskiyi REVOKE ETMEDEN atla — müşteriyi boşta bırakma (replacements.approve deseni).
+      //
+      // KÜME HİZASI (G1): temel yüklem artık fulfillment.allocatableCountForLine ile BİREBİR
+      // aynıdır — status='available' + notExpiredCond + use_count < max_uses. `notExpiredCond`
+      // eksikken sayım "stok var" diyor, gerçek atama (assign.ts süresi geçmiş kalemi dışlar)
+      // 0 döndürüyordu → eski key revoke edilmiş, yenisi gelmemiş oluyordu (müşteri boşta).
+      //
+      // GLUE NOTU — tek kaynak devri neden ERTELENDİ: bu sayımın allocatableCountForLine'da
+      // KARŞILIĞI OLMAYAN iki recall-özel hariç tutması var (hedef partinin kendi key'leri +
+      // 'voided' partilerin key'leri). Servise devredersek bu iki koruma KAYBOLUR (kusurlu
+      // partiden taze key verilebilir) — yani devir güvenliği GEVŞETİR. Doğru devir:
+      // allocatableCountForLine'a opsiyonel "hariç tutulacak parti" parametresi eklenip
+      // (excludeBatchId + voided-parti süzgeci) BURASI o servise bağlanmalı; o değişiklik
+      // fulfillment.service.ts'i de kapsadığı için bu partinin dosya kapsamı DIŞINDA.
       const availRows = await rawRows<{ n: number }>(this.db, sql`
         SELECT count(*)::int AS n
         FROM license_items li
         JOIN order_lines ol ON ol.id = ${c.line_id}
         WHERE li.product_id = ol.product_id
           AND li.status = 'available'
+          -- Stok ömrü (expires_at) dolmuş kalem ATANAMAZ (tek kaynak: assignment/assign.ts).
+          AND ${notExpiredCond('li')}
           AND li.use_count < li.max_uses
           -- Değiştirilen key ASLA geri çekilen HEDEF partiden gelmesin. IS DISTINCT FROM:
           -- batch'siz (batch_id NULL, elle girilen) key'ler aday olarak sayılmaya devam eder.

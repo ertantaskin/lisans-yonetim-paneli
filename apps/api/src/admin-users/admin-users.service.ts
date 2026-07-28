@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -16,13 +16,29 @@ import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';
 import { REDIS } from '../redis/redis.module';
 import { adminUsers, type AdminUser } from '../db/schema';
-import { hashPassword, verifyPassword, DUMMY_HASH } from '../auth/password';
+import { hashPassword, verifyPassword, dummyHash } from '../auth/password';
 
 /** Parola hash'i olmadan dışa dönük admin görünümü. */
 export type PublicAdminUser = Omit<AdminUser, 'passwordHash'>;
 
 const MAX_FAILS = 10; // kimlik başına başarısız deneme sınırı
 const FAIL_WINDOW_SEC = 900; // 15 dk
+
+/** Lockout penceresi (saniye) — controller 429'a `Retry-After` başlığı koyarken kullanır. */
+export const LOGIN_FAIL_WINDOW_SEC = FAIL_WINDOW_SEC;
+
+/** Kimlik üst sınırı (controller ZodBody ile AYNI); savunma derinliği — bkz. verifyCredentials. */
+const MAX_IDENTIFIER_LEN = 200;
+
+/**
+ * Kimlik-dizesi kova anahtarı. HAM identifier YERİNE sha256 özeti kullanılır:
+ *  (a) anahtar uzunluğu sabitlenir → uzun dizelerle Redis şişirilemez (900 sn TTL),
+ *  (b) kullanıcı kimliği (e-posta = PII) Redis'e DÜZ yazılmaz.
+ * Ad-alanı `authfail:h:` — hesap kovası (`authfail:id:<uuid>`) ile çakışmaz.
+ */
+function identifierBucketKey(normalizedIdentifier: string): string {
+  return `authfail:h:${createHash('sha256').update(normalizedIdentifier).digest('hex')}`;
+}
 
 @Injectable()
 export class AdminUsersService implements OnModuleInit {
@@ -91,6 +107,8 @@ export class AdminUsersService implements OnModuleInit {
       if (clash) throw new ConflictException('Kullanıcı adı mevcut bir e-posta ile çakışıyor.');
     }
     const id = randomUUID();
+    // scrypt artık asenkron (event loop bloklanmaz) → hash insert'ten ÖNCE hesaplanır.
+    const passwordHash = await hashPassword(input.password);
     try {
       const [row] = await this.db
         .insert(adminUsers)
@@ -99,7 +117,7 @@ export class AdminUsersService implements OnModuleInit {
           email,
           username,
           name: input.name.trim(),
-          passwordHash: hashPassword(input.password),
+          passwordHash,
           role: input.role === 'owner' ? 'owner' : 'admin',
         })
         .returning();
@@ -116,13 +134,22 @@ export class AdminUsersService implements OnModuleInit {
    * Kimlik (e-posta VEYA kullanıcı adı) + parola doğrular. Deterministik çözüm:
    * '@' içeren identifier yalnız e-postaya, diğerleri yalnız kullanıcı adına bakar.
    * Kimlik başına Redis rate-limit (brute-force). Başarısızsa null; sınır aşıldıysa 429.
+   *
+   * NOT: kimlik başına kova TEK BAŞINA yetmez — her istekte FARKLI identifier gönderen saldırgan
+   * her seferinde taze bir kova açar (ve her deneme bir scrypt maliyeti doğurur). Bu boşluğu
+   * controller'daki IP başına hız sınırı kapatır (bkz. AdminAuthController.login).
    */
   async verifyCredentials(identifier: string, password: string): Promise<PublicAdminUser | null> {
     const raw = identifier.trim();
+    // Boş / aşırı uzun kimlik: DB sorgusu ve scrypt maliyeti ÖDENMEDEN reddedilir. Controller
+    // zaten 200 karakterde 400 döner; bu guard servisi doğrudan çağıran yollar içindir. (Hesap
+    // varlığı sızmaz: hiçbir gerçek kimlik bu aralığın dışında olamaz.)
+    if (raw.length === 0 || raw.length > MAX_IDENTIFIER_LEN) return null;
     const isEmail = raw.includes('@');
     // Kimlik-dizesi kovası: BİLİNMEYEN kimlikler (not-found/enumeration yolu) için hız-limiti —
     // hesap varlığını timing ile sızdırmadan tanımadığımız identifier'ları da sınırlar.
-    const idKey = `authfail:${raw.toLowerCase()}`;
+    // Anahtar sha256 ÖZETİ ile kurulur (sabit uzunluk + PII Redis'e düz yazılmaz).
+    const idKey = identifierBucketKey(raw.toLowerCase());
 
     // Bilinmeyen-kimlik kovası kilitliyse hemen reddet.
     if ((Number(await this.redis.get(idKey)) || 0) >= MAX_FAILS) {
@@ -148,9 +175,10 @@ export class AdminUsersService implements OnModuleInit {
       );
     }
 
-    const ok = user && !user.disabled && verifyPassword(password, user.passwordHash);
+    const ok = user && !user.disabled && (await verifyPassword(password, user.passwordHash));
     if (!ok) {
-      if (!user || user.disabled) verifyPassword(password, DUMMY_HASH); // sabit-zaman
+      // Sabit-zaman: hesap yok/pasifse de aynı scrypt maliyeti ödenir (enumeration koruması).
+      if (!user || user.disabled) await verifyPassword(password, await dummyHash());
       // Bilinen hesapta YANLIŞ parola → hesap-kimliği kovası (e-posta+kullanıcı adı tek kovada).
       // Bilinmeyen kimlik → kimlik-dizesi kovası (varlık sızdırmadan yine de hız-limitli).
       const failKey = acctKey ?? idKey;
@@ -207,10 +235,11 @@ export class AdminUsersService implements OnModuleInit {
   /** Parola sıfırla + tokenVersion +1 (eski oturumlar geçersizleşir). */
   async resetPassword(id: string, password: string): Promise<PublicAdminUser> {
     if (password.length < 8) throw new BadRequestException('Parola en az 8 karakter olmalı.');
+    const passwordHash = await hashPassword(password); // asenkron scrypt (event loop bloklanmaz)
     const [row] = await this.db
       .update(adminUsers)
       .set({
-        passwordHash: hashPassword(password),
+        passwordHash,
         tokenVersion: sql`${adminUsers.tokenVersion} + 1`,
         updatedAt: sql`now()`,
       })
