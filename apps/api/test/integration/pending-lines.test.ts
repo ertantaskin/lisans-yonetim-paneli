@@ -62,8 +62,13 @@ async function createUnmappedOrder(opts: {
       siteId: site.id,
       remoteOrderId,
       customerEmail: `${tag}@example.test`,
-      status: opts.held ? 'held_for_review' : 'unmapped',
+      // NOT: 'held_for_review' bir order_status enum değeri DEĞİL — inceleme, ayrı
+      // `held_for_review` boolean bayrağıyla temsil edilir (§8, createOrder held-dalı:
+      // sipariş 'pending' kalır, satır atanmaz). Durum enum'una yazmak 22P02 verir.
+      status: 'unmapped',
       heldForReview: opts.held ?? false,
+      heldAt: opts.held ? new Date() : null,
+      heldReason: opts.held ? 'test' : null,
       idempotencyKey: `${site.id}:${remoteOrderId}`,
     })
     .returning({ id: schema.orders.id });
