@@ -1,0 +1,241 @@
+'use server';
+import { revalidatePath } from 'next/cache';
+import { apiRaw, apiSend } from '../../lib/api';
+import { getActor } from '../../lib/session';
+
+/**
+ * Lisans envanteri sunucu aksiyonları (§12/§13).
+ *
+ * Neden action: envanter tablosu İSTEMCİDE etkileşimli (arama/filtre/sayfalama), ama
+ * ADMIN_TOKEN tarayıcıya ASLA gitmez → istemci bu action'ları çağırır, action Next
+ * sunucusunda API'ye gider. Sayfalama SUNUCU tarafında (LIMIT/OFFSET) — 100 satır seçilse
+ * bile istemciye yalnız o sayfa iner.
+ *
+ * KRİTİK (Next 15): bu dosya YALNIZ async fonksiyon export edebilir. Sabitler (izinli
+ * sayfa boyutları vb.) bilerek yerel tutuldu; tip export'ları derlemede silinir (sorunsuz).
+ */
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** API `optionalDigits` şeması `^\d{1,7}$` bekler → sayfa numarası bu aralığa kırpılır. */
+const MAX_PAGE = 9_999_999;
+const PAGE_SIZES = [25, 50, 100];
+const SORTS = ['created_desc', 'created_asc', 'assigned_desc'];
+/** UI'da sunulan durum süzgeçleri (license_items enum'unun tamamı değil — operatör dili). */
+const STATUSES = [
+  'available',
+  'assigned',
+  'quarantined',
+  'voided',
+  'expired',
+  'suspended',
+  'replaced',
+  'revoked',
+  'depleted',
+];
+
+// ── API yanıt tipleri (apps/api stock.service.ts ile birebir; JSON'da tarihler string) ──
+export interface LicenseInventoryField {
+  key: string;
+  label: string;
+  value: string;
+  /** Şemada "gizli" işaretli alan (parola vb.) — UI varsayılan olarak gizler. */
+  secret: boolean;
+}
+
+export interface LicenseInventoryDelivery {
+  assignmentId: string;
+  assignmentStatus: string;
+  units: number;
+  assignedAt: string | null;
+  validUntil: string | null;
+  orderId: string;
+  remoteOrderId: string;
+  customerEmail: string;
+  siteId: string;
+  siteDomain: string;
+  siteType: string;
+  /** Mağaza admin panelindeki sipariş bağlantısı — SALT YÖNLENDİRME (otomatik bağlantı YOK). */
+  storeAdminUrl: string | null;
+}
+
+export interface LicenseInventoryRow {
+  id: string;
+  productId: string;
+  productName: string;
+  productSku: string;
+  /** products.kind ham değeri (key | account | code | custom) — UI labels ile Türkçeleştirir. */
+  productType: string;
+  usageMode: string;
+  status: string;
+  maxUses: number;
+  useCount: number;
+  remainingUses: number;
+  kind: 'key' | 'account';
+  value: string | null;
+  fields: LicenseInventoryField[] | null;
+  batchId: string | null;
+  batchCode: string | null;
+  supplierName: string | null;
+  unitCostCents: number | null;
+  costCurrency: string | null;
+  createdAt: string;
+  delivered: LicenseInventoryDelivery | null;
+}
+
+export interface LicenseInventoryPage {
+  rows: LicenseInventoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface LicenseListParams {
+  productId?: string;
+  siteId?: string;
+  batchId?: string;
+  status?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+  sort?: string;
+}
+
+export interface LicenseListResult {
+  ok: boolean;
+  page?: LicenseInventoryPage;
+  error?: string;
+}
+
+export interface LicenseMutationResult {
+  ok: boolean;
+  error?: string;
+}
+
+/** Non-2xx yanıttan kullanıcıya gösterilecek Türkçe mesajı çıkarır (ham gövde sızmaz). */
+async function messageOf(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = (await res.json()) as { message?: unknown };
+    const m = data?.message;
+    if (typeof m === 'string' && m.trim()) return m;
+    if (Array.isArray(m)) {
+      const joined = m.filter((x): x is string => typeof x === 'string').join('; ');
+      if (joined) return joined;
+    }
+  } catch {
+    /* gövde JSON değil → fallback */
+  }
+  return fallback;
+}
+
+/** İşlem sonrası ilgili ekranları tazeler (ürün detayı + /stock stok kolonu). */
+function revalidateInventory(productId?: string) {
+  if (productId && UUID_RE.test(productId)) revalidatePath(`/products/${productId}`);
+  revalidatePath('/stock');
+}
+
+/**
+ * Lisans envanteri sayfası. Ürün-bazlı (`productId`) veya GLOBAL (parametresiz).
+ * Tüm parametreler burada doğrulanır/kırpılır → geçersiz istemci girdisi API'de 400 üretmez.
+ * Aktör başlığı taşınır: her liste görüntülemesi API tarafında TEK 'reveal' audit kaydına düşer.
+ */
+export async function fetchLicenseItemsAction(
+  params: LicenseListParams = {},
+): Promise<LicenseListResult> {
+  const qs = new URLSearchParams();
+  if (params.productId && UUID_RE.test(params.productId)) qs.set('productId', params.productId);
+  if (params.siteId && UUID_RE.test(params.siteId)) qs.set('siteId', params.siteId);
+  if (params.batchId && UUID_RE.test(params.batchId)) qs.set('batchId', params.batchId);
+  if (params.status && STATUSES.includes(params.status)) qs.set('status', params.status);
+
+  const search = String(params.search ?? '').trim().slice(0, 120);
+  if (search) qs.set('search', search);
+
+  const rawPage = Number(params.page);
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.min(Math.floor(rawPage), MAX_PAGE) : 1;
+  qs.set('page', String(page));
+
+  const rawSize = Number(params.pageSize);
+  qs.set('pageSize', String(PAGE_SIZES.includes(rawSize) ? rawSize : PAGE_SIZES[0]));
+
+  if (params.sort && SORTS.includes(params.sort)) qs.set('sort', params.sort);
+
+  try {
+    const res = await apiRaw('GET', `/v1/admin/license-items?${qs.toString()}`, {
+      actor: await getActor(),
+    });
+    if (!res.ok) return { ok: false, error: await messageOf(res, 'Lisans listesi alınamadı.') };
+    const data = (await res.json()) as LicenseInventoryPage;
+    return { ok: true, page: data };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Bağlantı hatası' };
+  }
+}
+
+/**
+ * Tekil lisansı GEÇERSİZ KIL ("sil"). Kayıt silinmez — izlenebilirlik için `voided`
+ * durumuna geçer ve stoktan düşer. Teslim edilmiş lisansta API 409 döner; mesaj AYNEN
+ * kullanıcıya gösterilir (UI de ayrıca devre dışı bırakır — iki katman).
+ */
+export async function voidLicenseItemAction(input: {
+  id: string;
+  reason: string;
+  productId?: string;
+}): Promise<LicenseMutationResult> {
+  const id = String(input?.id ?? '').trim();
+  if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz lisans kaydı.' };
+  const reason = String(input?.reason ?? '').trim();
+  if (!reason) return { ok: false, error: 'İptal sebebi zorunludur.' };
+
+  try {
+    await apiSend(
+      'DELETE',
+      `/v1/admin/license-items/${id}`,
+      { reason: reason.slice(0, 500) },
+      await getActor(),
+    );
+    revalidateInventory(input?.productId);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
+  }
+}
+
+/**
+ * Tekil lisansın payload'ını DEĞİŞTİR (yanlış girilmiş anahtar/hesap düzeltme). Yeni değer
+ * API'de yeniden şifrelenir; sebep audit'e yazılır. Teslim edilmiş lisansta 409 (o akış
+ * sipariş detayındaki "Değiştir" işlemidir — müşterideki anahtar sessizce bozulmasın).
+ */
+export async function updateLicenseItemAction(input: {
+  id: string;
+  reason: string;
+  value?: string;
+  fields?: Record<string, string>;
+  productId?: string;
+}): Promise<LicenseMutationResult> {
+  const id = String(input?.id ?? '').trim();
+  if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz lisans kaydı.' };
+  const reason = String(input?.reason ?? '').trim();
+  if (!reason) return { ok: false, error: 'Değişiklik sebebi zorunludur.' };
+
+  const body: Record<string, unknown> = { reason: reason.slice(0, 500) };
+  if (input?.fields && typeof input.fields === 'object') {
+    const fields: Record<string, string> = {};
+    for (const [k, v] of Object.entries(input.fields)) fields[String(k)] = String(v ?? '');
+    if (Object.keys(fields).length === 0) {
+      return { ok: false, error: 'Hesap alanları boş olamaz.' };
+    }
+    body.fields = fields;
+  } else {
+    const value = String(input?.value ?? '').trim();
+    if (!value) return { ok: false, error: 'Yeni lisans değeri zorunludur.' };
+    body.value = value;
+  }
+
+  try {
+    await apiSend('PATCH', `/v1/admin/license-items/${id}`, body, await getActor());
+    revalidateInventory(input?.productId);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
+  }
+}

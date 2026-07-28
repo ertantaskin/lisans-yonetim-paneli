@@ -170,7 +170,18 @@ export function MappingsManager({
 
         {catErr && <p className="text-sm text-destructive">Katalog: {catErr}</p>}
         {state.error && <p className="text-sm text-destructive">{state.error}</p>}
-        {state.ok && <p className="text-sm text-success">Eşleme eklendi.</p>}
+        {state.ok && (
+          <p className="text-sm text-success">
+            Eşleme eklendi.
+            {state.resolved
+              ? ` Bekleyen ${state.resolved.linked} satır bu ürüne bağlandı, ${state.resolved.delivered} tanesi teslim edildi${
+                  state.resolved.stillPending > 0
+                    ? `, ${state.resolved.stillPending} satır stok bekliyor`
+                    : ''
+                }.`
+              : ''}
+          </p>
+        )}
       </form>
 
       {/* Mevcut eşlemeler: mağaza ürünü (adıyla) → bu panel ürünü; Pasifleştir + Kaldır. */}

@@ -1,205 +1,149 @@
 import Link from 'next/link';
 import {
-  ListChecks,
   ShoppingCart,
-  PackageX,
-  RefreshCw,
-  ShieldAlert,
   Boxes,
-  ArrowRight,
+  ShieldAlert,
   Inbox,
   Globe,
   Truck,
+  Link2,
   LayoutDashboard,
+  TriangleAlert,
 } from 'lucide-react';
 import { getDashboard, type DashboardSummary } from './queries';
-import { PageHeader, EmptyState } from '../../components/ui/page-header';
-import { StatTile } from '../../components/ui/stat-tile';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { StatusBadge } from '../../components/ui/badge';
+import { apiGet } from '../../lib/api';
+import { PageHeader } from '../../components/ui/page-header';
+import { StatStrip } from '../../components/ui/stat-tile';
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../../components/ui/table';
+  LiveKpiStrip,
+  LiveOrdersCard,
+  LiveStatus,
+  LiveSupportCard,
+} from '../../components/live/live-feed';
+import type { LivePayload } from '../../lib/live-types';
 
 export const dynamic = 'force-dynamic';
 
-/** Genel-bakış hızlı erişim kısayolları (kabuk navigasyonuyla aynı hedefler). */
+/**
+ * Sunucu tarafındaki ilk kare için satır sayısı. `LiveProvider`'ın varsayılan `limit`
+ * değeriyle AYNI olmalı (components/live/live-provider.tsx) — aksi halde ilk canlı poll
+ * listenin uzunluğunu değiştirir ve ekran zıplar.
+ */
+const LIVE_LIMIT = 15;
+
+/** Alt satır hızlı erişim kısayolları (kabuk navigasyonuyla aynı hedefler). */
 const QUICK_LINKS: Array<{ label: string; href: string; icon: typeof Inbox }> = [
   { label: 'Bekleyen Teslimatlar', href: '/pending', icon: Inbox },
   { label: 'Siparişler', href: '/orders', icon: ShoppingCart },
   { label: 'Stok & Ürünler', href: '/stock', icon: Boxes },
+  { label: 'Ürün Eşleştirme', href: '/mappings', icon: Link2 },
   { label: 'Kanallar / Siteler', href: '/sites', icon: Globe },
   { label: 'Tedarikçiler', href: '/suppliers', icon: Truck },
 ];
 
+/**
+ * Genel Bakış = operatörün İŞ İSTASYONU (§17). Mesai boyunca açık kalması tasarlanmıştır:
+ *
+ *  1. Sunucu, canlı akışın İLK KARESİNİ de çeker (`/v1/admin/live`) → sayaçlar ve iki liste
+ *     ilk boyamada DOLU gelir; ekran asla boş/iskelet açılmaz.
+ *  2. Sonrasını `useLive()` devralır: panel genelinde TEK poll (15 sn, ETag'li, sekme
+ *     arkadayken duraklar) — bu ekran kendi isteğini AÇMAZ. Yeni kayıtlar kısa süre vurgulanır.
+ *  3. Canlı akışta olmayan yavaş metrikler (bugünkü sipariş / stok / güvenlik) altta ince
+ *     bir şeritte sunucu özetiyle durur — gürültü yapmadan bağlam verir.
+ *
+ * İki çekim BAĞIMSIZ: özet başarısız olsa bile sayfa render edilir (yalnız uyarı bandı çıkar),
+ * anlık görüntü başarısız olsa bile istemci poll'u devreye girip listeleri doldurur.
+ */
 export default async function DashboardOverviewPage() {
-  let data: DashboardSummary | null = null;
-  let error: string | null = null;
-  try {
-    data = await getDashboard();
-  } catch (e) {
-    error = e instanceof Error ? e.message : 'Bağlantı hatası';
-  }
+  // İki bağımsız çekim PARALEL ve birbirinden BAĞIMSIZ hataya dayanıklı:
+  //  • summary  → yavaş metrikler (bugünkü sipariş / stok / güvenlik)
+  //  • snapshot → canlı akışın İLK karesi (istemci poll'unun döneceği gövdenin aynısı)
+  // Snapshot sunucuda bir kez alınır; sonrasını tek canlı poller devralır (ek istek yok).
+  const [summaryRes, snapshotRes] = await Promise.allSettled([
+    getDashboard(),
+    apiGet<LivePayload>(`/v1/admin/live?limit=${LIVE_LIMIT}`),
+  ]);
 
-  if (error || !data) {
-    return (
-      <div>
-        <PageHeader icon={LayoutDashboard} title="Genel Bakış" description="Panel özeti ve günün operasyonel durumu." />
-        <Card className="p-6">
-          <p className="text-sm text-destructive">Genel bakış yüklenemedi: {error}</p>
-        </Card>
-      </div>
-    );
-  }
+  const data: DashboardSummary | null =
+    summaryRes.status === 'fulfilled' ? summaryRes.value : null;
+  const error =
+    summaryRes.status === 'rejected'
+      ? summaryRes.reason instanceof Error
+        ? summaryRes.reason.message
+        : 'Bağlantı hatası'
+      : null;
 
-  const {
-    pendingLines,
-    todayOrders,
-    lowStockCount,
-    openReplacements,
-    openSecurityEvents,
-    totalAvailableStock,
-    recentOrders,
-  } = data;
+  // `null` tohum = sunucu da veremedi → akış kartları "kayıt yok" yerine iskelet gösterir.
+  const snapshot: LivePayload | null =
+    snapshotRes.status === 'fulfilled' ? snapshotRes.value : null;
 
   return (
-    <div>
-      <PageHeader icon={LayoutDashboard} title="Genel Bakış" description="Panel özeti ve günün operasyonel durumu.">
-        <Button asChild variant="outline" size="sm">
-          <Link href="/pending">
-            <Inbox className="size-4" /> Bekleyenler
-          </Link>
-        </Button>
+    <div className="space-y-4">
+      <PageHeader
+        icon={LayoutDashboard}
+        title="Genel Bakış"
+        description="İş istasyonu — gelen siparişler ve destek talepleri canlı olarak buradan izlenir."
+      >
+        <LiveStatus />
       </PageHeader>
 
-      {/* KPI ızgarası */}
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <StatTile
-          label="Bekleyen Satır"
-          value={pendingLines}
-          icon={ListChecks}
-          tone={pendingLines > 0 ? 'warning' : 'success'}
-          hint={pendingLines > 0 ? 'teslim bekliyor' : 'tümü teslim edildi'}
-        />
-        <StatTile
-          label="Bugünkü Sipariş"
-          value={todayOrders}
-          icon={ShoppingCart}
-          tone="accent"
-          hint="gün başından beri"
-        />
-        <StatTile
-          label="Toplam Stok"
-          value={totalAvailableStock.toLocaleString('tr-TR')}
-          icon={Boxes}
-          tone="success"
-          hint="atanabilir kapasite"
-        />
-        <StatTile
-          label="Düşük Stok"
-          value={lowStockCount}
-          icon={PackageX}
-          tone={lowStockCount > 0 ? 'danger' : 'success'}
-          hint={lowStockCount > 0 ? 'eşiğin altında' : 'eşik üstü'}
-        />
-        <StatTile
-          label="Açık Değişim"
-          value={openReplacements}
-          icon={RefreshCw}
-          tone={openReplacements > 0 ? 'warning' : 'neutral'}
-          hint={openReplacements > 0 ? 'yanıt bekliyor' : 'açık talep yok'}
-        />
-        <StatTile
-          label="Güvenlik Olayı"
-          value={openSecurityEvents}
-          icon={ShieldAlert}
-          tone={openSecurityEvents > 0 ? 'warning' : 'neutral'}
-          hint="son 7 gün"
-        />
+      {error && (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <div>
+            <AlertTitle>Sunucu özeti yüklenemedi</AlertTitle>
+            <AlertDescription>
+              {error} — canlı akış ayrı yoldan beslenir, aşağıdaki listeler çalışmaya devam eder.
+            </AlertDescription>
+          </div>
+        </Alert>
+      )}
+
+      {/* Canlı iş kuyrukları: her hücre ilgili çalışma ekranına bağlantı */}
+      <LiveKpiStrip initialStats={snapshot?.stats} />
+
+      {/* Ana akış: solda siparişler, sağda destek talepleri */}
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <LiveOrdersCard initialOrders={snapshot?.orders ?? null} />
+        <LiveSupportCard initialSupports={snapshot?.supports ?? null} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Son siparişler */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShoppingCart className="size-4 text-muted-foreground" /> Son Siparişler
-            </CardTitle>
-          </CardHeader>
-          <CardContent className={recentOrders.length === 0 ? '' : 'p-0'}>
-            {recentOrders.length === 0 ? (
-              <EmptyState icon={Inbox} title="Sipariş yok" description="Yeni sipariş geldiğinde burada görünür." />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Sipariş No</TableHead>
-                    <TableHead>Müşteri</TableHead>
-                    <TableHead>Durum</TableHead>
-                    <TableHead>Tarih</TableHead>
-                    <TableHead className="text-right">Detay</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recentOrders.map((o) => (
-                    <TableRow key={o.id}>
-                      <TableCell className="font-medium text-foreground">{o.remoteOrderId}</TableCell>
-                      <TableCell className="text-foreground/80">{o.customerEmail}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={o.status} />
-                      </TableCell>
-                      <TableCell className="tabular-nums text-muted-foreground">
-                        {new Date(o.createdAt).toLocaleString('tr-TR', {
-                          dateStyle: 'short',
-                          timeStyle: 'short',
-                        })}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button asChild variant="ghost" size="sm">
-                          <Link href={`/orders/${o.id}`}>
-                            Aç <ArrowRight className="size-3.5" />
-                          </Link>
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+      {/* Yavaş metrikler (sunucu özeti) — canlı akışta yer kaplamasın diye ince şeritte */}
+      {data && (
+        <StatStrip
+          items={[
+            { icon: ShoppingCart, label: 'Bugünkü sipariş', value: data.todayOrders },
+            {
+              icon: Boxes,
+              label: 'Atanabilir stok',
+              value: data.totalAvailableStock.toLocaleString('tr-TR'),
+            },
+            {
+              icon: ShieldAlert,
+              label: 'Güvenlik olayı',
+              value: data.openSecurityEvents,
+              hint: 'son 7 gün',
+              tone: data.openSecurityEvents > 0 ? 'warning' : 'default',
+            },
+          ]}
+        />
+      )}
 
-        {/* Hızlı erişim */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ArrowRight className="size-4 text-muted-foreground" /> Hızlı Erişim
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            {QUICK_LINKS.map((l) => {
-              const Icon = l.icon;
-              return (
-                <Button
-                  key={l.href}
-                  asChild
-                  variant="outline"
-                  className="justify-start"
-                >
-                  <Link href={l.href}>
-                    <Icon className="size-4" /> {l.label}
-                  </Link>
-                </Button>
-              );
-            })}
-          </CardContent>
-        </Card>
+      {/* Hızlı erişim */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 text-xs font-medium text-muted-foreground">Hızlı erişim</span>
+        {QUICK_LINKS.map((l) => {
+          const Icon = l.icon;
+          return (
+            <Button key={l.href} asChild variant="outline" size="sm">
+              <Link href={l.href}>
+                <Icon className="size-3.5" /> {l.label}
+              </Link>
+            </Button>
+          );
+        })}
       </div>
     </div>
   );

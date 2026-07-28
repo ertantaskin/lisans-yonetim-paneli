@@ -6,6 +6,7 @@ import { AppSidebar } from './app-sidebar';
 import { SiteHeader } from './site-header';
 import { CommandPalette } from './command-palette';
 import { AnnouncerProvider } from '../a11y/announcer';
+import { LiveProvider } from '../live/live-provider';
 
 /**
  * Uygulama kabuğu. /login yolunda kabuğu (sidebar/header) GİZLER → giriş sayfası
@@ -28,6 +29,10 @@ export function AppShell({
 
   return (
     <AnnouncerProvider>
+      {/* Canlı akış TEK sağlayıcıda: üst bardaki bildirim çanı ve genel bakış ekranı aynı
+          poll'u paylaşır (ekran başına ayrı istek yok). /login'de mount EDİLMEZ (yukarıda
+          erken dönüş) → giriş sayfası hiçbir yetkili uca dokunmaz. */}
+      <LiveProvider>
       {/* İçeriğe atla (WCAG 2.4.1) — klavye/okuyucu ilk odakta ~20 sidebar linkini
           atlayıp ana içeriğe geçer. Normalde gizli, odaklanınca görünür. */}
       <a
@@ -57,6 +62,7 @@ export function AppShell({
         </SidebarInset>
       </SidebarProvider>
       <CommandPalette />
+      </LiveProvider>
     </AnnouncerProvider>
   );
 }

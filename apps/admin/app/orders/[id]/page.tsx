@@ -12,6 +12,9 @@ import {
   ShieldAlert,
   Store,
   PackageCheck,
+  ExternalLink,
+  Gift,
+  UserRound,
 } from 'lucide-react';
 import { apiGet, ApiError, type OrderDetail } from '../../../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -27,11 +30,83 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
-import { eventTypeLabel, siteTypeLabel } from '../../../lib/labels';
+import {
+  assignmentStatusLabel,
+  auditActionLabel,
+  eventTypeLabel,
+  pendingReasonAction,
+  pendingReasonLabel,
+  siteTypeLabel,
+} from '../../../lib/labels';
 import { CompleteLineButton, AssignmentActions, ResendButton } from './order-actions';
 import { OrderReplacements } from './order-replacements';
+import {
+  LineDiagnosisStrip,
+  OrderResolveBanner,
+  type LineDiagnosis,
+  type OrderDiagnosis,
+} from './line-diagnosis';
 
-type Assignment = OrderDetail['assignments'][number];
+/**
+ * Sipariş detayı — backend `detail()` yanıtının GENİŞLETİLMİŞ alanları.
+ *
+ * `lib/api.ts` merkezî sözlüğe (paralel işçi) ait olduğu için burada kesişim (intersection)
+ * tipiyle genişletilir: alanlar opsiyonel tanımlanır → lib/api.ts sonradan aynı alanları
+ * zorunlu ilan ederse kesişim daralır ve tip yine tutarlı kalır (çakışma olmaz).
+ */
+type Line = OrderDetail['lines'][number] & {
+  /** MAĞAZADAKİ ürün bilgisi (kullanıcı isteği): push'ta gelen ham kimlik + ad. */
+  remoteProductId?: string | null;
+  remoteVariationId?: string | null;
+  remoteName?: string | null;
+  isBonus?: boolean;
+  originRemoteLineId?: string | null;
+  availableStock?: number | null;
+  /** Satırın neden beklediği (detail() tanısı) — tanı ucu erişilemezse yedek kaynak. */
+  pendingReason?: string | null;
+  productSku?: string | null;
+  productKind?: string | null;
+};
+
+type Assignment = OrderDetail['assignments'][number] & {
+  isBonus?: boolean;
+  remoteName?: string | null;
+  remoteLineId?: string | null;
+  replaced?: boolean;
+  replaceReason?: string | null;
+};
+
+type HistoryRow = OrderDetail['history'][number] & {
+  isBonus?: boolean;
+  remoteName?: string | null;
+  productName?: string | null;
+};
+
+type AuditRow = {
+  id: string;
+  action: string;
+  actor: string;
+  targetType: string | null;
+  targetId: string | null;
+  op: string | null;
+  reason: string | null;
+  createdAt: string;
+};
+
+type Detail = Omit<
+  OrderDetail,
+  'order' | 'lines' | 'assignments' | 'history' | 'auditTrail'
+> & {
+  order: OrderDetail['order'] & {
+    /** Mağaza yönetim panelinde siparişi açan link (SALT LİNK — panel mağazaya bağlanmaz). */
+    storeAdminUrl?: string | null;
+  };
+  lines: Line[];
+  assignments: Assignment[];
+  history: HistoryRow[];
+  /** "Kim yaptı" denetim izi (§8) — zaman çizelgesine karışır. */
+  auditTrail?: AuditRow[];
+};
 
 /** ISO tarihi tr-TR biçimler; süresi geçmişse amber vurgu bilgisi döner. */
 function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
@@ -42,6 +117,17 @@ function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
     expired: d.getTime() < Date.now(),
   };
 }
+
+const fmtDateTime = (iso: string) =>
+  new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' });
+
+/** Zaman çizelgesi etiketleri — TEK KAYNAK `lib/labels.ts` (ham enum operatöre çıkmaz). */
+const eventTitle = (t: string) => eventTypeLabel(t);
+
+const auditTitle = (a: AuditRow) =>
+  a.op === 'pending_resolve'
+    ? 'Ürün eşlemesi geriye dönük uygulandı'
+    : auditActionLabel(a.action);
 
 /** Tek aktif lisans satırı — kompakt: anahtar + yanında Göster, sağda ikon aksiyonlar. */
 function LicenseRow({ a, orderId }: { a: Assignment; orderId: string }) {
@@ -75,14 +161,24 @@ export const dynamic = 'force-dynamic';
 
 export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  let data: OrderDetail | null = null;
+
+  // Detay + "neden bekliyor" tanısı PARALEL. Tanı OPSİYONEL katmandır: uç hata verirse
+  // (eski API imajı, geçici hata) sayfa eski davranışıyla tam çalışmaya devam eder.
+  const [detailRes, diagRes] = await Promise.allSettled([
+    apiGet<Detail>(`/v1/admin/orders/${id}`),
+    apiGet<OrderDiagnosis>(`/v1/admin/pending-lines/diagnose/${id}`),
+  ]);
+
+  let data: Detail | null = null;
   let error: string | null = null;
-  try {
-    data = await apiGet<OrderDetail>(`/v1/admin/orders/${id}`);
-  } catch (e) {
+  if (detailRes.status === 'fulfilled') {
+    data = detailRes.value;
+  } else {
+    const e = detailRes.reason;
     if (e instanceof ApiError && e.status === 404) notFound();
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
+  const diagnosis: OrderDiagnosis | null = diagRes.status === 'fulfilled' ? diagRes.value : null;
 
   if (error || !data) {
     return (
@@ -100,6 +196,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   }
 
   const { order, lines, assignments, events, emails, history, replacements } = data;
+  const auditTrail = data.auditTrail ?? [];
+
+  const diagByLine = new Map<string, LineDiagnosis>(
+    (diagnosis?.lines ?? []).map((l) => [l.lineId, l] as const),
+  );
 
   // Atamaları satır (ürün kalemi) bazında grupla → ürün-merkezli tek görünüm (Satırlar + Aktif
   // Lisanslar birleşti; kullanıcı "ikisi çakışıyor, karışık" dedi). Aktif/askıda ürün kartında;
@@ -113,10 +214,8 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const isActive = (a: Assignment) => a.status === 'active' || a.status === 'suspended';
   const terminalAsg = assignments.filter((a) => !isActive(a));
   // Bonus (sentetik) satırlar en sona; asıl ürün kalemleri önce.
-  const isBonusLine = (remoteLineId: string) => remoteLineId.startsWith('bonus:');
-  const sortedLines = [...lines].sort(
-    (x, y) => Number(isBonusLine(x.remoteLineId)) - Number(isBonusLine(y.remoteLineId)),
-  );
+  const isBonusLine = (l: Line) => l.isBonus ?? l.remoteLineId.startsWith('bonus:');
+  const sortedLines = [...lines].sort((x, y) => Number(isBonusLine(x)) - Number(isBonusLine(y)));
 
   // Çok ürün kalemli siparişte kartları ayırt edilebilir kılmak için ürün kalemi başına ince bir
   // sol kenar aksan rengi (chart paleti — monokrom UI'da nötr kalır; kullanıcı isteği). Yalnız
@@ -128,14 +227,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     'var(--chart-4)',
     'var(--chart-5)',
   ];
-  const productLineCount = sortedLines.filter((l) => !isBonusLine(l.remoteLineId)).length;
+  const productLineCount = sortedLines.filter((l) => !isBonusLine(l)).length;
   const lineAccent = new Map<string, string | null>();
   {
     let pIdx = 0;
     for (const l of sortedLines) {
       lineAccent.set(
         l.id,
-        productLineCount > 1 && !isBonusLine(l.remoteLineId)
+        productLineCount > 1 && !isBonusLine(l)
           ? CARD_ACCENTS[pIdx++ % CARD_ACCENTS.length]
           : null,
       );
@@ -145,14 +244,39 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const openReplacements = replacements.filter(
     (r) => r.status === 'open' || r.status === 'info_requested',
   ).length;
+  // Destek kartında "ilgili lisans" satırı için okunabilir özet (sır göstermez: key tipinde
+  // yalnız son 4 hane; hesap tipinde hiç değer yok).
+  const licenseLabels: Record<string, string> = {};
+  for (const a of assignments) {
+    const tail = a.kind === 'key' && a.payload ? ` · …${a.payload.slice(-4)}` : '';
+    licenseLabels[a.id] =
+      `${a.productName ?? 'Lisans'}${tail} — ${assignmentStatusLabel(a.status)}`;
+  }
+
   const totalQty = lines.reduce((s, l) => s + l.qty, 0);
   const totalFulfilled = lines.reduce((s, l) => s + l.fulfilledQty, 0);
   const activeCount = assignments.filter(isActive).length;
   const fullyDelivered = totalFulfilled >= totalQty && totalQty > 0;
-  const createdAt = new Date(order.createdAt).toLocaleString('tr-TR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  });
+  const createdAt = fmtDateTime(order.createdAt);
+
+  // Zaman çizelgesi: teslimat olayları + "kim yaptı" denetim izi TEK kronolojik akışta
+  // (kullanıcı isteği: "lisans değişimi/eklemesi yapan kullanıcının bilgisi tutulmalı").
+  const timeline = [
+    ...events.map((e) => ({
+      key: `e:${e.id}`,
+      at: e.createdAt,
+      title: eventTitle(e.type),
+      detail: e.message,
+      actor: null as string | null,
+    })),
+    ...auditTrail.map((a) => ({
+      key: `a:${a.id}`,
+      at: a.createdAt,
+      title: auditTitle(a),
+      detail: a.reason,
+      actor: a.actor || null,
+    })),
+  ].sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime());
 
   return (
     <div className="space-y-4">
@@ -188,6 +312,17 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   <ShoppingCart className="size-3.5 text-muted-foreground" />
                   {order.siteType ? siteTypeLabel(order.siteType) : 'Mağaza'} #{order.remoteOrderId}
                 </span>
+                {order.storeAdminUrl && (
+                  <a
+                    href={order.storeAdminUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    <ExternalLink className="size-3.5" aria-hidden />
+                    Mağaza panelinde aç
+                  </a>
+                )}
                 <span className="text-xs text-muted-foreground">
                   {order.customerEmail} · {createdAt}
                 </span>
@@ -218,9 +353,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             )}
           </span>
           {openReplacements > 0 && (
-            <Link href="#destek" className="inline-flex items-center gap-1.5 text-warning hover:underline">
+            <Link
+              href="#destek"
+              className="inline-flex items-center gap-1.5 text-warning hover:underline"
+            >
               <LifeBuoy className="size-4" />
-              <strong>{openReplacements}</strong> açık destek talebi
+              <strong>{openReplacements}</strong> yanıt bekleyen destek talebi
             </Link>
           )}
         </div>
@@ -232,12 +370,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" />
           <div className="text-foreground">
             Bu sipariş <strong>güvenlik incelemesinde</strong> — teslimat manuel onay bekliyor.{' '}
-            <Link href="/review" className="font-medium text-primary underline-offset-2 hover:underline">
+            <Link
+              href="/review"
+              className="font-medium text-primary underline-offset-2 hover:underline"
+            >
               İnceleme Kuyruğu
             </Link>
             'ndan onaylayın veya reddedin. (Onaya kadar teslimat yapılmaz.)
           </div>
         </div>
+      )}
+
+      {/* Eşleme sonradan yapılmış ama satırlar eşleme öncesinden kalmış → tek tıkla çöz. */}
+      {diagnosis && (
+        <OrderResolveBanner orderId={order.id} count={diagnosis.resolvableCount} />
       )}
 
       {/* ── İki kolon: sol (geniş) ürünler+lisanslar; sağ (dar) destek + referans ── */}
@@ -255,26 +401,78 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             {sortedLines.map((l) => {
               const lineAsg = asgByLine.get(l.id) ?? [];
               const activeLine = lineAsg.filter(isActive);
-              const bonus = isBonusLine(l.remoteLineId);
+              const bonus = isBonusLine(l);
               const accent = lineAccent.get(l.id);
+              const diag = diagByLine.get(l.id) ?? null;
               // "Kalanları Ata" yalnız gerçekten eksik + işlenebilir satırda (held/canceled/bonus hariç).
-              const incomplete = l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
+              const incomplete =
+                l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
+
+              // MAĞAZADAKİ ürün (kullanıcı isteği): ad yoksa ham kimliğe düş; varyasyon ekle.
+              const storeName = l.remoteName?.trim() || null;
+              const storeRef = storeName ?? (l.remoteProductId ? `#${l.remoteProductId}` : null);
+              const variation = l.remoteVariationId ? ` · varyasyon ${l.remoteVariationId}` : '';
+              // Panel ürünü eşlenmemişse ANA başlık mağaza adı olur (operatör neyin eksik
+              // olduğunu ilk bakışta görsün); eşliyse panel ürün adı ana başlıktır.
+              const mainTitle = l.productId
+                ? (l.productName ?? '—')
+                : (storeRef ?? 'Ürün eşlenmemiş');
+
               return (
                 <Card
                   key={l.id}
                   className="overflow-hidden"
                   style={accent ? { borderLeftWidth: '4px', borderLeftColor: accent } : undefined}
                 >
-                  {/* Ürün başlığı: ad + teslim durumu + (eksikse) Kalanları Ata */}
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-2.5">
-                    <div className="min-w-0">
-                      <div className="font-semibold text-foreground">
-                        {l.productName ?? (l.productId ? '—' : 'Ürün eşlenmemiş')}
+                  {/* Ürün başlığı: panel adı + MAĞAZADAKİ ad + teslim durumu + Kalanları Ata */}
+                  <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-border bg-muted/40 px-4 py-2.5">
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className="max-w-full truncate font-semibold text-foreground"
+                          title={mainTitle}
+                        >
+                          {mainTitle}
+                        </span>
+                        {bonus && (
+                          <Badge variant="accent">
+                            <Gift aria-hidden /> Bonus
+                          </Badge>
+                        )}
+                        {!l.productId && !bonus && (
+                          <Badge variant="danger">
+                            <ShieldAlert aria-hidden /> Eşlenmemiş
+                          </Badge>
+                        )}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {bonus ? 'Bonus lisans (ek teslimat)' : `kalem #${l.remoteLineId} · ${l.qty} adet`}
-                      </div>
+
+                      {/* Mağazadan (WooCommerce/pazar yeri) gelen ürün bilgisi. */}
+                      {l.productId && storeRef && (
+                        <p
+                          className="max-w-full truncate text-xs text-muted-foreground"
+                          title={`${storeRef}${variation}`}
+                        >
+                          <Store className="mr-1 inline size-3 align-[-2px]" aria-hidden />
+                          Mağazadaki ad:{' '}
+                          <span className="text-foreground/80">{storeRef}</span>
+                          {variation}
+                        </p>
+                      )}
+                      {!l.productId && l.remoteProductId && storeName && (
+                        <p className="max-w-full truncate text-xs text-muted-foreground">
+                          <Store className="mr-1 inline size-3 align-[-2px]" aria-hidden />
+                          Mağaza ürün kimliği: #{l.remoteProductId}
+                          {variation}
+                        </p>
+                      )}
+
+                      <p className="text-xs text-muted-foreground">
+                        {bonus
+                          ? 'Bonus lisans (ek teslimat — mağazada karşılığı yok)'
+                          : `kalem #${l.remoteLineId} · ${l.qty} adet`}
+                      </p>
                     </div>
+
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm tabular-nums text-muted-foreground">
                         <strong className="text-foreground">
@@ -290,6 +488,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                       {incomplete && <CompleteLineButton lineId={l.id} orderId={order.id} />}
                     </div>
                   </div>
+
+                  {/* "Neden bekliyor" tanı şeridi — sebep + ne yapmalı + tek tık aksiyon. */}
+                  <LineDiagnosisStrip
+                    diagnosis={diag}
+                    orderId={order.id}
+                    siteId={diagnosis?.siteId ?? order.siteId}
+                    fallbackTitle={
+                      !diag && l.pendingReason ? pendingReasonLabel(l.pendingReason) : null
+                    }
+                    fallbackMessage={
+                      !diag && l.pendingReason ? pendingReasonAction(l.pendingReason) : null
+                    }
+                  />
+
                   {/* Bu ürünün aktif anahtarları */}
                   <div>
                     {activeLine.length === 0 ? (
@@ -315,8 +527,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
                 <Archive className="size-4" />
                 Geçmiş / iptal edilen lisanslar ({terminalAsg.length})
-                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
-                <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
+                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">
+                  göster
+                </span>
+                <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">
+                  gizle
+                </span>
               </summary>
               <div className="border-t border-border">
                 {terminalAsg.map((a) => (
@@ -325,6 +541,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 opacity-90 first:border-t-0"
                   >
                     <span className="text-sm text-foreground">{a.productName ?? '—'}</span>
+                    {a.isBonus && (
+                      <Badge variant="accent">
+                        <Gift aria-hidden /> Bonus
+                      </Badge>
+                    )}
                     <code className="max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                       {a.kind === 'account'
                         ? (a.fields?.map((f) => `${f.label}: ${f.value}`).join(' / ') ?? '—')
@@ -342,39 +563,66 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             </details>
           )}
 
-          {/* Değişim geçmişi (eski anahtarlar) — katlanır referans. */}
+          {/* Değişim geçmişi (eski anahtarlar) — katlanır referans; KİM yaptı görünür. */}
           {history.length > 0 && (
             <details className="group rounded-xl border border-border bg-card">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
                 <RefreshCw className="size-4" />
                 Değişim geçmişi — eski anahtarlar ({history.length})
-                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">göster</span>
-                <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">gizle</span>
+                <span className="ml-auto text-xs text-muted-foreground group-open:hidden">
+                  göster
+                </span>
+                <span className="ml-auto hidden text-xs text-muted-foreground group-open:inline">
+                  gizle
+                </span>
               </summary>
               <div className="overflow-x-auto border-t border-border">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
+                      <TableHead>Ürün</TableHead>
                       <TableHead>Eski key</TableHead>
                       <TableHead>Sebep</TableHead>
-                      <TableHead>Yapan</TableHead>
+                      <TableHead>İşlemi yapan</TableHead>
                       <TableHead className="text-right">Tarih</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {history.map((h) => (
                       <TableRow key={h.id}>
+                        <TableCell className="text-sm text-foreground">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="truncate" title={h.productName ?? undefined}>
+                              {h.productName ?? '—'}
+                            </span>
+                            {h.isBonus && (
+                              <Badge variant="accent">
+                                <Gift aria-hidden /> Bonus
+                              </Badge>
+                            )}
+                          </div>
+                          {h.remoteName && (
+                            <div
+                              className="truncate text-xs text-muted-foreground"
+                              title={h.remoteName}
+                            >
+                              Mağazadaki ad: {h.remoteName}
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell className="font-mono text-xs text-foreground">
                           {/* key-tipi ölü anahtar TAM (karantina, satışa dönmez); account maskeli. */}
                           {h.oldValue ?? h.oldMasked}
                         </TableCell>
                         <TableCell className="text-sm text-foreground">{h.reason}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{h.actor}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          <span className="inline-flex items-center gap-1">
+                            <UserRound className="size-3" aria-hidden />
+                            {h.actor || '—'}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                          {new Date(h.createdAt).toLocaleString('tr-TR', {
-                            dateStyle: 'short',
-                            timeStyle: 'short',
-                          })}
+                          {fmtDateTime(h.createdAt)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -397,7 +645,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   Destek Talepleri
                   {openReplacements > 0 && (
                     <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning">
-                      {openReplacements} açık
+                      {openReplacements} yanıt bekliyor
                     </span>
                   )}
                 </CardTitle>
@@ -406,7 +654,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 </Button>
               </CardHeader>
               <CardContent className="p-0">
-                <OrderReplacements replacements={replacements} orderId={order.id} />
+                <OrderReplacements
+                  replacements={replacements}
+                  orderId={order.id}
+                  customerEmail={order.customerEmail}
+                  licenseLabels={licenseLabels}
+                />
               </CardContent>
             </Card>
           )}
@@ -420,7 +673,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             </CardHeader>
             <CardContent>
               {emails.length === 0 ? (
-                <EmptyState icon={Mail} title="Mail yok" description="Teslimat mailleri burada görünür." />
+                <EmptyState
+                  icon={Mail}
+                  title="Mail yok"
+                  description="Teslimat mailleri burada görünür."
+                />
               ) : (
                 <ul className="space-y-2.5 text-sm">
                   {emails.map((m) => (
@@ -441,20 +698,27 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {events.length === 0 ? (
-                <EmptyState icon={History} title="Kayıt yok" description="Sipariş olayları burada listelenir." />
+              {timeline.length === 0 ? (
+                <EmptyState
+                  icon={History}
+                  title="Kayıt yok"
+                  description="Sipariş olayları burada listelenir."
+                />
               ) : (
                 <ol className="relative max-h-96 space-y-4 overflow-y-auto border-l border-border pl-5">
-                  {events.map((e) => (
-                    <li key={e.id} className="relative">
+                  {timeline.map((t) => (
+                    <li key={t.key} className="relative">
                       <span className="absolute -left-[1.6rem] top-1 size-2.5 rounded-full border-2 border-background bg-primary" />
-                      <div className="text-sm font-medium text-foreground">{eventTypeLabel(e.type)}</div>
-                      {e.message && <div className="text-sm text-muted-foreground">{e.message}</div>}
+                      <div className="text-sm font-medium text-foreground">{t.title}</div>
+                      {t.detail && <div className="text-sm text-muted-foreground">{t.detail}</div>}
+                      {t.actor && (
+                        <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                          <UserRound className="size-3" aria-hidden />
+                          İşlemi yapan: <span className="text-foreground/80">{t.actor}</span>
+                        </div>
+                      )}
                       <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
-                        {new Date(e.createdAt).toLocaleString('tr-TR', {
-                          dateStyle: 'short',
-                          timeStyle: 'short',
-                        })}
+                        {fmtDateTime(t.at)}
                       </div>
                     </li>
                   ))}

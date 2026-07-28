@@ -20,6 +20,12 @@ export const notifications = pgTable(
     meta: jsonb('meta'),
     /** Telegram'a gönderildi mi (best-effort; env yoksa false kalır). */
     sentTelegram: boolean('sent_telegram').notNull().default(false),
+    /**
+     * Üst bardaki bildirim çanı okuma durumu (§17). null = okunmamış. GLOBAL (panel tek
+     * operasyon ekibi tarafından izlenir) — per-admin okuma durumu bilinçli olarak YOK
+     * (ayrı tablo + join maliyeti; çan sayacı sıcak yol).
+     */
+    readAt: timestamp('read_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -27,6 +33,10 @@ export const notifications = pgTable(
   (t) => [
     index('notifications_created_idx').on(t.createdAt.desc()),
     index('notifications_type_idx').on(t.type),
+    // Çan sayacı (okunmamış) sıcak yolu — partial index yalnız okunmamışları kapsar.
+    index('notifications_unread_idx')
+      .on(t.createdAt.desc())
+      .where(sql`${t.readAt} IS NULL`),
   ],
 );
 

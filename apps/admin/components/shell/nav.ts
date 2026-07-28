@@ -55,6 +55,9 @@ export const NAV: NavSection[] = [
     items: [
       { label: 'Stok & Ürünler', href: '/stock', icon: Boxes },
       { label: 'Ürün Eşleştirme', href: '/mappings', icon: Link2 },
+      // Karantina lisans/hesap kalemleriyle ilgilidir (arızalı → tedarikçiye iade/değişim akışı),
+      // güvenlik olaylarıyla değil → "Sistem" yerine Envanter altında (kullanıcı geri bildirimi).
+      { label: 'Karantina', href: '/quarantine', icon: ShieldOff },
       { label: 'Kanallar / Siteler', href: '/sites', icon: Globe },
     ],
   },
@@ -86,7 +89,6 @@ export const NAV: NavSection[] = [
     title: 'Sistem',
     items: [
       { label: 'Güvenlik', href: '/security', icon: ShieldAlert },
-      { label: 'Karantina', href: '/quarantine', icon: ShieldOff },
       { label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true },
     ],
   },

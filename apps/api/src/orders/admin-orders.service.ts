@@ -5,7 +5,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
 import { recordReplacementLineage } from './assignment-history';
@@ -15,6 +16,7 @@ import {
   assignmentHistory,
   assignments,
   auditLog,
+  batches,
   emailLog,
   fulfillmentEvents,
   licenseItems,
@@ -22,9 +24,11 @@ import {
   orders,
   orderStatusEnum,
   products,
+  purchaseOrders,
   siteProductMappings,
   sites,
   stockAdjustments,
+  suppliers,
   type Site,
 } from '../db/schema';
 // Barrel'a eklenmedi (replacements modülüyle aynı desen) → doğrudan dosyadan al.
@@ -69,6 +73,128 @@ function maskPayload(
     }
   }
   return { maskedPayload: mask(plain), maskedFields: null };
+}
+
+/**
+ * Mağaza admin panelinde siparişi AÇAN link (§17). SALT LİNK ÜRETİMİ — panel mağazaya
+ * BAĞLANMAZ, oturum AÇMAZ, hiçbir istek ATMAZ; operatörün tarayıcısında açacağı bir URL
+ * metni döndürür (mağaza yetkisi tamamen operatörün kendi oturumundadır).
+ *
+ * Öncelik: `sites.admin_order_url_template` (operatör tanımlı, `{orderId}` yer tutucusu) →
+ * yoksa site TİPİNDEN varsayılan (yalnız 'woocommerce'; marketplace/reseller/null → null,
+ * çünkü o platformların admin yolu bilinmiyor → uydurma link üretmeyiz).
+ *
+ * GÜVENLİK (enjeksiyon): remoteOrderId encodeURIComponent ile kaçırılır (query/pat parçalanamaz);
+ * üretilen URL `new URL()` ile ayrıştırılır ve YALNIZ http/https şeması kabul edilir — şablona
+ * `javascript:`/`data:` yazılmışsa null döner (operatör-kaynaklı da olsa ham geçirilmez).
+ * Origin türetmede webhookUrl önceliklidir (gerçek erişilebilir kök), yoksa `https://<domain>`.
+ */
+export function buildStoreAdminUrl(
+  site:
+    | {
+        type?: string | null;
+        domain?: string | null;
+        webhookUrl?: string | null;
+        adminOrderUrlTemplate?: string | null;
+      }
+    | null
+    | undefined,
+  remoteOrderId: string | null | undefined,
+): string | null {
+  if (!site || !remoteOrderId) return null;
+  const safeId = encodeURIComponent(String(remoteOrderId));
+
+  const asHttpUrl = (candidate: string): string | null => {
+    try {
+      const u = new URL(candidate);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+      return u.toString();
+    } catch {
+      return null;
+    }
+  };
+
+  const template = (site.adminOrderUrlTemplate ?? '').trim();
+  if (template) {
+    // Şablon operatörün girdiği ham metindir → OLDUĞU GİBİ kullanılmaz, URL olarak ayrıştırılır.
+    return asHttpUrl(template.split('{orderId}').join(safeId));
+  }
+
+  if (site.type !== 'woocommerce') return null;
+
+  let origin: string | null = null;
+  const webhook = (site.webhookUrl ?? '').trim();
+  if (webhook) {
+    try {
+      const u = new URL(webhook);
+      if (u.protocol === 'http:' || u.protocol === 'https:') origin = u.origin;
+    } catch {
+      /* bozuk webhook_url → domain'e düş */
+    }
+  }
+  if (!origin) {
+    const domain = (site.domain ?? '').trim();
+    if (!domain) return null;
+    const withScheme = /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
+    try {
+      origin = new URL(withScheme).origin;
+    } catch {
+      return null;
+    }
+  }
+
+  return asHttpUrl(`${origin}/wp-admin/admin.php?page=wc-orders&action=edit&id=${safeId}`);
+}
+
+/**
+ * Bonus atamalar AYRI sentetik satırda durur (`bonus:<origWooItemId>:<uuid>`, eski format
+ * `bonus:<uuid>`). Bu yardımcı satırın AİT OLDUĞU mağaza kalemini çözer → WP meta box /
+ * panel, bonus'u doğru ürün kaleminin altında gruplayabilir (önek ayrıştırma tekrarı yok).
+ * Orijin gömülü değilse (eski format) satırın kendi id'si döner.
+ */
+export function resolveOriginRemoteLineId(remoteLineId: string): string {
+  if (!remoteLineId.startsWith('bonus:')) return remoteLineId;
+  const rest = remoteLineId.slice('bonus:'.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return remoteLineId; // eski `bonus:<uuid>` → orijin bilinmiyor
+  return rest.slice(0, sep);
+}
+
+/** Satır bonus (sentetik, mağaza tarafında karşılığı olmayan) mı? */
+export function isBonusRemoteLineId(remoteLineId: string): boolean {
+  return remoteLineId.startsWith('bonus:');
+}
+
+/**
+ * Bir sipariş satırının NEDEN beklediğinin makine-okunur tanısı (§13 "bekleyen satır mantığı"):
+ * operatör "teslim edilmedi" yerine EYLEME dönük sebebi görür. Öncelik terminal/blokaj sırası:
+ * iptal → inceleme → eşlemesiz → ön-sipariş penceresi → stok yok → all-or-nothing eksiği.
+ */
+export type PendingReason =
+  | 'unmapped'
+  | 'no_stock'
+  | 'held'
+  | 'canceled'
+  | 'release_gated'
+  | 'all_or_nothing'
+  | null;
+
+/**
+ * Karantina listesi süzgeçleri (§13 "listeyi tedarikçiye ilet"). Hepsi opsiyonel — parametresiz
+ * çağrı eski davranışı birebir korur (son 500 ölü anahtar, en yeni önce).
+ * CSV/Excel üretimi API'DE YAPILMAZ; uç yalnız JSON döner (biçimlendirme admin tarafında).
+ */
+export interface QuarantineQuery {
+  /** Ürün adı/SKU, müşteri e-postası, mağaza sipariş no, parti etiketi, tedarikçi adı (ILIKE). */
+  search?: string;
+  status?: 'quarantined' | 'voided';
+  productId?: string;
+  supplierId?: string;
+  /** ISO tarih/zaman — birleşik `quarantinedAt` üzerinden süzülür (bkz. listQuarantine notu). */
+  from?: string;
+  to?: string;
+  /** Varsayılan 500, üst sınır 5000. */
+  limit?: number;
 }
 
 @Injectable()
@@ -132,7 +258,7 @@ export class AdminOrdersService {
    * koşulu UPDATE WHERE'ine gömülü → atomik (eşzamanlı revoke ile yarışta da terminal atama
    * yeniden aktifleşmez).
    */
-  async suspend(assignmentId: string, suspend: boolean, actor: string) {
+  async suspend(assignmentId: string, suspend: boolean, actor: string, reason?: string) {
     const [asg] = await this.db
       .select({ status: assignments.status })
       .from(assignments)
@@ -165,6 +291,9 @@ export class AdminOrdersService {
       actor,
       targetType: 'assignment',
       targetId: assignmentId,
+      // "Kim + neden" (§8): sebep opsiyoneldir (askıya alma çoğu zaman refleks bir işlem), ama
+      // verildiyse iz KAYBOLMAZ — sipariş detayındaki denetim izinde görünür.
+      meta: reason ? { reason } : undefined,
     });
     return { assignmentId, status: target };
   }
@@ -242,8 +371,8 @@ export class AdminOrdersService {
     return { oldAssignmentId: assignmentId, newAssignmentId, status: 'replaced' as const };
   }
 
-  /** Teslimat mailini tekrar gönder — 60sn debounce (§13). */
-  async resend(orderId: string): Promise<{ queued: boolean }> {
+  /** Teslimat mailini tekrar gönder — 60sn debounce (§13). Kim tetikledi audit'e düşer. */
+  async resend(orderId: string, actor = 'panel:admin'): Promise<{ queued: boolean }> {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
@@ -257,6 +386,18 @@ export class AdminOrdersService {
       order.customerEmail,
       `Siparişiniz — ${order.remoteOrderId}`,
     );
+    // §8 izlenebilirlik: müşteriye lisans İÇEREN mail yeniden gönderildi — kim yaptı iz kalsın.
+    // best-effort: audit yazımı zaten kuyruğa alınmış maili geri almaz, isteği patlatmamalı.
+    try {
+      await this.db.insert(auditLog).values({
+        action: 'resend',
+        actor,
+        targetType: 'order',
+        targetId: orderId,
+      });
+    } catch {
+      /* audit yazımı başarısız → mail yine de kuyrukta */
+    }
     return { queued: true };
   }
 
@@ -294,132 +435,215 @@ export class AdminOrdersService {
 
     // Siparişin geldiği mağaza (site) + kanal tipi — operatör hangi siteden/hangi platformdan
     // geldiğini görsün (çok siteli, platform-bağımsız panel: woocommerce/marketplace/reseller).
+    // webhookUrl + adminOrderUrlTemplate YALNIZ storeAdminUrl türetmek için okunur; yanıta GİRMEZ
+    // (sır kolonları — hmac/api_key — hiç seçilmez).
     const [siteRow] = await this.db
-      .select({ domain: sites.domain, type: sites.type })
+      .select({
+        domain: sites.domain,
+        type: sites.type,
+        webhookUrl: sites.webhookUrl,
+        adminOrderUrlTemplate: sites.adminOrderUrlTemplate,
+      })
       .from(sites)
       .where(eq(sites.id, order.siteId))
       .limit(1);
 
-    // Satırlar + ürün adı (operatör hangi satırın hangi ürün olduğunu görsün, ham Woo id değil).
-    const lines = await this.db
-      .select({
-        id: orderLines.id,
-        remoteLineId: orderLines.remoteLineId,
-        qty: orderLines.qty,
-        fulfilledQty: orderLines.fulfilledQty,
-        status: orderLines.status,
-        productId: orderLines.productId,
-        canceled: orderLines.canceled,
-        productName: products.name,
-      })
-      .from(orderLines)
-      .leftJoin(products, eq(orderLines.productId, products.id))
-      .where(eq(orderLines.orderId, orderId));
+    // Eski/yeni lisans satırı AYRI alias'larla bağlanır (aynı tabloya iki join) → değişim
+    // geçmişinde hem değişen (ölü) hem yerine geçen (canlı) anahtar tek sorguda gelir.
+    const oldItem = alias(licenseItems, 'old_li');
+    const newItem = alias(licenseItems, 'new_li');
 
-    const asgRows = await this.db
-      .select({
-        id: assignments.id,
-        lineId: assignments.lineId,
-        status: assignments.status,
-        units: assignments.units,
-        validUntil: assignments.validUntil,
-        deliveredAt: assignments.deliveredAt,
-        payloadEnc: licenseItems.payloadEnc,
-        licenseItemId: licenseItems.id,
-        // multi kapasite görünürlüğü + hesap alan-maskesi için.
-        itemMaxUses: licenseItems.maxUses,
-        itemUseCount: licenseItems.useCount,
-        productKind: products.kind,
-        productName: products.name,
-        payloadSchema: products.payloadSchema,
-      })
-      .from(assignments)
-      .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
-      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-      .innerJoin(products, eq(orderLines.productId, products.id))
-      .where(eq(assignments.orderId, orderId));
+    // Bağımsız okumalar TEK turda (N+1 yok; ek alanlar ekstra round-trip getirmez).
+    const [lineRows, asgRows, events, emails, historyRows, replacementRows] = await Promise.all([
+      // Satırlar + ürün adı + MAĞAZA ürün bilgisi (remoteProductId/remoteVariationId/remoteName)
+      // + "neden bekliyor" tanısı için gereken ürün alanları + ürünün ANLIK kullanılabilir
+      // kapasitesi (tek korelasyonlu alt sorgu; sipariş satırı sayısı küçüktür, N+1 round-trip yok).
+      this.db
+        .select({
+          id: orderLines.id,
+          remoteLineId: orderLines.remoteLineId,
+          remoteProductId: orderLines.remoteProductId,
+          remoteVariationId: orderLines.remoteVariationId,
+          remoteName: orderLines.remoteName,
+          qty: orderLines.qty,
+          fulfilledQty: orderLines.fulfilledQty,
+          status: orderLines.status,
+          productId: orderLines.productId,
+          canceled: orderLines.canceled,
+          policyOverride: orderLines.policyOverride,
+          productName: products.name,
+          productSku: products.sku,
+          productKind: products.kind,
+          productPolicy: products.fulfillmentPolicy,
+          productStockless: products.stockless,
+          productReleaseAt: products.releaseAt,
+          // MULTI/MAK dahil kapasite: Σ(max_uses − use_count) (products.list ile AYNI semantik).
+          availableStock: sql<number>`(
+            select coalesce(sum(li.max_uses - li.use_count), 0)::int
+            from license_items li
+            where li.product_id = ${orderLines.productId} and li.status = 'available'
+          )`,
+        })
+        .from(orderLines)
+        .leftJoin(products, eq(orderLines.productId, products.id))
+        .where(eq(orderLines.orderId, orderId)),
 
-    // Terminal (iade/iptal/değiştirilmiş) atamaların iptal SEBEBİ — audit_log.meta.reason'dan
-    // toplanır → "Geçmiş" satırında kısaca gösterilir (operatör neden iptal edildiğini görsün).
-    // Bir atamanın birden çok revoke kaydı olamaz ama defansif: en yeni kazanır.
+      this.db
+        .select({
+          id: assignments.id,
+          lineId: assignments.lineId,
+          // Mağaza kalemi (Woo item id) + bonus sentetik satırın orijini → panel/WP atamayı
+          // DOĞRU ürün kaleminin altında gruplayabilir.
+          remoteLineId: orderLines.remoteLineId,
+          remoteName: orderLines.remoteName,
+          status: assignments.status,
+          units: assignments.units,
+          validUntil: assignments.validUntil,
+          deliveredAt: assignments.deliveredAt,
+          payloadEnc: licenseItems.payloadEnc,
+          licenseItemId: licenseItems.id,
+          // multi kapasite görünürlüğü + hesap alan-maskesi için.
+          itemMaxUses: licenseItems.maxUses,
+          itemUseCount: licenseItems.useCount,
+          productKind: products.kind,
+          productName: products.name,
+          payloadSchema: products.payloadSchema,
+        })
+        .from(assignments)
+        .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+        .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+        .innerJoin(products, eq(orderLines.productId, products.id))
+        .where(eq(assignments.orderId, orderId)),
+
+      this.db
+        .select()
+        .from(fulfillmentEvents)
+        .where(eq(fulfillmentEvents.orderId, orderId))
+        .orderBy(fulfillmentEvents.createdAt),
+
+      this.db
+        .select()
+        .from(emailLog)
+        .where(eq(emailLog.orderId, orderId))
+        .orderBy(emailLog.createdAt),
+
+      // Değişim soyağacı (§3/§7 "eski anahtar geçmişi"): bu siparişin atamalarına bağlı
+      // assignment_history satırları. BONUS satırlar da KAPSANIR (bonus sentetik satırın
+      // productId'si vardır; join ürün-seviyesinde LEFT → hiçbir soyağacı düşmez).
+      this.db
+        .select({
+          id: assignmentHistory.id,
+          assignmentId: assignmentHistory.assignmentId,
+          reason: assignmentHistory.reason,
+          actor: assignmentHistory.actor,
+          createdAt: assignmentHistory.createdAt,
+          lineId: assignments.lineId,
+          remoteLineId: orderLines.remoteLineId,
+          remoteName: orderLines.remoteName,
+          productName: products.name,
+          oldPayloadEnc: oldItem.payloadEnc,
+          oldLicenseItemId: oldItem.id,
+          newPayloadEnc: newItem.payloadEnc,
+          newLicenseItemId: newItem.id,
+          // Anahtarın ürün tipi: key ise TAM göster (ölü/karantina key → sır değil),
+          // account ise parola sızmasın diye maskeli kal.
+          productKind: products.kind,
+        })
+        .from(assignmentHistory)
+        .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
+        .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+        .leftJoin(products, eq(orderLines.productId, products.id))
+        .leftJoin(oldItem, eq(assignmentHistory.oldLicenseItemId, oldItem.id))
+        .leftJoin(newItem, eq(assignmentHistory.newLicenseItemId, newItem.id))
+        .where(eq(assignments.orderId, orderId))
+        .orderBy(desc(assignmentHistory.createdAt)),
+
+      // Bu siparişe ait değişim/destek talepleri (§13) — sipariş bağlamında görünsün ki operatör
+      // "Sorun Bildir → onayla" akışını siparişten takip edebilsin (support ekranıyla çift yönlü bağ).
+      this.db
+        .select({
+          id: replacementRequests.id,
+          status: replacementRequests.status,
+          reason: replacementRequests.reason,
+          withinWarranty: replacementRequests.withinWarranty,
+          resolutionNote: replacementRequests.resolutionNote,
+          lineId: replacementRequests.lineId,
+          assignmentId: replacementRequests.assignmentId,
+          createdAt: replacementRequests.createdAt,
+        })
+        .from(replacementRequests)
+        .where(eq(replacementRequests.orderId, orderId))
+        .orderBy(desc(replacementRequests.createdAt)),
+    ]);
+
     const asgIds = asgRows.map((a) => a.id);
-    const reasonRows = asgIds.length
-      ? await this.db
-          .select({
-            targetId: auditLog.targetId,
-            meta: auditLog.meta,
-            createdAt: auditLog.createdAt,
-          })
-          .from(auditLog)
-          .where(
-            and(
-              eq(auditLog.action, 'revoke'),
-              eq(auditLog.targetType, 'assignment'),
-              inArray(auditLog.targetId, asgIds),
-            ),
-          )
-          .orderBy(desc(auditLog.createdAt))
-      : [];
+
+    // "Kim yaptı" izi (§8): bu siparişin VE atamalarının audit_log kayıtları TEK sorguda.
+    // Terminal atamaların revoke SEBEBİ de buradan türetilir (ayrı sorgu yok). Otomatik
+    // görüntüleme-reveal kayıtları (meta.auto=true) HARİÇ — aksi halde her sayfa açılışı izi boğar.
+    const auditRows = await this.db
+      .select({
+        id: auditLog.id,
+        action: auditLog.action,
+        actor: auditLog.actor,
+        targetType: auditLog.targetType,
+        targetId: auditLog.targetId,
+        meta: auditLog.meta,
+        createdAt: auditLog.createdAt,
+      })
+      .from(auditLog)
+      .where(
+        and(
+          asgIds.length
+            ? or(
+                and(eq(auditLog.targetType, 'order'), eq(auditLog.targetId, orderId)),
+                and(eq(auditLog.targetType, 'assignment'), inArray(auditLog.targetId, asgIds)),
+              )
+            : and(eq(auditLog.targetType, 'order'), eq(auditLog.targetId, orderId)),
+          sql`(${auditLog.meta} ->> 'auto') is distinct from 'true'`,
+          // PERF: audit_log'da (target_type, target_id) index'i YOK; tek index created_at'tir.
+          // Bu siparişe ait bir audit kaydı siparişten ÖNCE oluşamaz → alt sınır, taramayı
+          // `audit_log_created_idx` üzerinde sipariş tarihine kadar KESER (migration gerekmez).
+          gte(auditLog.createdAt, order.createdAt),
+        ),
+      )
+      .orderBy(desc(auditLog.createdAt))
+      .limit(300);
+
+    // Bir atamanın birden çok revoke kaydı olamaz ama defansif: en yeni kazanır.
     const revokeReasonByAsg = new Map<string, string>();
-    for (const r of reasonRows) {
-      if (r.targetId && !revokeReasonByAsg.has(r.targetId)) {
-        const reason = (r.meta as { reason?: unknown } | null)?.reason;
-        if (typeof reason === 'string' && reason) revokeReasonByAsg.set(r.targetId, reason);
-      }
+    for (const r of auditRows) {
+      if (r.action !== 'revoke' || r.targetType !== 'assignment' || !r.targetId) continue;
+      if (revokeReasonByAsg.has(r.targetId)) continue;
+      const reason = (r.meta as { reason?: unknown } | null)?.reason;
+      if (typeof reason === 'string' && reason) revokeReasonByAsg.set(r.targetId, reason);
     }
 
-    const events = await this.db
-      .select()
-      .from(fulfillmentEvents)
-      .where(eq(fulfillmentEvents.orderId, orderId))
-      .orderBy(fulfillmentEvents.createdAt);
-
-    const emails = await this.db
-      .select()
-      .from(emailLog)
-      .where(eq(emailLog.orderId, orderId))
-      .orderBy(emailLog.createdAt);
-
-    // Değişim soyağacı (§3/§7 "eski anahtar geçmişi"): bu siparişin atamalarına bağlı
-    // assignment_history satırları. Eski key MASKELİ gösterilir (son-4) → admin hangi key'in
-    // değiştiğini görür; düz payload sızmaz (leftJoin: eski kayıt silinmişse '—').
-    const historyRows = await this.db
-      .select({
-        id: assignmentHistory.id,
-        assignmentId: assignmentHistory.assignmentId,
-        reason: assignmentHistory.reason,
-        actor: assignmentHistory.actor,
-        createdAt: assignmentHistory.createdAt,
-        oldPayloadEnc: licenseItems.payloadEnc,
-        oldLicenseItemId: licenseItems.id,
-        // Eski anahtarın ürün tipi: key ise TAM göster (ölü/karantina key → sır değil),
-        // account ise parola sızmasın diye maskeli kal.
-        productKind: products.kind,
-      })
-      .from(assignmentHistory)
-      .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
-      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-      .innerJoin(products, eq(orderLines.productId, products.id))
-      .leftJoin(licenseItems, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
-      .where(eq(assignments.orderId, orderId))
-      .orderBy(desc(assignmentHistory.createdAt));
-
-    // Bu siparişe ait değişim/destek talepleri (§13) — sipariş bağlamında görünsün ki operatör
-    // "Sorun Bildir → onayla" akışını siparişten takip edebilsin (support ekranıyla çift yönlü bağ).
-    const replacementRows = await this.db
-      .select({
-        id: replacementRequests.id,
-        status: replacementRequests.status,
-        reason: replacementRequests.reason,
-        withinWarranty: replacementRequests.withinWarranty,
-        resolutionNote: replacementRequests.resolutionNote,
-        lineId: replacementRequests.lineId,
-        assignmentId: replacementRequests.assignmentId,
-        createdAt: replacementRequests.createdAt,
-      })
-      .from(replacementRequests)
-      .where(eq(replacementRequests.orderId, orderId))
-      .orderBy(desc(replacementRequests.createdAt));
+    // Değişimle geri alınan atamalar: eski lisans satırı assignment_history.oldLicenseItemId
+    // olarak geçiyorsa bu atama İPTAL/İADE DEĞİL, DEĞİŞTİRİLMİŞTİR — UI "iptal" yerine
+    // "değiştirildi" etiketleyebilsin diye türetilmiş bayrak döner (durum makinesine dokunulmaz;
+    // assignments.status yolu ve tüm invaryantlar aynen korunur).
+    const replacedByLicenseItem = new Map<
+      string,
+      { historyId: string; newAssignmentId: string; reason: string; at: Date | null }
+    >();
+    for (const h of historyRows) {
+      if (!h.oldLicenseItemId || replacedByLicenseItem.has(h.oldLicenseItemId)) continue;
+      replacedByLicenseItem.set(h.oldLicenseItemId, {
+        historyId: h.id,
+        newAssignmentId: h.assignmentId,
+        reason: h.reason,
+        at: h.createdAt ?? null,
+      });
+    }
+    // Soyağacı satırının ESKİ atamasını (aynı lisans satırını taşıyan terminal atama) çöz.
+    const terminalAsgByLicenseItem = new Map<string, string>();
+    for (const a of asgRows) {
+      if (a.status === 'active' || a.status === 'suspended') continue;
+      if (!terminalAsgByLicenseItem.has(a.licenseItemId)) {
+        terminalAsgByLicenseItem.set(a.licenseItemId, a.id);
+      }
+    }
 
     // Görüntüleme audit'i (§ "reveal/kopyalama audit'e düşer"): admin paneli kimlik-doğrulamalı
     // olduğu için lisanslar artık maskesiz gösterilir (kullanıcı isteği) — bu yüzden her sipariş
@@ -444,25 +668,90 @@ export class AdminOrdersService {
 
     return {
       // heldForReview zaten satırda; siteDomain + siteType başlıkta "hangi mağaza / hangi kanal".
-      order: { ...order, siteDomain: siteRow?.domain ?? null, siteType: siteRow?.type ?? null },
-      lines,
+      // storeAdminUrl: mağaza adminindeki siparişe SALT LİNK (panel mağazaya bağlanmaz, §17).
+      order: {
+        ...order,
+        siteDomain: siteRow?.domain ?? null,
+        siteType: siteRow?.type ?? null,
+        storeAdminUrl: buildStoreAdminUrl(siteRow, order.remoteOrderId),
+      },
+      lines: lineRows.map((l) => {
+        const bonus = isBonusRemoteLineId(l.remoteLineId);
+        const availableStock = l.productId ? Number(l.availableStock ?? 0) : null;
+        return {
+          id: l.id,
+          remoteLineId: l.remoteLineId,
+          qty: l.qty,
+          fulfilledQty: l.fulfilledQty,
+          status: l.status,
+          productId: l.productId,
+          canceled: l.canceled,
+          productName: l.productName,
+          productSku: l.productSku ?? null,
+          productKind: l.productKind ?? null,
+          // MAĞAZADAKİ ürün bilgisi (kullanıcı isteği): sipariş push'unda gelen ham kimlik + AD.
+          // Eski satırlarda/eski eklentide null olabilir (geriye dönük uyumlu).
+          remoteProductId: l.remoteProductId ?? null,
+          remoteVariationId: l.remoteVariationId ?? null,
+          remoteName: l.remoteName ?? null,
+          // Bonus (sentetik) satır → mağazada karşılığı YOK; origin kalem altında gösterilir.
+          isBonus: bonus,
+          originRemoteLineId: resolveOriginRemoteLineId(l.remoteLineId),
+          availableStock,
+          pendingReason: this.diagnosePendingReason({
+            canceled: l.canceled,
+            held: order.heldForReview,
+            productId: l.productId,
+            status: l.status,
+            qty: l.qty,
+            fulfilledQty: l.fulfilledQty,
+            policy: l.policyOverride ?? l.productPolicy ?? null,
+            stockless: l.productStockless ?? false,
+            releaseAt: l.productReleaseAt ?? null,
+            availableStock,
+          }),
+        };
+      }),
       emails,
       replacements: replacementRows,
       history: historyRows.map((h) => {
-        const plain =
+        const oldPlain =
           h.oldPayloadEnc && h.oldLicenseItemId
             ? this.crypto.decrypt(h.oldPayloadEnc, CryptoService.licenseItemAad(h.oldLicenseItemId))
             : null;
+        const newPlain =
+          h.newPayloadEnc && h.newLicenseItemId
+            ? this.crypto.decrypt(h.newPayloadEnc, CryptoService.licenseItemAad(h.newLicenseItemId))
+            : null;
+        const remoteLineId = h.remoteLineId ?? '';
         return {
           id: h.id,
+          // Değişimle OLUŞAN (taze) atama — soyağacının "yeni" ucu.
           assignmentId: h.assignmentId,
+          newAssignmentId: h.assignmentId,
+          // Değişimle geri alınan (eski) atama — "Geçmiş" listesindeki satırla eşleştirmek için.
+          oldAssignmentId: h.oldLicenseItemId
+            ? (terminalAsgByLicenseItem.get(h.oldLicenseItemId) ?? null)
+            : null,
           reason: h.reason,
+          // KİM YAPTI (§8): 'wp:kullanici@site' / 'panel:<admin>' formatında olduğu gibi geçer.
           actor: h.actor,
           createdAt: h.createdAt,
-          oldMasked: plain !== null ? mask(plain) : '—',
+          lineId: h.lineId,
+          remoteLineId: remoteLineId || null,
+          originRemoteLineId: remoteLineId ? resolveOriginRemoteLineId(remoteLineId) : null,
+          // Bonus atamanın değişimi de soyağacına DÜŞER; UI "Bonus" rozetiyle ayırt edebilsin.
+          isBonus: remoteLineId ? isBonusRemoteLineId(remoteLineId) : false,
+          productName: h.productName ?? null,
+          remoteName: h.remoteName ?? null,
+          oldLicenseItemId: h.oldLicenseItemId ?? null,
+          newLicenseItemId: h.newLicenseItemId ?? null,
+          oldMasked: oldPlain !== null ? mask(oldPlain) : '—',
           // key-tipi ölü anahtar TAM gösterilir (operatör hangi key'in değiştiğini net görür);
           // account-tipi → null (frontend maskeli oldMasked'e düşer, parola sızmaz).
-          oldValue: plain !== null && h.productKind === 'key' ? plain : null,
+          oldValue: oldPlain !== null && h.productKind === 'key' ? oldPlain : null,
+          newMasked: newPlain !== null ? mask(newPlain) : '—',
+          newValue: newPlain !== null && h.productKind === 'key' ? newPlain : null,
         };
       }),
       assignments: asgRows.map((a) => {
@@ -476,6 +765,8 @@ export class AdminOrdersService {
         const schema =
           a.productKind === 'account' ? AccountPayloadSchema.safeParse(a.payloadSchema) : null;
         const fields = schema?.success ? parseAccountPayload(schema.data, plain) : null;
+        const terminal = a.status !== 'active' && a.status !== 'suspended';
+        const lineage = terminal ? replacedByLicenseItem.get(a.licenseItemId) : undefined;
         return {
           id: a.id,
           lineId: a.lineId,
@@ -486,17 +777,75 @@ export class AdminOrdersService {
           licenseItemId: a.licenseItemId,
           kind: a.productKind,
           productName: a.productName,
+          // Mağaza kalemi + bonus bağlamı (bonus atama, mağazada karşılığı olmayan sentetik satırda).
+          remoteLineId: a.remoteLineId,
+          originRemoteLineId: resolveOriginRemoteLineId(a.remoteLineId),
+          isBonus: isBonusRemoteLineId(a.remoteLineId),
+          remoteName: a.remoteName ?? null,
           payload: plain,
           fields,
           // Terminal atamada iptal sebebi (aktifte null) — "Geçmiş" satırında gösterilir.
           revokeReason: revokeReasonByAsg.get(a.id) ?? null,
+          // DEĞİŞİMLE geri alındıysa "iptal" DEĞİL "değiştirildi" (türetilmiş; durum makinesi
+          // değişmedi — revoke akışı ve tüm invaryantlar aynen korunur).
+          replaced: !!lineage,
+          replacedByAssignmentId: lineage?.newAssignmentId ?? null,
+          replaceReason: lineage?.reason ?? null,
+          replacedAt: lineage?.at ?? null,
           // multi (MAK) kalan kapasite görünürlüğü.
           maxUses: a.itemMaxUses,
           useCount: a.itemUseCount,
         };
       }),
       events,
+      // "Kim yaptı" denetim izi (§8): sipariş + atamalarına ait audit_log kayıtları.
+      auditTrail: auditRows.map((r) => {
+        const meta = (r.meta ?? null) as { reason?: unknown; op?: unknown } | null;
+        return {
+          id: r.id,
+          action: r.action,
+          actor: r.actor,
+          targetType: r.targetType,
+          targetId: r.targetId,
+          op: typeof meta?.op === 'string' ? meta.op : null,
+          reason: typeof meta?.reason === 'string' ? meta.reason : null,
+          createdAt: r.createdAt,
+        };
+      }),
     };
+  }
+
+  /**
+   * Satırın NEDEN beklediği (§13). Saf fonksiyon — sorgu YAPMAZ; tüm girdiler detail()'in tek
+   * satır sorgusundan gelir (N+1 yok). Öncelik sırası bilinçli: terminal/blokaj durumları önce
+   * (iptal → inceleme → eşlemesiz), sonra teslim edilebilirlik engelleri (ön sipariş → stok →
+   * all-or-nothing). Satır zaten tamamlandıysa null (bekleyen bir şey yok).
+   */
+  private diagnosePendingReason(l: {
+    canceled: boolean;
+    held: boolean;
+    productId: string | null;
+    status: string;
+    qty: number;
+    fulfilledQty: number;
+    policy: string | null;
+    stockless: boolean;
+    releaseAt: Date | null;
+    availableStock: number | null;
+  }): PendingReason {
+    if (l.canceled) return 'canceled';
+    if (l.status === 'fulfilled') return null;
+    if (l.held) return 'held';
+    if (!l.productId) return 'unmapped';
+    if (l.stockless && l.releaseAt && new Date(l.releaseAt).getTime() > Date.now()) {
+      return 'release_gated';
+    }
+    const remaining = l.qty - l.fulfilledQty;
+    if (remaining <= 0) return null;
+    const available = l.availableStock ?? 0;
+    if (available <= 0) return 'no_stock';
+    if (l.policy === 'all-or-nothing' && available < remaining) return 'all_or_nothing';
+    return null;
   }
 
   /**
@@ -979,16 +1328,17 @@ export class AdminOrdersService {
     return this.reveal(assignmentId, actor);
   }
 
-  /** §7 askıya al/geri aç — site-scoped. */
+  /** §7 askıya al/geri aç — site-scoped. reason opsiyonel (verilirse audit'e düşer). */
   async siteSuspend(
     site: Site,
     remoteOrderId: string,
     assignmentId: string,
     suspend: boolean,
     actor: string,
+    reason?: string,
   ) {
     await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
-    return this.suspend(assignmentId, suspend, actor);
+    return this.suspend(assignmentId, suspend, actor, reason);
   }
 
   /** §7 aynı üründen taze key ile değiştir (sebepli) — site-scoped. */
@@ -1006,7 +1356,7 @@ export class AdminOrdersService {
   /** §7 teslimat mailini tekrar gönder (60sn debounce) — site-scoped + audit izi. */
   async siteResend(site: Site, remoteOrderId: string, actor: string) {
     const { orderId } = await this.assertOrderInSite(remoteOrderId, site.id);
-    const r = await this.resend(orderId);
+    const r = await this.resend(orderId, actor);
     await this.db.insert(fulfillmentEvents).values({
       orderId,
       type: 'mail_resent',
@@ -1080,9 +1430,10 @@ export class AdminOrdersService {
       .limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
-    const lines = await this.db
+    const lineRows = await this.db
       .select({
         remoteLineId: orderLines.remoteLineId,
+        remoteName: orderLines.remoteName,
         qty: orderLines.qty,
         fulfilledQty: orderLines.fulfilledQty,
         status: orderLines.status,
@@ -1092,6 +1443,11 @@ export class AdminOrdersService {
       .from(orderLines)
       .leftJoin(products, eq(orderLines.productId, products.id))
       .where(eq(orderLines.orderId, order.id));
+    const lines = lineRows.map((l) => ({
+      ...l,
+      originRemoteLineId: resolveOriginRemoteLineId(l.remoteLineId),
+      isBonus: isBonusRemoteLineId(l.remoteLineId),
+    }));
 
     const asgRows = await this.db
       .select({
@@ -1117,22 +1473,46 @@ export class AdminOrdersService {
       .where(eq(assignments.orderId, order.id))
       .orderBy(desc(assignments.deliveredAt));
 
+    // Eski/yeni anahtar AYRI alias'larla — geçmiş satırında "neyle değişti" de görünsün (maskeli).
+    const oldItem = alias(licenseItems, 'old_li');
+    const newItem = alias(licenseItems, 'new_li');
     const historyRows = await this.db
       .select({
         assignmentId: assignmentHistory.assignmentId,
         remoteLineId: orderLines.remoteLineId,
+        productName: products.name,
+        remoteName: orderLines.remoteName,
         reason: assignmentHistory.reason,
         actor: assignmentHistory.actor,
         createdAt: assignmentHistory.createdAt,
-        oldPayloadEnc: licenseItems.payloadEnc,
-        oldLicenseItemId: licenseItems.id,
+        oldPayloadEnc: oldItem.payloadEnc,
+        oldLicenseItemId: oldItem.id,
+        newPayloadEnc: newItem.payloadEnc,
+        newLicenseItemId: newItem.id,
       })
       .from(assignmentHistory)
       .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-      .leftJoin(licenseItems, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
+      .leftJoin(products, eq(orderLines.productId, products.id))
+      .leftJoin(oldItem, eq(assignmentHistory.oldLicenseItemId, oldItem.id))
+      .leftJoin(newItem, eq(assignmentHistory.newLicenseItemId, newItem.id))
       .where(eq(assignments.orderId, order.id))
       .orderBy(desc(assignmentHistory.createdAt));
+
+    // DEĞİŞİMLE geri alınan atamayı "İptal" DEĞİL "Değiştirildi" gösterebilmek için türetilmiş
+    // bayrak (kullanıcı bulgusu: bonus/normal değişimde eski anahtar meta box'ta "İptal" görünüyordu).
+    // Durum makinesine DOKUNULMAZ — assignments.status 'revoked' kalır (revoke akışı, karantina ve
+    // §2 invaryantları aynen); yalnız SUNUM için "bu revoke bir değişimdi" bilgisi eklenir.
+    // licenseItemId siteye DÖNMEZ; eşleştirme server-side yapılır.
+    const replacedItemIds = new Set(
+      historyRows.map((h) => h.oldLicenseItemId).filter((x): x is string => !!x),
+    );
+    const replaceReasonByItem = new Map<string, string>();
+    for (const h of historyRows) {
+      if (h.oldLicenseItemId && !replaceReasonByItem.has(h.oldLicenseItemId)) {
+        replaceReasonByItem.set(h.oldLicenseItemId, h.reason);
+      }
+    }
 
     return {
       orderId: order.id,
@@ -1146,10 +1526,19 @@ export class AdminOrdersService {
           CryptoService.licenseItemAad(a.licenseItemId),
         );
         const masked = maskPayload(plain, a.productKind, a.payloadSchema);
+        const terminal = a.status !== 'active' && a.status !== 'suspended';
+        const replaced = terminal && replacedItemIds.has(a.licenseItemId);
         // licenseItemId DÖNMEZ (site iç id'yi görmez) — yalnız assignmentId aksiyon hedefidir.
         return {
           id: a.id,
+          replaced,
+          replaceReason: replaced ? (replaceReasonByItem.get(a.licenseItemId) ?? null) : null,
           remoteLineId: a.remoteLineId,
+          // BONUS gruplama (§7): bonus atama `bonus:<wooItemId>:<uuid>` sentetik satırındadır.
+          // originRemoteLineId, WP meta box'un önek AYRIŞTIRMADAN doğru ürün kaleminin altına
+          // gruplaması için TEK anahtardır (atamalar ve geçmiş AYNI alanı taşır).
+          originRemoteLineId: resolveOriginRemoteLineId(a.remoteLineId),
+          isBonus: isBonusRemoteLineId(a.remoteLineId),
           status: a.status,
           units: a.units,
           validUntil: a.validUntil,
@@ -1161,17 +1550,42 @@ export class AdminOrdersService {
           useCount: a.itemUseCount,
         };
       }),
-      history: historyRows.map((h) => ({
-        assignmentId: h.assignmentId,
-        remoteLineId: h.remoteLineId,
-        reason: h.reason,
-        actor: h.actor,
-        createdAt: h.createdAt,
-        oldMasked:
-          h.oldPayloadEnc && h.oldLicenseItemId
-            ? mask(this.crypto.decrypt(h.oldPayloadEnc, CryptoService.licenseItemAad(h.oldLicenseItemId)))
-            : '—',
-      })),
+      history: historyRows.map((h) => {
+        const remoteLineId = h.remoteLineId ?? '';
+        return {
+          assignmentId: h.assignmentId,
+          remoteLineId: h.remoteLineId,
+          // KRİTİK (kullanıcı bulgusu): bonus atamanın değişim geçmişi, WP tarafında satır
+          // eşleşmesi TAM `remoteLineId` üzerinden yapıldığı için düşüyordu (bonus satırın id'si
+          // `bonus:<item>:<uuid>`, Woo kalemi ise `<item>`). originRemoteLineId ile geçmiş de
+          // atamalarla AYNI şekilde gruplanır → bonus değişimi artık geçmişte görünür.
+          originRemoteLineId: remoteLineId ? resolveOriginRemoteLineId(remoteLineId) : null,
+          isBonus: remoteLineId ? isBonusRemoteLineId(remoteLineId) : false,
+          productName: h.productName ?? null,
+          remoteName: h.remoteName ?? null,
+          reason: h.reason,
+          actor: h.actor,
+          createdAt: h.createdAt,
+          oldMasked:
+            h.oldPayloadEnc && h.oldLicenseItemId
+              ? mask(
+                  this.crypto.decrypt(
+                    h.oldPayloadEnc,
+                    CryptoService.licenseItemAad(h.oldLicenseItemId),
+                  ),
+                )
+              : '—',
+          newMasked:
+            h.newPayloadEnc && h.newLicenseItemId
+              ? mask(
+                  this.crypto.decrypt(
+                    h.newPayloadEnc,
+                    CryptoService.licenseItemAad(h.newLicenseItemId),
+                  ),
+                )
+              : '—',
+        };
+      }),
     };
   }
 
@@ -1186,19 +1600,59 @@ export class AdminOrdersService {
    * account → yalnız secret-OLMAYAN alanlar (parola HİÇ dönmez). TAM değer yalnız kaynak siparişin loglu
    * reveal yolunda görülür. Yazma yok — salt-okunur.
    */
-  async listQuarantine() {
+  async listQuarantine(params: QuarantineQuery = {}) {
+    const limit = Math.min(Math.max(Math.trunc(params.limit ?? 500), 1), 5000);
+    // Satır çoğalması (leftJoin fan-out: aynı ölü key'in birden çok atama/soyağacı satırı) SQL
+    // LIMIT'i tüketebildiği için lisans-satırı bazında dedupe'tan ÖNCE daha geniş çekilir, sonra
+    // JS'te `limit`e kırpılır. Üst sınır sabit → bellek patlamaz.
+    const fetchLimit = Math.min(limit * 3 + 50, 20_000);
+
+    const search = (params.search ?? '').trim();
+    const like = search ? `%${search}%` : null;
+    // Tedarikçi zinciri: parti (batch) doğrudan tedarikçi taşımıyorsa satın alma emrinden gelir.
+    const supplierIdExpr = sql`coalesce(${batches.supplierId}, ${purchaseOrders.supplierId})`;
+
+    const conditions = [inArray(licenseItems.status, ['quarantined', 'voided'])];
+    if (params.status) conditions.push(eq(licenseItems.status, params.status));
+    if (params.productId) conditions.push(eq(licenseItems.productId, params.productId));
+    if (params.supplierId) conditions.push(sql`${supplierIdExpr} = ${params.supplierId}`);
+    if (like) {
+      // Aranabilir alanlar: ürün adı/SKU, müşteri e-postası, mağaza sipariş no, parti etiketi,
+      // tedarikçi adı. ANAHTAR İÇERİĞİ aranmaz (payload şifreli — düz metin sorgusu imkânsız).
+      const searchCond = or(
+        ilike(products.name, like),
+        ilike(products.sku, like),
+        ilike(orders.customerEmail, like),
+        ilike(orders.remoteOrderId, like),
+        ilike(batches.label, like),
+        ilike(suppliers.name, like),
+      );
+      if (searchCond) conditions.push(searchCond);
+    }
+
     const rows = await this.db
       .select({
         licenseItemId: licenseItems.id,
         payloadEnc: licenseItems.payloadEnc,
         status: licenseItems.status,
         assignedAt: licenseItems.assignedAt,
+        createdAt: licenseItems.createdAt,
+        productId: products.id,
         productName: products.name,
+        productSku: products.sku,
         productKind: products.kind,
         payloadSchema: products.payloadSchema,
+        batchId: batches.id,
+        batchCode: batches.label,
+        supplierId: sql<string | null>`${supplierIdExpr}`,
+        supplierName: suppliers.name,
         sourceOrderId: orders.id,
         sourceRemoteOrderId: orders.remoteOrderId,
         customerEmail: orders.customerEmail,
+        siteDomain: sites.domain,
+        siteType: sites.type,
+        siteWebhookUrl: sites.webhookUrl,
+        siteAdminOrderUrlTemplate: sites.adminOrderUrlTemplate,
         // Değişim soyağacı (varsa): eski key → yeni atama + sebep + zaman.
         replacedByAssignmentId: assignmentHistory.assignmentId,
         historyReason: assignmentHistory.reason,
@@ -1212,13 +1666,18 @@ export class AdminOrdersService {
       .leftJoin(assignments, eq(assignments.licenseItemId, licenseItems.id))
       .leftJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .leftJoin(orders, eq(assignments.orderId, orders.id))
+      .leftJoin(sites, eq(orders.siteId, sites.id))
+      // Tedarik zinciri (§12): parti → satın alma emri → tedarikçi. batch_id FK'siz plain uuid.
+      .leftJoin(batches, eq(licenseItems.batchId, batches.id))
+      .leftJoin(purchaseOrders, eq(batches.purchaseOrderId, purchaseOrders.id))
+      .leftJoin(suppliers, sql`${suppliers.id} = ${supplierIdExpr}`)
       // sebep (değişim): eski key = ah.old_license_item_id.
       .leftJoin(assignmentHistory, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
-      .where(inArray(licenseItems.status, ['quarantined', 'voided']))
-      // NULLS LAST: voided (recall) item'ların assignedAt'i NULL — DESC'te NULLS FIRST olup listenin
-      // başını kaplamasın (yeni quarantined tek-kullanım key'ler 500 sınırında kesilmesin).
-      .orderBy(sql`${licenseItems.assignedAt} DESC NULLS LAST`)
-      .limit(500);
+      .where(and(...conditions))
+      // voided (recall) item'ların assignedAt'i NULL → stok giriş tarihine (created_at) düş;
+      // aksi halde tüm recall kategorisi listenin sonunda kalıp pencereden düşerdi.
+      .orderBy(sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt}) DESC`)
+      .limit(fetchLimit);
 
     // audit_log fallback (detail() reasonRows deseni): düz-revoke (değişim değil) sebebi
     // audit_log.meta.reason'da → formerAssignmentId kümesi için topla (en yeni kazanır).
@@ -1302,7 +1761,9 @@ export class AdminOrdersService {
         const adjAt = adjAtByLi.get(r.licenseItemId) ?? null;
         return {
           licenseItemId: r.licenseItemId,
+          productId: r.productId,
           productName: r.productName,
+          sku: r.productSku,
           productKind: r.productKind,
           status: r.status,
           keyPreview: this.quarantineKeyPreview(
@@ -1311,12 +1772,33 @@ export class AdminOrdersService {
             r.productKind,
             r.payloadSchema,
           ),
+          // Tedarik izi (§12) — tedarikçiye "şu partiden şu anahtarlar bozuk" diye iletilebilsin.
+          batchId: r.batchId ?? null,
+          batchCode: r.batchCode ?? null,
+          supplierId: r.supplierId ?? null,
+          supplierName: r.supplierName ?? null,
+          // Stok girişi (import) tarihi — karantina tarihinden AYRI kavram.
+          createdAt: r.createdAt ?? null,
           sourceOrderId: r.sourceOrderId ?? null,
           sourceRemoteOrderId: r.sourceRemoteOrderId ?? null,
+          // Alan adı simetrisi (yeni tüketiciler için; source* alanları GERİYE DÖNÜK korunur).
+          orderId: r.sourceOrderId ?? null,
+          remoteOrderId: r.sourceRemoteOrderId ?? null,
+          siteDomain: r.siteDomain ?? null,
+          // Mağaza adminindeki kaynak sipariş — SALT LİNK (panel mağazaya bağlanmaz).
+          storeAdminUrl: buildStoreAdminUrl(
+            {
+              type: r.siteType,
+              domain: r.siteDomain,
+              webhookUrl: r.siteWebhookUrl,
+              adminOrderUrlTemplate: r.siteAdminOrderUrlTemplate,
+            },
+            r.sourceRemoteOrderId,
+          ),
           customerEmail: r.customerEmail ?? null,
           reason: r.historyReason ?? auditReason ?? adjReason ?? null,
           replacedByAssignmentId: r.replacedByAssignmentId ?? null,
-          quarantinedAt: r.historyAt ?? auditAt ?? adjAt ?? r.assignedAt ?? null,
+          quarantinedAt: r.historyAt ?? auditAt ?? adjAt ?? r.assignedAt ?? r.createdAt ?? null,
         };
       });
 
@@ -1326,7 +1808,32 @@ export class AdminOrdersService {
       const tb = b.quarantinedAt ? new Date(b.quarantinedAt).getTime() : 0;
       return tb - ta;
     });
-    return mapped;
+
+    // Tarih aralığı BİRLEŞİK `quarantinedAt` üzerinden uygulanır (değişim/audit/stok-düzeltme
+    // zamanlarının koalesansı — tek bir DB kolonu değil), bu yüzden filtre SQL'de değil burada
+    // çalışır. Pratik sonuç: aralık, yukarıdaki `fetchLimit` penceresi İÇİNDEN süzülür; çok eski
+    // aralıklar için `limit` yükseltilmelidir (uç dokümante edilmiştir).
+    const fromTs = params.from ? Date.parse(params.from) : Number.NaN;
+    // Yalnız TARİH verildiyse (YYYY-MM-DD) üst sınır gün SONUNA kadar kapsar — aksi halde
+    // "bugünden bugüne" seçimi 00:00 sınırında kalıp listeyi boş gösterirdi.
+    const rawTo = (params.to ?? '').trim();
+    const toParsed = rawTo ? Date.parse(rawTo) : Number.NaN;
+    const toTs =
+      !Number.isNaN(toParsed) && /^\d{4}-\d{2}-\d{2}$/.test(rawTo)
+        ? toParsed + 86_399_999
+        : toParsed;
+    const filtered =
+      Number.isNaN(fromTs) && Number.isNaN(toTs)
+        ? mapped
+        : mapped.filter((r) => {
+            const t = r.quarantinedAt ? new Date(r.quarantinedAt).getTime() : null;
+            if (t === null) return false;
+            if (!Number.isNaN(fromTs) && t < fromTs) return false;
+            if (!Number.isNaN(toTs) && t > toTs) return false;
+            return true;
+          });
+
+    return filtered.slice(0, limit);
   }
 
   /**

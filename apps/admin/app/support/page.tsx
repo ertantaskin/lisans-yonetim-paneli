@@ -1,11 +1,16 @@
-import { LifeBuoy } from 'lucide-react';
+import { LifeBuoy, TriangleAlert } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
-import { Card } from '../../components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { SupportTable } from '../../components/support-table';
 import { getReplacements, type ReplacementRow } from './queries';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Destek kuyruğu (§13) — müşterilerin mağazadan bildirdiği arızalı lisans/hesap talepleri.
+ * Operatör bu ekrandan ÇIKMADAN talebi okur, yanıtlar (yazışma) ve karar verir
+ * (onayla = değişim / bilgi iste / reddet).
+ */
 export default async function SupportPage() {
   let replacements: ReplacementRow[] = [];
   let error: string | null = null;
@@ -20,12 +25,18 @@ export default async function SupportPage() {
       <PageHeader
         icon={LifeBuoy}
         title="Destek"
-        description="Değişim/garanti talepleri — onayla (değiştir), reddet veya bilgi iste."
+        description="Müşterinin “çalışmıyor” diye bildirdiği lisans/hesap talepleri: talebi açın, yazışmadan yanıtlayın, ardından değişimi onaylayın, bilgi isteyin ya da reddedin."
       />
       {error ? (
-        <Card className="p-6">
-          <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
-        </Card>
+        <Alert variant="destructive">
+          <TriangleAlert />
+          <div className="min-w-0 flex-1">
+            <AlertTitle>Destek talepleri yüklenemedi</AlertTitle>
+            <AlertDescription>
+              API'ye ulaşılamadı: {error} — bağlantı düzelince sayfayı yenileyin.
+            </AlertDescription>
+          </div>
+        </Alert>
       ) : (
         <SupportTable replacements={replacements} />
       )}

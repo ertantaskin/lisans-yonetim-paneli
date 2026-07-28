@@ -93,6 +93,23 @@ function buildProductBody(formData: FormData, isUpdate = false): Record<string, 
 export interface FormState {
   ok: boolean;
   error?: string;
+  /**
+   * Eşleme kurulduktan SONRA geriye dönük çözülen bekleyen satırların özeti (§3).
+   * Kullanıcının şikâyeti buydu: "eşledim ama sipariş hâlâ eşlenmemiş görünüyor" — eşleme artık
+   * eski bekleyen satırlara da uygulanır ve sonucu burada raporlanır.
+   */
+  resolved?: { linked: number; delivered: number; stillPending: number };
+}
+
+/** Bekleyen satır çözümü sonucu (POST /v1/admin/pending-lines/resolve). */
+export interface ResolvePendingSummary {
+  scanned: number;
+  linked: number;
+  delivered: number;
+  stillPending: number;
+  noMapping: number;
+  skipped: number;
+  truncated: boolean;
 }
 
 /** Ürün oluşturma — useActionState uyumlu; doğrulama hatası (ör. multi⇒maxUses, account⇒schema)
@@ -240,9 +257,73 @@ export async function createMappingAction(
     );
     // Eşleme oluşturma artık ürün detayında (ürün-merkezli) → o sayfayı tazele.
     revalidatePath(`/products/${productId}`);
-    return { ok: true };
+
+    // GERİYE DÖNÜK UYGULAMA (§3): eşleme yapılmadan önce gelmiş ve product_id=NULL kalmış bekleyen
+    // satırlar, bu eşleme sayesinde artık çözülebilir. Kullanıcının bildirdiği hata tam buydu —
+    // eşledikten sonra sipariş hâlâ "eşlenmemiş" görünüyordu. OTOMATİK EŞLEME DEĞİL: yalnız
+    // operatörün AZ ÖNCE ELLE kurduğu eşleme, eski satırlara uygulanır.
+    // Best-effort: burada oluşan hata eşlemeyi başarısız GÖSTERMEZ (eşleme kaydı zaten oluştu).
+    let resolved: FormState['resolved'];
+    try {
+      const r = await apiPost<ResolvePendingSummary>(
+        '/v1/admin/pending-lines/resolve',
+        {
+          siteId,
+          remoteProductId,
+          ...(remoteVariationId ? { remoteVariationId } : {}),
+        },
+        await getActor(),
+      );
+      if (r && (r.linked > 0 || r.delivered > 0)) {
+        resolved = { linked: r.linked, delivered: r.delivered, stillPending: r.stillPending };
+        revalidatePath('/orders');
+        revalidatePath('/pending');
+        revalidatePath('/mappings');
+      }
+    } catch {
+      /* çözüm best-effort — operatör /mappings ekranından tekrar tetikleyebilir */
+    }
+
+    return { ok: true, ...(resolved ? { resolved } : {}) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
+/**
+ * Bekleyen (eşlemesiz) satırları MEVCUT eşlemelerle geriye dönük çöz + teslimatı dene (§3).
+ * Filtresiz çağrı tüm eşlemesiz satırları tarar (sunucuda 500 satır sınırı; `truncated` ile bildirilir).
+ * Yeni eşleme OLUŞTURMAZ — otomatik eşleştirme yoktur (güvenlik kuralı).
+ */
+export async function resolvePendingLinesAction(input: {
+  siteId?: string;
+  remoteProductId?: string;
+  remoteVariationId?: string | null;
+  orderId?: string;
+  lineId?: string;
+}): Promise<{ ok: boolean; result?: ResolvePendingSummary; error?: string }> {
+  try {
+    const result = await apiPost<ResolvePendingSummary>(
+      '/v1/admin/pending-lines/resolve',
+      {
+        ...(input.siteId ? { siteId: input.siteId } : {}),
+        ...(input.remoteProductId ? { remoteProductId: input.remoteProductId } : {}),
+        // null ANLAMLI ("varyasyonsuz satırlar") — undefined ise alan hiç gönderilmez.
+        ...(input.remoteVariationId !== undefined
+          ? { remoteVariationId: input.remoteVariationId }
+          : {}),
+        ...(input.orderId ? { orderId: input.orderId } : {}),
+        ...(input.lineId ? { lineId: input.lineId } : {}),
+      },
+      await getActor(),
+    );
+    revalidatePath('/mappings');
+    revalidatePath('/orders');
+    revalidatePath('/pending');
+    if (input.orderId) revalidatePath(`/orders/${input.orderId}`);
+    return { ok: true, result };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Bekleyen satırlar çözülemedi' };
   }
 }
 

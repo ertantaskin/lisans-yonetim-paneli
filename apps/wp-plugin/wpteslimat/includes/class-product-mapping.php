@@ -51,10 +51,11 @@ class Wpteslimat_Product_Mapping {
     /** Panel ürün türünü (kind) Türkçeleştir (ham enum kullanıcıya çıkmaz). */
     private static function kind_label($kind) {
         switch ($kind) {
-            case 'key':     return 'Key';
-            case 'account': return 'Hesap';
-            case 'code':    return 'Kod';
-            default:        return (string) $kind;
+            case 'key':     return __('Anahtar', 'wpteslimat');
+            case 'account': return __('Hesap', 'wpteslimat');
+            case 'code':    return __('Kod', 'wpteslimat');
+            case 'custom':  return __('Özel', 'wpteslimat');
+            default:        return __('Diğer', 'wpteslimat');
         }
     }
 

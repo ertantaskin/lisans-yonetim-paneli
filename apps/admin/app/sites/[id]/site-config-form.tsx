@@ -8,7 +8,7 @@ import {
   type TestConnectionState,
   type UpdateSiteState,
 } from '../actions';
-import { Input } from '../../../components/ui/input';
+import { Input, checkboxClass } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
 import { Field, FormSection, FieldRow } from '../../../components/ui/field';
@@ -102,7 +102,7 @@ export function SiteConfigForm({
                 name="dynamicQuotaEnabled"
                 type="checkbox"
                 defaultChecked={dynamicQuotaEnabled}
-                className="size-4 rounded border-border accent-primary"
+                className={checkboxClass}
               />
               Dinamik satış kotası
             </label>
@@ -162,7 +162,7 @@ export function SiteConfigForm({
                 name="sandbox"
                 type="checkbox"
                 defaultChecked={sandbox}
-                className="size-4 rounded border-border accent-primary"
+                className={checkboxClass}
               />
               Sandbox (test modu)
             </label>

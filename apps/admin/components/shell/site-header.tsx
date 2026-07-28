@@ -6,6 +6,8 @@ import { Search } from 'lucide-react';
 import { NAV } from './nav';
 import { ThemeToggle } from '../theme';
 import { PresenceIndicator } from '../presence-indicator';
+import { NotificationBell } from '../live/notification-bell';
+import { useLive } from '../live/live-provider';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { SidebarTrigger } from '../ui/sidebar';
@@ -74,26 +76,78 @@ export function SiteHeader() {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
+        {/*
+          Arama tetiği: dar ekranda YALNIZ ikon (kare, h-8 — diğer üst bar öğeleriyle aynı
+          yükseklik), `sm` ve üstünde metin + kısayol rozeti. Eskiden `w-full max-w-56` idi
+          ve dar ekranda diğer öğeleri eziyordu.
+        */}
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event('open-command'))}
-          className="group flex h-8 w-full max-w-56 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+          aria-label="Ara"
+          title="Ara (Ctrl+K)"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 sm:w-52 sm:justify-start sm:gap-2 sm:px-2.5 sm:text-xs"
         >
-          <Search className="size-3.5" />
-          <span className="flex-1 text-left">Ara…</span>
-          <kbd className="hidden items-center gap-0.5 rounded border border-border px-1 py-0.5 text-[10px] font-medium sm:inline-flex">
+          <Search className="size-4 shrink-0 sm:size-3.5" />
+          <span className="hidden flex-1 text-left sm:inline">Ara…</span>
+          <kbd className="hidden h-5 items-center rounded border border-border px-1.5 font-sans text-[10px] font-medium leading-none text-muted-foreground sm:inline-flex">
             Ctrl K
           </kbd>
         </button>
-        {/* Operatör çakışma uyarısı (§14) — aynı sayfada başka admin varsa görünür. */}
-        <PresenceIndicator />
-        <Badge variant="success" className="hidden sm:inline-flex">
-          <span className="size-1.5 rounded-full bg-current" />
-          CANLI
-        </Badge>
+
+        {/* Bildirim çanı — kendi isteğini AÇMAZ, paylaşılan canlı akıştan (useLive) okur. */}
+        <NotificationBell />
+
+        {/* Operatör çakışma uyarısı (§14) — aynı sayfada başka admin varsa görünür.
+            Metni uzun olduğundan dar ekranda gizlenir (üst bar taşmasın). */}
+        <div className="hidden h-8 items-center md:flex">
+          <PresenceIndicator />
+        </div>
+
+        <LiveStatus />
         <ThemeToggle />
       </div>
     </header>
+  );
+}
+
+/**
+ * Canlı akış durumu — GERÇEK duruma bağlı (eskiden sabit "CANLI" yazıyordu, yanıltıcıydı).
+ * Dar ekranda gizlidir; orada aynı bilgiyi bildirim çanının yanındaki uyarı ikonu verir.
+ */
+function LiveStatus() {
+  const { errorCount, updatedAt } = useLive();
+  const ok = errorCount === 0;
+  const connecting = ok && updatedAt === 0;
+
+  // updatedAt SSR'da her zaman 0 → sunucu/istemci ilk render'ı aynı (hydration uyumsuzluğu yok).
+  const last =
+    updatedAt > 0
+      ? new Date(updatedAt).toLocaleTimeString('tr-TR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          timeZone: 'Europe/Istanbul',
+        })
+      : null;
+
+  const title = connecting
+    ? 'Canlı akış başlatılıyor…'
+    : ok
+      ? `Canlı akış çalışıyor${last ? ` — son güncelleme ${last}` : ''}`
+      : `Canlı akışa ulaşılamıyor, yeniden deneniyor${last ? ` — son güncelleme ${last}` : ''}`;
+
+  return (
+    <Badge
+      variant={connecting ? 'outline' : ok ? 'success' : 'warning'}
+      className="hidden h-6 shrink-0 sm:inline-flex"
+      title={title}
+    >
+      <span className="size-1.5 rounded-full bg-current" />
+      {/* Renk tek başına bilgi taşımasın (WCAG 1.4.1) — durum metni ekran okuyucuda da net. */}
+      <span className="sr-only">Canlı akış durumu: </span>
+      {connecting ? 'BAĞLANIYOR' : ok ? 'CANLI' : 'BAĞLANTI YOK'}
+    </Badge>
   );
 }

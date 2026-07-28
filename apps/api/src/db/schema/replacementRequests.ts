@@ -59,5 +59,33 @@ export const replacementRequests = pgTable(
   ],
 );
 
+/**
+ * replacement_messages — destek talebi yazışması (§13). Admin ↔ müşteri çift yönlü mesaj
+ * dizisi; her mesajın yazarı KİMLİKTEN gelir (admin oturumu / site HMAC), gövdeden DEĞİL.
+ * internal=true olan mesaj yalnız panelde görünür (müşteriye gitmez). Sır ASLA yazılmaz.
+ */
+export const replacementMessages = pgTable(
+  'replacement_messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => replacementRequests.id, { onDelete: 'cascade' }),
+    /** 'admin' | 'customer' | 'system' */
+    authorType: text('author_type').notNull(),
+    /** Görünen ad (admin kullanıcı adı / 'Müşteri' / 'Sistem'). */
+    authorName: text('author_name').notNull(),
+    body: text('body').notNull(),
+    /** true ise iç not — müşteriye GÖSTERİLMEZ. */
+    internal: boolean('internal').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => [index('replacement_messages_request_idx').on(t.requestId, t.createdAt)],
+);
+
 export type ReplacementRequest = typeof replacementRequests.$inferSelect;
 export type NewReplacementRequest = typeof replacementRequests.$inferInsert;
+export type ReplacementMessage = typeof replacementMessages.$inferSelect;
+export type NewReplacementMessage = typeof replacementMessages.$inferInsert;

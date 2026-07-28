@@ -80,6 +80,12 @@ class Wpteslimat_Order_Sync {
         if (!Wpteslimat_Settings::is_configured()) return;
         if (Wpteslimat_Settings::is_clone()) return;
 
+        // (§7 "kim yaptı") İşi TETİKLEYEN mağaza yöneticisini siparişe kaydet: arka plan işinde
+        // (Action Scheduler) oturum YOKTUR → panel audit'i aksi halde 'system' derdi. Yalnız
+        // MAĞAZA YETKİLİSİ kaydedilir; ödeme sonrası müşteri oturumuyla tetiklenen otomatik push
+        // müşteri adına yazılmaz (audit'te yanıltıcı olurdu, panel tarafı 'system' görür).
+        self::remember_initiator($order_id);
+
         if (function_exists('as_enqueue_async_action')) {
             if (function_exists('as_has_scheduled_action')
                 && as_has_scheduled_action($hook, [$order_id], 'wpteslimat')) {
@@ -90,6 +96,35 @@ class Wpteslimat_Order_Sync {
             // Action Scheduler yok (nadir) → senkron fallback: eski, bloklayan ama çalışan davranış.
             $this->$method($order_id);
         }
+    }
+
+    /**
+     * (§7 izlenebilirlik) İşlemi başlatan mağaza yöneticisinin kullanıcı adını sipariş meta'sına
+     * yazar. Yalnız yetkili (manage_woocommerce / edit_shop_orders) oturumda çalışır → checkout
+     * yolunda (müşteri oturumu) ek DB yazımı YAPILMAZ. Değer değişmediyse tekrar kaydetmez.
+     */
+    private static function remember_initiator($order_id) {
+        if (!is_user_logged_in()) return;
+        if (!current_user_can('manage_woocommerce') && !current_user_can('edit_shop_orders')) return;
+        $user = wp_get_current_user();
+        if (!$user || !$user->exists() || !$user->user_login) return;
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+        $login = (string) $user->user_login;
+        if ((string) $order->get_meta('_wpteslimat_actor') === $login) return;
+        $order->update_meta_data('_wpteslimat_actor', $login);
+        $order->save();
+    }
+
+    /**
+     * Panel çağrısından hemen ÖNCE, işi tetikleyen kullanıcıyı (varsa) tek-seferlik aktör olarak
+     * ayarlar → arka plan işinde bile audit "wp:<yönetici>@<site>" olur. Kayıt yoksa no-op
+     * (panel istemcisi 'system'e düşer).
+     */
+    private static function apply_initiator($order) {
+        if (!is_a($order, 'WC_Order')) return;
+        $login = (string) $order->get_meta('_wpteslimat_actor');
+        if ($login !== '') Wpteslimat_Panel_Client::set_actor($login);
     }
 
     public function push($order_id) {
@@ -123,6 +158,7 @@ class Wpteslimat_Order_Sync {
             'lines'         => $lines,
         ];
 
+        self::apply_initiator($order);
         $res = Wpteslimat_Panel_Client::post('/v1/orders', $body);
         $this->log($order_id, 'push', $body, $res);
 
@@ -231,6 +267,7 @@ class Wpteslimat_Order_Sync {
         ];
 
         self::$syncing = true;
+        self::apply_initiator($order);
         $res = Wpteslimat_Panel_Client::post('/v1/orders', $body);
         $this->log($order_id, 'resync', $body, $res);
 
@@ -267,6 +304,7 @@ class Wpteslimat_Order_Sync {
 
         $reason = 'İade/iptal (' . wc_get_order_status_name($order->get_status()) . ')';
         $body = ['reason' => $reason];
+        self::apply_initiator($order);
         $res = Wpteslimat_Panel_Client::post(
             '/v1/orders/' . rawurlencode((string) $order_id) . '/revoke',
             $body
@@ -285,7 +323,13 @@ class Wpteslimat_Order_Sync {
                 $order->delete_meta_data('_wpteslimat_held_for_review');
             }
             $count = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
-            $order->add_order_note(sprintf('Teslimat: %d lisans geri alındı (%s).', $count, $reason));
+            $who = (string) $order->get_meta('_wpteslimat_actor');
+            $order->add_order_note(sprintf(
+                'Teslimat: %d lisans geri alındı (%s).%s',
+                $count,
+                $reason,
+                $who !== '' ? ' İşlemi başlatan: ' . $who . '.' : ''
+            ));
             $order->save();
         } else {
             // Başarısız → retry planla.
@@ -362,6 +406,7 @@ class Wpteslimat_Order_Sync {
 
         // Kısmi iade → satır-bazlı /refund ucu.
         $body = ['reason' => 'WooCommerce kısmi iade', 'lines' => $lines];
+        self::apply_initiator($order);
         $res = Wpteslimat_Panel_Client::post(
             '/v1/orders/' . rawurlencode((string) $order_id) . '/refund',
             $body

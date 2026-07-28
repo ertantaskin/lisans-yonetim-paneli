@@ -57,6 +57,8 @@ const STOCK_STATE: Record<string, string> = {
   revoked: 'Geri alınan',
   expired: 'Süresi dolan',
   voided: 'Geçersiz',
+  quarantined: 'Karantinada',
+  replaced: 'Değiştirildi',
 };
 export const stockStateLabel = (s: string) => lookup(STOCK_STATE, s);
 
@@ -101,8 +103,118 @@ const ASSIGNMENT_STATUS: Record<string, string> = {
   suspended: 'Askıda',
   revoked: 'Geri alındı',
   expired: 'Süresi doldu',
+  // Değişim sonrası eski atama: "iptal" DEĞİL — anahtar değiştirildi (kullanıcı geri bildirimi).
+  replaced: 'Değiştirildi',
+  quarantined: 'Karantinada',
 };
 export const assignmentStatusLabel = (s: string) => lookup(ASSIGNMENT_STATUS, s);
+
+// ── Lisans kalemi (license_items) durumu — envanter listeleri ────────────────
+const LICENSE_ITEM_STATUS: Record<string, string> = {
+  available: 'Stokta',
+  reserved: 'Rezerve',
+  assigned: 'Teslim edildi',
+  quarantined: 'Karantinada',
+  voided: 'Geçersiz kılındı',
+  expired: 'Süresi doldu',
+  // Atama tarafından türeyen ama envanter listelerinde de görülebilen durumlar.
+  suspended: 'Askıda',
+  replaced: 'Değiştirildi',
+  revoked: 'Geri alındı',
+  depleted: 'Tükendi',
+};
+export const licenseItemStatusLabel = (s: string) => lookup(LICENSE_ITEM_STATUS, s);
+
+// ── Satır neden bekliyor? (sipariş detayı tanısı) ────────────────────────────
+const PENDING_REASON: Record<string, string> = {
+  unmapped: 'Mağaza ürünü panelde eşlenmemiş',
+  no_stock: 'Stok yok',
+  held: 'Sipariş incelemede',
+  canceled: 'Satır iptal/iade edilmiş',
+  release_gated: 'Ön sipariş — satış tarihi gelmedi',
+  all_or_nothing: 'Tamamı hazır değil (hep-ya-hiç politikası)',
+};
+export const pendingReasonLabel = (r: string) => lookup(PENDING_REASON, r);
+
+/** Bekleme nedeni için operatörün atması gereken adım (tek cümle). */
+const PENDING_REASON_ACTION: Record<string, string> = {
+  unmapped: 'Ürün Eşleştirme ekranından bu mağaza ürününü panel ürününe eşleyin, sonra “Eşlemeyi uygula” deyin.',
+  no_stock: 'Ürüne stok girin; stok gelince bekleyen satır otomatik tamamlanır.',
+  held: 'İnceleme Kuyruğu’ndan siparişi onaylayın ya da reddedin.',
+  canceled: 'İşlem gerekmiyor — iade/iptal edilen satır yeniden teslim edilmez.',
+  release_gated: 'Ürünün satış tarihini bekleyin veya ürün ayarından tarihi değiştirin.',
+  all_or_nothing: 'Satırın tamamını karşılayacak stok girin ya da politikayı kısmi teslimata çevirin.',
+};
+export const pendingReasonAction = (r: string) => lookup(PENDING_REASON_ACTION, r);
+
+/**
+ * Satır tanısı (`GET /v1/admin/pending-lines/diagnose/:orderId` → `LineDiagnosisReason`).
+ * `PENDING_REASON` ile AYRI vokabülerdir: orası `detail()`'in kaba nedenini (`no_stock`),
+ * burası tanı ucunun ayrıntılı nedenini (`out-of-stock`, `mapping-available`…) karşılar.
+ */
+const DIAGNOSIS_REASON: Record<string, string> = {
+  ok: 'Teslim edildi',
+  ready: 'Teslime hazır',
+  'mapping-available': 'Eşleme hazır — satıra uygulanmayı bekliyor',
+  unmapped: 'Mağaza ürünü panelde eşlenmemiş',
+  'no-remote-id': 'Mağaza ürün kimliği kayıtlı değil',
+  held: 'Sipariş güvenlik incelemesinde',
+  'out-of-stock': 'Stok yetersiz',
+  preorder: 'Ön sipariş — satış tarihi gelmedi',
+  canceled: 'Satır iade/iptal edilmiş',
+};
+export const diagnosisReasonLabel = (r: string) => lookup(DIAGNOSIS_REASON, r);
+
+// ── Destek / değişim talebi durumu ───────────────────────────────────────────
+const SUPPORT_STATUS: Record<string, string> = {
+  open: 'Açık',
+  info_requested: 'Bilgi bekleniyor',
+  approved: 'Onaylandı',
+  rejected: 'Reddedildi',
+};
+export const supportStatusLabel = (s: string) => lookup(SUPPORT_STATUS, s);
+
+const MESSAGE_AUTHOR: Record<string, string> = {
+  admin: 'Yönetici',
+  customer: 'Müşteri',
+  system: 'Sistem',
+};
+export const messageAuthorLabel = (t: string) => lookup(MESSAGE_AUTHOR, t);
+
+// ── Rozet durumu (ui/badge → StatusBadge) ────────────────────────────────────
+// `StatusBadge` TEK bileşende birden çok vokabüleri gösterir (sipariş / atama / destek /
+// mail / lisans kalemi). Etiketler burada birleşir → bileşende yalnız renk + ikon eşlemesi
+// kalır. Büyük/küçük harf tutarlıdır (eski sözlükte "teslim edildi" ile "Geri alındı"
+// karışıktı — aynı satırda iki farklı dil görünüyordu).
+const BADGE_STATUS: Record<string, string> = {
+  // Sipariş / atama
+  fulfilled: 'Teslim edildi',
+  active: 'Aktif',
+  partial: 'Kısmi teslim',
+  pending: 'Bekliyor',
+  suspended: 'Askıda',
+  expired: 'Süresi doldu',
+  revoked: 'Geri alındı',
+  replaced: 'Değiştirildi',
+  held_for_review: 'İncelemede',
+  canceled: 'İptal',
+  unmapped: 'Eşlenmemiş',
+  // Destek / değişim talebi
+  open: 'Açık',
+  info_requested: 'Bilgi bekleniyor',
+  approved: 'Onaylandı',
+  rejected: 'Reddedildi',
+  // Mail kaydı
+  sent: 'Gönderildi',
+  delivered: 'İletildi',
+  queued: 'Kuyrukta',
+  failed: 'Başarısız',
+  bounced: 'Geri döndü',
+  // Lisans kalemi
+  quarantined: 'Karantinada',
+  voided: 'Geçersiz kılındı',
+};
+export const badgeStatusLabel = (s: string) => lookup(BADGE_STATUS, s);
 
 // ── Site tipi ────────────────────────────────────────────────────────────────
 const SITE_TYPE: Record<string, string> = {
@@ -145,8 +257,36 @@ const EVENT_TYPE: Record<string, string> = {
   revoked: 'Geri alındı',
   review_released: 'İnceleme onaylandı',
   review_rejected: 'İnceleme reddedildi',
+  // Eşleme sonradan yapıldı → eski bekleyen satır geriye dönük bağlandı (§3).
+  mapping_resolved: 'Eşleme uygulandı',
+  assignment_created: 'Lisans atandı',
+  replaced: 'Lisans değiştirildi',
+  bonus_assigned: 'Bonus lisans eklendi',
+  suspended: 'Askıya alındı',
+  unsuspended: 'Askı kaldırıldı',
+  resent: 'Mail yeniden gönderildi',
 };
 export const eventTypeLabel = (t: string) => lookup(EVENT_TYPE, t);
+
+// ── Denetim kaydı işlemi (audit_log.action) ──────────────────────────────────
+// Anahtarlar `audit_action` PG enum'unun TAM listesidir (apps/api/src/db/schema/enums.ts).
+const AUDIT_ACTION: Record<string, string> = {
+  reveal: 'Lisans görüntülendi',
+  replace: 'Lisans değiştirildi',
+  revoke: 'Lisans iptal edildi',
+  suspend: 'Lisans askıya alındı',
+  unsuspend: 'Lisans askıdan çıkarıldı',
+  import: 'Stok içe aktarıldı',
+  login: 'Panele giriş',
+  assign: 'Lisans atandı',
+  resend: 'Teslimat maili yeniden gönderildi',
+  site_update: 'Site güncellendi',
+  anonymize: 'Veri anonimleştirildi',
+  receive: 'Tedarik teslim alındı',
+  recall: 'Parti geri çekildi',
+  adjust: 'Stok düzeltildi',
+};
+export const auditActionLabel = (a: string) => lookup(AUDIT_ACTION, a);
 
 // ── Güvenlik olayı tipi ──────────────────────────────────────────────────────
 // Anahtarlar GERÇEK `security_events.type` değerleridir (kaynak: apps/api/src/security/

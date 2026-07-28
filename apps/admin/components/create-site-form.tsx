@@ -2,7 +2,7 @@
 import { useActionState } from 'react';
 import { Plus, TriangleAlert } from 'lucide-react';
 import { createSiteAction, type CreateSiteState } from '../app/sites/actions';
-import { Input } from './ui/input';
+import { Input, checkboxClass } from './ui/input';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Field, FieldRow } from './ui/field';
@@ -63,7 +63,7 @@ export function CreateSiteForm() {
               id="cs-sandbox"
               name="sandbox"
               type="checkbox"
-              className="size-4 rounded border-border accent-primary"
+              className={checkboxClass}
             />
             Test modunu etkinleştir
           </label>

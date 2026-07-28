@@ -107,12 +107,15 @@ export async function apiSend<T>(
 export async function apiRaw(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
-  opts?: { body?: unknown; actor?: string },
+  opts?: { body?: unknown; actor?: string; ifNoneMatch?: string },
 ): Promise<Response> {
   const withBody = opts?.body !== undefined;
+  const h = headers(withBody, opts?.actor);
+  // Koşullu istek (canlı akış poll'u): ETag eşleşirse API 304 döner → gövde hiç taşınmaz.
+  if (opts?.ifNoneMatch) h['if-none-match'] = opts.ifNoneMatch;
   return fetch(`${API_URL}${path}`, {
     method,
-    headers: headers(withBody, opts?.actor),
+    headers: h,
     body: withBody ? JSON.stringify(opts!.body) : undefined,
     cache: 'no-store',
   });
@@ -196,6 +199,39 @@ export interface CatalogSummaryRow {
   productCount: number;
   /** Kataloğun en son ne zaman senkronlandığı (ISO); hiç senkron yoksa null. */
   lastSyncedAt: string | null;
+}
+
+/**
+ * GET /v1/admin/pending-lines — mağaza ürünü panelde eşlenmediği için TESLİM EDİLEMEYEN
+ * sipariş satırlarının site + mağaza ürünü bazında gruplanmış özeti (§3).
+ * `mappedNow: true` = operatör eşlemeyi SONRADAN yaptı → tek tıkla geriye dönük çözülebilir.
+ */
+export interface PendingLineGroup {
+  siteId: string;
+  siteDomain: string;
+  remoteProductId: string | null;
+  remoteVariationId: string | null;
+  remoteName: string | null;
+  lineCount: number;
+  orderCount: number;
+  totalQty: number;
+  oldestAt: string;
+  mappedNow: boolean;
+  heldCount: number;
+  reason: 'mapping-available' | 'unmapped' | 'no-remote-id';
+  hint: string;
+}
+
+export interface PendingLinesSummary {
+  groups: PendingLineGroup[];
+  totals: {
+    groupCount: number;
+    lineCount: number;
+    orderCount: number;
+    totalQty: number;
+    resolvableGroups: number;
+    resolvableLines: number;
+  };
 }
 
 /**

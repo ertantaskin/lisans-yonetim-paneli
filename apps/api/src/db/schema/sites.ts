@@ -32,6 +32,13 @@ export const sites = pgTable('sites', {
   /** Geri kanal webhook hedefi (WP eklentisi) — null ise webhook gönderilmez (§2). */
   webhookUrl: text('webhook_url'),
   /**
+   * Mağaza admin panelinde siparişi AÇMAK için URL şablonu (§17). `{orderId}` yer tutucusu
+   * remoteOrderId ile değiştirilir. null ise site tipinden varsayılan türetilir
+   * (woocommerce → /wp-admin/admin.php?page=wc-orders&action=edit&id={orderId}).
+   * SALT YÖNLENDİRME: panel mağaza adminine bağlanmaz/oturum açmaz — yalnız link üretir.
+   */
+  adminOrderUrlTemplate: text('admin_order_url_template'),
+  /**
    * Günlük satış kotası (§5) — bu site günde en fazla bu kadar sipariş push edebilir.
    * null = limitsiz. SERT tavan: aşımda 429 (Retry-After) döner ve sipariş REDDEDİLİR.
    * (Kontrol OrdersService.createOrder içinde, idempotency lookup'ından sonra + site

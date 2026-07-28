@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
@@ -10,6 +11,91 @@ export interface DashboardRecentOrder {
   customerEmail: string;
   status: string;
   createdAt: string;
+}
+
+// ─── İş istasyonu ("canlı") akışı (§13/§17) ────────────────────────────────────────────
+// Panel mesai boyunca AÇIK kalacak bir iş istasyonu ekranı besler. N ayrı poller yerine TEK
+// hafif uç: aynı anlık görüntüde son siparişler + son destek talepleri + bildirim çanı + KPI.
+// Sır/payload ASLA dönmez (yalnız kimlik/durum/sayaç metinleri).
+
+/** Canlı akış: son sipariş satırı (özet — payload/anahtar YOK). */
+export interface LiveOrderRow {
+  id: string;
+  remoteOrderId: string;
+  siteId: string;
+  /**
+   * Sipariş sahibi mağazanın alan adı. orders.site_id FK'si ON DELETE RESTRICT olduğundan
+   * siparişi olan site SİLİNEMEZ → pratikte hep dolu; join savunma amaçlı LEFT (yalnız
+   * teorik boşlukta '' döner, UI tarafı nullable ile uğraşmaz).
+   */
+  siteDomain: string;
+  customerEmail: string;
+  status: string;
+  /** §8 inceleme kuyruğunda mı (held_for_review) — teslimat manuel onay bekliyor. */
+  held: boolean;
+  lineCount: number;
+  fulfilledLines: number;
+  createdAt: string;
+}
+
+/** Canlı akış: son destek/değişim talebi satırı (talep gerekçesi KIRPILIR). */
+export interface LiveSupportRow {
+  id: string;
+  status: string;
+  customerEmail: string;
+  orderId: string;
+  remoteOrderId: string | null;
+  siteDomain: string | null;
+  /** Talebin ilk ~140 karakteri (uzunsa '…' eklenir) — liste satırına sığsın. */
+  reasonExcerpt: string;
+  withinWarranty: boolean;
+  createdAt: string;
+}
+
+/** Canlı akış: bildirim çanı satırı (readAt null = okunmamış). */
+export interface LiveNotificationRow {
+  id: string;
+  type: string;
+  severity: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  readAt: string | null;
+}
+
+/** Canlı akış: üst şerit sayaçları (hepsi TEK sorguda toplanır). */
+export interface LiveStats {
+  /** Açık destek/değişim talebi (open + info_requested). */
+  openSupport: number;
+  /** İnceleme kuyruğundaki sipariş (held_for_review = true). */
+  heldOrders: number;
+  /** Eşlemesi OLAN ama teslim bekleyen satır (stok bekliyor). */
+  pendingLines: number;
+  /** Eşlemesi OLMAYAN bekleyen satır (operatör eşleme yapmalı). */
+  unmappedLines: number;
+  /** Düşük stok ürünü sayısı (summary().lowStockCount ile AYNI tanım). */
+  lowStockProducts: number;
+}
+
+/** Tek çağrılık iş istasyonu anlık görüntüsü. */
+export interface LiveSnapshot {
+  /** Sunucu zamanı (ISO). ETag hesabına DAHİL DEĞİL — yoksa her istek değişirdi. */
+  ts: string;
+  orders: LiveOrderRow[];
+  supports: LiveSupportRow[];
+  notifications: { unread: number; recent: LiveNotificationRow[] };
+  stats: LiveStats;
+}
+
+/** Canlı uç varsayılan/limit sınırları — yanıt küçük kalsın (poll sıcak yolu). */
+const LIVE_DEFAULT_LIMIT = 15;
+const LIVE_MAX_LIMIT = 50;
+/** Destek talebi gerekçesinin listede gösterilen azami uzunluğu. */
+const REASON_EXCERPT_LEN = 140;
+
+/** pg timestamptz (Date | string) → ISO. postgres.js Date döndürür; string de tolere edilir. */
+function toIso(value: Date | string): string {
+  return new Date(value).toISOString();
 }
 
 /**
@@ -172,5 +258,243 @@ export class DashboardService {
       // pg timestamptz → ISO (Date ile normalize; string/Date ikisini de karşılar).
       createdAt: new Date(r.created_at).toISOString(),
     }));
+  }
+
+  // ─── İş istasyonu ("canlı") akışı ────────────────────────────────────────────────────
+
+  /**
+   * Tek çağrılık iş istasyonu anlık görüntüsü (§13/§17). Ekran mesai boyunca açık kalıp
+   * ~15 sn'de bir çağrılacağı için TASARIM GEREĞİ ucuzdur:
+   *  - toplam 6 sorgu (N ayrı poller yerine tek uç),
+   *  - hepsi index'li (orders_created_idx / order_lines_order_idx / notifications_created_idx /
+   *    notifications_unread_idx / orders_held_idx / order_lines_pending_product_idx),
+   *  - yanıt limit ile küçük tutulur (max 50),
+   *  - `etag` ile değişiklik yoksa controller 304 döner → günün büyük kısmında bant genişliği ~0.
+   *
+   * ETag `ts` HARİÇ tüm gövdeden türetilir; aksi halde her istek "değişti" görünürdü.
+   * @returns gövde (`snapshot`) + zayıf ETag (`etag`)
+   */
+  async live(limit = LIVE_DEFAULT_LIMIT): Promise<{ snapshot: LiveSnapshot; etag: string }> {
+    const n =
+      Number.isFinite(limit) && limit > 0
+        ? Math.min(Math.trunc(limit), LIVE_MAX_LIMIT)
+        : LIVE_DEFAULT_LIMIT;
+
+    const [orders, supports, recentNotifications, unread, counters, lowStockProducts] =
+      await Promise.all([
+        this.liveOrders(n),
+        this.liveSupports(n),
+        this.liveNotifications(n),
+        this.unreadNotificationCount(),
+        this.liveCounters(),
+        this.lowStockCount(),
+      ]);
+
+    const snapshot: LiveSnapshot = {
+      ts: new Date().toISOString(),
+      orders,
+      supports,
+      notifications: { unread, recent: recentNotifications },
+      stats: { ...counters, lowStockProducts },
+    };
+
+    // Deterministik özet: `ts` DIŞARIDA bırakılır. Nesneler sabit anahtar sırasıyla
+    // kurulduğundan JSON.stringify çıktısı da deterministiktir (aynı veri → aynı ETag).
+    const digest = createHash('sha1')
+      .update(
+        JSON.stringify({
+          orders: snapshot.orders,
+          supports: snapshot.supports,
+          notifications: snapshot.notifications,
+          stats: snapshot.stats,
+        }),
+      )
+      .digest('hex');
+
+    return { snapshot, etag: `W/"${digest}"` };
+  }
+
+  /**
+   * En yeni N sipariş + mağaza alan adı + satır sayaçları. Önce orders_created_idx ile
+   * yalnız N satır seçilir, sonra LATERAL ile o N sipariş için satır agregasyonu yapılır
+   * → tüm order_lines taranmaz (poll sıcak yolu ucuz kalır).
+   */
+  private async liveOrders(limit: number): Promise<LiveOrderRow[]> {
+    const rows = await rawRows<{
+      id: string;
+      remote_order_id: string;
+      site_id: string;
+      site_domain: string | null;
+      customer_email: string;
+      status: string;
+      held_for_review: boolean;
+      line_count: number;
+      fulfilled_lines: number;
+      created_at: Date | string;
+    }>(this.db, sql`
+      SELECT o.id,
+             o.remote_order_id,
+             o.site_id,
+             s.domain AS site_domain,
+             o.customer_email,
+             o.status::text AS status,
+             o.held_for_review,
+             coalesce(l.line_count, 0) AS line_count,
+             coalesce(l.fulfilled_lines, 0) AS fulfilled_lines,
+             o.created_at
+      FROM (
+        SELECT id, remote_order_id, site_id, customer_email, status, held_for_review, created_at
+        FROM orders
+        -- id tiebreak: aynı ms'de oluşan iki sipariş poll'lar arasında YER DEĞİŞTİRMESİN.
+        -- Sıra kararsız olsaydı veri değişmeden ETag değişir, 304 kazanımı kaybolurdu.
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      ) o
+      LEFT JOIN sites s ON s.id = o.site_id
+      LEFT JOIN LATERAL (
+        SELECT count(*)::int AS line_count,
+               (count(*) FILTER (WHERE ol.status = 'fulfilled'))::int AS fulfilled_lines
+        FROM order_lines ol
+        WHERE ol.order_id = o.id
+      ) l ON true
+      ORDER BY o.created_at DESC, o.id DESC;
+    `);
+
+    return rows.map((r) => ({
+      id: r.id,
+      remoteOrderId: r.remote_order_id,
+      siteId: r.site_id,
+      siteDomain: r.site_domain ?? '',
+      customerEmail: r.customer_email,
+      status: r.status,
+      held: r.held_for_review === true,
+      lineCount: Number(r.line_count ?? 0),
+      fulfilledLines: Number(r.fulfilled_lines ?? 0),
+      createdAt: toIso(r.created_at),
+    }));
+  }
+
+  /**
+   * En yeni N destek/değişim talebi. Gerekçe SQL'de kırpılır (uzun serbest metin ağı
+   * gereksiz meşgul etmesin); kırpıldıysa '…' eklenir. Sır dönmez (payload/anahtar yok).
+   */
+  private async liveSupports(limit: number): Promise<LiveSupportRow[]> {
+    const rows = await rawRows<{
+      id: string;
+      status: string;
+      customer_email: string;
+      order_id: string;
+      remote_order_id: string | null;
+      site_domain: string | null;
+      reason_excerpt: string | null;
+      reason_len: number;
+      within_warranty: boolean;
+      created_at: Date | string;
+    }>(this.db, sql`
+      SELECT r.id,
+             r.status::text AS status,
+             r.customer_email,
+             r.order_id,
+             o.remote_order_id,
+             s.domain AS site_domain,
+             left(r.reason, ${REASON_EXCERPT_LEN}::int) AS reason_excerpt,
+             length(r.reason)::int AS reason_len,
+             r.within_warranty,
+             r.created_at
+      FROM replacement_requests r
+      LEFT JOIN orders o ON o.id = r.order_id
+      LEFT JOIN sites s ON s.id = r.site_id
+      -- id tiebreak → sıra kararlı (ETag flap etmez, bkz. liveOrders).
+      ORDER BY r.created_at DESC, r.id DESC
+      LIMIT ${limit};
+    `);
+
+    return rows.map((r) => {
+      const excerpt = r.reason_excerpt ?? '';
+      return {
+        id: r.id,
+        status: r.status,
+        customerEmail: r.customer_email,
+        orderId: r.order_id,
+        remoteOrderId: r.remote_order_id ?? null,
+        siteDomain: r.site_domain ?? null,
+        reasonExcerpt: Number(r.reason_len ?? 0) > REASON_EXCERPT_LEN ? `${excerpt}…` : excerpt,
+        withinWarranty: r.within_warranty === true,
+        createdAt: toIso(r.created_at),
+      };
+    });
+  }
+
+  /** En yeni N bildirim (çan dropdown'ı). notifications_created_idx'ten karşılanır. */
+  private async liveNotifications(limit: number): Promise<LiveNotificationRow[]> {
+    const rows = await rawRows<{
+      id: string;
+      type: string;
+      severity: string;
+      title: string;
+      message: string;
+      created_at: Date | string;
+      read_at: Date | string | null;
+    }>(this.db, sql`
+      SELECT id, type, severity, title, message, created_at, read_at
+      FROM notifications
+      -- id tiebreak → sıra kararlı (ETag flap etmez, bkz. liveOrders).
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${limit};
+    `);
+
+    return rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      severity: r.severity,
+      title: r.title,
+      message: r.message,
+      createdAt: toIso(r.created_at),
+      readAt: r.read_at ? toIso(r.read_at) : null,
+    }));
+  }
+
+  /** Okunmamış bildirim sayısı (çan rozeti). notifications_unread_idx (partial) kapsar. */
+  private async unreadNotificationCount(): Promise<number> {
+    const rows = await rawRows<{ c: number }>(this.db, sql`
+      SELECT count(*)::int AS c FROM notifications WHERE read_at IS NULL;
+    `);
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  /**
+   * Üst şerit sayaçları TEK sorguda (skalar alt-sorgular). Ayrı ayrı 4 gidiş-dönüş yerine
+   * tek round-trip → 15 sn'lik poll'da ağ/bağlantı maliyeti düşer.
+   * pendingLines: eşlemesi OLAN bekleyen satır · unmappedLines: eşlemesi OLMAYAN (product_id NULL).
+   * İkisinde de iptal (canceled=true) satırlar HARİÇ — onlar asla teslim edilmez (§2).
+   */
+  private async liveCounters(): Promise<Omit<LiveStats, 'lowStockProducts'>> {
+    const rows = await rawRows<{
+      open_support: number;
+      held_orders: number;
+      pending_lines: number;
+      unmapped_lines: number;
+    }>(this.db, sql`
+      SELECT
+        (SELECT count(*)::int FROM replacement_requests
+          WHERE status IN ('open', 'info_requested')) AS open_support,
+        (SELECT count(*)::int FROM orders
+          WHERE held_for_review = true) AS held_orders,
+        (SELECT count(*)::int FROM order_lines
+          WHERE product_id IS NOT NULL
+            AND status IN ('pending', 'partial')
+            AND canceled = false) AS pending_lines,
+        (SELECT count(*)::int FROM order_lines
+          WHERE product_id IS NULL
+            AND status IN ('pending', 'partial')
+            AND canceled = false) AS unmapped_lines;
+    `);
+    const r = rows[0];
+    return {
+      openSupport: Number(r?.open_support ?? 0),
+      heldOrders: Number(r?.held_orders ?? 0),
+      pendingLines: Number(r?.pending_lines ?? 0),
+      unmappedLines: Number(r?.unmapped_lines ?? 0),
+    };
   }
 }

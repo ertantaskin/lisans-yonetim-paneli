@@ -8,9 +8,11 @@ import {
   PauseCircle,
   Mail,
   Loader2,
+  RefreshCw,
   ShieldAlert,
   type LucideIcon,
 } from 'lucide-react';
+import { badgeStatusLabel } from '../../lib/labels';
 import { cn } from '../../lib/utils';
 
 const badgeVariants = cva(
@@ -38,39 +40,44 @@ export function Badge({ className, variant, ...props }: BadgeProps) {
   return <span className={cn(badgeVariants({ variant }), className)} {...props} />;
 }
 
-// ── Durum → renk/etiket/ikon (§17: tek durum dili, pill+ikon) ────────────────
-type StatusMeta = { variant: NonNullable<BadgeProps['variant']>; label: string; icon: LucideIcon };
+// ── Durum → renk/ikon (§17: tek durum dili, pill+ikon) ───────────────────────
+// METİN burada DEĞİL: Türkçe etiket `lib/labels.ts` → `badgeStatusLabel` (TEK KAYNAK).
+// Burada yalnız GÖRSEL eşleme (renk varyantı + ikon) durur.
+type StatusMeta = { variant: NonNullable<BadgeProps['variant']>; icon: LucideIcon };
 
 const STATUS: Record<string, StatusMeta> = {
-  fulfilled: { variant: 'success', label: 'teslim edildi', icon: CheckCircle2 },
-  active: { variant: 'success', label: 'aktif', icon: CheckCircle2 },
-  sent: { variant: 'success', label: 'gönderildi', icon: Mail },
-  delivered: { variant: 'success', label: 'iletildi', icon: CheckCircle2 },
-  partial: { variant: 'warning', label: 'kısmi', icon: Clock },
-  pending: { variant: 'warning', label: 'bekliyor', icon: Clock },
+  fulfilled: { variant: 'success', icon: CheckCircle2 },
+  active: { variant: 'success', icon: CheckCircle2 },
+  sent: { variant: 'success', icon: Mail },
+  delivered: { variant: 'success', icon: CheckCircle2 },
+  partial: { variant: 'warning', icon: Clock },
+  pending: { variant: 'warning', icon: Clock },
+  held_for_review: { variant: 'warning', icon: ShieldAlert },
   // Değişim/garanti talepleri (§13).
-  open: { variant: 'warning', label: 'açık', icon: Clock },
-  info_requested: { variant: 'warning', label: 'bilgi istendi', icon: Mail },
-  approved: { variant: 'success', label: 'onaylandı', icon: CheckCircle2 },
-  rejected: { variant: 'danger', label: 'reddedildi', icon: Ban },
-  queued: { variant: 'warning', label: 'kuyrukta', icon: Loader2 },
-  suspended: { variant: 'warning', label: 'askıda', icon: PauseCircle },
-  expired: { variant: 'warning', label: 'süresi doldu', icon: Clock },
-  unmapped: { variant: 'danger', label: 'eşlenmemiş', icon: ShieldAlert },
-  revoked: { variant: 'danger', label: 'Geri alındı', icon: Ban },
-  failed: { variant: 'danger', label: 'başarısız', icon: AlertTriangle },
-  bounced: { variant: 'danger', label: 'geri döndü', icon: AlertTriangle },
-  quarantined: { variant: 'danger', label: 'Karantina', icon: ShieldAlert },
-  voided: { variant: 'danger', label: 'Geçersiz', icon: Ban },
+  open: { variant: 'warning', icon: Clock },
+  info_requested: { variant: 'warning', icon: Mail },
+  approved: { variant: 'success', icon: CheckCircle2 },
+  rejected: { variant: 'danger', icon: Ban },
+  queued: { variant: 'warning', icon: Loader2 },
+  suspended: { variant: 'warning', icon: PauseCircle },
+  expired: { variant: 'warning', icon: Clock },
+  unmapped: { variant: 'danger', icon: ShieldAlert },
+  revoked: { variant: 'danger', icon: Ban },
+  replaced: { variant: 'neutral', icon: RefreshCw },
+  canceled: { variant: 'neutral', icon: Ban },
+  failed: { variant: 'danger', icon: AlertTriangle },
+  bounced: { variant: 'danger', icon: AlertTriangle },
+  quarantined: { variant: 'danger', icon: ShieldAlert },
+  voided: { variant: 'danger', icon: Ban },
 };
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
-  const meta = STATUS[status] ?? { variant: 'neutral' as const, label: status, icon: Clock };
+  const meta = STATUS[status] ?? { variant: 'neutral' as const, icon: Clock };
   const Icon = meta.icon;
   return (
     <Badge variant={meta.variant} className={className}>
       <Icon />
-      {meta.label}
+      {badgeStatusLabel(status)}
     </Badge>
   );
 }

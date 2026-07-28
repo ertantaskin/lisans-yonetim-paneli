@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
@@ -9,6 +18,16 @@ import { ReplacementsService } from './replacements.service';
 // @AdminActor (x-admin-actor header) kaynağından gelir; body ile SPOOF edilemez (supply-ops deseni).
 const ApproveBody = z.object({ actor: z.string().optional() });
 const NoteBody = z.object({ note: z.string().min(1), actor: z.string().optional() });
+
+/**
+ * Admin mesajı. `internal=true` → yalnız panelde görünen İÇ NOT (müşteriye ne mail gider
+ * ne de site-facing uçtan döner). Varsayılan false = müşteriye görünen yanıt + bildirim maili.
+ */
+const AdminMessageBody = z.object({
+  body: z.string().min(1).max(4000),
+  internal: z.boolean().optional(),
+});
+type AdminMessageBody = z.infer<typeof AdminMessageBody>;
 
 /** Admin: değişim talebi operasyonları (§13). ADMIN_TOKEN gerektirir. */
 @Controller('admin/replacements')
@@ -52,5 +71,25 @@ export class AdminReplacementsController {
   ) {
     // actor yalnız oturumdan (header) gelir; reject/approve ile tutarlı → izlenebilir (spoof edilemez).
     return this.replacements.requestInfo(id, body.note, actor);
+  }
+
+  /** Yazışmanın TAMAMI (iç notlar DAHİL — yalnız admin yolu). */
+  @Get(':id/messages')
+  messages(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.replacements.listMessages(id, { includeInternal: true });
+  }
+
+  /**
+   * Cevap yaz (kullanıcı isteği: "CEVAP VERME gibi bir şansımız olmuyor").
+   * Mesaj eklemek talebin DURUMUNU DEĞİŞTİRMEZ — durum geçişi ayrı aksiyondur
+   * (approve/reject/request-info). Kapanmış talebe de yazılabilir (izlenebilirlik).
+   */
+  @Post(':id/messages')
+  addMessage(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodBody(AdminMessageBody)) body: AdminMessageBody,
+    @AdminActor() actor: string,
+  ) {
+    return this.replacements.addAdminMessage(id, body, actor);
   }
 }

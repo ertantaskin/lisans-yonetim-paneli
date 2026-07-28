@@ -16,7 +16,7 @@ import {
   testConnectionAction,
   type TestConnectionResult,
 } from './actions';
-import { Input, selectClass } from '../../../components/ui/input';
+import { Input, checkboxClass, selectClass } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
 import { Field } from '../../../components/ui/field';
 import {
@@ -255,7 +255,7 @@ export function Wizard() {
                     id="wz-sandbox"
                     name="sandbox"
                     type="checkbox"
-                    className="size-4 rounded border-border accent-primary"
+                    className={checkboxClass}
                   />
                   Test modunu etkinleştir
                 </label>

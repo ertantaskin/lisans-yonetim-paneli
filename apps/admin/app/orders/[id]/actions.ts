@@ -1,7 +1,35 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, type RevealResult } from '../../../lib/api';
+import { apiGet, apiPost, type RevealResult } from '../../../lib/api';
 import { getActor, isOwner } from '../../../lib/session';
+
+/**
+ * Tanı ucunun ('GET /v1/admin/pending-lines/diagnose/:orderId') yanıt şekli — YEREL (export
+ * edilmez: 'use server' dosyası yalnız async fonksiyon export eder; tip export'u da bilinçli
+ * olarak minimum tutulur). Alan adları backend ile birebir aynıdır.
+ */
+interface DiagnosisLine {
+  lineId: string;
+  reason: string;
+  action: string;
+  message: string;
+}
+interface DiagnosisResponse {
+  resolvableCount: number;
+  lines: DiagnosisLine[];
+}
+
+/** POST /v1/admin/pending-lines/resolve yanıtı (ResolvePendingResult) — yerel. */
+interface ResolveResponse {
+  scanned: number;
+  linked: number;
+  delivered: number;
+  stillPending: number;
+  noMapping: number;
+  skipped: number;
+  truncated: boolean;
+  details: Array<{ outcome: string; message: string }>;
+}
 
 export interface RevealState {
   assignmentId?: string;
@@ -47,6 +75,9 @@ export interface MutationState {
  * "Kalanları Ata" — satırın kalan adedini atar (§13). Backend added=0 ile SESSİZ no-op dönebilir
  * (stok yok / satır iptal-iade / sipariş incelemede / all-or-nothing eksik / ön-sipariş) — bu
  * durumları yeşil "başarılı" gibi göstermeyip operatöre dürüst bir uyarı veririz (denetim bulgusu).
+ *
+ * added=0 olduğunda GERÇEK sebebi tanı ucundan okuruz (kullanıcı geri bildirimi: "atanacak bir şey
+ * yok diyor ama neden olduğunu anlamıyorum"). Tanı erişilemezse eski genel mesaja düşülür.
  */
 export async function completeLineAction(lineId: string, orderId: string): Promise<MutationState> {
   if (!lineId || !orderId) return { ok: false, error: 'Geçersiz istek' };
@@ -60,15 +91,91 @@ export async function completeLineAction(lineId: string, orderId: string): Promi
     revalidatePath(`/orders/${orderId}`);
     const added = typeof res?.added === 'number' ? res.added : null;
     if (added === 0) {
-      return {
-        ok: false,
-        error:
-          'Atanacak bir şey yok — stok tükenmiş, satır iptal/iade edilmiş ya da sipariş incelemede olabilir.',
-      };
+      return { ok: false, error: await diagnoseLineMessage(orderId, lineId) };
     }
     return { ok: true, message: added != null ? `${added} lisans atandı.` : 'Kalanlar atandı.' };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Atama başarısız' };
+  }
+}
+
+/**
+ * Satırın NEDEN atanamadığını tanı ucundan tek cümleyle getirir (best-effort).
+ * Tanı opsiyonel katmandır: uç hata verirse genel (eski) mesaj döner, akış bozulmaz.
+ */
+async function diagnoseLineMessage(orderId: string, lineId: string): Promise<string> {
+  const generic =
+    'Atanacak bir şey yok — stok tükenmiş, satır iptal/iade edilmiş ya da sipariş incelemede olabilir.';
+  try {
+    const diag = await apiGet<DiagnosisResponse>(`/v1/admin/pending-lines/diagnose/${orderId}`);
+    const line = diag.lines?.find((l) => l.lineId === lineId);
+    if (!line?.message) return generic;
+    return line.reason === 'mapping-available'
+      ? `${line.message} (Bu satır için “Eşlemeyi Uygula” düğmesini kullanın.)`
+      : line.message;
+  } catch {
+    return generic;
+  }
+}
+
+/**
+ * "Eşlemeyi Uygula" (§3/§13): operatörün SONRADAN tanımladığı eşlemeyi, eşleme öncesinden kalmış
+ * BEKLEYEN satırlara geriye dönük uygular ve normal atama makinesiyle teslimatı dener.
+ *
+ * KRİTİK: yeni eşleme OLUŞTURMAZ / TAHMİN ETMEZ — yalnız `site_product_mappings` içindeki AKTİF,
+ * elle tanımlanmış eşlemeler uygulanır (otomatik eşleştirme yok, güvenlik kuralı). lineId
+ * verilirse tek satır, verilmezse siparişin tüm bekleyen satırları taranır.
+ *
+ * Sonuç SESSİZCE "başarılı" gösterilmez: hiçbir satır bağlanamadıysa ok=false + gerçek sebep.
+ */
+export async function resolvePendingAction(
+  orderId: string,
+  lineId?: string,
+): Promise<MutationState> {
+  if (!orderId) return { ok: false, error: 'Geçersiz istek' };
+  try {
+    const actor = await getActor();
+    const res = await apiPost<ResolveResponse>(
+      '/v1/admin/pending-lines/resolve',
+      lineId ? { orderId, lineId } : { orderId },
+      actor,
+    );
+    revalidatePath(`/orders/${orderId}`);
+    revalidatePath('/orders');
+
+    const scanned = res?.scanned ?? 0;
+    const linked = res?.linked ?? 0;
+    const delivered = res?.delivered ?? 0;
+    const stillPending = res?.stillPending ?? 0;
+    const noMapping = res?.noMapping ?? 0;
+
+    if (scanned === 0) {
+      return {
+        ok: false,
+        error:
+          'Uygulanacak bekleyen satır bulunamadı — satır bu arada çözülmüş ya da iptal/iade edilmiş olabilir.',
+      };
+    }
+    if (linked === 0) {
+      // Bağlanan satır yoksa: eşleme yok (en sık) ya da satır bu arada değişti → gerçek sebebi ver.
+      const first = res?.details?.[0]?.message;
+      return {
+        ok: false,
+        error:
+          first ??
+          (noMapping > 0
+            ? 'Bu mağaza ürünü için aktif eşleme yok — önce Ürün Eşleştirme ekranından eşleyin.'
+            : 'Hiçbir satır bağlanamadı.'),
+      };
+    }
+
+    const parts = [`${linked} satır bağlandı`];
+    if (delivered > 0) parts.push(`${delivered} satır teslim edildi`);
+    if (stillPending > 0) parts.push(`${stillPending} satır hâlâ bekliyor`);
+    if (res?.truncated) parts.push('liste sınıra takıldı, tekrar çalıştırın');
+    return { ok: true, message: `${parts.join(', ')}.` };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Eşleme uygulanamadı' };
   }
 }
 

@@ -2,7 +2,7 @@
 import type { Table } from '@tanstack/react-table';
 import { X } from 'lucide-react';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
+import { SearchInput } from '../ui/search-input';
 import { DataTableViewOptions } from './data-table-view-options';
 import { DataTableFacetedFilter, type FacetOption } from './data-table-faceted-filter';
 
@@ -31,12 +31,12 @@ export function DataTableToolbar<TData>({
     <div className="flex items-center justify-between gap-2 pb-3">
       <div className="flex flex-1 flex-wrap items-center gap-2">
         {searchCol && (
-          <Input
-            aria-label={searchPlaceholder}
+          <SearchInput
+            ariaLabel={searchPlaceholder}
             placeholder={searchPlaceholder}
             value={(searchCol.getFilterValue() as string) ?? ''}
-            onChange={(e) => searchCol.setFilterValue(e.target.value)}
-            className="h-8 w-40 lg:w-64"
+            onValueChange={(v) => searchCol.setFilterValue(v)}
+            className="w-44 lg:w-72"
           />
         )}
         {facets.map((f) => {

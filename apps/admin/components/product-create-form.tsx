@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { ProductRow } from '../lib/api';
-import { Input, selectClass } from './ui/input';
+import { Input, checkboxClass, selectClass } from './ui/input';
 import { Button } from './ui/button';
 import { Field, FormSection, FieldRow } from './ui/field';
 
@@ -198,7 +198,7 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
                     type="checkbox"
                     checked={f.secret}
                     onChange={(e) => setField(i, { secret: e.target.checked })}
-                    className="size-4 accent-primary"
+                    className={checkboxClass}
                   />
                   Gizli
                 </label>
@@ -211,7 +211,7 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
                     type="checkbox"
                     checked={f.required}
                     onChange={(e) => setField(i, { required: e.target.checked })}
-                    className="size-4 accent-primary"
+                    className={checkboxClass}
                   />
                   Zorunlu
                 </label>
@@ -325,7 +325,7 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
                 name="stockless"
                 value="on"
                 defaultChecked={defaults?.stockless ?? false}
-                className="size-4 accent-primary"
+                className={checkboxClass}
               />
               <span className="text-sm text-muted-foreground">Stok gelmeden satışa aç</span>
             </div>

@@ -1,15 +1,17 @@
-import { Link2, Store, PackageSearch } from 'lucide-react';
+import { Link2, Store, PackageSearch, Clock } from 'lucide-react';
 import {
   apiGet,
   type UnmappedRow,
   type ProductRow,
   type CatalogSummaryRow,
   type CatalogRow,
+  type PendingLinesSummary,
 } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { UnmappedTable } from '../../components/unmapped-table';
 import { CatalogTable } from '../../components/catalog-table';
+import { PendingLinesPanel } from '../../components/pending-lines-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,8 +39,10 @@ export default async function MappingsPage({
   let rows: UnmappedRow[] = [];
   let products: ProductRow[] = [];
   let catalog: CatalogRow[] = [];
+  let pending: PendingLinesSummary | null = null;
   let error: string | null = null;
   let catalogError: string | null = null;
+  let pendingError: string | null = null;
   try {
     [summary, rows, products] = await Promise.all([
       apiGet<CatalogSummaryRow[]>('/v1/admin/catalog/summary'),
@@ -47,6 +51,12 @@ export default async function MappingsPage({
     ]);
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
+  }
+  // Bekleyen satır özeti AYRI try/catch: yeni uç geçici hata verse bile eşleme ekranı çalışsın.
+  try {
+    pending = await apiGet<PendingLinesSummary>('/v1/admin/pending-lines');
+  } catch (e) {
+    pendingError = e instanceof Error ? e.message : 'Bekleyen satır özeti alınamadı';
   }
   // Katalog fetch'i AYRI try/catch: tek bir bozuk ?site= (400) ya da geçici katalog hatası TÜM
   // sayfayı (site seçici + reaktif "Eşlenmemiş Gelen Ürünler" güvenlik ağı dâhil) boşaltmasın.
@@ -107,6 +117,30 @@ export default async function MappingsPage({
               eşleyin.
             </p>
             <UnmappedTable rows={rows} products={products} />
+          </section>
+
+          {/* Eşleme SONRADAN yapıldığında eski satırlar kendiliğinden çözülmez (teslimat motoru
+              product_id üzerinden tarar, eşlemesiz satırda o alan NULL'dır). Bu bölüm takılı
+              satırları gösterir ve mevcut eşlemeyi geriye dönük uygular. */}
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Clock className="size-4 text-muted-foreground" aria-hidden />
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                Eşleme Bekleyen Sipariş Satırları
+              </h2>
+            </div>
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              Mağaza ürünü panelde eşli olmadığı için teslim edilemeyen satırlar. Ürünü eşledikten
+              sonra “Eşlemeyi Uygula” ile bu eski siparişler de teslimata alınır — yeni eşleme
+              oluşturulmaz, yalnız sizin kurduğunuz eşleme geçmişe uygulanır.
+            </p>
+            {pendingError ? (
+              <p role="alert" className="text-sm text-destructive">
+                Bekleyen satır özeti alınamadı: {pendingError}
+              </p>
+            ) : (
+              <PendingLinesPanel summary={pending} />
+            )}
           </section>
         </div>
       )}

@@ -65,14 +65,19 @@ class Wpteslimat_Admin_Metabox {
     /** Değiştir/askıya al/bonus/tekrar-mail: manage_woocommerce. */
     private static function can_operate() { return current_user_can('manage_woocommerce'); }
 
+    /**
+     * Atama durumu → Türkçe etiket. HAM enum (active/revoked/…) kullanıcıya ASLA çıkmaz;
+     * bilinmeyen/yeni bir durum gelirse teknik kod yerine nötr "Bilinmiyor" gösterilir.
+     */
     private static function asg_status_label($s) {
         switch ($s) {
-            case 'active':    return 'Aktif';
-            case 'suspended': return 'Askıda';
-            case 'revoked':   return 'İptal';
-            case 'expired':   return 'Süresi doldu';
-            case 'replaced':  return 'Değiştirildi';
-            default:          return $s;
+            case 'active':      return 'Aktif';
+            case 'suspended':   return 'Askıda';
+            case 'revoked':     return 'İptal';
+            case 'expired':     return 'Süresi doldu';
+            case 'replaced':    return 'Değiştirildi';
+            case 'quarantined': return 'Değiştirildi';
+            default:            return 'Bilinmiyor';
         }
     }
 
@@ -82,10 +87,32 @@ class Wpteslimat_Admin_Metabox {
             case 'partial':   return 'Kısmi teslim';
             case 'fulfilled': return 'Tamamlandı';
             case 'revoked':   return 'İptal';
+            case 'expired':   return 'Süresi doldu';
             case 'held':      return 'İncelemede';
             case 'unmapped':  return 'Ürün eşlenmemiş';
-            default:          return $s ?: 'bilinmiyor';
+            default:          return 'Bilinmiyor';
         }
+    }
+
+    /**
+     * Panel audit aktörünü ("wp:ahmet@magaza.com", "admin", "system") operatöre okunur hâle getirir.
+     * Panel yanıt şekli değişirse ham değere düşer (asla PHP hatası vermez).
+     */
+    private static function actor_label($actor) {
+        $actor = is_scalar($actor) ? trim((string) $actor) : '';
+        if ($actor === '') return '';
+        if (strpos($actor, 'wp:') === 0) {
+            $rest = substr($actor, 3);
+            $at = strrpos($rest, '@');
+            $user = ($at !== false) ? substr($rest, 0, $at) : $rest;
+            $user = trim((string) $user);
+            if ($user === 'system' || $user === '') return __('otomatik işlem', 'wpteslimat');
+            /* translators: %s = mağaza (WordPress) kullanıcı adı */
+            return sprintf(__('%s (mağaza)', 'wpteslimat'), $user);
+        }
+        if ($actor === 'system') return __('otomatik işlem', 'wpteslimat');
+        if ($actor === 'admin')  return __('panel yöneticisi', 'wpteslimat');
+        return $actor;
     }
 
     /**
@@ -108,18 +135,88 @@ class Wpteslimat_Admin_Metabox {
         return $view;
     }
 
-    /** Bu atamalar bu Woo kalemine mi ait? remoteLineId == item_id VEYA bonus:<item_id>:… */
+    /**
+     * Panel satır kimliği (remoteLineId) bu Woo sipariş kalemine mi ait?
+     *
+     * İki biçim eşleşir:
+     *   - "<item_id>"                 → normal sipariş kalemi
+     *   - "bonus:<item_id>:<uuid>"    → o kaleme eklenen sentetik bonus satırı (panel bonusAssign)
+     *
+     * ATAMALAR ve DEĞİŞİM GEÇMİŞİ bu TEK fonksiyondan geçer. Daha önce geçmiş tam eşitlikle
+     * (`=== $item_id`) süzülüyordu; bonus satırının kimliği hiçbir Woo kalemiyle birebir
+     * eşleşmediği için BONUS bir lisans değiştirildiğinde eski anahtar kartta "İptal" görünüyor
+     * ama değişim geçmişine HİÇ düşmüyordu (kullanıcı hata bildirimi). Ortak eşleştirme bunu kapatır.
+     */
+    private static function line_matches($remote_line_id, $item_id) {
+        $rl = (string) $remote_line_id;
+        $iid = (string) $item_id;
+        if ($iid === '') return false;
+        return $rl === $iid || strpos($rl, 'bonus:' . $iid . ':') === 0;
+    }
+
+    /** Bu atamalar bu Woo kalemine mi ait? (normal satır + o kalemin bonus satırları) */
     private static function assignments_for_line($view, $item_id) {
         $out = [];
         $items = (isset($view['assignments']) && is_array($view['assignments'])) ? $view['assignments'] : [];
-        $needle = 'bonus:' . $item_id . ':';
         foreach ($items as $a) {
-            $rl = isset($a['remoteLineId']) ? (string) $a['remoteLineId'] : '';
-            if ($rl === (string) $item_id || strpos($rl, $needle) === 0) {
+            if (!is_array($a)) continue;
+            if (self::line_matches(isset($a['remoteLineId']) ? $a['remoteLineId'] : '', $item_id)) {
                 $out[] = $a;
             }
         }
         return $out;
+    }
+
+    /**
+     * Bu Woo kalemine ait değişim geçmişi (bonus satırların geçmişi DÂHİL — assignments ile
+     * aynı eşleştirme). Panel `history` alanını hiç döndürmezse boş dizi (savunmacı).
+     */
+    private static function history_for_line($view, $item_id) {
+        $out = [];
+        $rows = (isset($view['history']) && is_array($view['history'])) ? $view['history'] : [];
+        foreach ($rows as $h) {
+            if (!is_array($h)) continue;
+            if (self::line_matches(isset($h['remoteLineId']) ? $h['remoteLineId'] : '', $item_id)) {
+                $out[] = $h;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Değişim sonucu ölen anahtarları tespit eder → kartta "İptal" yerine "Değiştirildi" yazılır.
+     *
+     * Panel, değişimde eski atamayı `revoked` yapar (gerçek iade ile AYNI durum kodu) ve değişim
+     * kaydını `assignment_history`'ye yazar; history satırı YENİ atamanın id'sini taşır, eskisininkini
+     * DEĞİL. Bu yüzden eski atama id ile doğrudan işaretlenemiyor. Eşleştirme sırası:
+     *   1) `oldAssignmentId` (panel ileride eklerse — KESİN eşleşme, tercih edilir),
+     *   2) `oldMasked` ↔ atamanın `maskedPayload`'ı (panelde ikisi de AYNI mask() ile üretilir;
+     *      key/kod ürünlerinde birebir tutar — bonus/değişim yolu zaten yalnız tek-kullanımlık ürün).
+     * Eşleşme bulunamazsa hiçbir şey değişmez (mevcut "İptal" etiketi korunur) — güvenli düşüş.
+     *
+     * @return array{ids:array<string,true>, masked:array<string,true>} arama kümeleri
+     */
+    private static function replaced_lookup($history) {
+        $ids = [];
+        $masked = [];
+        foreach ((array) $history as $h) {
+            if (!is_array($h)) continue;
+            $oid = isset($h['oldAssignmentId']) ? (string) $h['oldAssignmentId'] : '';
+            if ($oid !== '') $ids[$oid] = true;
+            $om = isset($h['oldMasked']) ? (string) $h['oldMasked'] : '';
+            if ($om !== '' && $om !== '—') $masked[$om] = true;
+        }
+        return ['ids' => $ids, 'masked' => $masked];
+    }
+
+    /** Atama bir DEĞİŞİM sonucu mu öldü (iade değil)? — replaced_lookup kümelerine bakar. */
+    private static function is_replaced($a, $lookup) {
+        $status = isset($a['status']) ? (string) $a['status'] : '';
+        if ($status !== 'revoked' && $status !== 'quarantined') return false;
+        $aid = isset($a['id']) ? (string) $a['id'] : '';
+        if ($aid !== '' && !empty($lookup['ids'][$aid])) return true;
+        $mp = isset($a['maskedPayload']) ? (string) $a['maskedPayload'] : '';
+        return $mp !== '' && !empty($lookup['masked'][$mp]);
     }
 
     /** Durum → renkli pill CSS sınıfı (bilinmeyen → nötr). */
@@ -178,18 +275,27 @@ class Wpteslimat_Admin_Metabox {
         .wpt-history{border-top:1px solid #f0f0f1;background:#fbfbfc}
         .wpt-history>summary{padding:6px 10px;font-size:11px;color:#646970;cursor:pointer}
         .wpt-history ul{margin:0;padding:0 10px 8px 26px;font-size:11px;color:#646970}
+        .wpt-history--scroll ul{max-height:150px;overflow-y:auto}
         .wpt-history li{margin:2px 0}
         .wpt-history code{background:#f0f0f1;border-radius:3px;padding:0 4px}
+        .wpt-history__meta{color:#8c8f94}
         .wpt-side-status{display:inline-flex;align-items:center;font-size:11px;font-weight:600;line-height:1;padding:3px 9px;border-radius:999px;border:1px solid #dcdcde;background:#f6f7f7;color:#3c434a}
         </style>
         <?php
     }
 
-    /** Tek atama satırı (maskeli değer + durum pill + key-bazlı aksiyonlar). */
-    private static function render_asg_row($a, $can_reveal, $can_op) {
+    /**
+     * Tek atama satırı (maskeli değer + durum pill + key-bazlı aksiyonlar).
+     *
+     * @param array|null $lookup replaced_lookup() çıktısı — verilirse değişimle ölen anahtar
+     *                           "İptal" yerine "Değiştirildi" etiketiyle gösterilir.
+     */
+    private static function render_asg_row($a, $can_reveal, $can_op, $lookup = null) {
         $aid = isset($a['id']) ? (string) $a['id'] : '';
         if ($aid === '') return;
         $status = isset($a['status']) ? (string) $a['status'] : '';
+        // Değişimle ölen anahtar iade DEĞİLDİR → operatöre "Değiştirildi" olarak göster.
+        $replaced = is_array($lookup) && self::is_replaced($a, $lookup);
         $is_active = ($status === 'active');
         $is_suspended = ($status === 'suspended');
         $is_bonus = isset($a['remoteLineId']) && strpos((string) $a['remoteLineId'], 'bonus:') === 0;
@@ -211,7 +317,9 @@ class Wpteslimat_Admin_Metabox {
         }
         echo '</div>';
 
-        echo '<span class="wpt-pill ' . esc_attr(self::pill_class($status)) . '">' . esc_html(self::asg_status_label($status)) . '</span>';
+        $pill_status = $replaced ? 'replaced' : $status;
+        echo '<span class="wpt-pill ' . esc_attr(self::pill_class($pill_status)) . '">'
+            . esc_html(self::asg_status_label($pill_status)) . '</span>';
         if ($is_bonus) echo '<span class="wpt-meta wpt-meta--bonus">' . esc_html__('Bonus', 'wpteslimat') . '</span>';
         if (!empty($a['maxUses']) && (int) $a['maxUses'] > 1) {
             echo '<span class="wpt-meta">' . esc_html((int) ($a['useCount'] ?? 0)) . '/' . esc_html((int) $a['maxUses']) . ' kullanım</span>';
@@ -241,6 +349,39 @@ class Wpteslimat_Admin_Metabox {
         }
         echo '</div>';
         echo '</li>';
+    }
+
+    /**
+     * Değişim geçmişi bloğu — "hangi eski anahtar, neden, KİM tarafından, ne zaman değiştirildi".
+     * Varsayılan AÇIK (operatör tıklamadan görsün); 5'ten fazla kayıtta kendi içinde kaydırılır,
+     * böylece sipariş ekranı uzamaz. Panel yanıtındaki her alan opsiyonel kabul edilir (eksik
+     * alan PHP hatası üretmez; yalnız o parça gösterilmez).
+     */
+    private static function render_history($hist) {
+        if (empty($hist) || !is_array($hist)) return;
+        $n = count($hist);
+        $scroll = $n > 5 ? ' wpt-history--scroll' : '';
+        echo '<details class="wpt-history' . $scroll . '" open><summary>'
+            . esc_html__('Değişim geçmişi', 'wpteslimat') . ' (' . intval($n) . ')</summary>';
+        echo '<ul>';
+        foreach ($hist as $h) {
+            if (!is_array($h)) continue;
+            $old    = isset($h['oldMasked']) ? (string) $h['oldMasked'] : '—';
+            $reason = isset($h['reason']) ? trim((string) $h['reason']) : '';
+            $who    = self::actor_label(isset($h['actor']) ? $h['actor'] : '');
+            $when   = !empty($h['createdAt']) ? Wpteslimat_My_Account::format_date($h['createdAt']) : '';
+
+            echo '<li><code>' . esc_html($old) . '</code>';
+            if ($reason !== '') echo ' — ' . esc_html($reason);
+            $meta = [];
+            if ($who !== '')  $meta[] = $who;
+            if ($when !== '') $meta[] = $when;
+            if (!empty($meta)) {
+                echo ' <span class="wpt-history__meta">· ' . esc_html(implode(' · ', $meta)) . '</span>';
+            }
+            echo '</li>';
+        }
+        echo '</ul></details>';
     }
 
     /**
@@ -281,33 +422,21 @@ class Wpteslimat_Admin_Metabox {
         echo '<span class="wpt-line-head__count">' . $summary . '</span>';
         echo '</div>';
 
+        // Bu satıra ait değişim geçmişi (bonus satırların geçmişi de DÂHİL — ortak eşleştirme).
+        $hist = self::history_for_line($view, $item_id);
+        $lookup = self::replaced_lookup($hist);
+
         if (!empty($mine)) {
             // 5+ anahtarda kaydır → sipariş ekranı sonsuz uzamaz.
             $scroll = $total > 5 ? ' wpt-keys--scroll' : '';
             echo '<ul class="wpt-keys' . $scroll . '">';
-            foreach ($mine as $a) self::render_asg_row($a, $can_reveal, $can_op);
+            foreach ($mine as $a) self::render_asg_row($a, $can_reveal, $can_op, $lookup);
             echo '</ul>';
         } else {
             echo '<div class="wpt-empty">' . esc_html__('Bu ürün için henüz teslim edilmiş lisans yok.', 'wpteslimat') . '</div>';
         }
 
-        // Bu satıra ait değişim geçmişi (eski anahtarlar) — katlanır (varsayılan kapalı, yer kaplamaz).
-        $hist = [];
-        if (isset($view['history']) && is_array($view['history'])) {
-            foreach ($view['history'] as $h) {
-                if (isset($h['remoteLineId']) && (string) $h['remoteLineId'] === (string) $item_id) $hist[] = $h;
-            }
-        }
-        if (!empty($hist)) {
-            echo '<details class="wpt-history"><summary>' . esc_html__('Değişim geçmişi', 'wpteslimat') . ' (' . count($hist) . ')</summary>';
-            echo '<ul>';
-            foreach ($hist as $h) {
-                $old = isset($h['oldMasked']) ? $h['oldMasked'] : '—';
-                $reason = isset($h['reason']) ? $h['reason'] : '';
-                echo '<li><code>' . esc_html($old) . '</code>' . ($reason !== '' ? ' — ' . esc_html($reason) : '') . '</li>';
-            }
-            echo '</ul></details>';
-        }
+        self::render_history($hist);
 
         // Ürün-bazlı "Bonus Ekle" — kartın alt aksiyonu (key-bazlı aksiyonlardan görsel olarak ayrı).
         if ($can_op) {
@@ -328,10 +457,13 @@ class Wpteslimat_Admin_Metabox {
             echo '<p><em>' . esc_html__('Bu ortam (klon/staging) lisans işlemlerini yürütemez.', 'wpteslimat') . '</em></p>';
             return;
         }
-        $local_status = $order->get_meta('_wpteslimat_status');
+        $local_status = (string) $order->get_meta('_wpteslimat_status');
         if (!$order->get_meta('_wpteslimat_order_id')) {
-            echo '<p><strong>Durum:</strong> ' . esc_html(self::order_status_label($local_status)) . '</p>';
-            echo '<p><em>Henüz panele iletilmedi.</em></p>';
+            // Henüz iletilmemiş siparişte "Durum: Bilinmiyor" satırı bilgi taşımaz → tek net cümle.
+            if ($local_status !== '') {
+                echo '<p><strong>Durum:</strong> ' . esc_html(self::order_status_label($local_status)) . '</p>';
+            }
+            echo '<p><em>' . esc_html__('Henüz panele iletilmedi.', 'wpteslimat') . '</em></p>';
             return;
         }
 
@@ -344,7 +476,9 @@ class Wpteslimat_Admin_Metabox {
 
         $live_status = isset($view['status']) ? (string) $view['status'] : '';
         $panel_held = !empty($view['held']);
-        $display = $live_status !== '' ? self::order_status_label($live_status) : ($local_status ?: 'bilinmiyor');
+        // Ham enum (fulfilled/partial/…) operatöre ASLA çıkmaz — canlı durum yoksa yerel meta da
+        // aynı Türkçe sözlükten geçer.
+        $display = self::order_status_label($live_status !== '' ? $live_status : (string) $local_status);
         echo '<p><strong>Durum:</strong> ' . esc_html($display) . '</p>';
 
         // held meta idempotent temizle/göster.
@@ -360,25 +494,40 @@ class Wpteslimat_Admin_Metabox {
 
         echo '<p style="color:#787c82;font-size:12px">' . esc_html__('Lisanslar ve işlemler her ürünün altında (sipariş kalemleri) görünür.', 'wpteslimat') . '</p>';
 
-        // Güncel Woo kalemlerine bağlanamayan atamalar (ör. kalem Woo\'dan silinmiş) — burada göster ki kaybolmasın.
+        // Güncel Woo kalemlerine bağlanamayan atamalar (ör. kalem Woo'dan silinmiş, ya da ESKİ
+        // biçimli `bonus:<uuid>` satırı — içinde kalem id'si yok) — burada göster ki kaybolmasın.
+        // Geçmişleri de aynı ölçütle burada listelenir; aksi halde hiçbir kartta görünmezlerdi.
         $item_ids = array_map('strval', array_keys($order->get_items('line_item')));
+        $matches_any = static function ($remote_line_id) use ($item_ids) {
+            foreach ($item_ids as $iid) {
+                if (self::line_matches($remote_line_id, $iid)) return true;
+            }
+            return false;
+        };
+
         $orphans = [];
         $asgs = (isset($view['assignments']) && is_array($view['assignments'])) ? $view['assignments'] : [];
         foreach ($asgs as $a) {
-            $rl = isset($a['remoteLineId']) ? (string) $a['remoteLineId'] : '';
-            $matched = in_array($rl, $item_ids, true);
-            if (!$matched && strpos($rl, 'bonus:') === 0) {
-                foreach ($item_ids as $iid) {
-                    if (strpos($rl, 'bonus:' . $iid . ':') === 0) { $matched = true; break; }
-                }
-            }
-            if (!$matched) $orphans[] = $a;
+            if (!is_array($a)) continue;
+            if (!$matches_any(isset($a['remoteLineId']) ? $a['remoteLineId'] : '')) $orphans[] = $a;
         }
-        if (!empty($orphans)) {
+        $orphan_hist = [];
+        $hist_rows = (isset($view['history']) && is_array($view['history'])) ? $view['history'] : [];
+        foreach ($hist_rows as $h) {
+            if (!is_array($h)) continue;
+            if (!$matches_any(isset($h['remoteLineId']) ? $h['remoteLineId'] : '')) $orphan_hist[] = $h;
+        }
+
+        if (!empty($orphans) || !empty($orphan_hist)) {
+            $lookup = self::replaced_lookup($orphan_hist);
             echo '<div style="margin-top:8px;border-top:1px solid #ddd;padding-top:6px"><strong style="font-size:12px">' . esc_html__('Bağlanmayan lisanslar', 'wpteslimat') . '</strong>';
-            echo '<ul style="margin:4px 0 0;padding:0">';
-            foreach ($orphans as $a) self::render_asg_row($a, self::can_reveal(), self::can_operate());
-            echo '</ul></div>';
+            if (!empty($orphans)) {
+                echo '<ul class="wpt-keys" style="margin:4px 0 0;padding:0">';
+                foreach ($orphans as $a) self::render_asg_row($a, self::can_reveal(), self::can_operate(), $lookup);
+                echo '</ul>';
+            }
+            self::render_history($orphan_hist);
+            echo '</div>';
         }
 
         // Sipariş-seviyesi: Tekrar Mail.
@@ -492,6 +641,10 @@ class Wpteslimat_Admin_Metabox {
 
     // ─── AJAX işleyicileri — nonce + capability + is_clone; panele site-HMAC ile ───────
 
+    /**
+     * Ortak ön-kontrol — üçlü güvenlik kapısı (§7): nonce + capability + klon/staging guard.
+     * @return WC_Order Panele iletilmiş sipariş (aksi halde JSON hata ile sonlanır).
+     */
     private function guard_request($require_operate = true) {
         check_ajax_referer('wpteslimat_mb', 'nonce');
         if (Wpteslimat_Settings::is_clone()) {
@@ -506,62 +659,167 @@ class Wpteslimat_Admin_Metabox {
         if (!$order || !$order->get_meta('_wpteslimat_order_id')) {
             wp_send_json_error(['message' => 'Sipariş bulunamadı veya panele iletilmemiş.'], 404);
         }
-        return (string) $order->get_id();
+        return $order;
     }
 
+    /** Panel yanıtı başarılı mı (2xx)? */
+    private static function is_ok($res) {
+        $code = isset($res['code']) ? (int) $res['code'] : 0;
+        return $code >= 200 && $code < 300;
+    }
+
+    /** Bu isteği yapan WP kullanıcısının görünen adı (sipariş notu için). */
+    private static function who() {
+        $u = wp_get_current_user();
+        if ($u && $u->exists() && $u->user_login) return (string) $u->user_login;
+        return __('bilinmeyen kullanıcı', 'wpteslimat');
+    }
+
+    /**
+     * MAĞAZA TARAFI LOGU (§7 "kim yaptı"): panelde başarıyla tamamlanan işlemi WooCommerce
+     * sipariş notuna da yazar → operatör paneli açmadan kimin ne yaptığını görür. Mevcut
+     * "Teslimat:" önek düzeni korunur. Salt-okuma (reveal) NOT ÜRETMEZ — gürültü olurdu.
+     */
+    private static function note($order, $text) {
+        if (!is_a($order, 'WC_Order')) return;
+        $order->add_order_note('Teslimat: ' . $text);
+    }
+
+    /**
+     * Panel yanıtını istemciye ilet. Hata durumunda kullanıcıya HAM HTTP kodu değil, anlamlı
+     * Türkçe mesaj gider (panel kendi mesajını döndürdüyse o tercih edilir).
+     */
     private function relay($res) {
         $code = isset($res['code']) ? (int) $res['code'] : 0;
         $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
-        if ($code >= 200 && $code < 300) {
+        if (self::is_ok($res)) {
             wp_send_json_success($body);
         }
-        $msg = isset($body['message']) ? $body['message'] : ('Panel hatası (' . $code . ')');
-        wp_send_json_error(['message' => $msg, 'code' => $code], 200);
+        wp_send_json_error(['message' => self::error_message($code, $body), 'code' => $code], 200);
+    }
+
+    /** Panel/HTTP hatasını sade Türkçeye çevirir (ham kod yalnız parantez içinde ipucu olarak). */
+    private static function error_message($code, $body) {
+        // Panelin kendi açıklaması varsa en doğrusu odur (Nest `message` dizi de olabilir).
+        $msg = isset($body['message']) ? $body['message'] : (isset($body['error']) ? $body['error'] : '');
+        if (is_array($msg)) $msg = implode(' ', array_map('strval', $msg));
+        $msg = is_scalar($msg) ? trim((string) $msg) : '';
+        if ($msg !== '') return $msg;
+
+        switch (true) {
+            case $code === 0:
+                return __('Panele ulaşılamadı (ağ hatası veya zaman aşımı). Lütfen tekrar deneyin.', 'wpteslimat');
+            case $code === 401:
+            case $code === 403:
+                return __('Panel isteği reddetti (kimlik/imza doğrulanamadı). Ayarlar → Tanılama ile bağlantıyı kontrol edin.', 'wpteslimat');
+            case $code === 404:
+                return __('Kayıt panelde bulunamadı (sipariş veya lisans silinmiş olabilir).', 'wpteslimat');
+            case $code === 409:
+                return __('İşlem şu an yapılamıyor — uygun stok yok ya da kayıt başka bir işlemle değişmiş.', 'wpteslimat');
+            case $code === 429:
+                return __('Çok sık istek gönderildi. Lütfen biraz bekleyip tekrar deneyin.', 'wpteslimat');
+            case $code >= 500:
+                return __('Panelde beklenmeyen bir hata oluştu. Lütfen daha sonra tekrar deneyin.', 'wpteslimat');
+        }
+        return __('İşlem tamamlanamadı. Lütfen tekrar deneyin.', 'wpteslimat');
     }
 
     private static function sanitize_aid($raw) {
         return preg_replace('/[^A-Za-z0-9\-]/', '', (string) $raw);
     }
 
+    /** Woo sipariş kaleminin ürün adı (sipariş notu için okunur bağlam); bulunamazsa boş. */
+    private static function line_name($order, $item_id) {
+        if (!is_a($order, 'WC_Order')) return '';
+        $item = $order->get_item(absint($item_id));
+        return ($item && method_exists($item, 'get_name')) ? (string) $item->get_name() : '';
+    }
+
     public function ajax_reveal() {
-        $remote = $this->guard_request(false); // reveal = manage_options
+        $order = $this->guard_request(false); // reveal = manage_options
+        $remote = (string) $order->get_id();
         $aid = self::sanitize_aid($_POST['assignment_id'] ?? '');
         if ($aid === '') wp_send_json_error(['message' => 'Geçersiz atama.'], 400);
         $res = Wpteslimat_Panel_Client::post('/v1/orders/' . rawurlencode($remote) . '/assignments/' . rawurlencode($aid) . '/reveal', []);
+        // Sipariş notu YAZILMAZ: her görüntüleme not üretse sipariş geçmişi gürültüye boğulurdu.
+        // İzlenebilirlik korunur — panel reveal'ı audit_log'a "wp:<kullanıcı>@<site>" ile yazar.
         $this->relay($res);
     }
 
     public function ajax_replace() {
-        $remote = $this->guard_request(true);
+        $order = $this->guard_request(true);
+        $remote = (string) $order->get_id();
         $aid = self::sanitize_aid($_POST['assignment_id'] ?? '');
         $reason = isset($_POST['reason']) ? sanitize_text_field(wp_unslash($_POST['reason'])) : '';
         if ($aid === '') wp_send_json_error(['message' => 'Geçersiz atama.'], 400);
         if ($reason === '') wp_send_json_error(['message' => 'Değişim sebebi gerekli.'], 400);
         $res = Wpteslimat_Panel_Client::post('/v1/orders/' . rawurlencode($remote) . '/assignments/' . rawurlencode($aid) . '/replace', ['reason' => $reason]);
+        if (self::is_ok($res)) {
+            self::note($order, sprintf(
+                /* translators: 1: WP kullanıcı adı, 2: değişim sebebi */
+                __('%1$s bir lisansı yeni bir anahtarla değiştirdi. Sebep: %2$s', 'wpteslimat'),
+                self::who(),
+                $reason
+            ));
+        }
         $this->relay($res);
     }
 
     public function ajax_suspend() {
-        $remote = $this->guard_request(true);
+        $order = $this->guard_request(true);
+        $remote = (string) $order->get_id();
         $aid = self::sanitize_aid($_POST['assignment_id'] ?? '');
         if ($aid === '') wp_send_json_error(['message' => 'Geçersiz atama.'], 400);
         $suspend = isset($_POST['suspend']) && $_POST['suspend'] === '1';
         $res = Wpteslimat_Panel_Client::post('/v1/orders/' . rawurlencode($remote) . '/assignments/' . rawurlencode($aid) . '/suspend', ['suspend' => $suspend]);
+        if (self::is_ok($res)) {
+            self::note($order, sprintf(
+                $suspend
+                    /* translators: %s = WP kullanıcı adı */
+                    ? __('%s bir lisansı askıya aldı (müşteri geçici olarak göremez).', 'wpteslimat')
+                    : __('%s askıdaki lisansı yeniden aktif etti.', 'wpteslimat'),
+                self::who()
+            ));
+        }
         $this->relay($res);
     }
 
     public function ajax_bonus() {
-        $remote = $this->guard_request(true);
+        $order = $this->guard_request(true);
+        $remote = (string) $order->get_id();
         // Bonus per-LINE: Woo item id (sanitize — sadece rakam/harf; sentetik bonus id gönderilmez).
         $line = preg_replace('/[^A-Za-z0-9:_\-]/', '', (string) ($_POST['remote_line_id'] ?? ''));
         if ($line === '') wp_send_json_error(['message' => 'Geçersiz ürün satırı.'], 400);
         $res = Wpteslimat_Panel_Client::post('/v1/orders/' . rawurlencode($remote) . '/lines/' . rawurlencode($line) . '/bonus', []);
+        if (self::is_ok($res)) {
+            $pname = self::line_name($order, $line);
+            self::note($order, $pname !== ''
+                ? sprintf(
+                    /* translators: 1: WP kullanıcı adı, 2: ürün adı */
+                    __('%1$s "%2$s" ürününe ücretsiz (bonus) bir lisans ekledi.', 'wpteslimat'),
+                    self::who(),
+                    $pname
+                )
+                : sprintf(
+                    /* translators: %s = WP kullanıcı adı */
+                    __('%s siparişe ücretsiz (bonus) bir lisans ekledi.', 'wpteslimat'),
+                    self::who()
+                ));
+        }
         $this->relay($res);
     }
 
     public function ajax_resend() {
-        $remote = $this->guard_request(true);
+        $order = $this->guard_request(true);
+        $remote = (string) $order->get_id();
         $res = Wpteslimat_Panel_Client::post('/v1/orders/' . rawurlencode($remote) . '/resend', []);
+        if (self::is_ok($res)) {
+            self::note($order, sprintf(
+                /* translators: %s = WP kullanıcı adı */
+                __('%s teslimat e-postasını tekrar gönderdi.', 'wpteslimat'),
+                self::who()
+            ));
+        }
         $this->relay($res);
     }
 }

@@ -8,6 +8,54 @@ if (!defined('ABSPATH')) exit;
 class Wpteslimat_Panel_Client {
 
     /**
+     * TEK-SEFERLİK aktör geçersiz kılma (§7 "kim yaptı" izlenebilirliği). Arka plan işlerinde
+     * (Action Scheduler / wp-cron) oturum açmış kullanıcı YOKTUR; işi TETİKLEYEN mağaza
+     * yöneticisi enqueue anında siparişe kaydedilir ve iş işleyicisi panel çağrısından hemen
+     * önce buraya koyar. Bir sonraki istekte TÜKETİLİR (temizlenir) → aynı PHP sürecinde koşan
+     * sonraki iş yanlış kullanıcıya atfedilmez.
+     */
+    private static $actor_override = null;
+
+    /**
+     * Bir sonraki panel isteğinin aktörünü (WP kullanıcı adı) belirler. Boş/geçersiz değer
+     * yok sayılır (mevcut oturum → 'system' zincirine düşer).
+     */
+    public static function set_actor($login) {
+        $login = self::sanitize_actor($login);
+        self::$actor_override = ($login === '') ? null : $login;
+    }
+
+    /**
+     * İsteği yapan WP kullanıcısının adı (audit attribution). Sıra: tek-seferlik geçersiz
+     * kılma → oturum açmış kullanıcı → 'system' (cron/webhook/arka plan işi).
+     * Panel bunu `wp:<kullanıcı>@<site.domain>` biçiminde birleştirir — domain PANELDEN gelir
+     * (güvenilir), bu yüzden burada YALNIZ kullanıcı adı gönderilir (format bozulmaz).
+     */
+    public static function current_actor() {
+        if (self::$actor_override !== null) return self::$actor_override;
+        if (function_exists('wp_get_current_user')) {
+            $current = wp_get_current_user();
+            if ($current && $current->exists()) {
+                $login = self::sanitize_actor($current->user_login);
+                if ($login !== '') return $login;
+            }
+        }
+        return 'system';
+    }
+
+    /**
+     * Başlık değeri güvenliği: yalnız güvenli karakterler (CR/LF dâhil her türlü başlık
+     * enjeksiyonu elenir) + uzunluk sınırı. 60 karakter panelin `WpActor` sanitizasyonuyla
+     * BİREBİR aynıdır → panelde sessizce kırpılma olmaz.
+     */
+    private static function sanitize_actor($raw) {
+        $val = is_scalar($raw) ? (string) $raw : '';
+        $val = preg_replace('/[^A-Za-z0-9._@+\- ]/', '', $val);
+        $val = trim(preg_replace('/\s+/', ' ', (string) $val));
+        return function_exists('mb_substr') ? mb_substr($val, 0, 60) : substr($val, 0, 60);
+    }
+
+    /**
      * İmza yolu kanonikleştirme — panel `canonicalizePath` (shared/api/hmac.ts) ile
      * BİREBİR aynı olmalı. Fragment atılır; query param'lar string sıralanır.
      */
@@ -63,16 +111,14 @@ class Wpteslimat_Panel_Client {
             'X-Trace-Id'  => wp_generate_uuid4(),
         ];
 
-        // Audit attribution (§7 "actor: wp:kullanıcı@site"): meta box operasyon uçları bu başlıktan
-        // WP kullanıcısını audit_log.actor'a yazar. YALNIZ audit içindir — YETKİ site HMAC secret'ıyla
-        // sağlanır (başlık sahtelense de yetki değişmez). İmzaya GİRMEZ. Oturum yoksa (cron/sistem
-        // push) gönderilmez → panel 'admin'e düşer; createOrder gibi uçlar zaten header'ı yok sayar.
-        if (function_exists('wp_get_current_user')) {
-            $current = wp_get_current_user();
-            if ($current && $current->exists() && $current->user_login) {
-                $headers['X-Wp-Actor'] = $current->user_login;
-            }
-        }
+        // Audit attribution (§7 "actor: wp:kullanıcı@site"): panel bu başlıktan WP kullanıcısını
+        // audit_log.actor'a yazar. YALNIZ audit içindir — YETKİ site HMAC secret'ıyla sağlanır
+        // (başlık sahtelense de yetki değişmez). İmzaya GİRMEZ. Oturum yoksa (cron/webhook/arka
+        // plan işi) 'system' gider → panelde "wp:system@site" olarak görünür; başlığı hiç
+        // göndermemek panelde yanıltıcı 'admin' üretiyordu. createOrder gibi uçlar zaten yok sayar.
+        $headers['X-Wp-Actor'] = self::current_actor();
+        // Tek-seferlik geçersiz kılma tüketildi → sonraki istek kendi bağlamından çözer.
+        self::$actor_override = null;
         $args = [
             'method'  => $method,
             'headers' => $headers,

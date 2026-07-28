@@ -43,6 +43,7 @@ import { StockAdjustForm } from './stock-adjust-form';
 import { ProductEditSheet } from '../../../components/product-edit-sheet';
 import { ImportStockForm } from '../../../components/import-stock-form';
 import { MappingsManager } from '../../../components/mappings-manager';
+import { LicenseItemsTable } from '../../../components/inventory/license-items-table';
 
 export const dynamic = 'force-dynamic';
 
@@ -398,6 +399,21 @@ export default async function ProductDetailPage({
           </Card>
         </div>
       </div>
+
+      {/* Lisans envanteri — TAM GENİŞLİK (kolon çok: lisans + durum + kapasite + teslimat).
+          Konum bilinçli: önce stok girilir/eşlenir (üstteki kartlar), sonra sonucu burada görülür. */}
+      <Card>
+        <CardHeader>
+          <CardTitle icon={KeyRound}>Lisans Envanteri</CardTitle>
+          <CardDescription>
+            Bu ürüne ait tüm lisans/hesap kalemleri — arama, filtreleme, tek tek düzeltme ve
+            teslim edilmiş kalemlerin sipariş bağlantısı.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LicenseItemsTable productId={product.id} payloadSchema={product.payloadSchema} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -98,7 +98,10 @@ class Wpteslimat_Order_List {
         }
     }
 
-    /** Panel durum kodu → sade Türkçe etiket. */
+    /**
+     * Panel durum kodu → sade Türkçe etiket. Ham enum (fulfilled/held/…) operatöre ÇIKMAZ;
+     * sözlükte olmayan bir durum gelirse teknik kod yerine nötr "Bilinmiyor" gösterilir.
+     */
     private static function status_label($status) {
         switch ($status) {
             case 'fulfilled': return __('Teslim edildi', 'wpteslimat');
@@ -107,7 +110,8 @@ class Wpteslimat_Order_List {
             case 'revoked':   return __('İptal', 'wpteslimat');
             case 'expired':   return __('Süresi doldu', 'wpteslimat');
             case 'unmapped':  return __('Eşlemesiz', 'wpteslimat');
-            default:          return (string) $status;
+            case 'held':      return __('İncelemede', 'wpteslimat');
+            default:          return __('Bilinmiyor', 'wpteslimat');
         }
     }
 
@@ -131,6 +135,12 @@ class Wpteslimat_Order_List {
         }
         if (!Wpteslimat_Settings::is_configured()) {
             return add_query_arg('wpteslimat_bulk', 'notconfigured', $redirect);
+        }
+        // (§7 klon/staging) Klon ortam CANLI panele hiç istek atmamalı ve yerel meta'yı canlı
+        // veriyle güncellememeli (bayat/yanıltıcı durum + gereksiz canlı yük). Diğer panel
+        // yollarıyla aynı guard — sessiz değil, operatöre dürüst bildirim.
+        if (Wpteslimat_Settings::is_clone()) {
+            return add_query_arg('wpteslimat_bulk', 'clone', $redirect);
         }
 
         $ids = array_values(array_filter(array_map('absint', (array) $ids)));
@@ -282,6 +292,10 @@ class Wpteslimat_Order_List {
         } elseif ($flag === 'notconfigured') {
             echo '<div class="notice notice-warning is-dismissible"><p>' .
                 esc_html__('Teslimat paneli yapılandırılmadığı için panel durumu güncellenemedi.', 'wpteslimat') .
+                '</p></div>';
+        } elseif ($flag === 'clone') {
+            echo '<div class="notice notice-warning is-dismissible"><p>' .
+                esc_html__('Klon/staging koruması etkin — panel durumu bu ortamda güncellenmez.', 'wpteslimat') .
                 '</p></div>';
         } elseif ($flag === 'error') {
             echo '<div class="notice notice-error is-dismissible"><p>' .

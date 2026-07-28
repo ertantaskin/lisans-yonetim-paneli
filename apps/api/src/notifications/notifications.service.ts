@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { notifications, type Notification } from '../db/schema/notifications';
 
@@ -98,12 +98,61 @@ export class NotificationsService {
     return row!;
   }
 
-  /** Son bildirimler (createdAt DESC). UI akışı için. */
-  async list(limit = 50): Promise<Notification[]> {
+  /**
+   * Son bildirimler (createdAt DESC). UI akışı için. `unreadOnly` ile üst bardaki bildirim
+   * çanı yalnız okunmamışları çekebilir (notifications_unread_idx partial index'i kapsar).
+   * İmza geriye dönük uyumlu: mevcut `list(limit)` çağrıları aynen çalışır.
+   */
+  async list(limit = 50, opts?: { unreadOnly?: boolean }): Promise<Notification[]> {
     return this.db
       .select()
       .from(notifications)
+      .where(opts?.unreadOnly ? isNull(notifications.readAt) : undefined)
       .orderBy(desc(notifications.createdAt))
       .limit(limit);
+  }
+
+  /** Okunmamış bildirim sayısı (çan rozeti). Partial index sıcak yolu — tek COUNT. */
+  async unreadCount(): Promise<number> {
+    const [row] = await this.db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(notifications)
+      .where(isNull(notifications.readAt));
+    return Number(row?.c ?? 0);
+  }
+
+  /**
+   * Bildirimleri okundu işaretler (§17 çan). `ids` verilirse yalnız onlar, `all: true` ise
+   * TÜM okunmamışlar `read_at = now()` olur.
+   *
+   * Okuma durumu GLOBAL (şema notu): panel tek operasyon ekibince izlenir, per-admin okuma
+   * durumu bilinçli olarak yok. Yalnız `read_at IS NULL` satırlar güncellenir → tekrar çağrı
+   * idempotenttir ve `marked` GERÇEKTEN yeni okunanları sayar (UI sahte "N okundu" göstermez).
+   *
+   * @returns marked = bu çağrıda okundu yapılan satır sayısı, unread = kalan okunmamış sayısı
+   */
+  async markRead(input: { ids?: string[]; all?: boolean }): Promise<{
+    marked: number;
+    unread: number;
+  }> {
+    const ids = input.ids?.filter((id) => typeof id === 'string' && id.length > 0) ?? [];
+    const markAll = input.all === true;
+
+    // Ne id ne 'all' → hiçbir şey yapma (yanlışlıkla TÜMÜNÜ okumaya çevirme). Sayaç yine döner.
+    if (!markAll && ids.length === 0) {
+      return { marked: 0, unread: await this.unreadCount() };
+    }
+
+    const rows = await this.db
+      .update(notifications)
+      .set({ readAt: new Date() })
+      .where(
+        markAll
+          ? isNull(notifications.readAt)
+          : and(isNull(notifications.readAt), inArray(notifications.id, ids)),
+      )
+      .returning({ id: notifications.id });
+
+    return { marked: rows.length, unread: await this.unreadCount() };
   }
 }
