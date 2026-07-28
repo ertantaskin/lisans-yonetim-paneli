@@ -29,8 +29,14 @@ const UpdateSiteBody = z.object({
    * Mağaza yönetim paneli sipariş bağlantısı şablonu — `{orderId}` yer tutucusuyla.
    * SALT YÖNLENDİRME: panel bu adrese OTOMATİK BAĞLANMAZ, veri çekmez; yalnız operatörün
    * tıklayacağı bağlantıyı üretir (kullanıcı isteği: "sadece url yönlendirme, otomatik
-   * bağlantı olmayacak — güvenlikten dolayı"). Boş/null → site tipinden türetilir.
-   * http/https ZORUNLU (javascript:/data: reddedilir); `{orderId}` içermeli.
+   * bağlantı olmayacak — güvenlikten dolayı"). Boş/null → bağlantı HİÇ gösterilmez
+   * (site tipinden TAHMİN üretilmez). http/https ZORUNLU (javascript:/data: reddedilir);
+   * `{orderId}` içermeli.
+   *
+   * NOT: şablonun KAYNAK işareti (`adminOrderUrlTemplateManual`, 0026) İSTEMCİDEN KABUL
+   * EDİLMEZ — bu şemada alanı YOK, z.object varsayılan olarak bilinmeyen anahtarları atar
+   * (strip) → gövdeye eklense bile servise ulaşmaz. Değer her zaman sunucuda bu şablon
+   * alanından türetilir (SitesService.update).
    */
   adminOrderUrlTemplate: z
     .string()

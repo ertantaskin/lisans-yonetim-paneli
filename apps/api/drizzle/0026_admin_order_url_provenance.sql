@@ -1,0 +1,20 @@
+-- 0026 — mağaza sipariş bağlantısı şablonunun KAYNAĞI (ADDITIVE; veri kaybı yok).
+--
+-- Sorun (denetim bulgusu): `sites.admin_order_url_template` iki farklı yazardan doluyor —
+--   (a) operatör, panel /sites/[id] formundan ELLE girer,
+--   (b) WP eklentisi, katalog senkronuyla `admin_url()` + HPOS tespitinden türetip bildirir.
+-- Sütunda kaynak ayrımı olmadığı için iki yanlıştan biri kaçınılmazdı:
+--   · senkron koşulsuz yazarsa → operatörün elle girdiği (ters-proxy/özel admin adresi) şablon
+--     her katalog senkronunda SESSİZCE eziliyordu;
+--   · senkron "dolu ise dokunma" derse → İLK otomatik değer sütunu KİLİTLİYOR; mağaza sonradan
+--     HPOS'u kapatsa ya da alt dizine taşınsa yeni doğru şablon bir daha ASLA yazılamıyordu
+--     (panel yanlış linki üretmeye devam ediyordu — "ya doğru ya hiç" şartının ihlali).
+--
+-- Çözüm: kaynağı AÇIKÇA işaretle. `true` YALNIZ panel formu kaydettiğinde yazılır; katalog
+-- senkronu yalnız `false` iken şablonu günceller. Böylece elle giriş kazanır ama otomatik
+-- değer kendi kendini kilitlemez.
+--
+-- Varsayılan `false` → mevcut satırların davranışı: mağaza bildirdiği şablonu yazabilir
+-- (geriye dönük uyumlu; bugüne kadar elle girilmiş bir değer varsa operatör formu bir kez
+-- kaydederek "elle" işaretini kalıcılaştırır).
+ALTER TABLE "sites" ADD COLUMN IF NOT EXISTS "admin_order_url_template_manual" boolean DEFAULT false NOT NULL;

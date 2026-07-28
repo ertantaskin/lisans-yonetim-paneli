@@ -29,6 +29,7 @@ import {
 } from '../db/schema';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
+import { buildStoreAdminUrl } from '../orders/store-admin-url';
 
 export interface ImportRejection {
   index: number;
@@ -194,7 +195,6 @@ interface LicenseItemRawRow {
   site_id: string | null;
   site_domain: string | null;
   site_type: string | null;
-  site_webhook_url: string | null;
   admin_order_url_template: string | null;
 }
 
@@ -645,7 +645,6 @@ export class StockService {
           d.site_id                   AS site_id,
           d.site_domain               AS site_domain,
           d.site_type                 AS site_type,
-          d.site_webhook_url          AS site_webhook_url,
           d.admin_order_url_template  AS admin_order_url_template,
           ps.total_count              AS total_count
         FROM page_slice ps
@@ -666,7 +665,6 @@ export class StockService {
             st.id AS site_id,
             st.domain AS site_domain,
             st.type::text AS site_type,
-            st.webhook_url AS site_webhook_url,
             st.admin_order_url_template AS admin_order_url_template
           FROM assignments a
           JOIN orders o ON o.id = a.order_id
@@ -780,12 +778,12 @@ export class StockService {
               siteId: r.site_id,
               siteDomain: r.site_domain ?? '',
               siteType: r.site_type ?? '',
+              // Mağaza adminindeki sipariş — SALT LİNK (tek kaynak: orders/store-admin-url.ts).
               storeAdminUrl: buildStoreAdminUrl(
                 {
                   type: r.site_type,
                   domain: r.site_domain,
-                  webhookUrl: r.site_webhook_url,
-                  template: r.admin_order_url_template,
+                  adminOrderUrlTemplate: r.admin_order_url_template,
                 },
                 r.remote_order_id,
               ),
@@ -1058,79 +1056,6 @@ function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-/** Yalnız http/https şemasına izin verir; aksi halde null (javascript:/data: engellenir). */
-function safeHttpUrl(raw: string): string | null {
-  try {
-    const u = new URL(raw);
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Mağaza origin'i: webhook URL'inden (en güvenilir), yoksa domain'den türetilir. */
-function storeOrigin(webhookUrl: string | null, domain: string | null): string | null {
-  if (webhookUrl) {
-    try {
-      const u = new URL(webhookUrl);
-      if (u.protocol === 'http:' || u.protocol === 'https:') return u.origin;
-    } catch {
-      /* bozuk webhook URL → domain'e düş */
-    }
-  }
-  if (domain) {
-    const host = domain.trim().replace(/^https?:\/\//i, '').split('/')[0];
-    if (host) {
-      try {
-        return new URL(`https://${host}`).origin;
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Mağaza admin panelinde siparişi açan URL (§17) — SALT YÖNLENDİRME. Panel mağazaya
- * BAĞLANMAZ/oturum açmaz, otomatik bir bağlantı kurmaz; yalnız operatörün tıklayacağı
- * linki üretir (kullanıcı isteği: "sadece URL yönlendirme, güvenlikten dolayı").
- *
- * Öncelik: sites.admin_order_url_template ({orderId} yer tutucusu) → yoksa woocommerce
- * varsayılanı. Diğer kanal tiplerinde (marketplace/reseller) şablon yoksa null.
- * remoteOrderId encodeURIComponent ile kaçırılır; sonuç yalnız http/https ise döner.
- *
- * NOT: W2'nin admin-orders içindeki aynı işlevli yardımcısını BİLEREK import etmiyoruz
- * (döngüsel bağımlılık + paralel çalışma riski) — kopya küçük ve yereldir.
- */
-function buildStoreAdminUrl(
-  site: {
-    type: string | null;
-    domain: string | null;
-    webhookUrl: string | null;
-    template: string | null;
-  },
-  remoteOrderId: string | null,
-): string | null {
-  if (!remoteOrderId) return null;
-  const encoded = encodeURIComponent(remoteOrderId);
-  const origin = storeOrigin(site.webhookUrl, site.domain);
-
-  const template = site.template?.trim();
-  if (template) {
-    const filled = template.split('{orderId}').join(encoded);
-    const abs = safeHttpUrl(filled);
-    if (abs) return abs;
-    // Şablon göreli yol olabilir ("/wp-admin/...") → mağaza origin'iyle çöz.
-    if (!origin) return null;
-    try {
-      return safeHttpUrl(new URL(filled, origin).toString());
-    } catch {
-      return null;
-    }
-  }
-
-  // Şablon yoksa yalnız WooCommerce için güvenli varsayılan üretilir.
-  if (site.type !== 'woocommerce' || !origin) return null;
-  return safeHttpUrl(`${origin}/wp-admin/admin.php?page=wc-orders&action=edit&id=${encoded}`);
-}
+// NOT: mağaza admin sipariş linki YEREL KOPYA DEĞİL — tek kaynak `orders/store-admin-url.ts`
+// (bu dosyadaki eski kopya ile admin-orders'taki kopyanın davranışları farklıydı; origin artık
+// yalnız şablon/domain'den türetilir, webhook_url'den ASLA — iç hostname riski).

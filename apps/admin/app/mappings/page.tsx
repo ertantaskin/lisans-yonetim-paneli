@@ -88,9 +88,18 @@ export default async function MappingsPage({
                 Site Kataloğu (proaktif eşleme)
               </h2>
             </div>
+            {/* [G9] Varyasyonlu üründe katalogda hem EBEVEYN satırı hem her varyasyon durur; sipariş
+                satırı her zaman bir varyasyona düştüğü için eşleme varyasyon-özel kurulur ve ebeveyn
+                satırı (SQL üç-değerli mantığı gereği) varyasyon eşlemeleriyle asla eşleşmez. Üst
+                şeritteki "eşlenmemiş katalog ürünü" sayacı bu satırı zaten HARİÇ tutar; operatör
+                aradaki farkı burada da görsün diye açıklandı — amaç, alarmı susturmak için tehlikeli
+                bir ürün-seviyesi catch-all eşleme kurulmasını önlemek. */}
             <p className="max-w-2xl text-sm text-muted-foreground">
               Bir mağaza seçin; o sitenin senkronlanmış tüm ürünlerini ADIYLA görün ve sipariş
-              beklemeden panel ürününe eşleyin.
+              beklemeden panel ürününe eşleyin. Varyasyonlu (variable) ürünlerde <strong>varsayılan
+              eylem varyasyonları eşlemektir</strong> — üst satır yalnızca ürün başlığıdır, eşlenmemiş
+              görünmesi bir eksik değildir (dilerseniz tüm varyasyonlar için ürün-seviyesi tek eşleme
+              de kurabilirsiniz).
             </p>
             {catalogError && (
               <p role="alert" className="text-sm text-destructive">

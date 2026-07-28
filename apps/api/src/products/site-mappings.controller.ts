@@ -35,6 +35,16 @@ const SyncCatalogBody = z.object({
       }),
     )
     .max(5000),
+  /**
+   * Mağazanın kendi bildirdiği admin sipariş URL şablonu (§17) — `{orderId}` yer tutucusuyla.
+   * Mağaza HPOS açık mı kapalı mı YALNIZ kendisi bilir; panelin varsayımı yerine kaynağından gelir.
+   * OPSİYONEL ve yalnızca BOŞLUK DOLDURUR: alan gönderilmezse (undefined) mevcut şablona
+   * dokunulmaz; paneldeki `sites.admin_order_url_template` DOLUYSA mağazanın gönderdiği değer
+   * (null dahil) YOK SAYILIR — elle giriş kazanır, temizleme operatörün işidir (panel formu).
+   * Şema/`{orderId}`/kimlik-bilgisi/host doğrulaması serviste yapılır; geçersizse SESSİZCE yok
+   * sayılır (katalog senkronu başarısız olmaz), sebebi yanıttaki status alanında döner.
+   */
+  adminOrderUrlTemplate: z.string().trim().max(500).nullish(),
 });
 type SyncCatalogBody = z.infer<typeof SyncCatalogBody>;
 
@@ -82,10 +92,14 @@ export class SiteMappingsController {
   /**
    * Mağaza ürün kataloğu senkronu (§3) — bu site için TAM snapshot (delete+insert). WP eklentisi
    * "Ürünleri Panele Aktar" + ürün kaydında çağırır → panelde proaktif eşleme mümkün olur. SIR YOK.
+   * Aynı çağrıda mağaza kendi admin sipariş URL şablonunu da bildirebilir (opsiyonel). Yanıt:
+   * `adminOrderUrlTemplateStatus` = accepted | kept_manual | rejected_host | rejected_format |
+   * absent (sır içermeyen sebep kodu; WP operatöre neden yazılmadığını gösterebilsin) +
+   * geriye dönük uyum için `adminOrderUrlTemplateAccepted` (yalnız accepted iken true).
    */
   @Post('catalog')
   @HttpCode(200)
   syncCatalog(@CurrentSite() site: Site, @Body(new ZodBody(SyncCatalogBody)) body: SyncCatalogBody) {
-    return this.products.syncCatalog(site.id, body.products);
+    return this.products.syncCatalog(site.id, body.products, body.adminOrderUrlTemplate);
   }
 }

@@ -13,6 +13,19 @@ if (!defined('ABSPATH')) exit;
  * Klasik (posts) + HPOS (custom orders table) list table'larının ikisi de desteklenir.
  */
 class Wpteslimat_Order_List {
+    /**
+     * "Panele iletilmedi" sanal filtre değeri. Panel-durum enum'undan DEĞİLDİR; siparişin
+     * `_wpteslimat_pushed` meta'sının HİÇ yazılmamış olmasını (yani panele hiç gitmemiş olmayı)
+     * ifade eder. Ayrı sabit → sorgu kurucularında yanlışlıkla panel durumu sanılmasın.
+     */
+    const PSTATUS_NOT_PUSHED = 'not_pushed';
+
+    /**
+     * (§2) Ödeme WP/geçit tarafındadır; bu durumlardaki sipariş panele BİLEREK iletilmez
+     * (ödenmemiş sipariş teslim edilmez). Kolonda nedeni açıkça yazmak için kullanılır.
+     */
+    private static $awaiting_payment_statuses = ['on-hold', 'pending', 'failed'];
+
     private static $instance = null;
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
@@ -82,9 +95,26 @@ class Wpteslimat_Order_List {
         if ($status === '' || $status === null) {
             // Henüz sorgulanmadı ve webhook durumu da yok; panele iletilip iletilmediğini göster.
             $pushed = $order->get_meta('_wpteslimat_pushed') === 'yes';
-            echo $pushed
-                ? '<span style="color:#888">' . esc_html__('sorgulanmadı', 'wpteslimat') . '</span>'
-                : '<span style="color:#bbb">&mdash;</span>';
+            if ($pushed) {
+                echo '<span style="color:#888">' . esc_html__('sorgulanmadı', 'wpteslimat') . '</span>';
+                return;
+            }
+            // (§2) Ödeme tamamen WP/geçit tarafındadır: havale/EFT (on-hold), ödeme bekleyen
+            // (pending) ve başarısız (failed) sipariş panele HİÇ iletilmez — bu DOĞRU davranıştır,
+            // ödenmemiş sipariş TESLİM EDİLMEZ. Ancak kolonda yalnız "—" görünmesi operatöre
+            // "sipariş kayboldu / panel görmedi" hissi veriyordu (gerçek şikâyet). Nedeni AÇIKÇA
+            // yaz: ödeme onaylanınca (processing/completed) sipariş otomatik iletilir.
+            if (self::is_awaiting_payment($order)) {
+                echo '<span style="color:#8a6100" title="'
+                    . esc_attr__('Ödeme WooCommerce tarafında onaylanınca (processing/completed) sipariş panele otomatik iletilir.', 'wpteslimat')
+                    . '">' . esc_html__('Panele iletilmedi — ödeme bekleniyor', 'wpteslimat') . '</span>';
+                return;
+            }
+            // Ödeme-öncesi DEĞİL ama yine de iletilmemiş (ör. eklenti kurulmadan önceki eski
+            // sipariş, teslim edilecek kalemi olmayan sipariş). Sessiz "—" korunur (liste
+            // gürültülenmesin) ama nedeni ipucu olarak taşınır; "Panele iletilmedi" filtresi
+            // bunları da listeler.
+            echo '<span style="color:#bbb" title="' . esc_attr__('Panele iletilmedi.', 'wpteslimat') . '">&mdash;</span>';
             return;
         }
         echo '<span>' . esc_html(self::status_label($status)) . '</span>';
@@ -96,6 +126,15 @@ class Wpteslimat_Order_List {
                 echo ' <small>(' . intval($fulfilled) . '/' . intval($total) . ')</small>';
             }
         }
+    }
+
+    /**
+     * Sipariş ödeme-öncesi durumda mı (havale/EFT bekleyen, ödeme bekleyen, başarısız)?
+     * WC_Order::get_status() 'wc-' önekini KIRPARAK döner → listeyle birebir karşılaştırılır.
+     */
+    private static function is_awaiting_payment($order) {
+        if (!is_a($order, 'WC_Order')) return false;
+        return in_array((string) $order->get_status(), self::$awaiting_payment_statuses, true);
     }
 
     /**
@@ -208,6 +247,9 @@ class Wpteslimat_Order_List {
     /** Filtrenin izin verdiği panel-durum enum'u (whitelist) → Türkçe etiket. */
     private static function pstatus_options() {
         return [
+            // Panel durumu DEĞİL, "hiç iletilmedi" (bkz. PSTATUS_NOT_PUSHED). Ödemesi
+            // tamamlanmamış siparişler burada toplanır → operatör "sipariş kayboldu" sanmaz.
+            self::PSTATUS_NOT_PUSHED => __('Panele iletilmedi', 'wpteslimat'),
             'unmapped'  => __('Eşlemesiz', 'wpteslimat'),
             'pending'   => __('Bekleyen', 'wpteslimat'),
             // Teslimat öncesi ayrı durum (§8 inceleme kuyruğu): handle_bulk panelin `held`
@@ -216,6 +258,28 @@ class Wpteslimat_Order_List {
             'partial'   => __('Kısmi', 'wpteslimat'),
             'fulfilled' => __('Teslim edildi', 'wpteslimat'),
             'revoked'   => __('İptal', 'wpteslimat'),
+        ];
+    }
+
+    /**
+     * Seçili filtre değeri için meta_query koşulunu üretir (klasik + HPOS ORTAK).
+     *
+     * "Panele iletilmedi" özel bir daldır: `_wpteslimat_panel_status` DEĞİL, `_wpteslimat_pushed`
+     * meta'sının YOKLUĞUNA bakar. Bu meta yalnızca panel siparişi kabul edince 'yes' olarak
+     * YAZILIR (başka bir değer hiç yazılmaz, silinmez) → NOT EXISTS tam olarak "panele hiç
+     * iletilmemiş" demektir.
+     */
+    private static function pstatus_meta_clause($val) {
+        if ($val === self::PSTATUS_NOT_PUSHED) {
+            return [
+                'key'     => '_wpteslimat_pushed',
+                'compare' => 'NOT EXISTS',
+            ];
+        }
+        return [
+            'key'     => '_wpteslimat_panel_status',
+            'value'   => $val,
+            'compare' => '=',
         ];
     }
 
@@ -254,7 +318,8 @@ class Wpteslimat_Order_List {
     }
 
     /**
-     * Klasik ana sorguya `_wpteslimat_panel_status = <val>` meta filtresi ekler.
+     * Klasik ana sorguya seçili filtrenin meta koşulunu ekler (bkz. pstatus_meta_clause:
+     * panel durumu `=` ya da "panele iletilmedi" için `_wpteslimat_pushed NOT EXISTS`).
      * Mevcut meta_query EZİLMEZ — yeni koşul AND ile eklenir.
      */
     public function filter_query_classic($query) {
@@ -265,11 +330,7 @@ class Wpteslimat_Order_List {
         if ($val === '') return;
         $meta_query = $query->get('meta_query');
         if (!is_array($meta_query)) $meta_query = [];
-        $meta_query[] = [
-            'key'     => '_wpteslimat_panel_status',
-            'value'   => $val,
-            'compare' => '=',
-        ];
+        $meta_query[] = self::pstatus_meta_clause($val);
         $query->set('meta_query', $meta_query);
     }
 
@@ -284,11 +345,7 @@ class Wpteslimat_Order_List {
         if ($val === '') return $query_args;
         $meta_query = (isset($query_args['meta_query']) && is_array($query_args['meta_query']))
             ? $query_args['meta_query'] : [];
-        $meta_query[] = [
-            'key'     => '_wpteslimat_panel_status',
-            'value'   => $val,
-            'compare' => '=',
-        ];
+        $meta_query[] = self::pstatus_meta_clause($val);
         $query_args['meta_query'] = $meta_query;
         return $query_args;
     }

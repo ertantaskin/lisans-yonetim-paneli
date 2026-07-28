@@ -33,11 +33,20 @@ export const sites = pgTable('sites', {
   webhookUrl: text('webhook_url'),
   /**
    * Mağaza admin panelinde siparişi AÇMAK için URL şablonu (§17). `{orderId}` yer tutucusu
-   * remoteOrderId ile değiştirilir. null ise site tipinden varsayılan türetilir
-   * (woocommerce → /wp-admin/admin.php?page=wc-orders&action=edit&id={orderId}).
+   * remoteOrderId ile değiştirilir. null/boş ise "Mağazada aç" bağlantısı HİÇ gösterilmez —
+   * tip-tabanlı TAHMİN üretilmez (HPOS kapalı mağazada ve alt-dizin kurulumunda yanlış link
+   * çıkıyordu; kullanıcı şartı: "ya doğru olmalı ya hiç link olmamalı").
    * SALT YÖNLENDİRME: panel mağaza adminine bağlanmaz/oturum açmaz — yalnız link üretir.
    */
   adminOrderUrlTemplate: text('admin_order_url_template'),
+  /**
+   * Şablonun KAYNAĞI (0026). true = operatör panel formundan ELLE girdi → katalog senkronu
+   * ÜZERİNE YAZMAZ. false = mağazanın bildirdiği (veya henüz hiç) değer → senkron güncelleyebilir.
+   * Ayrım olmadan iki yanlıştan biri kaçınılmazdı: ya elle giriş her senkronda eziliyordu, ya da
+   * ilk otomatik değer sütunu kilitleyip mağazanın SONRAKİ doğru şablonunu (HPOS kapatma /
+   * alt dizine taşınma) engelliyordu.
+   */
+  adminOrderUrlTemplateManual: boolean('admin_order_url_template_manual').notNull().default(false),
   /**
    * Günlük satış kotası (§5) — bu site günde en fazla bu kadar sipariş push edebilir.
    * null = limitsiz. SERT tavan: aşımda 429 (Retry-After) döner ve sipariş REDDEDİLİR.

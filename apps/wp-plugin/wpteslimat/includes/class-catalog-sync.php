@@ -21,6 +21,20 @@ if (!defined('ABSPATH')) exit;
  *   remoteVariationId = $product->get_id()        (varyasyon id)
  * gönderir; katalogdaki 'variation' satırları TAM AYNI çifti üretir → panel eşlemesi çözülür.
  * Basit üründe collect_lines get_parent_id() 0 döner → get_id()'e düşer; katalog da get_id() gönderir.
+ *
+ * AYRICA (§12): aynı istekte mağazanın YÖNETİM PANELİ SİPARİŞ BAĞLANTISI ŞABLONU da bildirilir
+ * (opsiyonel `adminOrderUrlTemplate`). Panel bu şablonu bugüne kadar TAHMİN ediyordu (HPOS yolu
+ * varsayımı + site domain'i) ve alt-dizin kurulumu / HPOS kapalı mağaza / farklı admin adresinde
+ * ÇÖZÜLEMEYEN link üretebiliyordu. Doğrusunu yalnız mağazanın kendisi bilir → burada üretilir.
+ * SALT YÖNLENDİRME: panel bu adrese otomatik BAĞLANMAZ, veri çekmez; yalnız operatörün tıklayacağı
+ * bağlantıyı kurar. Şablon güvenle üretilemiyorsa HİÇ gönderilmez (yanlış link yerine link yok).
+ *
+ * TETİKLER (hepsi arka plan — editör/istek ASLA bloklanmaz; hash aynıysa push ATLANIR → maliyet ~0):
+ *   - ürün oluştur/güncelle/çöpe at (woocommerce_new/update/trash_product),
+ *   - eklenti AKTİVASYONU (ilk kurulumda panel şablonsuz/katalogsuz kalmasın),
+ *   - eklenti GÜNCELLEMESİ (upgrader_process_complete) — yeni sürümün ürettiği şablon panele gitsin,
+ *   - GÜNLÜK heartbeat (kurtarma: hiç ürün düzenlenmeyen mağazada da katalog/şablon tazelenir),
+ *   - Ayarlar → "Ürünleri Panele Aktar" (manuel, hash'i yok sayar → zorla tazele).
  */
 class Wpteslimat_Catalog_Sync {
     private static $instance = null;
@@ -28,11 +42,35 @@ class Wpteslimat_Catalog_Sync {
     /** Panel bir çağrıda en fazla 5000 ürün kabul eder (ürün + varyasyon satırları toplamı). */
     const MAX_PRODUCTS = 5000;
 
+    /** Panel `adminOrderUrlTemplate` üst sınırı (sites.controller Zod `.max(500)`). Aşarsa gönderilmez. */
+    const MAX_TEMPLATE_LEN = 500;
+
+    /** Panelin şablonda beklediği yer tutucu — URL-encode EDİLMEMİŞ düz metin kalmalı. */
+    const ORDER_ID_PLACEHOLDER = '{orderId}';
+
     /** Arka plan (Action Scheduler / wp-cron) tek-deduped senkron iş hook'u. */
     const SYNC_HOOK = 'wpteslimat_async_catalog_sync';
 
+    /** Günlük "kurtarma" tetiği: hiç ürün düzenlenmese de katalog/şablon tazelenir (hash aynıysa no-op). */
+    const HEARTBEAT_HOOK = 'wpteslimat_catalog_heartbeat';
+
     /** Hızlı ard arda düzenlemeler tek push'ta birleşsin diye gecikme (saniye). */
     const SYNC_DELAY = 180; // 3 dk
+
+    /** Katalog (ÜRÜN satırları) parmak izi — push'u atlamak için. */
+    const OPT_HASH = 'wpteslimat_catalog_hash';
+
+    /** Sipariş bağlantısı ŞABLONU parmak izi — ürünlerden AYRI tutulur (F8, aşağıdaki nota bak). */
+    const OPT_TPL_HASH = 'wpteslimat_catalog_tpl_hash';
+
+    /** Panelin şablon hakkındaki son kararı (durum + gönderilen değer + zaman). */
+    const OPT_TPL_STATUS = 'wpteslimat_catalog_tpl_status';
+
+    /** Panelin döndürebileceği şablon durumları (bilinmeyen değer YOK SAYILIR → "bilinmiyor"). */
+    const TEMPLATE_STATUSES = ['accepted', 'kept_manual', 'rejected_host', 'rejected_format', 'absent'];
+
+    /** Panel şablonu REDDETTİYSE yeniden deneme aralığı (saniye) — günde bir (DAY_IN_SECONDS). */
+    const TPL_RETRY_INTERVAL = 86400;
 
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
@@ -49,8 +87,93 @@ class Wpteslimat_Catalog_Sync {
         add_action('woocommerce_update_product', [$this, 'schedule_sync']);
         add_action('woocommerce_trash_product', [$this, 'schedule_sync']);
 
+        // Eklenti GÜNCELLEMESİ sonrası (bu eklenti kendi güncelleyicisini taşır → aktivasyon hook'u
+        // ÇALIŞMAZ). Yeni sürüm şablon üretimini değiştirmiş olabilir; hash farklıysa push edilir.
+        add_action('upgrader_process_complete', [$this, 'on_upgrade'], 10, 2);
+
         // Arka plan iş işleyicisi (asıl panel çağrısı burada koşar; editör bloklanmaz).
         add_action(self::SYNC_HOOK, [$this, 'run_sync']);
+
+        // Günlük heartbeat: yalnız "senkron planla" der — hash değişmediyse panele HİÇ istek gitmez.
+        add_action(self::HEARTBEAT_HOOK, [$this, 'run_heartbeat']);
+        self::ensure_heartbeat();
+    }
+
+    /**
+     * Günlük heartbeat olayını (yoksa) kurar. wpteslimat_init'teki budama cron'u deseniyle aynı:
+     * temizlenmiş/hiç kurulmamış olayı normal yükleme yolunda yeniden kurar → eklenti güncellemesi
+     * aktivasyonu tetiklemese bile kurtarma tetiği yaşar. Yapılandırılmamış/klon sitede iş üretmez.
+     */
+    private static function ensure_heartbeat() {
+        if (!Wpteslimat_Settings::is_configured()) return;
+        if (Wpteslimat_Settings::is_clone()) return;
+        if (!function_exists('wp_next_scheduled') || !function_exists('wp_schedule_event')) return;
+        if (wp_next_scheduled(self::HEARTBEAT_HOOK)) return;
+        // İlk koşu 1 saat sonra → aktivasyon/güncelleme anındaki tetikle çakışmasın.
+        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', self::HEARTBEAT_HOOK);
+    }
+
+    /**
+     * Günlük heartbeat işleyicisi: senkronu NORMAL yoldan (Action Scheduler debounce + dedupe)
+     * planlar. Katalog ve şablon değişmediyse run_sync hash-atlamasıyla panele hiç istek yapmaz →
+     * günlük maliyet ~0; değiştiyse (ör. panel şablonu reddetti, operatör düzeltti) kendiliğinden
+     * yakalanır.
+     */
+    public function run_heartbeat() {
+        $this->schedule_sync();
+    }
+
+    /**
+     * Eklenti güncellendikten sonra senkronu planlar (F6b): güncelleme sonrası hiç ürün
+     * düzenlenmezse panel şablonsuz kalırdı ve panel artık TAHMİN üretmediği için "Mağaza panelinde
+     * aç" bağlantısı HİÇ çıkmazdı.
+     *
+     * @param mixed $upgrader Kullanılmaz (hook imzası).
+     * @param array $options  WP_Upgrader bağlamı: type/action/plugins.
+     */
+    public function on_upgrade($upgrader = null, $options = []) {
+        unset($upgrader); // hook imzası — kullanılmıyor
+        if (!is_array($options)) return;
+
+        $type = isset($options['type']) ? (string) $options['type'] : '';
+        if ($type !== 'plugin') return;
+
+        $action = isset($options['action']) ? (string) $options['action'] : '';
+        if ($action !== 'update' && $action !== 'install') return;
+
+        // Güncellenen BU eklenti mi? (Başka eklenti güncellemesinde boşuna iş üretme.)
+        $touched = [];
+        if (!empty($options['plugins']) && is_array($options['plugins'])) {
+            $touched = $options['plugins'];
+        } elseif (!empty($options['plugin'])) {
+            $touched = [(string) $options['plugin']];
+        }
+        $me = (defined('WPTESLIMAT_FILE') && function_exists('plugin_basename'))
+            ? plugin_basename(WPTESLIMAT_FILE)
+            : '';
+        // Liste boşsa (bağlam bilinmiyor) TEMKİNLİ davranıp planla — planlama ucuz, hash zaten atlar.
+        if ($me !== '' && !empty($touched) && !in_array($me, $touched, true)) return;
+
+        self::ensure_heartbeat();
+        $this->schedule_sync();
+    }
+
+    /**
+     * Eklenti AKTİVASYONU tetiği (F6b) — dosya sonundaki register_activation_hook'tan çağrılır.
+     * Aktivasyon anında sınıf henüz plugins_loaded'dan örneklenmemiş olabilir → statiktir.
+     * Yapılandırılmamış taze kurulumda schedule_sync sessizce çıkar; panele bağlandıktan sonraki
+     * ilk ürün düzenlemesi ya da günlük heartbeat kataloğu taşır.
+     */
+    public static function on_plugin_activated() {
+        self::ensure_heartbeat();
+        self::instance()->schedule_sync();
+    }
+
+    /** Deaktivasyonda heartbeat olayını temizle (yetim zamanlanmış olay kalmasın). */
+    public static function on_plugin_deactivated() {
+        if (function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook(self::HEARTBEAT_HOOK);
+        }
     }
 
     /**
@@ -90,21 +213,41 @@ class Wpteslimat_Catalog_Sync {
         $products = $this->collect_products();
         if ($products === null) return; // WooCommerce yok → kataloğu YANLIŞLIKLA boşaltma.
 
+        $payload = $this->build_payload($products);
+
         // YÜK OPTİMİZASYONU: katalog gerçekten değişmediyse push'u ATLA. woocommerce_update_product
         // her ürün kaydında (stok/fiyat düzenlemesi, sipariş stok düşümü dâhil) tetikler; ama katalog
         // yalnız ürün listesi/ad/sku/tip'i taşır. Hash aynıysa gereksiz HTTP + panelde gereksiz
         // yeniden-yazma olmaz → yoğun mağazada bile katalog yükü sıfıra yakın. (Manuel buton hash'i
         // yok sayar → her zaman zorla tazeler; kurtarma yolu.)
-        $hash = md5((string) wp_json_encode($products));
-        if (get_option('wpteslimat_catalog_hash') === $hash) {
-            return; // değişiklik yok — atla
+        //
+        // İKİ AYRI HASH (F8): ürün hash'i + şablon hash'i. Hash'i gövdenin TAMAMINDAN almak
+        // (şablon dâhil) HER tetikte farklı sonuç verebiliyordu: admin_url() şeması
+        // `is_ssl() || force_ssl_admin()` ile belirlenir; ters-proxy arkasında wp-admin isteğinde
+        // https, Action Scheduler/wp-cron loopback isteğinde http çözülebilir → hash oynar → her
+        // ürün kaydında TAM katalog DELETE+INSERT panele giderdi (tam da kaçınmak istediğimiz yük).
+        // Şablon hash'i şema-normalize edilir (bkz. template_hash) ve AYRI karşılaştırılır → şablon
+        // gerçekten değiştiğinde (HPOS açılıp kapandığında, admin adresi değiştiğinde) senkron YİNE
+        // tetiklenir, panel eski/yanlış şablonda kalmaz.
+        $products_same = (get_option(self::OPT_HASH) === $payload['product_hash']);
+        if ($products_same && get_option(self::OPT_TPL_HASH) === $payload['template_hash']) {
+            return; // ne katalog ne şablon değişti — atla
+        }
+        // REDDEDİLEN ŞABLON FRENİ: panel şablonu reddettiyse hash'i sabitlemiyoruz (bilerek — bir
+        // sonraki senkron tekrar denesin, F9). Ama ürünler AYNI kaldığı sürece her ürün kaydı/
+        // checkout stok düşümü bunu "değişiklik" sayıp TAM katalog push'u tetiklerdi (F8'in
+        // önlemek istediği yük). Yeniden deneme günde bir ile sınırlanır; günlük heartbeat zaten
+        // bu pencereyi açar, manuel "Ürünleri Panele Aktar" freni tümüyle yok sayar.
+        if ($products_same && self::template_rejected_recently()) {
+            return;
         }
 
-        $res  = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', ['products' => $products]);
+        $res  = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', $payload['body']);
         $code = isset($res['code']) ? (int) $res['code'] : 0;
         if ($code >= 200 && $code < 300) {
             // Yalnız BAŞARILI push sonrası hash'i sabitle → başarısızsa sonraki tetik yeniden dener.
-            update_option('wpteslimat_catalog_hash', $hash, false);
+            $status = self::remember_template_status($res, $payload['template']);
+            self::persist_hashes($payload, $status);
         } else {
             // Arka plan — sessiz kalmasın ama sipariş akışını etkilemesin. Bir sonraki ürün
             // düzenlemesi yeniden planlar; kalıcı hata operatöre manuel "Ürünleri Panele Aktar"
@@ -136,12 +279,17 @@ class Wpteslimat_Catalog_Sync {
             self::redirect('error', __('WooCommerce bulunamadı.', 'wpteslimat'));
         }
 
-        $res  = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', ['products' => $products]);
+        $payload = $this->build_payload($products);
+
+        $res  = Wpteslimat_Panel_Client::post('/v1/site-mappings/catalog', $payload['body']);
         $code = isset($res['code']) ? (int) $res['code'] : 0;
         if ($code >= 200 && $code < 300) {
-            // Manuel push HER ZAMAN gönderir (zorla tazele) ama başarı sonrası hash'i günceller →
-            // hemen ardından tetiklenen otomatik senkron aynı kataloğu tekrar itmez.
-            update_option('wpteslimat_catalog_hash', md5((string) wp_json_encode($products)), false);
+            // Manuel push HER ZAMAN gönderir (zorla tazele) ama başarı sonrası hash'leri günceller →
+            // hemen ardından tetiklenen otomatik senkron aynı kataloğu tekrar itmez. (run_sync ile
+            // AYNI build_payload yolundan geçilir — aksi halde iki yol farklı hash üretip sonsuz
+            // push yapardı.)
+            $status = self::remember_template_status($res, $payload['template']);
+            self::persist_hashes($payload, $status);
             $synced = isset($res['body']['synced']) ? (int) $res['body']['synced'] : count($products);
             self::redirect('ok', (string) $synced);
         }
@@ -158,6 +306,257 @@ class Wpteslimat_Catalog_Sync {
             ? (string) $res['body']['error']
             : sprintf(__('HTTP %d', 'wpteslimat'), $code);
         self::redirect('error', $err);
+    }
+
+    /**
+     * Panele gidecek katalog senkron gövdesini + KARŞILAŞTIRMA HASH'LERİNİ tek noktada kurar.
+     * run_sync ve handle_manual_sync AYNI yolu kullanır → iki yol farklı hash üretip sonsuz push
+     * yapamaz (F8 şartı).
+     *
+     * `adminOrderUrlTemplate` OPSİYONELDİR → alanı tanımayan ESKİ panel sürümü onu yok sayar
+     * (kırılma yok); tanıyan panel tahmin etmeyi bırakıp mağazanın bildirdiğini kullanır.
+     * Şablon güvenle üretilemiyorsa alan HİÇ eklenmez (panel kendi mevcut davranışına düşer).
+     *
+     * @param array $products collect_products() satırları.
+     * @return array{body:array, product_hash:string, template_hash:string, template:string|null}
+     */
+    private function build_payload(array $products) {
+        $body     = ['products' => $products];
+        $template = self::admin_order_url_template();
+        if ($template !== null) {
+            $body['adminOrderUrlTemplate'] = $template;
+        }
+
+        return [
+            'body'          => $body,
+            // Katalog parmak izi YALNIZ ürünlerden (şablon şeması istek bağlamına göre oynayabilir).
+            'product_hash'  => md5((string) wp_json_encode($products)),
+            'template_hash' => self::template_hash($template),
+            'template'      => $template,
+        ];
+    }
+
+    /**
+     * Şablon parmak izi — ŞEMA NORMALİZE edilir (F8). admin_url() şeması
+     * `is_ssl() || force_ssl_admin()` ile çözülür; ters-proxy arkasında (Caddy) wp-admin isteğinde
+     * https, Action Scheduler/wp-cron loopback isteğinde http gelebilir. Ham değerden hash almak
+     * her tetikte "değişti" derdi → gereksiz TAM katalog DELETE+INSERT. Şemayı atarak yalnız
+     * GERÇEK değişiklikleri (HPOS açık/kapalı, admin yolu/host) yakalarız.
+     *
+     * @param string|null $template Gönderilecek şablon (yoksa null).
+     * @return string md5 parmak izi.
+     */
+    private static function template_hash($template) {
+        $normalized = ($template === null) ? '' : preg_replace('#^https?://#i', '//', (string) $template);
+        return md5((string) $normalized);
+    }
+
+    /**
+     * Başarılı push sonrası parmak izlerini sabitler.
+     *
+     * Panel şablonu REDDETTİYSE şablon hash'i SABİTLENMEZ (silinir) → bir sonraki senkron (ör.
+     * günlük heartbeat ya da ilk ürün düzenlemesi) yeniden dener; operatör panelde site alan adını
+     * düzeltince kendiliğinden toparlar. Ürün hash'i her başarılı push'ta sabitlenir (katalog
+     * gerçekten yazıldı).
+     *
+     * @param array       $payload build_payload() çıktısı.
+     * @param string|null $status  Panelin şablon kararı (bilinmiyorsa null → bugünkü davranış).
+     */
+    private static function persist_hashes(array $payload, $status) {
+        update_option(self::OPT_HASH, $payload['product_hash'], false);
+
+        if ($status === 'rejected_host' || $status === 'rejected_format') {
+            delete_option(self::OPT_TPL_HASH);
+            return;
+        }
+        update_option(self::OPT_TPL_HASH, $payload['template_hash'], false);
+    }
+
+    /**
+     * (F9) Panel yanıtındaki ŞABLON DURUMUNU okur ve saklar — ayar sayfası artık koşulsuz
+     * "bildirildi" demek yerine panelin GERÇEK kararını gösterir.
+     *
+     * Panel (bu dalgada) şu alanları döndürür:
+     *   adminOrderUrlTemplateAccepted: bool
+     *   adminOrderUrlTemplateStatus:   'accepted'|'kept_manual'|'rejected_host'|'rejected_format'|'absent'
+     *
+     * GERİYE DÖNÜK UYUM: alanları döndürmeyen ESKİ panelde durum "bilinmiyor" kaydedilir (option
+     * silinir) → ayar sayfası bugünkü metnine düşer ve hash sabitleme davranışı da bugünküyle
+     * AYNI kalır. `accepted=false` TEK BAŞINA belirsizdir (kept_manual, rejected_host,
+     * rejected_format, absent — hepsi false üretir) → ondan "reddedildi" TÜRETİLMEZ (yoksa eski
+     * panelde sahte uyarı + her senkronda gereksiz yeniden push olurdu).
+     *
+     * @param array       $res           Panel istemcisi yanıtı (['code'=>int,'body'=>array]).
+     * @param string|null $sent_template Bu push'ta gönderilen şablon (yoksa null).
+     * @return string|null Normalize edilmiş durum, bilinmiyorsa null.
+     */
+    private static function remember_template_status(array $res, $sent_template) {
+        $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
+
+        $status = null;
+        if (isset($body['adminOrderUrlTemplateStatus']) && is_string($body['adminOrderUrlTemplateStatus'])
+            && in_array($body['adminOrderUrlTemplateStatus'], self::TEMPLATE_STATUSES, true)) {
+            $status = $body['adminOrderUrlTemplateStatus'];
+        } elseif (isset($body['adminOrderUrlTemplateAccepted']) && $body['adminOrderUrlTemplateAccepted'] === true) {
+            // Yalnız TRUE güvenle yorumlanabilir: gönderdiğimiz değer kaydedildi.
+            $status = 'accepted';
+        }
+
+        if ($status === null) {
+            delete_option(self::OPT_TPL_STATUS); // bilinmiyor (eski panel) → bugünkü metne düş
+            return null;
+        }
+
+        update_option(self::OPT_TPL_STATUS, [
+            'status'   => $status,
+            'template' => ($sent_template === null) ? '' : (string) $sent_template,
+            'time'     => time(),
+        ], false);
+
+        return $status;
+    }
+
+    /**
+     * Saklanan şablon durumunu okur (bozuk/eski biçime karşı savunmalı).
+     *
+     * @return array{status:string|null, template:string, time:int}
+     */
+    private static function template_state() {
+        $empty = ['status' => null, 'template' => '', 'time' => 0];
+
+        $raw = get_option(self::OPT_TPL_STATUS, null);
+        if (!is_array($raw)) return $empty;
+
+        $status = isset($raw['status']) && is_string($raw['status']) ? $raw['status'] : '';
+        if (!in_array($status, self::TEMPLATE_STATUSES, true)) return $empty;
+
+        return [
+            'status'   => $status,
+            'template' => isset($raw['template']) && is_string($raw['template']) ? $raw['template'] : '',
+            'time'     => isset($raw['time']) ? (int) $raw['time'] : 0,
+        ];
+    }
+
+    /**
+     * Şablon SON denemede panel tarafından reddedildi mi ve yeniden deneme penceresi henüz açılmadı mı?
+     * (run_sync freni — bkz. "REDDEDİLEN ŞABLON FRENİ" notu.)
+     */
+    private static function template_rejected_recently() {
+        $state = self::template_state();
+        if ($state['status'] !== 'rejected_host' && $state['status'] !== 'rejected_format') return false;
+        if ($state['time'] <= 0) return false; // zaman bilinmiyor → freni uygulama, dene
+        return (time() - $state['time']) < self::TPL_RETRY_INTERVAL;
+    }
+
+    /**
+     * (§12) Mağaza yönetim paneli SİPARİŞ bağlantısı şablonu — `{orderId}` yer tutucusuyla.
+     *
+     *   HPOS AÇIK  → .../wp-admin/admin.php?page=wc-orders&action=edit&id={orderId}
+     *   HPOS KAPALI→ .../wp-admin/post.php?post={orderId}&action=edit
+     *
+     * admin_url() KULLANILIR → alt-dizin kurulumu, farklı admin adresi (WP_ADMIN_DIR / çoklu-site)
+     * ve http/https şeması DOĞRU çözülür; panelin domain'den kök uydurmasına gerek kalmaz.
+     *
+     * GÜVENLİ TARAF: HPOS durumu tespit EDİLEMİYORSA (WooCommerce yok / eski sürüm / konteyner
+     * çözülemedi) ya da üretilen adres panel sözleşmesini (http(s) + düz `{orderId}` + ≤500
+     * karakter) sağlamıyorsa null döner → şablon GÖNDERİLMEZ. Yanlış link üretmektense link
+     * olmaması yeğlenir (kullanıcı isteği).
+     *
+     * @return string|null Şablon, ya da güvenle üretilemiyorsa null.
+     */
+    public static function admin_order_url_template() {
+        $hpos = self::hpos_enabled();
+        if ($hpos === null) return null; // tespit edilemedi → TAHMİN ETME
+
+        if (!function_exists('admin_url')) return null;
+
+        $path = $hpos
+            ? 'admin.php?page=wc-orders&action=edit&id=' . self::ORDER_ID_PLACEHOLDER
+            : 'post.php?post=' . self::ORDER_ID_PLACEHOLDER . '&action=edit';
+
+        $url = (string) admin_url($path);
+
+        // ŞEMA KARARLILIĞI (F8): admin_url() şemasını `is_ssl() || force_ssl_admin()` ile çözer →
+        // aynı mağazada wp-admin isteği https, Action Scheduler/wp-cron loopback isteği http
+        // üretebilir. Bu yalnız hash'i değil PANELE YAZILAN DEĞERİ de oynatır (son koşan bağlam
+        // kazanır; operatör bazen http linki alır). İstek bağlamından BAĞIMSIZ kaynak: DB'deki ham
+        // `siteurl` (ve force_ssl_admin sabiti). Bilinemiyorsa DOKUNMA (belirsizken dokunma).
+        $stable_scheme = self::stable_admin_scheme();
+        if ($stable_scheme !== null) {
+            $url = function_exists('set_url_scheme')
+                ? (string) set_url_scheme($url, $stable_scheme)
+                : preg_replace('#^https?://#i', $stable_scheme . '://', $url);
+        }
+
+        // admin_url() ham birleştirme yapar (encode etmez) ama 'admin_url' filtresi devredeyse
+        // yer tutucu URL-encode edilmiş olabilir → düz metne geri çevir (küçük/büyük harf hex).
+        if (strpos($url, self::ORDER_ID_PLACEHOLDER) === false) {
+            $url = str_ireplace('%7BorderId%7D', self::ORDER_ID_PLACEHOLDER, $url);
+        }
+
+        // Panel sözleşmesi (sites.controller Zod): http(s) ile başlar, `{orderId}` içerir, ≤500 karakter.
+        // Herhangi biri sağlanmıyorsa gönderme — panel zaten reddeder, sessiz 400 üretmeyelim.
+        if (!preg_match('#^https?://#i', $url)) return null;
+        if (strpos($url, self::ORDER_ID_PLACEHOLDER) === false) return null;
+        if (strlen($url) > self::MAX_TEMPLATE_LEN) return null;
+
+        return $url;
+    }
+
+    /**
+     * İstek bağlamından BAĞIMSIZ yönetim paneli şeması (F8 yardımcısı).
+     *
+     * Sıra: (1) `force_ssl_admin()` → her hâlükârda https · (2) DB'deki ham `siteurl` option'ının
+     * şeması (wp-admin / cron / loopback fark etmez, hep aynı değer) · (3) tespit edilemedi → null
+     * (çağıran admin_url() şemasına DOKUNMAZ).
+     *
+     * @return string|null 'https' | 'http' | null
+     */
+    private static function stable_admin_scheme() {
+        if (function_exists('force_ssl_admin') && force_ssl_admin()) return 'https';
+
+        $raw = (string) get_option('siteurl', '');
+        if ($raw === '') return null;
+
+        $scheme = parse_url($raw, PHP_URL_SCHEME);
+        $scheme = is_string($scheme) ? strtolower($scheme) : '';
+        return ($scheme === 'http' || $scheme === 'https') ? $scheme : null;
+    }
+
+    /**
+     * HPOS (WooCommerce özel sipariş tablosu) etkin mi?
+     *
+     * Sıra: (1) WooCommerce DI konteynerinden CustomOrdersTableController (kanonik kaynak) →
+     * (2) OrderUtil yardımcısı (WooCommerce 6.9+ genel API) → (3) tespit edilemedi.
+     *
+     * @return bool|null true=HPOS açık, false=klasik (posts), null=TESPİT EDİLEMEDİ (şablon gönderilmez).
+     */
+    private static function hpos_enabled() {
+        $controller = 'Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController';
+        if (function_exists('wc_get_container') && class_exists($controller)) {
+            try {
+                $container = wc_get_container();
+                if ($container && method_exists($container, 'get')) {
+                    $svc = $container->get($controller);
+                    if ($svc && method_exists($svc, 'custom_orders_table_usage_is_enabled')) {
+                        return (bool) $svc->custom_orders_table_usage_is_enabled();
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Konteyner çözümlemesi patlarsa (sürüm farkı) sessizce yardımcıya düş.
+            }
+        }
+
+        $util = 'Automattic\WooCommerce\Utilities\OrderUtil';
+        if (class_exists($util) && method_exists($util, 'custom_orders_table_usage_is_enabled')) {
+            try {
+                return (bool) call_user_func([$util, 'custom_orders_table_usage_is_enabled']);
+            } catch (\Throwable $e) {
+                // Yardımcı da patladı → tespit edilemedi.
+            }
+        }
+
+        return null; // GÜVENLİ taraf: varsayım yapma.
     }
 
     /**
@@ -299,7 +698,49 @@ class Wpteslimat_Catalog_Sync {
         ?>
         <hr>
         <h2><?php esc_html_e('Ürün Kataloğu', 'wpteslimat'); ?></h2>
-        <p><?php esc_html_e('Mağazadaki yayınlanmış ürünleri (ve varyasyonlarını) panele aktarır; böylece panelde ürünleri sipariş beklemeden, adıyla proaktif olarak eşleyebilirsiniz. Yalnız ürün adı, SKU ve tip gönderilir — sır, fiyat veya lisans verisi gönderilmez. Tam anlık görüntüdür (panel bu sitenin kataloğunu değiştirir). Ürün eklendiğinde/güncellendiğinde/silindiğinde arka planda otomatik de senkronlanır.', 'wpteslimat'); ?></p>
+        <p><?php esc_html_e('Mağazadaki yayınlanmış ürünleri (ve varyasyonlarını) panele aktarır; böylece panelde ürünleri sipariş beklemeden, adıyla proaktif olarak eşleyebilirsiniz. Yalnız ürün adı, SKU ve tip gönderilir — sır, fiyat veya lisans verisi gönderilmez. Tam anlık görüntüdür (panel bu sitenin kataloğunu değiştirir). Ürün eklendiğinde/güncellendiğinde/silindiğinde, eklenti güncellendiğinde ve günde bir kez arka planda otomatik de senkronlanır (katalog değişmediyse panele istek gönderilmez).', 'wpteslimat'); ?></p>
+        <?php
+        // Şeffaflık: panele hangi sipariş bağlantısı şablonunun bildirildiğini VE panelin bu
+        // şablonu kabul edip etmediğini operatör görsün (yanlış/eksik link şikâyetinde ilk
+        // bakılacak yer). Sır içermez — yalnız admin adresi.
+        $order_url_template = self::admin_order_url_template();
+        $tpl_state = self::template_state();
+        $tpl_status = $tpl_state['status'];
+        ?>
+        <?php if ($order_url_template === null): ?>
+            <p><em><?php esc_html_e('Sipariş bağlantısı şablonu belirlenemedi (WooCommerce sürümü desteklemiyor) — panele gönderilmiyor. Panelde site ayarlarından elle tanımlayabilirsiniz.', 'wpteslimat'); ?></em></p>
+        <?php elseif ($tpl_status === 'accepted'): ?>
+            <p>
+                <?php esc_html_e('Sipariş bağlantısı şablonu panele bildirildi ve kabul edildi:', 'wpteslimat'); ?>
+                <code><?php echo esc_html($order_url_template); ?></code>
+            </p>
+        <?php elseif ($tpl_status === 'kept_manual'): ?>
+            <p>
+                <?php esc_html_e('Panelde elle girilmiş şablon kullanılıyor; mağazanın bildirdiği değer yok sayıldı.', 'wpteslimat'); ?>
+                <br><span class="description"><?php
+                    /* translators: %s: mağazanın panele bildirdiği şablon */
+                    printf(esc_html__('Mağazanın bildirdiği: %s', 'wpteslimat'), '<code>' . esc_html($order_url_template) . '</code>');
+                ?></span>
+            </p>
+        <?php elseif ($tpl_status === 'rejected_host'): ?>
+            <div class="notice notice-warning inline"><p>
+                <?php esc_html_e('Panel sipariş bağlantısı şablonunu reddetti — panelde kayıtlı site alan adı ile mağaza adresi eşleşmiyor olabilir. Panelde site alan adını güncelleyin.', 'wpteslimat'); ?>
+                <br><code><?php echo esc_html($order_url_template); ?></code>
+            </p></div>
+        <?php elseif ($tpl_status === 'rejected_format'): ?>
+            <div class="notice notice-warning inline"><p>
+                <?php esc_html_e('Panel sipariş bağlantısı şablonunu reddetti (biçim).', 'wpteslimat'); ?>
+                <br><code><?php echo esc_html($order_url_template); ?></code>
+            </p></div>
+        <?php elseif ($tpl_status === 'absent'): ?>
+            <p><em><?php esc_html_e('Şablon belirlenemedi; panelde elle tanımlayın.', 'wpteslimat'); ?></em></p>
+        <?php else: ?>
+            <?php // Durum bilinmiyor: henüz senkron yapılmadı ya da panel sürümü durum döndürmüyor. ?>
+            <p>
+                <?php esc_html_e('Panele bildirilen sipariş bağlantısı şablonu:', 'wpteslimat'); ?>
+                <code><?php echo esc_html($order_url_template); ?></code>
+            </p>
+        <?php endif; ?>
         <?php if (!$configured): ?>
             <p><em><?php esc_html_e('Önce panele bağlanın.', 'wpteslimat'); ?></em></p>
         <?php elseif ($is_clone): ?>
@@ -323,4 +764,14 @@ class Wpteslimat_Catalog_Sync {
         wp_safe_redirect($url);
         exit;
     }
+}
+
+// ── Aktivasyon/deaktivasyon tetikleri (F6b) ──────────────────────────────────────────────────
+// Aktivasyon isteğinde eklenti dosyası yüklenir ama `plugins_loaded` çoktan geçmiştir → sınıf
+// örneklenmez. Bu yüzden kanca DOSYA DÜZEYİNDE, statik geri çağırmayla kaydedilir (ana eklenti
+// dosyasına dokunmaya gerek yok). Aktivasyonda: heartbeat cron'u + ilk katalog senkronu planlanır
+// → yeni kurulumda panel şablonsuz/katalogsuz kalmaz. Deaktivasyonda heartbeat temizlenir.
+if (defined('WPTESLIMAT_FILE') && function_exists('register_activation_hook')) {
+    register_activation_hook(WPTESLIMAT_FILE, ['Wpteslimat_Catalog_Sync', 'on_plugin_activated']);
+    register_deactivation_hook(WPTESLIMAT_FILE, ['Wpteslimat_Catalog_Sync', 'on_plugin_deactivated']);
 }

@@ -3,7 +3,7 @@
  * Plugin Name: WP Teslimat Eklentisi
  * Description: WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatları
  *              müşteriye gösterir. Lisans verisi WP'de TUTULMAZ — panel tek doğruluk kaynağı.
- * Version: 0.8.0
+ * Version: 0.9.0
  * Requires PHP: 7.4
  * Author: Lisans Paneli
  * Text Domain: wpteslimat
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 //           eşlemek için. Sır göndermez (yalnız ad/sku/tip); additive.
 // = 0.6.0 = Sipariş satırlarına mağaza ürün adı (remoteName) eklendi — panelde eşlenmemiş
 //           ürünleri isimle görüp tek tıkla eşlemek için (teslimatı etkilemez, additive).
-define('WPTESLIMAT_VERSION', '0.8.0');
+define('WPTESLIMAT_VERSION', '0.9.0');
 define('WPTESLIMAT_DIR', plugin_dir_path(__FILE__));
 define('WPTESLIMAT_FILE', __FILE__);
 

@@ -10,6 +10,97 @@ class Wpteslimat_Order_Sync {
     private static $instance = null;
     /** Re-entrancy guard: resync sırasındaki save() zinciri kendini tetiklemesin (#16). */
     private static $syncing = false;
+
+    /**
+     * (GECİKME) Aynı istekte, YANIT MÜŞTERİYE GÖNDERİLDİKTEN SONRA çalıştırılacak işler.
+     * Anahtar "hook|order_id" → [metot, AS argüman dizisi, hook]. Aynı (hook, sipariş) çifti bir
+     * istekte yalnız BİR KEZ kaydedilir (checkout'ta birden çok durum geçişi ateşlenebilir).
+     * (G1) Argüman dizisi ve hook SAKLANIR: iş bitince kuyruktaki ikizi as_unschedule_action ile
+     * BİREBİR aynı argümanlarla düşürülür.
+     */
+    private static $after_response_jobs = [];
+    /** 'shutdown' hook'una istek başına yalnız BİR KEZ bağlan. */
+    private static $after_response_hooked = false;
+    /** (F10) Sınıra takılıp satır-içi koşulMAYAN iş sayısı (Action Scheduler devralır) — yalnız log. */
+    private static $after_response_deferred = 0;
+
+    /**
+     * (F10) Bir İSTEKTE satır-içi koşulacak EN FAZLA iş sayısı. WooCommerce yönetim ekranındaki
+     * toplu durum değiştirme (ör. 50 siparişi "tamamlandı" yapma) tek istekte onlarca iş kaydeder;
+     * her iş bir panel HTTP çağrısıdır → tek PHP işçisi dakikalarca meşgul kalır ve FPM havuzu
+     * tükenir. Sınırın üstündeki işler ZATEN kuyrukta olan Action Scheduler işine bırakılır
+     * (iş KAYBOLMAZ, yalnız birkaç saniye/dakika gecikir).
+     */
+    const AFTER_RESPONSE_MAX_JOBS = 3;
+
+    /**
+     * (G5) BAĞLANTIYI KAPATAMAYAN SAPI (ne fastcgi_finish_request ne litespeed_finish_request —
+     * ör. mod_php/Apache) için AYRI sınırlar. O dalda istek, işler bitene kadar tarayıcıya AÇIK
+     * kalır: 3 iş × 5sn + set_time_limit(20) checkout sekmesini 15-20sn "yükleniyor" bırakabilirdi
+     * (eski yorumdaki "birkaç yüz ms" yalnız MUTLU YOL için doğruydu). Bu dalda:
+     *   - tek iş (MAX_JOBS_BLOCKING),
+     *   - 2sn panel timeout (HTTP_TIMEOUT_BLOCKING),
+     *   - yalnız KRİTİK iş (push/revoke) satır-içi koşar; resync/refund Action Scheduler'a kalır
+     *     (birkaç saniye gecikme kabul edilebilir — teslimat gecikmesi DEĞİL, uzlaştırma gecikmesi).
+     */
+    const AFTER_RESPONSE_MAX_JOBS_BLOCKING = 1;
+    const INLINE_CRITICAL_METHODS = ['push', 'revoke'];
+
+    /**
+     * (F10/#98) Satır-içi yolda panel HTTP çağrısı için KISA zaman aşımı (sn). Varsayılan 15sn
+     * yerine 5sn: satır-içi yol PHP işçisini meşgul tutar ve bağlantıyı kapatamayan SAPI'lerde
+     * (mod_php) isteği uzatır. Ölçülen panel yanıt süresi ~15 ms → 5sn fazlasıyla yeterli.
+     * Zaman aşımına uğrayan çağrı bugünkü davranışla aynı şekilde retry planlar; ayrıca AS
+     * güvenlik ağı işi tam timeout'la (15sn) yeniden dener.
+     */
+    const INLINE_HTTP_TIMEOUT = 5;
+    /** (G5) Bağlantı kapatılamayan SAPI'de daha da kısa timeout — istek müşteriyi bekletiyor. */
+    const INLINE_HTTP_TIMEOUT_BLOCKING = 2;
+
+    /** (F10) İş başına PHP zaman sınırı (sn) — takılan tek çağrı işçiyi süresiz tutmasın. */
+    const INLINE_TIME_LIMIT = 20;
+    /** (G5) Bağlantı kapatılamayan SAPI'de üst sınır: 1 iş × 2sn timeout → 6sn fazlasıyla yeter. */
+    const INLINE_TIME_LIMIT_BLOCKING = 6;
+
+    /**
+     * (F2/G2) İş kilidi TTL (sn): süreç fatal error ile ölse bile kilit en fazla bu kadar takılı
+     * kalır; sonraki koşum bayat kilidi devralır.
+     *
+     * (G2) 300 → 60: TTL, Action Scheduler'ın GECİKME PENCERESİNİN (ölçülen 12-75sn) ALTINDA
+     * olmalıdır. Aksi halde satır-içi koşum fatal alıp kilidi takılı bıraktığında AS güvenlik ağı
+     * kilidi "taze" görüp işi atlıyor, sipariş panele HİÇ gitmiyordu (kilit bir MUTEX'tir; güvenlik
+     * ağını yutmamalıdır). Kilit yalnız GERÇEK eşzamanlılığı kapatır: satır-içi tüm iş döngüsü
+     * en fazla ~20sn sürer (bkz. INLINE_TIME_LIMIT), yani 60sn hâlâ geniş bir marjdır.
+     */
+    const JOB_LOCK_TTL = 60;
+
+    /**
+     * (G2) Kilit MEŞGULken işi kaç saniye sonraya yeniden planlarız. TTL ile eşit: kilidi tutan
+     * süreç ölmüşse yeniden planlanan koşum kilidi BAYAT bulup devralır; süreç sağlıklıysa işi
+     * çoktan bitirmiştir ve "yapıldı" işareti yeniden planlanan koşumu susturur (bkz. mark_done).
+     */
+    const JOB_RESCHEDULE_DELAY = 60;
+
+    /**
+     * (G1) "Yapıldı" işareti (transient) — kilit IDEMPOTENCY DEĞİL, yalnız MUTEX'tir: satır-içi iş
+     * biter, kilit açılır, 15-75sn sonra koşan AS işi kilidi BOŞ bulup AYNI işi baştan koşar.
+     * push/revoke kalıcı meta ile korunur ama resync/refund korunmuyordu → panele ikinci POST +
+     * siparişe yanıltıcı ikinci not. Birincil savunma as_unschedule_action'dır (kuyrukta BEKLEYEN
+     * ikizi düşürür); bu işaret İKİNCİL savunmadır — AS işi zaten "running" durumdaysa kuyruktan
+     * düşürülemez, o iş kilide takılır ve kendini yeniden planlar (G2).
+     *
+     * KRİTİK: bu işaret YALNIZCA `wpteslimat_recheck` (kilit meşgul olduğu için ertelenmiş güvenlik-ağı
+     * koşumu) tarafından TÜKETİLİR. Normal iş hook'ları (async/retry/satır-içi) işarete HİÇ bakmaz →
+     * MEŞRU bir yeniden tetik (ör. operatör kalemleri tekrar düzenledi, ikinci kısmi iade girdi) ASLA
+     * yutulmaz. İş KAYBI, mükerrer POST'tan çok daha kötüdür.
+     *
+     * TTL kayıt temizliği içindir; işaret TEK SEFERLİK tüketilir ve yalnız TAZE ise (≤ WINDOW) recheck'i
+     * susturur — pencere, erteleme (60sn) + AS gecikmesini (≤75sn) kapsar; daha eski bir işaret
+     * "bu iş gerçekten şimdi bitti" kanıtı sayılmaz ve recheck GÜVENLİ yönde (koşarak) davranır.
+     */
+    const DONE_MARKER_TTL = 300;
+    const DONE_MARKER_WINDOW = 180;
+
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
         return self::$instance;
@@ -21,6 +112,8 @@ class Wpteslimat_Order_Sync {
         // (Action Scheduler) alır; asıl push/revoke/resync arka plan işinde koşar. AS yoksa (nadir —
         // WooCommerce AS taşır) senkron fallback ile eski davranış korunur. Idempotency
         // (_wpteslimat_pushed/_revoked) + klon guard'ı iş işleyicilerinde aynen geçerli.
+        // GECİKME (ölçüldü: AS işleri 12-75sn sonra koşuyordu): AS güvenlik ağı olarak KORUNUR,
+        // ama iş ayrıca aynı istekte YANIT GÖNDERİLDİKTEN SONRA koşturulur → bkz. after_response().
         add_action('woocommerce_order_status_processing', [$this, 'enqueue_push'], 10, 1);
         add_action('woocommerce_order_status_completed', [$this, 'enqueue_push'], 10, 1);
         // İade/iptal → panelde lisansı geri al (§2: iade edilen key satışta CANLI kalmaz).
@@ -42,6 +135,11 @@ class Wpteslimat_Order_Sync {
         add_action('wpteslimat_async_revoke', [$this, 'revoke'], 10, 2);
         add_action('wpteslimat_async_resync', [$this, 'resync_items'], 10, 2);
         add_action('wpteslimat_async_refund', [$this, 'sync_refund'], 10, 2);
+
+        // (G2) GÜVENLİK AĞI yeniden koşumu: iş kilidi meşgul olduğu için atlanan koşum bu hook ile
+        // ertelenir (bkz. reschedule_locked_job). AYRI bir hook olması ŞART — böylece "yapıldı"
+        // işareti YALNIZ bu yolda tüketilir ve meşru yeni tetikler asla susturulmaz (bkz. recheck).
+        add_action('wpteslimat_recheck', [$this, 'recheck'], 10, 3);
 
         // Retry (başarısız işlerin tekrarı; Action Scheduler yoksa wp-cron). Aktör tekrar denemeye
         // de taşınır → 30dk sonra koşan iş hâlâ DOĞRU kişiyi gösterir.
@@ -93,17 +191,460 @@ class Wpteslimat_Order_Sync {
         $actor = self::current_initiator();
 
         if (function_exists('as_enqueue_async_action')) {
-            // Dedupe sorgusu argümanlarla BİREBİR aynı olmalı (AS args'ı serileştirip karşılaştırır).
-            if (function_exists('as_has_scheduled_action')
-                && as_has_scheduled_action($hook, [$order_id, $actor], 'wpteslimat')) {
-                return;
+            // (G1) Argüman dizisi TEK YERDE üretilir: AS argümanları serileştirip karşılaştırdığı için
+            // dedupe (as_has_scheduled_action), kuyruğa alma (as_enqueue_async_action) ve İLERİDEKİ
+            // kuyruktan düşürme (as_unschedule_action) BİREBİR aynı diziyi kullanmak ZORUNDADIR.
+            $args = [$order_id, $actor];
+            $already_queued = function_exists('as_has_scheduled_action')
+                && as_has_scheduled_action($hook, $args, 'wpteslimat');
+            if (!$already_queued) {
+                // GÜVENLİK AĞI olarak AS işi AYNEN korunur: yanıt-sonrası satır-içi çalıştırma
+                // herhangi bir nedenle koşmazsa (cron/CLI bağlamı, istek başına iş sınırı,
+                // PHP fatal, istek yarıda kesildi) iş yine de kuyrukta durur ve retry'ı vardır.
+                as_enqueue_async_action($hook, $args, 'wpteslimat');
             }
-            as_enqueue_async_action($hook, [$order_id, $actor], 'wpteslimat');
+            // EK OLARAK aynı istekte, yanıt gönderildikten sonra işi hemen koş (bkz. after_response).
+            // Zaten kuyrukta bekleyen bir iş olsa BİLE kaydederiz: amaç gecikmeyi ~0'a indirmektir.
+            // (F2) İki koşumun ÇAKIŞMASI kısa ömürlü iş kilidiyle engellenir (bkz. run_locked);
+            // (G1) satır-içi iş BİTTİKTEN sonra AS işi kuyruktan DÜŞÜRÜLÜR (kilit mutex'tir,
+            // idempotency değildir) — eskiden resync/refund panele iki kez POST ediyordu.
+            $this->after_response($hook, $method, $args);
         } else {
             // Action Scheduler yok (nadir) → senkron fallback: eski, bloklayan ama çalışan davranış.
             // Aynı istekte koştuğu için oturum zaten mevcuttur; aktörü yine de AÇIKÇA geçiririz ki
             // başarısızlıkta planlanan wp-cron retry'ı da doğru kişiyi taşısın (kalıcı meta gerekmez).
             $this->$method($order_id, $actor);
+        }
+    }
+
+    /**
+     * (GECİKME — ölçülmüş sorun) Action Scheduler işleri dev ortamında planlanmalarından
+     * 12sn / 27sn / 30sn / 65sn / 75sn SONRA koşuyordu. Sebep: AS'in async loopback dispatch'i
+     * güvenilir değil; iş pratikte wp-cron'un 'every_minute' → action_scheduler_run_queue
+     * olayına düşüyor ve wp-cron ANCAK siteye bir sayfa isteği geldiğinde tetikleniyor. Trafiği
+     * düşük mağazada bu "sipariş panele dakikalar sonra düştü" demek → operatörün gecikme şikâyeti.
+     *
+     * Çözüm: işi checkout/status isteğini BLOKLAMADAN, aynı PHP sürecinde ama YANIT MÜŞTERİYE
+     * GÖNDERİLDİKTEN SONRA çalıştır. 'shutdown' hook'una EN GEÇ öncelikle (PHP_INT_MAX) bağlanırız;
+     * WP kendi çıktı tamponlarını 'shutdown' önceliği 1'deki wp_ob_end_flush_all() ile boşaltır,
+     * biz ondan SONRA koşarız (aksi halde sayfa çıktısı kırpılırdı).
+     *
+     * (#98) BAĞLANTI KAPATMA KATMANLI: fastcgi_finish_request() (PHP-FPM) → litespeed_finish_request()
+     * (LiteSpeed/OpenLiteSpeed) → hiçbiri yok (mod_php). Eskiden fastcgi_finish_request yoksa satır-içi
+     * yol HİÇ kaydedilmiyordu; mod_php (ör. wordpress:6-php8.2-apache) dahil çok yaygın kurulumlarda
+     * gecikme düzeltmesi ETKİSİZ kalıyordu (ölçülen 12-75 sn gecikme aynen sürüyordu). Artık mod_php'de
+     * de satır-içi koşarız: tamponlar boşaltıldığı için sayfa İÇERİĞİ tarayıcıya çoktan gitmiştir.
+     *
+     * (G5) ANCAK bağlantı kapatılamayan SAPI'de istek, işler bitene kadar AÇIK kalır (tarayıcı
+     * "yükleniyor" gösterir) → o dalda sınırlar AYRILIR: tek iş + 2sn panel timeout + yalnız KRİTİK
+     * iş (push/revoke); resync/refund Action Scheduler'a bırakılır. Böylece en kötü durum ~2-6sn'dir
+     * (eskiden 3 iş × 5sn + set_time_limit(20) → 15-20sn olabiliyordu).
+     * ignore_user_abort(true) ile istemci bağlantıyı kesse bile iş yarım kalmaz.
+     */
+    private function after_response($hook, $method, $args) {
+        // (F10/#98) Bağlam kapısı: zaten arka plandaysak (cron/CLI) satır-içi koşuma HİÇ girme.
+        if (!self::can_run_inline()) return;
+        if (!method_exists($this, $method)) return;
+        if (!is_array($args) || !isset($args[0])) return;
+
+        // (G5) Bağlantı kapatılamıyorsa istek müşteriyi bekletir → yalnız KRİTİK iş satır-içi koşar.
+        // Uzlaştırma işleri (resync/refund) zaten kuyrukta olan AS işine kalır (iş KAYBOLMAZ).
+        if (!self::can_close_connection() && !in_array($method, self::INLINE_CRITICAL_METHODS, true)) {
+            self::$after_response_deferred++;
+            return;
+        }
+
+        $order_id = (int) $args[0];
+        $key = $hook . '|' . $order_id;
+        if (isset(self::$after_response_jobs[$key])) return;
+
+        // (F10/G5) İstek başına satır-içi iş SINIRI — fazlası AS kuyruğunda bekleyen işe kalır.
+        if (count(self::$after_response_jobs) >= self::max_inline_jobs()) {
+            self::$after_response_deferred++;
+            return;
+        }
+
+        // AS'e verilen argüman dizisini AYNEN saklarız: iş bitince as_unschedule_action ile
+        // kuyruktaki ikizini düşürmek için BİREBİR aynı diziyi geçmek zorundayız (G1).
+        self::$after_response_jobs[$key] = [$method, $args, $hook];
+
+        if (!self::$after_response_hooked) {
+            self::$after_response_hooked = true;
+            add_action('shutdown', [$this, 'run_after_response_jobs'], PHP_INT_MAX);
+        }
+    }
+
+    /**
+     * (F10/#98/G3) Bu istekte satır-içi (yanıt-sonrası) koşum ANLAMLI mı?
+     *
+     * - CLI/WP-CLI: "yanıt" diye bir şey yok, istek kimseyi bekletmez → AS/senkron yol zaten yeterli.
+     * - Cron (wp_doing_cron/DOING_CRON): zaten arka plan; AS işi orada koşacak.
+     *
+     * (G3) REST İSTEKLERİ ARTIK DIŞLANMAZ. Eskiden `REST_REQUEST` topluca "arka plan" sayılıyordu;
+     * bu YANLIŞTI: modern WooCommerce'in VARSAYILAN checkout'u (Checkout Block / Store API
+     * POST /wp-json/wc/store/v1/checkout) bir REST isteğidir ve `woocommerce_order_status_processing`
+     * TAM O İSTEKTE ateşlenir → gecikme düzeltmesi en yaygın checkout yolunda HİÇ çalışmıyor, yalnız
+     * klasik shortcode checkout'ta çalışıyordu (aynı sürümde iki farklı davranış). REST yanıtı da
+     * (rest_api_loaded → serve_request → die()) 'shutdown'dan ÖNCE gönderilir; tamponlar boşaltıldıktan
+     * sonra koştuğumuz için satır-içi koşum orada da güvenlidir.
+     *
+     * Diğer tüm bağlamlarda (checkout thank-you, Store API checkout, admin sipariş ekranı, admin-ajax,
+     * ödeme geçidi IPN'i vb.) satır-içi koşarız — asıl gecikme şikâyeti oralardan geliyordu.
+     */
+    private static function can_run_inline() {
+        if (php_sapi_name() === 'cli') return false;
+        if (defined('WP_CLI') && WP_CLI) return false;
+        if (function_exists('wp_doing_cron') && wp_doing_cron()) return false;
+        if (defined('DOING_CRON') && DOING_CRON) return false;
+        return true;
+    }
+
+    /**
+     * (G5) Yanıt gönderildikten sonra BAĞLANTIYI kapatabiliyor muyuz? PHP-FPM (fastcgi_finish_request)
+     * ve LiteSpeed (litespeed_finish_request) kapatabilir; mod_php/Apache KAPATAMAZ → istek, işler
+     * bitene kadar müşterinin sekmesinde açık kalır. Yetenek statiktir (function_exists) → iş
+     * KAYDEDİLİRKEN de güvenle sorgulanabilir.
+     */
+    private static function can_close_connection() {
+        return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request');
+    }
+
+    /** (G5) İstek başına satır-içi iş sınırı — bağlantı kapatılamıyorsa TEK iş. */
+    private static function max_inline_jobs() {
+        return self::can_close_connection()
+            ? self::AFTER_RESPONSE_MAX_JOBS
+            : self::AFTER_RESPONSE_MAX_JOBS_BLOCKING;
+    }
+
+    /** (G5) Satır-içi panel HTTP timeout'u — bağlantı kapatılamıyorsa daha kısa (müşteri bekliyor). */
+    private static function inline_http_timeout() {
+        return self::can_close_connection()
+            ? self::INLINE_HTTP_TIMEOUT
+            : self::INLINE_HTTP_TIMEOUT_BLOCKING;
+    }
+
+    /** (G5) İş başına PHP zaman sınırı — bağlantı kapatılamıyorsa daha kısa. */
+    private static function inline_time_limit() {
+        return self::can_close_connection()
+            ? self::INLINE_TIME_LIMIT
+            : self::INLINE_TIME_LIMIT_BLOCKING;
+    }
+
+    /**
+     * (F10) Satır-içi koşumda YALNIZ panel isteklerinin zaman aşımını kısaltır.
+     *
+     * İş metotlarının imzasını (push/revoke/resync_items/sync_refund) ve Panel_Client'ı DEĞİŞTİRMEDEN
+     * istek-kapsamlı bir "kısa timeout modu" sağlar: Panel_Client::post varsayılan 15sn geçer, bu
+     * filtre onu satır-içi timeout'a indirir (G5: bağlantı kapatılamıyorsa 2sn). Yalnız panel URL'iyle
+     * BAŞLAYAN istekler etkilenir (mağazanın kargo/ödeme gibi diğer HTTP çağrıları korunur); filtre
+     * iş döngüsü biter bitmez kaldırılır (istek kapsamı dışına taşmaz).
+     */
+    public function inline_panel_timeout($args, $url) {
+        $panel = Wpteslimat_Settings::panel_url();
+        if ($panel !== '' && strpos((string) $url, $panel) === 0) {
+            $current = isset($args['timeout']) ? (float) $args['timeout'] : 15;
+            $args['timeout'] = min($current, (float) self::inline_http_timeout());
+        }
+        return $args;
+    }
+
+    /**
+     * 'shutdown' (PHP_INT_MAX) işleyicisi: önce yanıtı kapat, SONRA panel çağrılarını koş.
+     * Guard'lar (is_configured/is_clone/idempotency) iş metotlarının kendisinde AYNEN geçerli.
+     *
+     * Bu noktadan SONRA kaydedilen bir iş (teorik: bir işin içinden yeni bir status geçişi
+     * tetiklenirse) satır-içi koşmaz — AS güvenlik ağı onu devralır. Bilinçli: yeniden-giriş
+     * yapıp shutdown içinde döngü kurmayız.
+     */
+    public function run_after_response_jobs() {
+        if (empty(self::$after_response_jobs)) return;
+        $jobs = self::$after_response_jobs;
+        self::$after_response_jobs = [];
+
+        // (F10/G5) Satır-içi koşulMAYAN işler yalnız GECİKİR (AS kuyruğunda duruyorlar) — sessiz kalmasın.
+        if (self::$after_response_deferred > 0) {
+            error_log(sprintf(
+                'wpteslimat: %d iş satır-içi koşulmadı (istek başına sınır %d%s) — Action Scheduler devralacak.',
+                self::$after_response_deferred,
+                self::max_inline_jobs(),
+                self::can_close_connection() ? '' : ', bağlantı kapatılamıyor: yalnız kritik iş'
+            ));
+            self::$after_response_deferred = 0;
+        }
+
+        // İstemci bağlantıyı kesse bile iş TAMAMLANSIN (yarım kalan panel çağrısı = tutarsız durum).
+        // Bağlantıyı kapatamayan SAPI'lerde (mod_php) bu şart: kullanıcı sekmeyi kapatırsa PHP
+        // aksi halde iş ortasında sonlandırılırdı.
+        if (function_exists('ignore_user_abort')) ignore_user_abort(true);
+
+        // Kalan çıktı tamponlarını boşalt. WP zaten önceliği 1'de wp_ob_end_flush_all() çağırır;
+        // bu döngü yalnız artakalanlar için savunmadır. Kapatılamayan tamponda ob_end_flush()
+        // false döner → sonsuz döngüyü kır.
+        while (ob_get_level() > 0) {
+            if (!@ob_end_flush()) break;
+        }
+        flush();
+
+        // (#98) Bağlantıyı KAPAT — katmanlı: PHP-FPM → LiteSpeed → (yoksa) kapatmadan devam et.
+        // Üçüncü durumda (mod_php) sayfa İÇERİĞİ yukarıdaki flush ile tarayıcıya gitmiştir; yalnız
+        // bağlantı iş süresince (kısa timeout + en fazla 3 iş) açık kalır. Eski davranış burada
+        // satır-içi koşumu tamamen iptal ediyordu → gecikme düzeltmesi mod_php'de etkisizdi.
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
+        }
+
+        // (F10) Satır-içi yolda panel çağrıları KISA timeout ile yapılır (bkz. inline_panel_timeout).
+        add_filter('http_request_args', [$this, 'inline_panel_timeout'], 10, 2);
+        try {
+            foreach ($jobs as $job) {
+                list($method, $args, $hook) = $job;
+                $order_id = (int) $args[0];
+                $actor = isset($args[1]) && is_scalar($args[1]) ? (string) $args[1] : '';
+                // İş başına zaman sınırı: takılan tek bir çağrı PHP işçisini süresiz tutmasın
+                // (max_execution_time sıfır/uzun olan kurulumlarda da üst sınır garanti edilir).
+                if (function_exists('set_time_limit')) @set_time_limit(self::inline_time_limit());
+                $executed = false;
+                try {
+                    // run_locked true döner = iş gövdesi BU koşumda GERÇEKTEN çalıştı (kilit alındı,
+                    // guard'lara takılmadı). false = atlandı → kuyruktaki AS işine DOKUNMA.
+                    $executed = (bool) $this->$method($order_id, $actor);
+                } catch (\Throwable $e) {
+                    // Yanıt zaten gönderildi; burada patlamak kullanıcıya bir şey göstermez. İşi
+                    // kuyruktaki AS güvenlik ağına bırak, izlenebilirlik için logla.
+                    error_log('wpteslimat: yanıt-sonrası iş hatası (' . $method . ' #' . $order_id . '): ' . $e->getMessage());
+                    continue;
+                }
+                if (!$executed) continue;
+
+                // (G1) İş BURADA tamamlandı → kuyrukta BEKLEYEN ikizini düşür. Kilit bir MUTEX'tir,
+                // idempotency DEĞİL: kilit açıldıktan 15-75sn sonra koşacak AS işi aynı işi baştan
+                // yapardı (resync/refund kalıcı "yapıldı" meta'sı yazmaz → panele ikinci POST +
+                // siparişe yanıltıcı ikinci not). Argümanlar kuyruğa alınırkenkiyle BİREBİR aynı.
+                // Zaten "running" durumdaki bir AS ikizi kuyruktan düşürülemez; o koşum kilide takılır
+                // ve kendini 'wpteslimat_recheck' olarak erteler, orada "yapıldı" işareti onu susturur.
+                //
+                // GÜVENLİK: iş SÜRERKEN aynı (hook, sipariş) için YENİ bir tetik kaydedildiyse
+                // (teorik: gövde içindeki save() yeni bir durum geçişi doğurursa) kuyruktan DÜŞÜRME —
+                // o yeni iş bu döngüde koşmaz, AS güvenlik ağına aittir; düşürmek onu KAYBETMEK olurdu.
+                if (isset(self::$after_response_jobs[$hook . '|' . $order_id])) continue;
+                try {
+                    if (function_exists('as_unschedule_action')) {
+                        as_unschedule_action($hook, $args, 'wpteslimat');
+                    }
+                } catch (\Throwable $e) {
+                    error_log('wpteslimat: AS işi kuyruktan düşürülemedi (' . $hook . ' #' . $order_id . '): ' . $e->getMessage());
+                }
+            }
+        } finally {
+            // Filtre İSTEK KAPSAMINDA kalır: bundan sonraki (teorik) panel çağrıları normal 15sn.
+            remove_filter('http_request_args', [$this, 'inline_panel_timeout'], 10);
+        }
+    }
+
+    /**
+     * (F2) Kısa ömürlü İŞ KİLİDİ anahtarı.
+     *
+     * Anahtar İŞ ADINDAN türetilir (hook adından DEĞİL): aynı mantıksal iş üç ayrı yoldan gelebilir
+     * (wpteslimat_async_*, wpteslimat_retry_*, satır-içi yanıt-sonrası çağrı) ve hepsinin AYNI kilidi
+     * paylaşması gerekir — hook adı kullanılsaydı async ile retry farklı kilit alır, çift koşum sürerdi.
+     */
+    private static function lock_key($job, $order_id) {
+        return 'wpteslimat_lock_' . $job . '_' . (int) $order_id;
+    }
+
+    /**
+     * (F2/G4) Kilidi ATOMİK edinir; alınamazsa false (çağıran işi yeniden PLANLAR — bkz. run_locked).
+     *
+     * NEDEN gerekli: yanıt-sonrası satır-içi koşum ile Action Scheduler işi AYNI işi AYNI ANDA
+     * çalıştırabilir. push/revoke için kalıcı meta işareti (_wpteslimat_pushed/_wpteslimat_revoked)
+     * ikinciyi no-op yapar; ama resync_items ve sync_refund BÖYLE BİR İŞARET YAZMAZ → aynı iade/
+     * uzlaştırma panele İKİ KEZ POST edilir: siparişte yanıltıcı ikinci not ("0 birim geri alındı"),
+     * kuyruk logunda çift satır, panelde eşzamanlı iki /refund.
+     *
+     * (G4) NEDEN add_option DEĞİL: add_option ATOMİK "yoksa oluştur" DEĞİLDİR. WP çekirdeği önce
+     * get_option ile check-then-act yapar, sonra `INSERT ... ON DUPLICATE KEY UPDATE` çalıştırır →
+     * çakışmada İKİ süreç de true alabilir (kilit hiç kilitlemez). Bunun yerine DB düzeyinde atomik
+     * primitifler kullanılır:
+     *   - edinme  : INSERT IGNORE + rows_affected === 1 (UNIQUE option_name → yalnız BİR süreç ekler)
+     *   - devralma: koşullu UPDATE (WHERE option_value < eşik) + rows_affected === 1
+     * autoload='no' → kilit kaydı her istekte belleğe alınmaz. Yazımdan sonra obje-cache temizlenir
+     * (satırı $wpdb ile doğrudan yazdığımız için get_option/notoptions önbelleği bayat kalabilir).
+     */
+    private static function acquire_lock($job, $order_id) {
+        global $wpdb;
+        $key = self::lock_key($job, $order_id);
+        $now = time();
+
+        // 1) ATOMİK edinme: satır varsa INSERT IGNORE sessizce 0 satır etkiler (hata üretmez).
+        $inserted = $wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, 'no')",
+            $key,
+            (string) $now
+        ));
+        if ($inserted === false) {
+            // Sürücü INSERT IGNORE desteklemiyor (ör. SQLite drop-in) → geriye dönük, ATOMİK OLMAYAN
+            // add_option yoluna düş. Nadiren çift koşum olabilir (iş metotlarının kendi guard'ları
+            // devrede kalır); işin HİÇ koşmamasından iyidir. Bayat kilit devralması BURADA DA olmalı:
+            // aksi halde fatal'dan kalan kilit sonsuza dek kalır ve iş her seferinde ertelenip
+            // ertelenip HİÇ koşmaz.
+            if (add_option($key, (string) $now, '', 'no')) return true;
+            $since = (int) get_option($key, 0);
+            if ($since > 0 && ($now - $since) < self::JOB_LOCK_TTL) return false;
+            delete_option($key);
+            return (bool) add_option($key, (string) $now, '', 'no');
+        }
+        if ((int) $wpdb->rows_affected === 1) {
+            self::flush_option_cache($key);
+            return true;
+        }
+
+        // 2) Kilit VAR. Süreç fatal error ile ölmüşse kilit takılı kalabilir → TTL dolduysa DEVRAL.
+        // Koşullu UPDATE atomiktir: yarışta yalnız BİR süreç 1 satır etkiler (diğeri 0 alır).
+        // CAST(... AS UNSIGNED): option_value longtext'tir; sayısal karşılaştırmayı açıkça zorlarız.
+        // '<=' bilinçli: TAM TTL kadar yaşlı kilit de bayattır (güvenlik-ağı koşumu erteleme süresiyle
+        // TTL eşit olduğundan '<' kullanılsaydı devralma bir tur daha gecikirdi).
+        $updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND CAST(option_value AS UNSIGNED) <= %d",
+            (string) $now,
+            $key,
+            $now - self::JOB_LOCK_TTL
+        ));
+        if ($updated === false) return false;
+        $took_over = ((int) $wpdb->rows_affected === 1);
+        if ($took_over) {
+            self::flush_option_cache($key);
+            error_log(sprintf('wpteslimat: bayat iş kilidi devralındı (%s #%d) — önceki koşum yarıda kalmış olabilir.', $job, (int) $order_id));
+        }
+        return $took_over;
+    }
+
+    /**
+     * (G4) $wpdb ile doğrudan yazılan option satırı için obje-cache tutarlılığı: hem kaydın kendisi
+     * hem de "bu option YOK" bilgisini tutan `notoptions` listesi geçersizleştirilir.
+     */
+    private static function flush_option_cache($key) {
+        if (!function_exists('wp_cache_delete')) return;
+        wp_cache_delete($key, 'options');
+        wp_cache_delete('notoptions', 'options');
+    }
+
+    /** (F2) Kilidi bırakır (iş bitti/patladı fark etmez — çağıran finally içinde çağırır). */
+    private static function release_lock($job, $order_id) {
+        delete_option(self::lock_key($job, $order_id));
+    }
+
+    /** (G1) "Yapıldı" işaretinin anahtarı — kilitle AYNI (iş, sipariş) çiftine bağlıdır. */
+    private static function done_marker_key($job, $order_id) {
+        return 'wpteslimat_done_' . $job . '_' . (int) $order_id;
+    }
+
+    /**
+     * (G1) İş BAŞARIYLA tamamlandı (gövde exception atmadan döndü): kısa ömürlü işaret bırak —
+     * kilide takılıp ertelenmiş güvenlik-ağı koşumunu (recheck) susturur. Yalnız recheck okur.
+     */
+    private static function mark_done($job, $order_id) {
+        if (!function_exists('set_transient')) return;
+        set_transient(self::done_marker_key($job, $order_id), (string) time(), self::DONE_MARKER_TTL);
+    }
+
+    /**
+     * (G1) Güvenlik-ağı koşumunda (YALNIZ recheck): kilidi tutan ikiz koşum işi AZ ÖNCE bitirdi mi?
+     * İşaret TEK SEFERLİK tüketilir (okundu → silindi) ve yalnız TAZE ise (≤ DONE_MARKER_WINDOW)
+     * işi susturur. Bayat işaret hiçbir işi yutamaz — belirsizlikte GÜVENLİ yön koşmaktır.
+     */
+    private static function consume_done_marker($job, $order_id) {
+        if (!function_exists('get_transient')) return false;
+        $key = self::done_marker_key($job, $order_id);
+        $done_at = get_transient($key);
+        if ($done_at === false) return false;
+        delete_transient($key);
+        return (time() - (int) $done_at) <= self::DONE_MARKER_WINDOW;
+    }
+
+    /**
+     * (G2) Kilit MEŞGULken işi SESSİZCE düşürme — Action Scheduler güvenlik ağını yutar.
+     *
+     * Senaryo: satır-içi koşum fatal alır (max_execution_time/OOM) → kilit açılmadan kalır ve
+     * kalıcı "yapıldı" meta'sı YAZILMAZ; gövde içindeki schedule_retry() de hiç çalışmaz. AS işi
+     * kilidi taze görüp sessizce dönerse eylem 'complete' işaretlenir → SİPARİŞ PANELE HİÇ GİTMEZ.
+     * Bu yüzden meşgul kilitte iş +60sn sonraya YENİDEN PLANLANIR (o an kilit TTL ile bayat olur ve
+     * devralınır) ve iz için log bırakılır. AS yoksa sessiz geçilir (o kurulumda senkron fallback
+     * çalışır, eşzamanlılık zaten oluşmaz).
+     *
+     * NEDEN AYRI HOOK ('wpteslimat_recheck', iş adı argümanla taşınır) — asıl 'wpteslimat_async_*'
+     * hook'u DEĞİL: ertelenen koşum, kilidi tutan ikiz işi bitirdiyse TEKRAR KOŞMAMALIDIR (G1) ve bu
+     * yalnız "yapıldı" işaretine bakılarak anlaşılır. Aynı async hook kullanılsaydı işareti o hook'un
+     * TÜM koşumları sorgulamak zorunda kalırdı ve MEŞRU bir yeniden tetik (ikinci kısmi iade, ikinci
+     * kalem düzenlemesi) yanlışlıkla susturulabilirdi — iş kaybı. Ayrı hook ile işaret yalnız güvenlik
+     * ağı yolunda tüketilir. İş metotlarının imzaları DEĞİŞMEZ (recheck ayrı bir giriş noktasıdır).
+     */
+    private static function reschedule_locked_job($job, $order_id, $actor) {
+        $args = [(string) $job, (int) $order_id, is_scalar($actor) ? (string) $actor : ''];
+        error_log(sprintf(
+            'wpteslimat: %s #%d kilitli (başka koşum sürüyor ya da yarıda kalmış) — %dsn sonraya yeniden planlandı.',
+            $job,
+            (int) $order_id,
+            self::JOB_RESCHEDULE_DELAY
+        ));
+        if (!function_exists('as_schedule_single_action')) return;
+        // Aynı argümanlarla zaten bekleyen bir güvenlik-ağı koşumu varsa tekrar ekleme (kuyruk şişmesin).
+        if (function_exists('as_has_scheduled_action') && as_has_scheduled_action('wpteslimat_recheck', $args, 'wpteslimat')) return;
+        as_schedule_single_action(time() + self::JOB_RESCHEDULE_DELAY, 'wpteslimat_recheck', $args, 'wpteslimat');
+    }
+
+    /**
+     * (G1/G2) Güvenlik-ağı giriş noktası: kilit meşgul olduğu için atlanan işi SONRADAN koşar.
+     *
+     * - Kilidi tutan ikiz koşum işi BAŞARIYLA bitirmişse ("yapıldı" işareti taze) → koşMA (mükerrer
+     *   /orders veya /refund POST'u + siparişte yanıltıcı ikinci not olurdu).
+     * - İşaret yoksa/bayatsa (ikiz fatal ile ölmüş ya da hiç bitirememiş) → işi normal kilitli yoldan
+     *   koş. Kilit o an TTL ile bayattır ve atomik olarak devralınır → iş KAYBOLMAZ.
+     *
+     * @param string $job    Mantıksal iş adı: push|revoke|resync|refund.
+     */
+    public function recheck($job, $order_id = 0, $actor = '') {
+        $map = [
+            'push'   => 'do_push',
+            'revoke' => 'do_revoke',
+            'resync' => 'do_resync_items',
+            'refund' => 'do_sync_refund',
+        ];
+        $job = is_scalar($job) ? (string) $job : '';
+        if (!isset($map[$job])) return false;
+        if (self::consume_done_marker($job, $order_id)) return false;
+        return $this->run_locked($job, $map[$job], $order_id, $actor);
+    }
+
+    /**
+     * (F2) İş gövdesini kısa ömürlü kilitle sarar. Kilit alınamazsa iş ATLANIR ama SESSİZCE DEĞİL:
+     * güvenlik-ağı koşumu olarak yeniden planlanır (G2). Kilit yalnız MUTEX'tir; ertelenen koşumun
+     * mükerrer çalışmasını "yapıldı" işareti keser (G1 — yalnız recheck yolunda tüketilir).
+     *
+     * Ucuz ön kontroller (yapılandırma/klon) kilitten ÖNCE: yapılandırılmamış veya klon sitede
+     * gereksiz option yazımı olmasın. İş metotlarının kendi guard'ları (idempotency meta dahil)
+     * AYNEN korunur → çift savunma.
+     *
+     * @return bool İş gövdesi BU koşumda gerçekten çalıştı mı (çağıran buna göre AS ikizini düşürür).
+     */
+    private function run_locked($job, $method, $order_id, $actor) {
+        if (!Wpteslimat_Settings::is_configured()) return false;
+        if (Wpteslimat_Settings::is_clone()) return false;
+
+        if (!self::acquire_lock($job, $order_id)) {
+            self::reschedule_locked_job($job, $order_id, $actor);
+            return false;
+        }
+        // try/finally: dönüş, exception ve iç return dahil FATAL OLMAYAN tüm yollarda kilit bırakılır.
+        // Fatal (OOM/timeout) hâlinde finally çalışmaz → kilidi kısa TTL (JOB_LOCK_TTL) bayatlatır ve
+        // yeniden planlanan koşum devralır (bkz. reschedule_locked_job).
+        try {
+            $this->$method($order_id, $actor);
+            self::mark_done($job, $order_id);
+            return true;
+        } finally {
+            self::release_lock($job, $order_id);
         }
     }
 
@@ -137,8 +678,18 @@ class Wpteslimat_Order_Sync {
         if ($actor !== '') Wpteslimat_Panel_Client::set_actor($actor);
     }
 
-    /** @param string $actor İşi tetikleyen mağaza yöneticisi (yoksa '' → panelde 'system'). */
+    /**
+     * (F2) Kilitli giriş noktası — imza DEĞİŞMEDİ (AS/retry hook'ları ve senkron fallback aynen çağırır).
+     * Dönüş değeri yalnız satır-içi koşum için anlamlıdır (true = gövde çalıştı → AS ikizi düşürülür);
+     * WP hook'ları dönüşü yok sayar.
+     * @param string $actor İşi tetikleyen mağaza yöneticisi (yoksa '' → panelde 'system').
+     */
     public function push($order_id, $actor = '') {
+        return $this->run_locked('push', 'do_push', $order_id, $actor);
+    }
+
+    /** Asıl push gövdesi (kilit altında koşar). */
+    private function do_push($order_id, $actor = '') {
         if (!Wpteslimat_Settings::is_configured()) return;
         // Kopya/staging koruması (§7): site adresi bağlanma anındakinden farklıysa CANLI
         // panele push etme (klon ortamı gerçek stoğu tüketmesin). Admin'e uyarı gösterilir.
@@ -258,6 +809,14 @@ class Wpteslimat_Order_Sync {
      * içerideki $order->save() zinciri guard ile kendini yeniden tetikleyemez.
      */
     public function resync_items($order_id, $actor = '') {
+        // (F2) Kilit ŞART: resync kalıcı bir "yapıldı" işareti YAZMAZ (push/revoke'taki meta gibi) →
+        // satır-içi + AS çift koşumu panele iki kez POST ederdi (kuyruk logunda çift satır). Kilit
+        // yalnız EŞZAMANLI koşumu keser; ARDIŞIK (AS 15-75sn sonra) koşumu G1 mekanizması keser.
+        return $this->run_locked('resync', 'do_resync_items', $order_id, $actor);
+    }
+
+    /** Asıl resync gövdesi (kilit altında koşar). */
+    private function do_resync_items($order_id, $actor = '') {
         if (self::$syncing) return;
         if (!Wpteslimat_Settings::is_configured()) return;
         // Kopya/staging koruması (§7): klon ortamda uzlaştırma push'u yapma.
@@ -300,6 +859,11 @@ class Wpteslimat_Order_Sync {
      * @param string $actor İşi tetikleyen mağaza yöneticisi (yoksa '' → "İşlemi başlatan" YAZILMAZ).
      */
     public function revoke($order_id, $actor = '') {
+        return $this->run_locked('revoke', 'do_revoke', $order_id, $actor);
+    }
+
+    /** Asıl revoke gövdesi (kilit altında koşar). */
+    private function do_revoke($order_id, $actor = '') {
         if (!Wpteslimat_Settings::is_configured()) return;
         // Kopya/staging koruması (§7): klon ortamda CANLI panele revoke GÖNDERME. Klon aynı
         // api_key+hmac_secret VE `_wpteslimat_pushed` meta'sını miras alır → is_clone() true olsa
@@ -379,6 +943,14 @@ class Wpteslimat_Order_Sync {
      * lisans kapanır). Klon/yapılandırma guard'lı; başarısızlıkta retry.
      */
     public function sync_refund($order_id, $actor = '') {
+        // (F2) Kilit ŞART: iade uzlaştırması da kalıcı işaret yazmaz → çift koşum siparişe yanıltıcı
+        // ikinci not ("0 birim geri alındı") ve panele ikinci /refund POST'u üretiyordu. Ardışık
+        // (satır-içi bitti → AS geç koştu) mükerrer koşumu G1 mekanizması keser.
+        return $this->run_locked('refund', 'do_sync_refund', $order_id, $actor);
+    }
+
+    /** Asıl kısmi-iade gövdesi (kilit altında koşar). */
+    private function do_sync_refund($order_id, $actor = '') {
         if (!Wpteslimat_Settings::is_configured()) return;
         if (Wpteslimat_Settings::is_clone()) return;
         $order = wc_get_order($order_id);
@@ -417,6 +989,8 @@ class Wpteslimat_Order_Sync {
 
         // Tam iade (hiç net kalmadı) → terminal revoke yoluna devret (idempotent; _wpteslimat_revoked).
         // Aktör aynı işin parçası olarak devredilir (sipariş notu doğru kişiyi gösterir).
+        // (F2) KİLİT: revoke kendi anahtarını ('revoke') alır, biz 'refund' anahtarını tutuyoruz →
+        // iç içe çağrıda kendi kilidimize takılmayız (kilitler iş adına göre AYRI).
         if ($total_net === 0) {
             $this->revoke($order_id, $actor);
             return;

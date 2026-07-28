@@ -6,11 +6,24 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
 import { recordReplacementLineage } from './assignment-history';
+import { buildStoreAdminUrl } from './store-admin-url';
 import { FulfillmentService } from './fulfillment.service';
 import { DB, type Database } from '../db/db.module';
 import {
@@ -77,75 +90,11 @@ function maskPayload(
 }
 
 /**
- * Mağaza admin panelinde siparişi AÇAN link (§17). SALT LİNK ÜRETİMİ — panel mağazaya
- * BAĞLANMAZ, oturum AÇMAZ, hiçbir istek ATMAZ; operatörün tarayıcısında açacağı bir URL
- * metni döndürür (mağaza yetkisi tamamen operatörün kendi oturumundadır).
- *
- * Öncelik: `sites.admin_order_url_template` (operatör tanımlı, `{orderId}` yer tutucusu) →
- * yoksa site TİPİNDEN varsayılan (yalnız 'woocommerce'; marketplace/reseller/null → null,
- * çünkü o platformların admin yolu bilinmiyor → uydurma link üretmeyiz).
- *
- * GÜVENLİK (enjeksiyon): remoteOrderId encodeURIComponent ile kaçırılır (query/pat parçalanamaz);
- * üretilen URL `new URL()` ile ayrıştırılır ve YALNIZ http/https şeması kabul edilir — şablona
- * `javascript:`/`data:` yazılmışsa null döner (operatör-kaynaklı da olsa ham geçirilmez).
- * Origin türetmede webhookUrl önceliklidir (gerçek erişilebilir kök), yoksa `https://<domain>`.
+ * Mağaza admin sipariş linki artık TEK KAYNAKTAN gelir (`./store-admin-url`) — daha önce bu
+ * dosyada ve stock.service'te İKİ AYRI kopya vardı ve davranışları farklıydı (origin türetimi).
+ * Mevcut tüketiciler (testler dahil) bu modülden import etmeye devam edebilsin diye re-export.
  */
-export function buildStoreAdminUrl(
-  site:
-    | {
-        type?: string | null;
-        domain?: string | null;
-        webhookUrl?: string | null;
-        adminOrderUrlTemplate?: string | null;
-      }
-    | null
-    | undefined,
-  remoteOrderId: string | null | undefined,
-): string | null {
-  if (!site || !remoteOrderId) return null;
-  const safeId = encodeURIComponent(String(remoteOrderId));
-
-  const asHttpUrl = (candidate: string): string | null => {
-    try {
-      const u = new URL(candidate);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-      return u.toString();
-    } catch {
-      return null;
-    }
-  };
-
-  const template = (site.adminOrderUrlTemplate ?? '').trim();
-  if (template) {
-    // Şablon operatörün girdiği ham metindir → OLDUĞU GİBİ kullanılmaz, URL olarak ayrıştırılır.
-    return asHttpUrl(template.split('{orderId}').join(safeId));
-  }
-
-  if (site.type !== 'woocommerce') return null;
-
-  let origin: string | null = null;
-  const webhook = (site.webhookUrl ?? '').trim();
-  if (webhook) {
-    try {
-      const u = new URL(webhook);
-      if (u.protocol === 'http:' || u.protocol === 'https:') origin = u.origin;
-    } catch {
-      /* bozuk webhook_url → domain'e düş */
-    }
-  }
-  if (!origin) {
-    const domain = (site.domain ?? '').trim();
-    if (!domain) return null;
-    const withScheme = /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
-    try {
-      origin = new URL(withScheme).origin;
-    } catch {
-      return null;
-    }
-  }
-
-  return asHttpUrl(`${origin}/wp-admin/admin.php?page=wc-orders&action=edit&id=${safeId}`);
-}
+export { buildStoreAdminUrl };
 
 /**
  * Bonus atamalar AYRI sentetik satırda durur (`bonus:<origWooItemId>:<uuid>`, eski format
@@ -191,7 +140,11 @@ export interface QuarantineQuery {
   status?: 'quarantined' | 'voided';
   productId?: string;
   supplierId?: string;
-  /** ISO tarih/zaman — birleşik `quarantinedAt` üzerinden süzülür (bkz. listQuarantine notu). */
+  /**
+   * ISO tarih/zaman — birleşik `quarantinedAt` üzerinden süzülür. SQL'de SAĞLAM BİR ÜST KÜME
+   * (superset) ön-filtresi uygulanır (pencere doğru döneme kayar), kesin süzme okuma sonrası
+   * yapılır — bkz. listQuarantine içindeki "SQL ÖN-FİLTRESİ" notu.
+   */
   from?: string;
   to?: string;
   /** Varsayılan 500, üst sınır 5000. */
@@ -444,14 +397,65 @@ export class AdminOrdersService {
       .limit(200);
   }
 
-  /** Bekleyen Teslimatlar ana ekranı (§13): pending/partial siparişler. */
+  /**
+   * Bekleyen Teslimatlar ana ekranı (§13): henüz TAMAMLANMAMIŞ siparişler.
+   *
+   * 'unmapped' de DAHİLDİR (kullanıcı şikâyeti): mağaza ürünü panele eşlenmemişse sipariş
+   * `unmapped` durumunda kalır — teslim edilecek satırı vardır ama operatörün EYLEM alması
+   * gerekir (ürünü eşle → bekleyen satırı çöz). Eskiden yalnız pending/partial listelendiği
+   * için bu siparişler "Bekleyen Teslimatlar" ekranında HİÇ GÖRÜNMÜYOR, operatör panelde
+   * hiçbir iz bulamıyordu. Terminal durumlar (fulfilled/revoked) elbette dışarıda kalır.
+   *
+   * F11 (denetim): tek `limit(200)` PAYLAŞILIYORDU → mağazadan gelen eşlemesiz sipariş seli
+   * (yeni ürün eşlenmeden satışa açıldığında onlarca sipariş) pencereyi doldurup GERÇEKTEN stok
+   * bekleyen ESKİ siparişleri listeden düşürüyordu (operatör "sipariş kayboldu" görüyordu).
+   * Artık İKİ AYRI sorgu var — pending/partial için 200, unmapped için 100 — sonuçlar tarih
+   * azalan birleştirilir. Kova birbirini yiyemez.
+   *
+   * Dönüş tipi DİZİ kalır (S3: şekil değişikliği YOK); her satıra `hasUnmappedLine` eklenir —
+   * "bu siparişin eşlemesi olmayan AKTİF satırı var mı" (S1 ile aynı ifade). Sipariş `status`
+   * alanı kısmen teslim edilmiş karma siparişlerde 'partial' olabilir ama satırlarından biri
+   * hâlâ eşlemesizdir; operatör bunu status'ten göremiyordu. Tek EXISTS alt sorgusu ile çözülür
+   * (N+1 YOK); `order_lines_order_idx` + kısmi `order_lines_pending_product_idx` karşılar.
+   */
   async pending() {
-    return this.db
-      .select()
-      .from(orders)
-      .where(inArray(orders.status, ['pending', 'partial']))
-      .orderBy(desc(orders.createdAt))
-      .limit(200);
+    // S1/S3 ortak ifadesi: eşlemesiz (product_id NULL) + iptal EDİLMEMİŞ + hâlâ iş bekleyen satır.
+    //
+    // DİKKAT (tuzak): korelasyon `orders.id` DÜZ METİN yazılır, `${orders.id}` ile GÖMÜLMEZ.
+    // Drizzle tek-tablolu SELECT'te projeksiyondaki kolonları TABLO ÖNEKSİZ basar; gömülü kolon
+    // da öyle basılır → alt sorguda `ol.order_id = "id"` olur ve "id" iç kapsamdan (ol.id)
+    // çözülür → koşul HER ZAMAN false döner (sessiz kırılma, hata vermez). Üretilen SQL
+    // `.toSQL()` ile doğrulandı.
+    const hasUnmappedLine = sql<boolean>`exists (
+      select 1 from order_lines ol
+      where ol.order_id = orders.id
+        and ol.product_id is null
+        and ol.canceled = false
+        and ol.status in ('pending', 'partial')
+    )`;
+    const columns = getTableColumns(orders);
+
+    const [waiting, unmapped] = await Promise.all([
+      // Stok/kalan bekleyenler (klasik kuyruk).
+      this.db
+        .select({ ...columns, hasUnmappedLine })
+        .from(orders)
+        .where(inArray(orders.status, ['pending', 'partial']))
+        .orderBy(desc(orders.createdAt))
+        .limit(200),
+      // Eşlemesiz siparişler AYRI kotada — kendi seli yalnız kendi kovasını doldurur.
+      this.db
+        .select({ ...columns, hasUnmappedLine })
+        .from(orders)
+        .where(eq(orders.status, 'unmapped'))
+        .orderBy(desc(orders.createdAt))
+        .limit(100),
+    ]);
+
+    // Tek liste, tarih azalan (UI eşlemesizleri ayrıca öne alabilir — sıralama sunum kararı).
+    return [...waiting, ...unmapped].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    );
   }
 
   /** Admin sipariş detayı: satırlar + atamalar (maskeli) + timeline (§7 meta box). */
@@ -461,13 +465,13 @@ export class AdminOrdersService {
 
     // Siparişin geldiği mağaza (site) + kanal tipi — operatör hangi siteden/hangi platformdan
     // geldiğini görsün (çok siteli, platform-bağımsız panel: woocommerce/marketplace/reseller).
-    // webhookUrl + adminOrderUrlTemplate YALNIZ storeAdminUrl türetmek için okunur; yanıta GİRMEZ
-    // (sır kolonları — hmac/api_key — hiç seçilmez).
+    // adminOrderUrlTemplate YALNIZ storeAdminUrl türetmek için okunur; yanıta GİRMEZ
+    // (sır kolonları — hmac/api_key — hiç seçilmez). webhookUrl ARTIK OKUNMAZ: iç hostname
+    // olabildiğinden link üretiminde kullanılmıyor (bkz. store-admin-url.ts).
     const [siteRow] = await this.db
       .select({
         domain: sites.domain,
         type: sites.type,
-        webhookUrl: sites.webhookUrl,
         adminOrderUrlTemplate: sites.adminOrderUrlTemplate,
       })
       .from(sites)
@@ -877,14 +881,21 @@ export class AdminOrdersService {
   /**
    * İade/iptal → atama revoke, key karantinaya (§2: iade edilen key otomatik
    * satışa dönmez). audit_log'a düşer. Müşteri deliveries'te artık görünmez.
+   *
+   * `exec` (F1): varsayılan `this.db` — kendi transaction'ını açar (mevcut çağıranların
+   * davranışı DEĞİŞMEZ). Zaten bir transaction içinden çağrılırsa (syncRefunds) o tx geçilir;
+   * drizzle iç içe transaction'ı SAVEPOINT'e çevirir → aynı bağlantıda, aynı kilitlerle koşar.
+   * Bu ŞART: dış tx satır kilidini tutarken ayrı bağlantıda revoke denemek, kendi kilidimizi
+   * beklediğimiz (PG'nin göremediği) bir kilitlenme üretirdi.
    */
   async revokeAssignment(
     assignmentId: string,
     reason: string,
     actor: string,
     markLineCanceled = true,
+    exec: Database = this.db,
   ) {
-    return this.db.transaction(async (tx) => {
+    return exec.transaction(async (tx) => {
       const [asg] = await tx
         .select()
         .from(assignments)
@@ -972,10 +983,18 @@ export class AdminOrdersService {
    * (müşteri hakkını fazladan kaybeder). Kapasite tam `take` kadar döner (use_count -= take); satır
    * fulfilledQty `take` düşer. Satır 'canceled' İŞARETLENMEZ (adet düşür = iade DEĞİL → yeniden
    * atanabilir kalır). `units >= atama.units` ise tam revoke'a düşer (tek-kullanım hep bu yola gelir).
+   *
+   * `exec` (F1): revokeAssignment ile aynı sözleşme — dış transaction verilirse SAVEPOINT olarak koşar.
    */
-  async revokePartialUnits(assignmentId: string, units: number, reason: string, actor: string) {
+  async revokePartialUnits(
+    assignmentId: string,
+    units: number,
+    reason: string,
+    actor: string,
+    exec: Database = this.db,
+  ) {
     if (units <= 0) return { assignmentId, revoked: 0 };
-    return this.db.transaction(async (tx) => {
+    return exec.transaction(async (tx) => {
       const [asg] = await tx
         .select()
         .from(assignments)
@@ -1166,12 +1185,15 @@ export class AdminOrdersService {
     siteId: string,
     remoteProductId?: string,
     remoteVariationId?: string,
+    // F1: çağıran bir transaction içindeyse okuma da AYNI bağlantıdan yapılır (ayrı bağlantı
+    // dış tx'in kilitlediği satırları bekleyebilir + farklı anlık görüntü okur).
+    exec: Database = this.db,
   ): Promise<number> {
     if (!remoteProductId) return 1;
     const variation =
       remoteVariationId && remoteVariationId !== '0' ? remoteVariationId : null;
     if (variation) {
-      const [row] = await this.db
+      const [row] = await exec
         .select({ bundleQty: siteProductMappings.bundleQty })
         .from(siteProductMappings)
         .where(
@@ -1186,7 +1208,7 @@ export class AdminOrdersService {
         .limit(1);
       if (row) return row.bundleQty;
     }
-    const [row] = await this.db
+    const [row] = await exec
       .select({ bundleQty: siteProductMappings.bundleQty })
       .from(siteProductMappings)
       .where(
@@ -1213,13 +1235,14 @@ export class AdminOrdersService {
     siteId: string,
     line: { productId: string | null; bundleQty: number | null },
     remote: { remoteProductId?: string; remoteVariationId?: string },
+    exec: Database = this.db,
   ): Promise<number | null> {
     if (!line.productId) return 1;
     if (line.bundleQty != null && line.bundleQty > 0) return line.bundleQty;
     // Eski eklenti remoteProductId göndermiyorsa eşleme aranamaz → 1 (geriye dönük uyumlu:
     // 0025 öncesi davranış zaten buydu ve bundleQty=1 kurulumlarda doğrudur).
     if (!remote.remoteProductId) return 1;
-    return this.resolveBundleQty(siteId, remote.remoteProductId, remote.remoteVariationId);
+    return this.resolveBundleQty(siteId, remote.remoteProductId, remote.remoteVariationId, exec);
   }
 
   async syncRefunds(
@@ -1234,97 +1257,150 @@ export class AdminOrdersService {
     reason: string,
   ): Promise<{ orderId: string; revoked: number; adjustedLines: number }> {
     const [order] = await this.db
-      .select()
+      .select({ id: orders.id })
       .from(orders)
       .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, remoteOrderId)))
       .limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
     const actor = `site:${site.domain}`;
-    let totalRevoked = 0;
-    let adjusted = 0;
 
-    for (const l of lines) {
-      // netQty WP'den MAĞAZA birimi gelir; panel line.qty/fulfilledQty PANEL birimidir
-      // (= mağaza adedi × ölçek). Ölçeklemeden karşılaştırmak bundleQty>1'de iade edilmeyen
-      // satırlardan bile aşırı revoke ederdi.
-      const orderNetQty = Math.max(0, Math.floor(l.netQty));
-      const [line] = await this.db
-        .select()
+    /*
+     * F1 (denetim, YÜKSEK — para kaybı): bu gövde eskiden KİLİTSİZ ve TRANSACTION'SIZ bir
+     * read-modify-write'tı — satırı okur (qty/fulfilledQty), `excess` hesaplar, sonra ayrı
+     * ifadelerle revoke ederdi. WP tarafında aynı iade İKİ KEZ POST edilebiliyor (satır-içi
+     * `woocommerce_order_refunded` + Action Scheduler işi); iki istek de BAYAT fulfilledQty
+     * okuyup aynı `excess`i ikişer kez geri alıyordu → müşterinin İADE ETMEDİĞİ CANLI
+     * anahtarları ölüyor, ardından partial-auto satırı taze stokla dolduruyordu (hem müşteri
+     * mağduriyeti hem bedava lisans yanması).
+     *
+     * Artık tüm gövde TEK transaction'da ve sipariş advisory kilidinin ALTINDA koşar:
+     *   · İkinci eşzamanlı istek kilitte bekler, sırası gelince TAZE qty/fulfilledQty okur →
+     *     `netQty >= line.qty` görüp no-op eder (idempotent davranış korunur).
+     *   · Ortada hata olursa kısmi durum kalmaz (revoke edildi ama qty düşmedi → rollback).
+     * Davranış AYNEN korundu (netQty >= qty → dokunma; excess>0 → o kadar birim geri al);
+     * eklenen tek şey atomiklik.
+     */
+    return this.db.transaction(async (tx) => {
+      /*
+       * KİLİT ANAHTARI: `hashtext(order.id)` — projedeki TÜM sipariş-kapsamlı yazarlarla AYNI
+       * ad alanı (revokeOrderForSite / releaseHeld / rejectHeld / pending-lines.linkLine).
+       * Ayrı bir 'refund:<id>' ad alanı seçilseydi tam-iade ile kısmi-iade birbirini
+       * dışlamaz, ikisi de order_lines satırlarını FARKLI sırayla kilitleyip ABBA deadlock
+       * (40P01 → 500) üretebilirdi. Aynı anahtar hem yarışı kapatır hem kilit sırasını
+       * tekleştirir. (İç içe advisory alan bir yardımcı ÇAĞIRMIYORUZ → kendi kilidimizi
+       * bekleme riski yok; revokeOrderForSite'ın rejectHeld'i tx dışında çağırma nedeni budur.)
+       */
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${order.id}))`);
+
+      /*
+       * KİLİT SIRASI (proje sözleşmesi): advisory → assignments → order_lines → orders.
+       * revokeAssignment/revokePartialUnits de bu sırayla kilitler. Siparişin TÜM atama ve
+       * satır kilitleri döngüden ÖNCE alınır: aksi halde 1. satırın revoke'u `orders` satırını
+       * güncelledikten (kilitledikten) sonra 2. satır için YENİ bir order_lines kilidi istenir
+       * → aynı anda satır kilidi tutup orders isteyen completeLine ile ABBA deadlock olurdu.
+       * Küme sipariş başına küçüktür (satır/atama sayısı), maliyeti ihmal edilebilir.
+       */
+      await tx
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(eq(assignments.orderId, order.id))
+        .orderBy(asc(assignments.id))
+        .for('update');
+      await tx
+        .select({ id: orderLines.id })
         .from(orderLines)
-        .where(and(eq(orderLines.orderId, order.id), eq(orderLines.remoteLineId, l.remoteLineId)))
-        .limit(1);
-      if (!line || line.canceled) continue;
+        .where(eq(orderLines.orderId, order.id))
+        .orderBy(asc(orderLines.id))
+        .for('update');
 
-      // ÖLÇEK satırdan çözülür — eşlemeden DEĞİL (denetim bulgusu):
-      //  · Eşlemesiz satırda (`productId` NULL) qty MAĞAZA birimindedir → ölçek 1. Eskiden
-      //    burada koşulsuz bundleQty ile çarpılıyordu; satır sonradan "Eşlemeyi uygula" ile
-      //    bağlanınca linkLine aynı qty'yi BİR KEZ DAHA çarpıyor ve müşteriye hakkından fazla
-      //    (bedava) lisans teslim ediliyordu.
-      //  · Eşleme kaldırılmış + anlık görüntü yoksa ölçek BİLİNMEZ → satır ATLANIR (qty'ye
-      //    dokunmak canlı anahtarları iade YOKKEN geri alırdı).
-      const scale = await this.resolveLineScale(site.id, line, l);
-      if (scale == null) {
-        this.logger.warn(
-          `İade uzlaştırma: satır ölçeği çözülemedi (eşleme kaldırılmış, anlık görüntü yok) — ` +
-            `atlanıyor: line=${line.id} order=${order.id} remoteProduct=${l.remoteProductId ?? '-'}`,
-        );
-        continue;
-      }
-      const netQty = orderNetQty * scale;
-      if (netQty >= line.qty) continue; // Bu satırda iade yok (refund yolu qty ARTIRMAZ).
+      let totalRevoked = 0;
+      let adjusted = 0;
 
-      // 1) Fazla teslim edilmiş birimleri geri al (fulfilled > netQty) — revokeExcess deseni:
-      // en yeni atamadan başlayarak `excess` birim karşılanana dek; tek→karantina, multi→kapasite.
-      const excess = line.fulfilledQty - netQty;
-      if (excess > 0) {
-        const active = await this.db
-          .select({ id: assignments.id, units: assignments.units })
-          .from(assignments)
-          .where(and(eq(assignments.lineId, line.id), eq(assignments.status, 'active')))
-          .orderBy(desc(assignments.createdAt));
-        let revoked = 0;
-        for (const a of active) {
-          if (revoked >= excess) break;
-          const need = excess - revoked;
-          if (a.units <= need) {
-            await this.revokeAssignment(a.id, reason, actor, false);
-            revoked += a.units;
-          } else {
-            await this.revokePartialUnits(a.id, need, reason, actor);
-            revoked += need;
-          }
+      for (const l of lines) {
+        // netQty WP'den MAĞAZA birimi gelir; panel line.qty/fulfilledQty PANEL birimidir
+        // (= mağaza adedi × ölçek). Ölçeklemeden karşılaştırmak bundleQty>1'de iade edilmeyen
+        // satırlardan bile aşırı revoke ederdi.
+        const orderNetQty = Math.max(0, Math.floor(l.netQty));
+        // Kilit zaten yukarıda alındı; bu okuma TAZE (aynı tx içindeki kendi yazmalarımız da
+        // görünür → aynı remoteLineId iki kez gelirse ikinci tur no-op'a düşer).
+        const [line] = await tx
+          .select()
+          .from(orderLines)
+          .where(and(eq(orderLines.orderId, order.id), eq(orderLines.remoteLineId, l.remoteLineId)))
+          .limit(1);
+        if (!line || line.canceled) continue;
+
+        // ÖLÇEK satırdan çözülür — eşlemeden DEĞİL (denetim bulgusu):
+        //  · Eşlemesiz satırda (`productId` NULL) qty MAĞAZA birimindedir → ölçek 1. Eskiden
+        //    burada koşulsuz bundleQty ile çarpılıyordu; satır sonradan "Eşlemeyi uygula" ile
+        //    bağlanınca linkLine aynı qty'yi BİR KEZ DAHA çarpıyor ve müşteriye hakkından fazla
+        //    (bedava) lisans teslim ediliyordu.
+        //  · Eşleme kaldırılmış + anlık görüntü yoksa ölçek BİLİNMEZ → satır ATLANIR (qty'ye
+        //    dokunmak canlı anahtarları iade YOKKEN geri alırdı).
+        const scale = await this.resolveLineScale(site.id, line, l, tx);
+        if (scale == null) {
+          this.logger.warn(
+            `İade uzlaştırma: satır ölçeği çözülemedi (eşleme kaldırılmış, anlık görüntü yok) — ` +
+              `atlanıyor: line=${line.id} order=${order.id} remoteProduct=${l.remoteProductId ?? '-'}`,
+          );
+          continue;
         }
-        totalRevoked += revoked;
+        const netQty = orderNetQty * scale;
+        if (netQty >= line.qty) continue; // Bu satırda iade yok (refund yolu qty ARTIRMAZ).
+
+        // 1) Fazla teslim edilmiş birimleri geri al (fulfilled > netQty) — revokeExcess deseni:
+        // en yeni atamadan başlayarak `excess` birim karşılanana dek; tek→karantina, multi→kapasite.
+        const excess = line.fulfilledQty - netQty;
+        if (excess > 0) {
+          const active = await tx
+            .select({ id: assignments.id, units: assignments.units })
+            .from(assignments)
+            .where(and(eq(assignments.lineId, line.id), eq(assignments.status, 'active')))
+            .orderBy(desc(assignments.createdAt));
+          let revoked = 0;
+          for (const a of active) {
+            if (revoked >= excess) break;
+            const need = excess - revoked;
+            // tx GEÇİLİR: yardımcılar aynı bağlantıda SAVEPOINT olarak koşar (ayrı bağlantı
+            // bizim tuttuğumuz satır kilidini bekler ve asla dönmezdi).
+            if (a.units <= need) {
+              await this.revokeAssignment(a.id, reason, actor, false, tx);
+              revoked += a.units;
+            } else {
+              await this.revokePartialUnits(a.id, need, reason, actor, tx);
+              revoked += need;
+            }
+          }
+          totalRevoked += revoked;
+        }
+
+        // 2) qty'yi NET'e düşür (revoke sonrası taze fulfilled ile satır durumu yeniden).
+        const [fresh] = await tx
+          .select({ fulfilledQty: orderLines.fulfilledQty })
+          .from(orderLines)
+          .where(eq(orderLines.id, line.id))
+          .limit(1);
+        const nf = fresh?.fulfilledQty ?? 0;
+        const lineStatus = nf >= netQty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+        await tx
+          .update(orderLines)
+          .set({ qty: netQty, status: lineStatus })
+          .where(eq(orderLines.id, line.id));
+        adjusted++;
       }
 
-      // 2) qty'yi NET'e düşür (revoke sonrası taze fulfilled ile satır durumu yeniden).
-      const [fresh] = await this.db
-        .select({ fulfilledQty: orderLines.fulfilledQty })
-        .from(orderLines)
-        .where(eq(orderLines.id, line.id))
-        .limit(1);
-      const nf = fresh?.fulfilledQty ?? 0;
-      const lineStatus = nf >= netQty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
-      await this.db
-        .update(orderLines)
-        .set({ qty: netQty, status: lineStatus })
-        .where(eq(orderLines.id, line.id));
-      adjusted++;
-    }
-
-    if (adjusted > 0) {
-      await this.db.transaction(async (tx) => {
+      if (adjusted > 0) {
         await recomputeOrderStatus(tx, order.id);
         await tx.insert(fulfillmentEvents).values({
           orderId: order.id,
           type: 'revoked',
           message: `Kısmi iade uzlaştırıldı — ${adjusted} satır, ${totalRevoked} birim geri alındı (${reason})`,
         });
-      });
-    }
+      }
 
-    return { orderId: order.id, revoked: totalRevoked, adjustedLines: adjusted };
+      return { orderId: order.id, revoked: totalRevoked, adjustedLines: adjusted };
+    });
   }
 
   // ─── §7 Meta box SITE-SCOPED operasyonlar (WP eklentisi HMAC ile çağırır) ───────────
@@ -1658,6 +1734,10 @@ export class AdminOrdersService {
    * keyPreview server-side üretilir: key/code/custom → son-4 maskeli (bulk liste reveal-audit üretmesin);
    * account → yalnız secret-OLMAYAN alanlar (parola HİÇ dönmez). TAM değer yalnız kaynak siparişin loglu
    * reveal yolunda görülür. Yazma yok — salt-okunur.
+   *
+   * DÖNÜŞ (DÜRÜSTLÜK): düz dizi DEĞİL, `{ rows, truncated, limit }`. `truncated`, JS süzgecinden
+   * SONRAKİ satır sayısına değil SQL'in döndürdüğü HAM satır sayısının fetch üst sınırına dayanır —
+   * aksi halde tarih süzgeci satırları kırptığında liste EKSİKKEN uyarı `false` çıkıyordu (G6).
    */
   async listQuarantine(params: QuarantineQuery = {}) {
     const limit = Math.min(Math.max(Math.trunc(params.limit ?? 500), 1), 5000);
@@ -1665,6 +1745,27 @@ export class AdminOrdersService {
     // LIMIT'i tüketebildiği için lisans-satırı bazında dedupe'tan ÖNCE daha geniş çekilir, sonra
     // JS'te `limit`e kırpılır. Üst sınır sabit → bellek patlamaz.
     const fetchLimit = Math.min(limit * 3 + 50, 20_000);
+
+    // ── Tarih sınırları (SQL ön-filtresi + kesin JS süzgeci AYNI değerleri kullanır) ────────
+    // SAVUNMACI: geçersiz değer (from=abc) SESSİZCE süzgeçsiz kabul edilir — 400/500 atılmaz.
+    const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+    const rawFrom = (params.from ?? '').trim();
+    const rawTo = (params.to ?? '').trim();
+    const fromTs = rawFrom ? Date.parse(rawFrom) : Number.NaN;
+    const toParsed = rawTo ? Date.parse(rawTo) : Number.NaN;
+    // Yalnız TARİH verildiyse (YYYY-MM-DD) üst sınır gün SONUNA kadar kapsar — aksi halde
+    // "bugünden bugüne" seçimi 00:00 sınırında kalıp listeyi boş gösterirdi.
+    const toTs = !Number.isNaN(toParsed) && dateOnly.test(rawTo) ? toParsed + 86_399_999 : toParsed;
+    // SQL parametresi için ISO — Date aralığı DIŞINA taşan değer (ör. gün-sonu eklemesi üst
+    // sınırı aşarsa) `toISOString()`'i patlatır; null'a düşer → o yönde SQL ön-filtresi yok
+    // (kesin JS süzgeci yine çalışır). Okuma yolu ASLA 500 atmaz.
+    const isoOrNull = (ts: number): string | null => {
+      if (Number.isNaN(ts)) return null;
+      const d = new Date(ts);
+      return Number.isNaN(d.getTime()) ? null : d.toISOString();
+    };
+    const fromIso = isoOrNull(fromTs);
+    const toIso = isoOrNull(toTs);
 
     const search = (params.search ?? '').trim();
     const like = search ? `%${search}%` : null;
@@ -1689,6 +1790,95 @@ export class AdminOrdersService {
       if (searchCond) conditions.push(searchCond);
     }
 
+    // ── SQL ÖN-FİLTRESİ: tarih aralığı (denetim bulgusu G6) ────────────────────────────────
+    // Karantina tarihi TEK kolon DEĞİL: coalesce(değişim geçmişi, düz-revoke audit'i, stok
+    // düzeltme, atama, stok girişi). Son ikisi bu sorguda, ilk üçü AYRI tablolarda → KESİN
+    // süzgeç aşağıda (JS) kalır. Ama süzgeç YALNIZ JS'te kalırsa SQL en yeni `fetchLimit`
+    // satırı çeker ve seçilen ESKİ dönem o pencerede olmadığı için liste BOŞ görünürdü
+    // (20.000 kayıtlı kurulumda "01.01.2025–31.03.2025" → 0 satır). Bu yüzden SQL'e SAĞLAM
+    // BİR ÜST KÜME (superset) ön-filtresi konur: hiçbir GEÇERLİ satırı düşürmez, ama pencereyi
+    // doğru döneme kaydırır.
+    const baseAt = sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt})`;
+
+    // ÜST SINIR — sağlam: karantina olayı (revoke/değişim/düzeltme) kalemin atanmasından ya da
+    // stok girişinden ÖNCE olamaz ⇒ quarantinedAt >= baseAt. baseAt > to ise kayıt KESİN aralık
+    // dışıdır. ORDER BY da baseAt olduğu için pencere tam bu dönemin başından itibaren dolar.
+    if (toIso) conditions.push(sql`${baseAt} <= ${toIso}::timestamptz`);
+
+    // ALT SINIR — `baseAt >= from` TEK BAŞINA YANLIŞ olurdu: kalem 2 yıl önce atanıp DÜN
+    // karantinaya düşmüş olabilir ("Son 7 gün" süzgecinin en tipik kaydı). Bu yüzden aralıkta
+    // OLAY üretmiş kalemler ayrıca toplanıp OR ile eklenir (id listeleri; sır içermez).
+    // Toplama üst sınırı aşarsa alt-sınır ön-filtresi HİÇ uygulanmaz → geniş (ama eksiksiz)
+    // pencere; kesin süzme zaten JS'te yapılır. "Eksik liste" yerine "geniş liste" tercih edilir.
+    if (fromIso) {
+      const eventCap = 5000;
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const inWindow = (col: unknown) =>
+        toIso
+          ? sql`${col} >= ${fromIso}::timestamptz AND ${col} <= ${toIso}::timestamptz`
+          : sql`${col} >= ${fromIso}::timestamptz`;
+
+      const [historyIdRows, auditIdRows, adjIdRows] = await Promise.all([
+        // Değişim (assignment_history) — ana sorgudaki join ile AYNI anahtar: old_license_item_id.
+        this.db
+          .select({ id: assignmentHistory.oldLicenseItemId })
+          .from(assignmentHistory)
+          .where(
+            and(
+              sql`${assignmentHistory.oldLicenseItemId} is not null`,
+              inWindow(assignmentHistory.createdAt),
+            ),
+          )
+          .limit(eventCap + 1),
+        // Düz-revoke (audit_log) — hedef ATAMA id'si; ana sorguda assignments.id ile eşleşir.
+        this.db
+          .select({ id: auditLog.targetId })
+          .from(auditLog)
+          .where(
+            and(
+              eq(auditLog.action, 'revoke'),
+              eq(auditLog.targetType, 'assignment'),
+              inWindow(auditLog.createdAt),
+            ),
+          )
+          .limit(eventCap + 1),
+        // Stok düzeltme (recall/void/damage) — voided kalemlerin tek zaman kaynağı.
+        this.db
+          .select({ id: stockAdjustments.licenseItemId })
+          .from(stockAdjustments)
+          .where(
+            and(
+              inArray(stockAdjustments.action, ['recall', 'void', 'damage']),
+              sql`${stockAdjustments.licenseItemId} is not null`,
+              inWindow(stockAdjustments.createdAt),
+            ),
+          )
+          .limit(eventCap + 1),
+      ]);
+
+      const capped =
+        historyIdRows.length > eventCap ||
+        auditIdRows.length > eventCap ||
+        adjIdRows.length > eventCap;
+      if (!capped) {
+        const itemIds = Array.from(
+          new Set(
+            [...historyIdRows, ...adjIdRows].map((r) => r.id).filter((x): x is string => !!x),
+          ),
+        );
+        // target_id METİN kolonu — uuid'ye çevrilemeyen değer parametre olarak gönderilirse
+        // Postgres 22P02 atardı; okuma yolu asla 500'lemesin diye biçim doğrulanır.
+        const asgIds = Array.from(
+          new Set(auditIdRows.map((r) => r.id).filter((x): x is string => !!x && uuidRe.test(x))),
+        );
+        const parts = [sql`${baseAt} >= ${fromIso}::timestamptz`];
+        if (itemIds.length) parts.push(inArray(licenseItems.id, itemIds));
+        if (asgIds.length) parts.push(inArray(assignments.id, asgIds));
+        const fromCond = or(...parts);
+        if (fromCond) conditions.push(fromCond);
+      }
+    }
+
     const rows = await this.db
       .select({
         licenseItemId: licenseItems.id,
@@ -1710,7 +1900,7 @@ export class AdminOrdersService {
         customerEmail: orders.customerEmail,
         siteDomain: sites.domain,
         siteType: sites.type,
-        siteWebhookUrl: sites.webhookUrl,
+        // webhookUrl OKUNMAZ: mağaza admin linki artık yalnız şablon/domain'den türetilir.
         siteAdminOrderUrlTemplate: sites.adminOrderUrlTemplate,
         // Değişim soyağacı (varsa): eski key → yeni atama + sebep + zaman.
         replacedByAssignmentId: assignmentHistory.assignmentId,
@@ -1849,7 +2039,6 @@ export class AdminOrdersService {
             {
               type: r.siteType,
               domain: r.siteDomain,
-              webhookUrl: r.siteWebhookUrl,
               adminOrderUrlTemplate: r.siteAdminOrderUrlTemplate,
             },
             r.sourceRemoteOrderId,
@@ -1868,19 +2057,9 @@ export class AdminOrdersService {
       return tb - ta;
     });
 
-    // Tarih aralığı BİRLEŞİK `quarantinedAt` üzerinden uygulanır (değişim/audit/stok-düzeltme
-    // zamanlarının koalesansı — tek bir DB kolonu değil), bu yüzden filtre SQL'de değil burada
-    // çalışır. Pratik sonuç: aralık, yukarıdaki `fetchLimit` penceresi İÇİNDEN süzülür; çok eski
-    // aralıklar için `limit` yükseltilmelidir (uç dokümante edilmiştir).
-    const fromTs = params.from ? Date.parse(params.from) : Number.NaN;
-    // Yalnız TARİH verildiyse (YYYY-MM-DD) üst sınır gün SONUNA kadar kapsar — aksi halde
-    // "bugünden bugüne" seçimi 00:00 sınırında kalıp listeyi boş gösterirdi.
-    const rawTo = (params.to ?? '').trim();
-    const toParsed = rawTo ? Date.parse(rawTo) : Number.NaN;
-    const toTs =
-      !Number.isNaN(toParsed) && /^\d{4}-\d{2}-\d{2}$/.test(rawTo)
-        ? toParsed + 86_399_999
-        : toParsed;
+    // KESİN tarih süzgeci: birleşik `quarantinedAt` (değişim/audit/stok-düzeltme/atama/giriş
+    // koalesansı) ancak burada, üç kaynak birleştirildikten SONRA bilinir. Yukarıdaki SQL
+    // ön-filtresi pencereyi doğru döneme kaydırır; bu adım o pencereyi tam aralığa kırpar.
     const filtered =
       Number.isNaN(fromTs) && Number.isNaN(toTs)
         ? mapped
@@ -1893,6 +2072,13 @@ export class AdminOrdersService {
           });
 
     const out = filtered.slice(0, limit);
+
+    // KIRPILMA (DÜRÜSTLÜK, G6): sinyal HAM SQL satır sayısına dayanır — JS tarih süzgecinden
+    // SONRAKİ sayıya değil. Aksi halde süzgeç satırları kırptığında "liste eksik ama uyarı yok"
+    // durumu doğuyordu (operatör o dönemin bozuk anahtarlarını hiç görmeden dışa aktarıyordu).
+    // İki kaynak: (1) SQL fetch üst sınırına dayanıldı → daha eskiler HİÇ okunmadı;
+    // (2) dedupe sonrası kayıt sayısı `limit`i aştı → kuyruk kesildi.
+    const truncated = rows.length >= fetchLimit || filtered.length > limit;
 
     // "reveal audit'e düşer" (§17) bu yol için de geçerli: karantina listesi ölü anahtarların
     // DÜZ METNİNİ toplu döndürür (operatör tedarikçiye değişim talebi için dışa aktarır).
@@ -1910,7 +2096,10 @@ export class AdminOrdersService {
             view: 'quarantine_list',
             count: out.length,
             // Arama METNİ yazılmaz (müşteri e-postası içerebilir); yalnız süzgeç varlığı.
-            filtered: Boolean(search || params.status || params.productId || params.supplierId),
+            filtered: Boolean(
+              search || params.status || params.productId || params.supplierId || fromIso || toIso,
+            ),
+            truncated,
           },
         });
       } catch {
@@ -1918,7 +2107,8 @@ export class AdminOrdersService {
       }
     }
 
-    return out;
+    // Düz dizi DEĞİL: kırpılma bilgisi olmadan admin tarafı "liste tam" sanıyordu (G6).
+    return { rows: out, truncated, limit };
   }
 
   /**

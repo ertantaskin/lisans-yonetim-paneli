@@ -16,6 +16,19 @@ import { Field, FormSection, FieldRow } from '../../../components/ui/field';
 const initial: UpdateSiteState = { ok: false };
 
 /**
+ * Mağaza sipariş bağlantısı ÖRNEK şablonları (yalnız yardım metni — hiçbir yere gönderilmez).
+ * WooCommerce'te sipariş ekranının yolu mağazanın HPOS ayarına göre DEĞİŞİR; operatör hangi
+ * biçimi kopyalayacağını görsün diye ikisi de gösterilir. JSX içinde satır bölünmesi/kaçış
+ * karmaşası olmasın diye düz string sabit tutulur.
+ */
+const TEMPLATE_EXAMPLE_HPOS =
+  'https://magaza.com/wp-admin/admin.php?page=wc-orders&action=edit&id={orderId}';
+const TEMPLATE_EXAMPLE_CLASSIC = 'https://magaza.com/wp-admin/post.php?post={orderId}&action=edit';
+
+/** Yardım metnindeki örnek/yer tutucu kod parçaları — uzun URL taşmasın diye break-all. */
+const codeClass = 'break-all rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground/80';
+
+/**
  * Site 'Yapılandırma' düzenleme formu (§5/§14): günlük satış kotası + sandbox + gönderen
  * e-posta. updateSiteAction → PATCH /v1/admin/sites/:id (audit'e düşer). Yalnız bu üç alan
  * düzenlenir; status (askıya al/aktifleştir) ayrı aksiyondadır. SIR gösterilmez.
@@ -27,6 +40,7 @@ export function SiteConfigForm({
   senderEmail,
   webhookUrl,
   adminOrderUrlTemplate,
+  adminOrderUrlTemplateManual,
   dynamicQuotaEnabled,
   reviewMultiplier,
 }: {
@@ -37,10 +51,27 @@ export function SiteConfigForm({
   webhookUrl: string | null;
   /** Mağaza admin sipariş bağlantısı şablonu — SALT YÖNLENDİRME (otomatik bağlantı yok). */
   adminOrderUrlTemplate: string | null;
+  /**
+   * Şablonun KAYNAĞI (0026): true = operatör bu formdan ELLE girdi (mağazanın bildirdiği
+   * değer yok sayılır). Opsiyonel — eski API sürümü alanı döndürmezse "mağaza bildirebilir"
+   * kabul edilir (savunmacı varsayılan: false).
+   */
+  adminOrderUrlTemplateManual?: boolean;
   dynamicQuotaEnabled: boolean;
   reviewMultiplier: number;
 }) {
   const [state, action, pending] = useActionState(updateSiteAction, initial);
+
+  // Şablonun kaynağını operatöre DÜRÜSTÇE söyle: alan boşken bağlantı hiç görünmez, doluyken
+  // değerin nereden geldiği (elle mi, mağazadan mı) davranışı belirler — elle girilen değeri
+  // katalog senkronu ezmez, mağazadan gelen değeri sonraki senkron güncelleyebilir.
+  const templateFilled = Boolean(adminOrderUrlTemplate?.trim());
+  const templateManual = adminOrderUrlTemplateManual ?? false;
+  const templateSourceNote = !templateFilled
+    ? 'Şu an boş: sipariş ekranında "Mağaza panelinde aç" bağlantısı gösterilmiyor. Eklenti panele bağlıysa mağaza bildirdiğinde kendiliğinden dolar.'
+    : templateManual
+      ? 'Şu an elle girildi — mağazanın bildirdiği değer yok sayılıyor. Mağazadan yeniden öğrenilsin isterseniz alanı temizleyip kaydedin.'
+      : 'Şu an mağazanın bildirdiği değer kullanılıyor. Bu formu kaydederseniz değer "elle girildi" sayılır ve mağaza bir daha üzerine yazamaz; mağazanın güncellemesini istiyorsanız alanı boşaltıp kaydedin.';
 
   // Bağlantı sağlık testi (onboarding): plain-arg action → useTransition + local state
   // (site-status-toggle deseniyle aynı). Sonuç check-check inline gösterilir; SIR yok.
@@ -152,7 +183,26 @@ export function SiteConfigForm({
           <Field
             label="Mağaza sipariş bağlantısı (şablon)"
             htmlFor="sc-order-url"
-            hint="Panelden mağaza yönetim paneline tıklanabilir bağlantı üretir. {orderId} yer tutucusunu kullanın. Boş bırakılırsa site tipinden türetilir. Panel bu adrese BAĞLANMAZ, veri çekmez — sadece yönlendirir."
+            hint={
+              <>
+                Sipariş ekranındaki <strong>“Mağaza panelinde aç”</strong> bağlantısını üretir.{' '}
+                <strong>Boş bırakılırsa bağlantı hiç gösterilmez</strong> — panel doğru adresi
+                tahmin etmez; siparişin mağaza yönetimindeki yolunu yalnız mağazanın kendisi
+                bilir (HPOS açık/kapalı, alt dizine kurulum, özel yönetim yolu). Eklenti panele
+                bağlıysa alan mağazanın bildirdiği değerle kendiliğinden dolar; elle girerseniz
+                mağazanın bildirdiği değer yok sayılır. Panel bu adrese <strong>bağlanmaz</strong>,
+                veri çekmez — yalnız yeni sekmede açar. <code className={codeClass}>
+                  {'{orderId}'}
+                </code>{' '}
+                yer tutucusu zorunludur.
+                <span className="mt-1.5 block">
+                  Örnek (HPOS): <code className={codeClass}>{TEMPLATE_EXAMPLE_HPOS}</code>
+                  <br />
+                  Örnek (klasik): <code className={codeClass}>{TEMPLATE_EXAMPLE_CLASSIC}</code>
+                </span>
+                <span className="mt-1.5 block text-foreground/80">{templateSourceNote}</span>
+              </>
+            }
           >
             <Input
               id="sc-order-url"

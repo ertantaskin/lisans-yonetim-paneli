@@ -51,6 +51,31 @@ export interface LiveStats {
   /** Mağaza ürünü panelde eşlenmediği için bekleyen satırlar (operatör aksiyonu gerekir). */
   unmappedLines: number;
   lowStockProducts: number;
+  /**
+   * GERÇEK TALEP sayacı: en az bir eşlemesiz AKTİF satırı olan sipariş sayısı
+   * (`product_id IS NULL AND canceled = false AND status IN ('pending','partial')`
+   * satırı bulunan DISTINCT sipariş).
+   *
+   * DİKKAT — anlam değişti: eskiden `orders.status = 'unmapped'` idi, yani siparişin
+   * BÜTÜNÜYLE eşlemesiz olması gerekiyordu. Çok kalemli siparişte durum 'pending'
+   * olup yalnız bir kalem eşlemesiz olabilir; o sipariş de artık bu sayaca girer.
+   * Metinler buna göre kurulmalı ("siparişte ... bağlı değil", "sipariş eşlenmemiş" DEĞİL).
+   *
+   * Panelde teslimatı fiilen durduran TEK arıza budur → kırmızı (destructive) alarm
+   * YALNIZ bu sayaçtan türetilir. OPSİYONEL: api/admin dağıtım sapmasında (eski API
+   * sürümü) alan hiç gelmeyebilir — okurken `?? 0`, 0/undefined ise alarm HİÇ çizilmez.
+   */
+  unmappedOrders?: number;
+  /**
+   * BİLGİ sayacı (alarm DEĞİL): mağaza kataloğunda aktif panel eşlemesi olmayan ürün sayısı.
+   *
+   * Katalog mağazanın TÜM ürünlerini taşır — lisans taşımayanlar (kargo, hizmet, fiziksel
+   * ürün…) dahil. Bu yüzden "eşlenmemiş" ≠ "eşlenmesi gereken": sayaç doğru çalışan bir
+   * mağazada da kalıcı olarak > 0 kalabilir. Kırmızı bant/alarm ASLA buradan türetilmez
+   * (sönmeyen alarm = alarm körlüğü + operatörü tehlikeli "her şeyi eşle" davranışına iter).
+   * OPSİYONEL (yukarıdaki gerekçe).
+   */
+  unmappedCatalogProducts?: number;
 }
 
 export interface LivePayload {
@@ -73,5 +98,8 @@ export const EMPTY_LIVE: LivePayload = {
     pendingLines: 0,
     unmappedLines: 0,
     lowStockProducts: 0,
+    // Boş durumda 0 → eşleme alarmı HİÇ çizilmez (veri gelmeden alarm verilmez).
+    unmappedOrders: 0,
+    unmappedCatalogProducts: 0,
   },
 };

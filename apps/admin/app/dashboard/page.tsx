@@ -8,12 +8,14 @@ import {
   Truck,
   Link2,
   LayoutDashboard,
+  PackageSearch,
   TriangleAlert,
+  Unlink,
 } from 'lucide-react';
 import { getDashboard, type DashboardSummary } from './queries';
 import { apiGet } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
-import { StatStrip } from '../../components/ui/stat-tile';
+import { StatStrip, type StatStripItem } from '../../components/ui/stat-tile';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Button } from '../../components/ui/button';
 import {
@@ -79,6 +81,64 @@ export default async function DashboardOverviewPage() {
   const snapshot: LivePayload | null =
     snapshotRes.status === 'fulfilled' ? snapshotRes.value : null;
 
+  /**
+   * Sayaç okuma — SAVUNMACI: alan hiç gelmemişse (api/admin dağıtım sapması) `null` döner.
+   * `null` "veri yok" demektir; 0 ile karıştırılmaz (0 = "ölçtüm, iş yok").
+   */
+  const readCount = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+
+  /**
+   * GERÇEK TALEP (§3/§4): en az bir eşlemesiz aktif satırı olan sipariş sayısı. Panelin en
+   * sessiz arızası budur — o satırlar operatör ELLE eşleme kurana kadar teslim EDİLEMEZ.
+   * Kırmızı bant YALNIZ bu sayaçtan türetilir; sayaç eşleme kurulunca gerçekten söner.
+   * İki bağımsız kaynaktan okunur (sunucu özeti düşse bile canlı anlık görüntü verir);
+   * alan hiç gelmezse 0 kalır → bant HİÇ çizilmez (yanlış alarm yok).
+   */
+  const unmappedOrders =
+    readCount(data?.unmappedOrders) ?? readCount(snapshot?.stats?.unmappedOrders) ?? 0;
+
+  /**
+   * BİLGİ sayacı: katalogda panel eşlemesi olmayan mağaza ürünü. ALARM DEĞİL — katalog
+   * mağazanın TÜM ürünlerini taşır (kargo/hizmet/fiziksel ürün dahil), yani "eşlenmemiş"
+   * ≠ "eşlenmesi gereken" ve sayı doğru çalışan bir mağazada da kalıcı olarak > 0 kalır.
+   * Kırmızı bant buradan türetilse HİÇBİR doğru işlemle sönmezdi (alarm körlüğü) ve
+   * operatörü lisans taşımayan ürünleri de eşlemeye (tehlikeli "her şeyi eşle") iterdi.
+   * `null` = alan gelmedi → hücre hiç çizilmez (uydurma 0 gösterilmez).
+   */
+  const unmappedCatalogProducts =
+    readCount(data?.unmappedCatalogProducts) ?? readCount(snapshot?.stats?.unmappedCatalogProducts);
+
+  // Yavaş metrik şeridi: sunucu özeti gelmediyse o üç hücre düşer, bilgi sayacı (varsa) kalır.
+  const stripItems: StatStripItem[] = [];
+  if (data) {
+    stripItems.push(
+      { icon: ShoppingCart, label: 'Bugünkü sipariş', value: data.todayOrders },
+      {
+        icon: Boxes,
+        label: 'Atanabilir stok',
+        value: data.totalAvailableStock.toLocaleString('tr-TR'),
+      },
+      {
+        icon: ShieldAlert,
+        label: 'Güvenlik olayı',
+        value: data.openSecurityEvents,
+        hint: 'son 7 gün',
+        tone: data.openSecurityEvents > 0 ? 'warning' : 'default',
+      },
+    );
+  }
+  if (unmappedCatalogProducts !== null) {
+    stripItems.push({
+      icon: PackageSearch,
+      label: 'Panelde eşlenmemiş mağaza ürünü',
+      value: unmappedCatalogProducts.toLocaleString('tr-TR'),
+      // Nötr ton (uyarı DEĞİL) + beklentiyi düzelten açıklama.
+      hint: 'hepsinin eşlenmesi gerekmez; yalnız lisans taşıyanları eşleyin',
+      tone: 'default',
+    });
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -88,6 +148,44 @@ export default async function DashboardOverviewPage() {
       >
         <LiveStatus />
       </PageHeader>
+
+      {/*
+        Eşleme uyarı bandı — TEK bant, en üstte. YALNIZ gerçek talepten (eşlemesiz aktif satırı
+        olan sipariş) doğar: alarm ancak yapılacak İŞ varken çıkar ve iş bitince söner.
+        Katalog sayacından (bilgi) ASLA türetilmez — o sayı hiçbir doğru işlemle sıfırlanmaz.
+      */}
+      {unmappedOrders > 0 && (
+        <Alert variant="destructive">
+          <Unlink />
+          {/* `min-w-0 flex-1`: ikon kardeşiyle aynı satırda, uzun metinde taşma yapmaz. */}
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <AlertTitle>Eşleme bekleyen sipariş var</AlertTitle>
+              <AlertDescription>
+                {/*
+                  Cümle SATIR düzeyinde kurulur: siparişin tamamı eşlemesiz olmak zorunda değil —
+                  çok kalemli bir siparişin tek kalemi eşlemesizse sipariş 'bekliyor' görünür ama
+                  o kalem teslim edilemez (asıl operatör şikâyeti buydu).
+                */}
+                <strong className="tabular-nums">{unmappedOrders}</strong> siparişte mağaza ürünü
+                panel ürününe bağlı değil — bu satırlar eşleme yapılana kadar teslim edilemez.
+              </AlertDescription>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button asChild size="sm">
+                <Link href="/mappings">
+                  <Link2 className="size-3.5" /> Ürün Eşleştirme
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <Link href="/pending">
+                  <Inbox className="size-3.5" /> Bekleyen
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      )}
 
       {error && (
         <Alert variant="warning">
@@ -110,26 +208,11 @@ export default async function DashboardOverviewPage() {
         <LiveSupportCard initialSupports={snapshot?.supports ?? null} />
       </div>
 
-      {/* Yavaş metrikler (sunucu özeti) — canlı akışta yer kaplamasın diye ince şeritte */}
-      {data && (
-        <StatStrip
-          items={[
-            { icon: ShoppingCart, label: 'Bugünkü sipariş', value: data.todayOrders },
-            {
-              icon: Boxes,
-              label: 'Atanabilir stok',
-              value: data.totalAvailableStock.toLocaleString('tr-TR'),
-            },
-            {
-              icon: ShieldAlert,
-              label: 'Güvenlik olayı',
-              value: data.openSecurityEvents,
-              hint: 'son 7 gün',
-              tone: data.openSecurityEvents > 0 ? 'warning' : 'default',
-            },
-          ]}
-        />
-      )}
+      {/*
+        Yavaş metrikler (sunucu özeti) — canlı akışta yer kaplamasın diye ince şeritte.
+        Katalog bilgi sayacı da BURADA durur: alarm değil, bağlam.
+      */}
+      {stripItems.length > 0 && <StatStrip items={stripItems} />}
 
       {/* Hızlı erişim */}
       <div className="flex flex-wrap items-center gap-2">

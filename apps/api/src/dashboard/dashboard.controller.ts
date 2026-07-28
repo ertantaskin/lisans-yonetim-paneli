@@ -15,7 +15,20 @@ import { DashboardService, type DashboardSummary } from './dashboard.service';
 export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
-  /** Panel genel-bakış: bekleyen satır / bugünkü sipariş / düşük stok / açık talep / güvenlik / stok + son siparişler. */
+  /**
+   * Panel genel-bakış: bekleyen satır / bugünkü sipariş / eşlemesiz satırı olan sipariş +
+   * eşlenmemiş mağaza ürünü (§3) / düşük stok / açık talep / güvenlik / stok + son siparişler.
+   *
+   * İKİ EŞLEME SAYACI KARIŞTIRILMAMALI (aynı tanımlar canlı uçta da geçerlidir):
+   *  - `unmappedOrders` = GERÇEK talep: en az bir eşlemesiz AKTİF satırı olan sipariş sayısı
+   *    (iptal satırlar hariç). Operatör uyarısı/alarmı YALNIZ bundan türetilir; eşleme kurulup
+   *    satırlar çözülünce kendiliğinden söner.
+   *  - `unmappedCatalogProducts` = BİLGİ: mağaza katalogunda aktif eşlemesi olmayan ürün sayısı.
+   *    Katalog mağazanın TÜM ürünlerini taşır (lisans satmayanlar dahil) → "eşlenmemiş" ≠
+   *    "eşlenmesi gereken"; sağlıklı bir mağazada da kalıcı olarak yüksektir. Bu sayaçtan
+   *    kırmızı/destructive alarm üretilmez (alarm körlüğü + hatalı "catch-all" eşleme riski);
+   *    yalnız /mappings ekranına yönlendiren nötr bilgidir.
+   */
   @Get('dashboard')
   async summary(): Promise<DashboardSummary> {
     return this.dashboard.summary();

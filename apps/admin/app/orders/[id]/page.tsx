@@ -312,7 +312,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                   <ShoppingCart className="size-3.5 text-muted-foreground" />
                   {order.siteType ? siteTypeLabel(order.siteType) : 'Mağaza'} #{order.remoteOrderId}
                 </span>
-                {order.storeAdminUrl && (
+                {/* Mağaza panelinde aç — YALNIZ site ayarlarında şablon tanımlıysa. Şablon yoksa
+                    panel adres TAHMİN ETMEZ (yanlış link yerine link yok); ama düğmenin neden
+                    olmadığı da sessiz kalmasın diye tek satırlık sessiz ipucu + doğru ekran. */}
+                {order.storeAdminUrl ? (
                   <a
                     href={order.storeAdminUrl}
                     target="_blank"
@@ -322,6 +325,19 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     <ExternalLink className="size-3.5" aria-hidden />
                     Mağaza panelinde aç
                   </a>
+                ) : (
+                  order.siteId && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <ExternalLink className="size-3.5" aria-hidden />
+                      Mağaza bağlantısı tanımlı değil —{' '}
+                      <Link
+                        href={`/sites/${order.siteId}`}
+                        className="text-primary underline-offset-2 hover:underline"
+                      >
+                        site ayarlarından şablonu girin
+                      </Link>
+                    </span>
+                  )
                 )}
                 <span className="text-xs text-muted-foreground">
                   {order.customerEmail} · {createdAt}

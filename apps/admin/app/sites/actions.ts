@@ -83,8 +83,10 @@ export async function updateSiteAction(
     const webhookRaw = String(formData.get('webhookUrl') || '').trim();
     const webhookUrl: string | null = webhookRaw ? webhookRaw : null;
     // Mağaza admin sipariş bağlantısı şablonu — SALT YÖNLENDİRME (panel bu adrese bağlanmaz).
-    // Boş = temizle → site tipinden türetilsin. Şablon {orderId} içermeli, aksi halde her
-    // sipariş aynı adrese giderdi (sessiz yanlış bağlantı).
+    // Boş = temizle → "Mağaza panelinde aç" bağlantısı GÖSTERİLMEZ (tip-tabanlı tahmin YOK) ve
+    // "elle girildi" işareti kalkar → mağaza sonraki katalog senkronunda değeri yeniden bildirebilir
+    // (API: SitesService.update, kolon 0026). Şablon {orderId} içermeli, aksi halde her sipariş
+    // aynı adrese giderdi (sessiz yanlış bağlantı).
     const tplRaw = String(formData.get('adminOrderUrlTemplate') || '').trim();
     if (tplRaw) {
       if (!/^https?:\/\//i.test(tplRaw)) {

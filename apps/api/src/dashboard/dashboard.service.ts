@@ -74,8 +74,29 @@ export interface LiveStats {
   /** Eşlemesi OLMAYAN bekleyen satır (operatör eşleme yapmalı). */
   unmappedLines: number;
   /**
+   * EŞLEMESİZ satırı olan SİPARİŞ sayısı (bkz. UNMAPPED_ORDERS_COUNT). Satır sayacından
+   * (unmappedLines) FARKLI bir soruyu yanıtlar: "kaç müşteri siparişi eşleme beklediği için
+   * (kısmen ya da tamamen) teslim edilemiyor". GERÇEK talebi ölçen tek sayaç budur →
+   * operatör uyarısı/alarmı YALNIZ buradan türetilir; operatör /mappings ekranından eşlemeyi
+   * kurup satırları çözünce KENDİLİĞİNDEN söner.
+   */
+  unmappedOrders: number;
+  /**
+   * Mağaza katalogunda (site_remote_products) olup o site için AKTİF eşlemesi OLMAYAN ürün
+   * sayısı.
+   *
+   * BU BİR ALARM DEĞİLDİR — BİLGİ sayacıdır. Katalog mağazanın TÜM yayınlanmış ürünlerini
+   * taşır (lisans olmayanlar dahil): "eşlenmemiş" ≠ "eşlenmesi gereken". 500 ürünlü bir
+   * mağazada bu sayı kalıcı olarak yüksek kalır ve hiçbir doğru işlemle sıfırlanmaz.
+   * Kırmızı/destructive uyarı ASLA bundan türetilmez (alarm körlüğü yaratır, üstelik
+   * operatörü tehlikeli "her şeyi eşle" refleksine iter, §3); yalnız /mappings ekranına
+   * yönlendiren nötr bir bilgi olarak gösterilir. ≤60 sn bayat olabilir
+   * (bkz. COUNTER_CACHE_TTL_MS) — bilgi sayacı olduğu için bilinçli.
+   */
+  unmappedCatalogProducts: number;
+  /**
    * Düşük stok ürünü sayısı (summary().lowStockCount ile AYNI tanım — aynı önbelleği
-   * paylaşırlar). ≤60 sn bayat olabilir (bkz. LOW_STOCK_CACHE_TTL_MS); uyarı sayacı
+   * paylaşırlar). ≤60 sn bayat olabilir (bkz. COUNTER_CACHE_TTL_MS); uyarı sayacı
    * olduğu için bilinçli.
    */
   lowStockProducts: number;
@@ -98,23 +119,70 @@ const LIVE_MAX_LIMIT = 50;
 const REASON_EXCERPT_LEN = 140;
 
 /**
- * Düşük-stok sayacının SÜREÇ-İÇİ önbellek ömrü (ms).
+ * AĞIR uyarı sayaçlarının SÜREÇ-İÇİ önbellek ömrü (ms). İki sayaç paylaşır: düşük stok
+ * (products × license_items agregasyonu) ve eşlenmemiş katalog ürünü (site_remote_products ×
+ * site_product_mappings NOT EXISTS taraması).
  *
- * NEDEN önbellek: bu sayaç canlı anlık görüntünün EN pahalı parçasıdır (products ×
- * license_items agregasyonu — diğer 5 sorgu nokta-index'lidir). Panel mesai boyunca AÇIK
- * kalan bir iş istasyonudur ve her sekme 15 sn'de bir poll eder → 3 sekme = dakikada 12
- * agregasyon. Düşük stok DAKİKALAR ölçeğinde anlamlı bir operatör uyarısıdır (saniyeler
- * değil), dolayısıyla ≤60 sn bayatlık kabul edilebilir ve yük "sekme sayısı × 4/dk"
- * yerine "dakikada EN FAZLA 1"e iner.
+ * NEDEN önbellek: bunlar canlı anlık görüntünün EN pahalı parçalarıdır (diğer sorgular
+ * nokta-index'lidir). Panel mesai boyunca AÇIK kalan bir iş istasyonudur ve her sekme 15
+ * sn'de bir poll eder → 3 sekme = dakikada 12 agregasyon. Bu uyarılar DAKİKALAR ölçeğinde
+ * anlamlıdır (saniyeler değil), dolayısıyla ≤60 sn bayatlık kabul edilebilir ve yük
+ * "sekme sayısı × 4/dk" yerine "dakikada EN FAZLA 1"e iner.
  *
  * NEDEN 60 sn: poll periyodunun (15 sn) tam katı → her 4 poll'da bir tazelenir; ETag de
  * bu yüzden gereksiz yere flap etmez (aradaki 3 poll'da sayaç sabit → 304 korunur).
  *
  * BİLİNÇLİ TAKAS: önbellek süreç-içidir; çok-örnekli dağıtımda örnekler arası kısa süreli
- * sapma görülebilir. Kabul edilebilir çünkü bu YALNIZ bir uyarı sayacıdır — teslimat/atama
- * kararları buna dayanmaz, gerçek düşük-stok alarmı ayrı cron'dan (low-stock.service) üretilir.
+ * sapma görülebilir. Kabul edilebilir çünkü bunlar YALNIZ uyarı sayaçlarıdır — teslimat/atama
+ * kararları buna dayanmaz (gerçek düşük-stok alarmı ayrı cron'dan, low-stock.service'ten
+ * üretilir; eşleme ise HER ZAMAN elle yapılır — sayaç yalnız operatörü uyarır).
  */
-const LOW_STOCK_CACHE_TTL_MS = 60_000;
+const COUNTER_CACHE_TTL_MS = 60_000;
+
+/**
+ * Eşlenmemiş sipariş sayacının TEK KAYNAK tanımı (canlı şerit + genel-bakış aynı SQL'i
+ * kullanır → iki ekran farklı sayı gösterip "hangisi doğru" sorusu doğmaz).
+ *
+ * TANIM (bu dalgada DEĞİŞTİ): "en az bir EŞLEMESİZ AKTİF satırı olan sipariş" sayısı.
+ *
+ * NEDEN değişti — eski tanım (`orders.status = 'unmapped'`) sessizce eksik sayıyordu:
+ *  - `status='unmapped'` YALNIZ createOrder'da ve ancak satırların HEPSİ eşlemesizse yazılır;
+ *    recomputeOrderStatus bu değeri HİÇ üretmez. 2 kalemli bir siparişte (biri eşli-stok
+ *    bekliyor, biri EŞLEMESİZ) sipariş 'pending' olur → sayaca HİÇ girmezdi. Operatörün
+ *    "eşlenmemiş sipariş fark edilmiyor" şikâyeti tam olarak buydu.
+ *  - Satırlardan biri çözülünce sipariş 'partial'a geçip sayaçtan KALICI düşerdi (kalan
+ *    eşlemesiz satır hâlâ beklerken).
+ * Satır-tabanlı tanım iki boşluğu da kapatır ve pending-lines.service.summary()'nin tekil
+ * sipariş sayımıyla BİREBİR aynı SQL'dir → /mappings ekranındaki "N sipariş bekliyor" ile
+ * üst şerit sayacı asla çelişmez.
+ *
+ * PERF: koşul `order_lines_pending_product_idx` KISMİ index'iyle (product_id üzerinde,
+ * WHERE status IN ('pending','partial') AND canceled = false) birebir örtüşür. Eski sorgunun
+ * taradığı `orders.status` için ADANMIŞ index YOKTU (seq scan) — yani bu değişiklik doğruluğu
+ * düzeltirken poll sıcak yolunu da ucuzlatır.
+ *
+ * İptal (canceled) satır DIŞARIDA: iade/iptal edilmiş satır asla teslim edilmez (§2), operatörden
+ * eşleme beklemez.
+ */
+const UNMAPPED_ORDERS_COUNT = sql`(
+  SELECT count(DISTINCT ol.order_id)::int
+  FROM order_lines ol
+  WHERE ol.product_id IS NULL
+    AND ol.canceled = false
+    AND ol.status IN ('pending', 'partial')
+)`;
+
+/**
+ * Süreç-içi sayaç önbellek yuvası: değer (henüz hesaplanmadıysa null), yazılma anı ve
+ * SÜREN hesap. `inflight` NEDEN: önbellek boşken aynı anda gelen N poll (çok sekme) aksi
+ * halde N ayrı ağır sorgu başlatırdı — "sürü etkisi" tam da kaçındığımız yükü geri
+ * getirirdi. Bekleyenler tek sorgunun sonucunu paylaşır.
+ */
+interface CounterCacheSlot {
+  value: number | null;
+  at: number;
+  inflight: Promise<number> | null;
+}
 
 /** pg timestamptz (Date | string) → ISO. postgres.js Date döndürür; string de tolere edilir. */
 function toIso(value: Date | string): string {
@@ -131,8 +199,19 @@ export interface DashboardSummary {
   /** Bugün (yerel gün başı, sunucu TZ) oluşturulan sipariş sayısı. */
   todayOrders: number;
   /**
+   * EŞLEMESİZ satırı olan sipariş sayısı — canlı şeritle AYNI tanım/SQL
+   * (bkz. UNMAPPED_ORDERS_COUNT). Operatör uyarısı YALNIZ bu sayaçtan türetilir.
+   */
+  unmappedOrders: number;
+  /**
+   * Mağaza katalogunda olup AKTİF eşlemesi olmayan ürün sayısı — canlı şeritle AYNI
+   * önbelleği paylaşır (≤60 sn bayat olabilir, bkz. COUNTER_CACHE_TTL_MS).
+   * ALARM DEĞİL, BİLGİ sayacıdır (gerekçe: LiveStats.unmappedCatalogProducts).
+   */
+  unmappedCatalogProducts: number;
+  /**
    * Düşük stok ürünü sayısı (low_stock_threshold IS NOT NULL AND available<=eşik).
-   * ≤60 sn önbellekli (LOW_STOCK_CACHE_TTL_MS) — canlı uçla aynı değer.
+   * ≤60 sn önbellekli (COUNTER_CACHE_TTL_MS) — canlı uçla aynı değer.
    */
   lowStockCount: number;
   /** Açık değişim talebi (status IN open|info_requested). */
@@ -155,36 +234,49 @@ export class DashboardService {
   constructor(@Inject(DB) private readonly db: Database) {}
 
   /**
-   * Düşük-stok sayacı önbelleği (bkz. LOW_STOCK_CACHE_TTL_MS). Servis singleton olduğu
+   * Düşük-stok sayacı önbelleği (bkz. COUNTER_CACHE_TTL_MS). Servis singleton olduğu
    * için alan süreç ömrü boyunca yaşar; kalıcılık/invalidasyon YOKTUR (TTL yeter).
    */
-  private lowStockCache: { value: number; at: number } | null = null;
+  private lowStockSlot: CounterCacheSlot = { value: null, at: 0, inflight: null };
   /**
-   * Süren hesap. NEDEN: önbellek boşken aynı anda gelen N poll (çok sekme) aksi halde N
-   * ayrı agregasyon başlatırdı — "sürü etkisi" tam da kaçındığımız yükü geri getirirdi.
-   * Bekleyenler tek sorgunun sonucunu paylaşır.
+   * Eşlenmemiş katalog ürünü sayacı önbelleği — düşük-stokla AYNI desen, AYRI yuva
+   * (biri tazelenirken diğeri gereksiz yere geçersizleşmesin).
    */
-  private lowStockInflight: Promise<number> | null = null;
+  private unmappedCatalogSlot: CounterCacheSlot = { value: null, at: 0, inflight: null };
 
   /**
-   * Düşük-stok sayacını önbellekten servis eder; TTL dolduysa TEK sorgu koşup tazeler.
+   * Ağır bir sayacı önbellekten servis eder; TTL dolduysa TEK sorgu koşup tazeler
+   * (eşzamanlı çağrılar aynı hesabı paylaşır — bkz. CounterCacheSlot.inflight).
    * Hata durumunda bayat değere DÜŞÜLMEZ — hata çağırana yansır (önceki davranış korunur).
    */
-  private async lowStockCountCached(): Promise<number> {
-    const hit = this.lowStockCache;
-    if (hit && Date.now() - hit.at < LOW_STOCK_CACHE_TTL_MS) return hit.value;
-    if (this.lowStockInflight) return this.lowStockInflight;
+  private async counterCached(
+    slot: CounterCacheSlot,
+    load: () => Promise<number>,
+  ): Promise<number> {
+    if (slot.value !== null && Date.now() - slot.at < COUNTER_CACHE_TTL_MS) return slot.value;
+    if (slot.inflight) return slot.inflight;
 
-    const run = this.lowStockCount()
+    const run = load()
       .then((value) => {
-        this.lowStockCache = { value, at: Date.now() };
+        slot.value = value;
+        slot.at = Date.now();
         return value;
       })
       .finally(() => {
-        this.lowStockInflight = null;
+        slot.inflight = null;
       });
-    this.lowStockInflight = run;
+    slot.inflight = run;
     return run;
+  }
+
+  /** Düşük-stok sayacı (60 sn önbellekli + tek-uçuş). */
+  private lowStockCountCached(): Promise<number> {
+    return this.counterCached(this.lowStockSlot, () => this.lowStockCount());
+  }
+
+  /** Eşlenmemiş katalog ürünü sayacı (60 sn önbellekli + tek-uçuş). */
+  private unmappedCatalogProductsCached(): Promise<number> {
+    return this.counterCached(this.unmappedCatalogSlot, () => this.unmappedCatalogProducts());
   }
 
   /** Tüm KPI bloklarını paralel toplayıp tek özet nesnesi döndürür. */
@@ -192,6 +284,8 @@ export class DashboardService {
     const [
       pendingLines,
       todayOrders,
+      unmappedOrders,
+      unmappedCatalogProducts,
       lowStockCount,
       openReplacements,
       openSecurityEvents,
@@ -200,6 +294,9 @@ export class DashboardService {
     ] = await Promise.all([
       this.pendingLines(),
       this.todayOrders(),
+      this.unmappedOrders(),
+      // Canlı uçla AYNI önbellek (aşağıdaki lowStock ile aynı gerekçe).
+      this.unmappedCatalogProductsCached(),
       // Canlı uçla AYNI önbelleği paylaşır → genel-bakış ile canlı şerit aynı sayıyı gösterir
       // (iki ayrı hesap iki farklı değer üretip "sayı zıplıyor" izlenimi vermesin).
       this.lowStockCountCached(),
@@ -211,12 +308,87 @@ export class DashboardService {
     return {
       pendingLines,
       todayOrders,
+      unmappedOrders,
+      unmappedCatalogProducts,
       lowStockCount,
       openReplacements,
       openSecurityEvents,
       totalAvailableStock,
       recentOrders,
     };
+  }
+
+  /**
+   * Eşlemesiz satırı olan sipariş sayısı (operatör uyarısı, §3/§4). Tanım canlı şeritle
+   * ORTAK (UNMAPPED_ORDERS_COUNT) → iki ekran asla farklı sayı göstermez.
+   *
+   * ÖNBELLEKSİZ (bilinçli): sorgu `order_lines_pending_product_idx` kısmi index'inden
+   * karşılanır ve GERÇEK talebi ölçen alarm sayacıdır — bayat gösterilmemeli. Ağır olan
+   * (ve bu yüzden önbelleklenen) sayaç katalog taramasıdır, bu değil.
+   */
+  private async unmappedOrders(): Promise<number> {
+    const rows = await rawRows<{ c: number }>(this.db, sql`
+      SELECT ${UNMAPPED_ORDERS_COUNT} AS c;
+    `);
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  /**
+   * Mağaza katalogunda olup AKTİF eşlemesi OLMAYAN ürün sayısı (§3).
+   *
+   * ⚠ BU SAYAÇ BİR ALARM DEĞİLDİR — /mappings ekranına yönlendiren BİLGİ sayacıdır.
+   * Katalog, mağazanın TÜM yayınlanmış ürünlerinin anlık görüntüsüdür: lisans satmayan
+   * ürünler de (kargo, fiziksel ürün, hizmet…) içindedir. Yani "eşlenmemiş" ≠ "eşlenmesi
+   * gereken" ve bu sayı doğru çalışan bir mağazada da kalıcı olarak yüksek kalır. Kırmızı/
+   * destructive uyarı ASLA buradan türetilmemelidir (hiçbir doğru işlemle sönmeyen uyarı =
+   * alarm körlüğü; dahası operatörü tehlikeli "catch-all" ürün-seviyesi eşleme kurmaya iter).
+   * GERÇEK talep alarmı için `unmappedOrders` (UNMAPPED_ORDERS_COUNT) kullanılır.
+   *
+   * OTOMATİK EŞLEŞTİRME YOK — bu YALNIZ bir sayaçtır, hiçbir eşleme kurmaz/önermez.
+   *
+   * EŞLİ/EŞSİZ KARARI products.service.listCatalog ile aynıdır (varyasyon-özel VEYA ürün-seviyesi
+   * eşleme; active=false eşleme "eşlenmiş" SAYILMAZ) — orada LEFT JOIN + `mapped_product_id IS NOT
+   * NULL`, burada aynı ON koşulunun NOT EXISTS hâli. Eşdeğerdir çünkü site_product_mappings.product_id
+   * NOT NULL'dır (eşleşen satır ⇔ mapped=true); yalnız sayı gerektiğinden DISTINCT ON/JOIN yerine ucuz
+   * yarı-birleştirme kullanılır (mappings_site_remote_uniq index'inin (site_id, remote_product_id)
+   * öneki kullanılır).
+   *
+   * ⚠ KAPSAM AYNI DEĞİL (bilinçli): bu sayaç varyasyonlu ürünün EBEVEYN satırını HARİÇ tutar,
+   * listCatalog ise o satırı LİSTELER (ama `isVariableParent` bayrağıyla işaretler ve UI onu kırmızı
+   * "eşlenmemiş" yerine nötr "varyasyonları eşleyin — N/M eşli" olarak gösterir). Yani iki ekran
+   * aynı SATIR KÜMESİNİ göstermez; ama hiçbirinde ebeveyn satırı "eşlenmemiş" ALARMI üretmez →
+   * operatör "0 eşlenmemiş vs 100 eşlenmemiş" çelişkisi yaşamaz. Bu yorum eskiden "BİREBİR aynı"
+   * diyordu; gerçek bu değil — kural şu: EŞLEME KOŞULU birebir aynı, EBEVEYN SATIRI muamelesi farklı
+   * (burada sayılmaz, orada nötr bilgi satırı olarak listelenir). Değiştirirken ikisi de güncellenmeli.
+   *
+   * EBEVEYN SATIRI NEDEN HARİÇ: katalogda variable bir ürün hem EBEVEYN satırı (kind='variable',
+   * remote_variation_id IS NULL) hem her varyasyonu (kind='variation') ile durur. Sipariş satırı HER
+   * ZAMAN bir varyasyona düşer, eşleme de varyasyon-özel kurulur; ebeveyn satırı ise SQL üç-değerli
+   * mantığı gereği varyasyon-özel eşlemelerle ASLA eşleşmez (m.remote_variation_id = NULL → NULL).
+   * Sonuç: tüm varyasyonlar eşli olsa bile ebeveyn sonsuza dek "eşlenmemiş" sayılırdı → hariç tutulur.
+   *
+   * PERF: katalog satırı başına bir index probe → poll başına DEĞİL, 60 sn'de bir koşar
+   * (bkz. unmappedCatalogProductsCached / COUNTER_CACHE_TTL_MS).
+   */
+  private async unmappedCatalogProducts(): Promise<number> {
+    const rows = await rawRows<{ c: number }>(this.db, sql`
+      SELECT count(*)::int AS c
+      FROM site_remote_products rp
+      WHERE rp.active = true
+        -- Varyasyonlu ürünün EBEVEYN satırı sayılmaz (yukarıdaki gerekçe). coalesce ŞART:
+        -- düz "rp.kind = 'variable'" yazımında, kind NULL olan ESKİ katalog satırlarında ifade
+        -- NULL üretir, NOT(NULL) da NULL olur → o satırlar sessizce sayımdan düşerdi.
+        AND NOT (coalesce(rp.kind, '') = 'variable' AND rp.remote_variation_id IS NULL)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM site_product_mappings m
+          WHERE m.site_id = rp.site_id
+            AND m.remote_product_id = rp.remote_product_id
+            AND m.active = true
+            AND (m.remote_variation_id IS NULL OR m.remote_variation_id = rp.remote_variation_id)
+        );
+    `);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /** Teslim bekleyen satır sayısı (pending + partial). */
@@ -336,12 +508,17 @@ export class DashboardService {
   /**
    * Tek çağrılık iş istasyonu anlık görüntüsü (§13/§17). Ekran mesai boyunca açık kalıp
    * ~15 sn'de bir çağrılacağı için TASARIM GEREĞİ ucuzdur:
-   *  - toplam 6 sorgu (N ayrı poller yerine tek uç),
-   *  - hepsi index'li (orders_created_idx / order_lines_order_idx / notifications_created_idx /
-   *    notifications_unread_idx / orders_held_idx / order_lines_pending_product_idx /
-   *    replacement_requests_created_idx),
-   *  - tek AĞIR blok olan düşük-stok agregasyonu 60 sn önbelleklidir (LOW_STOCK_CACHE_TTL_MS)
-   *    → poll başına DEĞİL, dakikada en fazla bir kez koşar,
+   *  - toplam 6 sorgu (N ayrı poller yerine tek uç; sayaçlar TEK sorguda toplanır),
+   *  - sıcak yoldaki liste ve sayaç sorguları index'ten karşılanır (orders_created_idx /
+   *    order_lines_order_idx / notifications_created_idx / notifications_unread_idx /
+   *    orders_held_idx / order_lines_pending_product_idx / replacement_requests_created_idx).
+   *    DÜRÜST İSTİSNALAR: (a) açık destek sayacı `replacement_requests_status_idx`'i ancak
+   *    seçicilik yeterliyse kullanır, (b) eşlemesiz SİPARİŞ sayacı kısmi index'ten okunur ama
+   *    tekilleştirme (count DISTINCT order_id) için satır başına heap erişimi gerektirir —
+   *    yine de eski `orders.status='unmapped'` sürümünden ucuzdur (orada index YOKTU, tam
+   *    tablo taranıyordu), (c) aşağıdaki iki AĞIR blok tam taramadır ve bu yüzden önbelleklidir,
+   *  - iki AĞIR blok (düşük-stok agregasyonu + eşlenmemiş katalog taraması) 60 sn
+   *    önbelleklidir (COUNTER_CACHE_TTL_MS) → poll başına DEĞİL, dakikada en fazla bir kez koşar,
    *  - yanıt limit ile küçük tutulur (max 50),
    *  - `etag` ile değişiklik yoksa controller 304 döner → günün büyük kısmında bant genişliği ~0.
    *
@@ -354,23 +531,33 @@ export class DashboardService {
         ? Math.min(Math.trunc(limit), LIVE_MAX_LIMIT)
         : LIVE_DEFAULT_LIMIT;
 
-    const [orders, supports, recentNotifications, unread, counters, lowStockProducts] =
-      await Promise.all([
-        this.liveOrders(n),
-        this.liveSupports(n),
-        this.liveNotifications(n),
-        this.unreadNotificationCount(),
-        this.liveCounters(),
-        // Poll sıcak yolunun tek "ağır" sorgusu → 60 sn önbellekten (bkz. LOW_STOCK_CACHE_TTL_MS).
-        this.lowStockCountCached(),
-      ]);
+    const [
+      orders,
+      supports,
+      recentNotifications,
+      unread,
+      counters,
+      lowStockProducts,
+      unmappedCatalogProducts,
+    ] = await Promise.all([
+      this.liveOrders(n),
+      this.liveSupports(n),
+      this.liveNotifications(n),
+      this.unreadNotificationCount(),
+      this.liveCounters(),
+      // Poll sıcak yolunun "ağır" sorguları → 60 sn önbellekten (bkz. COUNTER_CACHE_TTL_MS).
+      this.lowStockCountCached(),
+      this.unmappedCatalogProductsCached(),
+    ]);
 
     const snapshot: LiveSnapshot = {
       ts: new Date().toISOString(),
       orders,
       supports,
       notifications: { unread, recent: recentNotifications },
-      stats: { ...counters, lowStockProducts },
+      // Anahtar sırası SABİT (spread + iki sabit alan) → JSON.stringify deterministik kalır,
+      // ETag veri değişmeden flap etmez.
+      stats: { ...counters, lowStockProducts, unmappedCatalogProducts },
     };
 
     // Deterministik özet: `ts` DIŞARIDA bırakılır. Nesneler sabit anahtar sırasıyla
@@ -567,13 +754,25 @@ export class DashboardService {
    * tek round-trip → 15 sn'lik poll'da ağ/bağlantı maliyeti düşer.
    * pendingLines: eşlemesi OLAN bekleyen satır · unmappedLines: eşlemesi OLMAYAN (product_id NULL).
    * İkisinde de iptal (canceled=true) satırlar HARİÇ — onlar asla teslim edilmez (§2).
+   * unmappedOrders: EN AZ BİR eşlemesiz aktif satırı olan SİPARİŞ (bkz. UNMAPPED_ORDERS_COUNT) —
+   * unmappedLines'ın sipariş bazında tekilleştirilmiş hâli; ikisi de AYNI satır kümesini okur,
+   * dolayısıyla "kaç satır / kaç sipariş" cevapları birbiriyle her zaman tutarlıdır.
+   *
+   * PERF NOTU: üç satır-tabanlı sayaç da `order_lines_pending_product_idx` KISMİ index'iyle
+   * (WHERE status IN ('pending','partial') AND canceled = false) örtüşür ve tek gidiş-dönüşte
+   * skalar alt-sorgu olarak toplanır (ek round-trip YOK). unmappedOrders tekilleştirme için
+   * heap'ten order_id okur; bu yine de eski `orders.status='unmapped'` sayımından ucuzdur
+   * (orada index yoktu → seq scan). Migration bu partide kapsam DIŞI.
    */
-  private async liveCounters(): Promise<Omit<LiveStats, 'lowStockProducts'>> {
+  private async liveCounters(): Promise<
+    Omit<LiveStats, 'lowStockProducts' | 'unmappedCatalogProducts'>
+  > {
     const rows = await rawRows<{
       open_support: number;
       held_orders: number;
       pending_lines: number;
       unmapped_lines: number;
+      unmapped_orders: number;
     }>(this.db, sql`
       SELECT
         (SELECT count(*)::int FROM replacement_requests
@@ -587,7 +786,8 @@ export class DashboardService {
         (SELECT count(*)::int FROM order_lines
           WHERE product_id IS NULL
             AND status IN ('pending', 'partial')
-            AND canceled = false) AS unmapped_lines;
+            AND canceled = false) AS unmapped_lines,
+        ${UNMAPPED_ORDERS_COUNT} AS unmapped_orders;
     `);
     const r = rows[0];
     return {
@@ -595,6 +795,7 @@ export class DashboardService {
       heldOrders: Number(r?.held_orders ?? 0),
       pendingLines: Number(r?.pending_lines ?? 0),
       unmappedLines: Number(r?.unmapped_lines ?? 0),
+      unmappedOrders: Number(r?.unmapped_orders ?? 0),
     };
   }
 }

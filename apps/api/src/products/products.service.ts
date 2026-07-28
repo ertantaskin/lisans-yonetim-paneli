@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
@@ -71,6 +72,8 @@ export interface ProductDetail {
 
 @Injectable()
 export class ProductsService {
+  private readonly logger = new Logger(ProductsService.name);
+
   constructor(@Inject(DB) private readonly db: Database) {}
 
   async create(input: NewProduct): Promise<Product> {
@@ -550,6 +553,19 @@ export class ProductsService {
    * varyasyon) gönderir → panel snapshot'ı YENİLER (delete+insert, atomik). Eşlemeler
    * (site_product_mappings) AYRI tablo → katalog yenilense de kopmaz. SIR YOK. Amaç: operatör
    * sipariş beklemeden mağaza ürününü ADIYLA seçip eşlesin (elle ham ID yazmasın).
+   *
+   * `adminOrderUrlTemplate` (opsiyonel, §17): mağaza kendi admin sipariş bağlantı şablonunu bildirir
+   * (HPOS açık/kapalı olduğunu yalnız mağaza bilir → panelin varsayımı yerine kaynağından gelir).
+   * Karar artık değerin DOLU olup olmadığına değil, KAYNAĞINA bakar (`sites.admin_order_url_template_manual`):
+   *   - undefined  → mevcut şablona DOKUNULMAZ (alan hiç gönderilmemiş)                → 'absent',
+   *   - kaynak ELLE (manual=true) → mağaza ne gönderirse göndersin DOKUNULMAZ (S5)     → 'kept_manual',
+   *   - kaynak OTOMATİK (manual=false) + null/boş gönderildi → mevcut değer SİLİNMEZ,
+   *     no-op (mağaza panelin ayarını kaldıramaz)                                      → 'accepted',
+   *   - kaynak OTOMATİK + dolu gönderildi → DOLU OLSA BİLE güncellenir; yalnız http(s) + `{orderId}` +
+   *     kimlik-bilgisiz + host==site.domain (ya da ALT alan adı) ise yazılır; aksi halde SESSİZCE
+   *     yok sayılır (warn) → 'rejected_format' / 'rejected_host'. Katalog senkronu ASLA başarısız olmaz.
+   * Yanıt: `adminOrderUrlTemplateStatus` (sebep kodu, WP tarafı reddin NEDENİNİ görebilsin) +
+   * geriye dönük uyum için `adminOrderUrlTemplateAccepted` (yalnız 'accepted' iken true). Sır dönmez.
    */
   async syncCatalog(
     siteId: string,
@@ -560,12 +576,29 @@ export class ProductsService {
       sku?: string | null;
       kind?: string | null;
     }>,
-  ): Promise<{ synced: number }> {
+    adminOrderUrlTemplate?: string | null,
+  ): Promise<{
+    synced: number;
+    adminOrderUrlTemplateAccepted: boolean;
+    adminOrderUrlTemplateStatus: SyncCatalogTemplateStatus;
+  }> {
+    // Şablon alanı HİÇ gönderilmemişse (undefined) mevcut sites.admin_order_url_template'e
+    // DOKUNMAYIZ — eski eklenti sürümleri alanı bilmez, kataloğu senkronlarken operatörün
+    // panelde elle girdiği şablonu silmemeliler.
+    const hasTemplateField = adminOrderUrlTemplate !== undefined;
     // Boş snapshot'ı NO-OP say (kataloğu SİLME): WP'de toplu düzenlemede tüm ürünler geçici olarak
     // taslağa düşerse ya da object-cache boş dönerse gelen boş dizi mevcut kataloğu YANLIŞLIKLA
     // silmesin. Gerçek "0 ürün" durumu da proaktif eşleme için anlamsız; snapshot korunur, sonraki
     // gerçek senkron düzeltir. (Silme YALNIZ dolu snapshot geldiğinde, replace semantiğiyle olur.)
-    if (!items.length) return { synced: 0 };
+    const skipCatalog = !items.length;
+    // Ne yazılacak katalog ne de şablon varsa hiç transaction açma (eski erken-çıkış davranışı).
+    if (skipCatalog && !hasTemplateField) {
+      return {
+        synced: 0,
+        adminOrderUrlTemplateAccepted: false,
+        adminOrderUrlTemplateStatus: 'absent',
+      };
+    }
     // Eşzamanlı aynı-site tam-snapshot'ları serileştir (upsertSiteMapping deseni): manuel "Ürünleri
     // Panele Aktar" ile arka plan otomatik senkron ÇAKIŞABİLİR. Kilit olmadan (a) varyasyonlu
     // katalogda T2 insert 23505 → 500; (b) tüm-basit katalogda unique index NULL'ı AYRI saydığından
@@ -573,33 +606,111 @@ export class ProductsService {
     const lockKey = `catalog:${siteId}`;
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
-      await tx.delete(siteRemoteProducts).where(eq(siteRemoteProducts.siteId, siteId));
-      const seen = new Set<string>();
-      const rows = items
-        .map((it) => {
-          const variation =
-            it.remoteVariationId && it.remoteVariationId !== '0' ? it.remoteVariationId : null;
-          return {
-            siteId,
-            remoteProductId: it.remoteProductId,
-            remoteVariationId: variation,
-            name: it.name.slice(0, 500),
-            sku: it.sku ? it.sku.slice(0, 120) : null,
-            kind: it.kind ? it.kind.slice(0, 40) : null,
-          };
-        })
-        // unique index NULL'ı ayrı sayar → delete+insert içinde mükerrer (product,variation) çift
-        // satırı INSERT'i patlatmasın diye app-düzeyi dedup (ilk kazanır).
-        .filter((r) => {
-          const k = `${r.remoteProductId}::${r.remoteVariationId ?? ''}`;
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        });
-      for (let i = 0; i < rows.length; i += 500) {
-        await tx.insert(siteRemoteProducts).values(rows.slice(i, i + 500));
+      let synced = 0;
+      if (!skipCatalog) {
+        await tx.delete(siteRemoteProducts).where(eq(siteRemoteProducts.siteId, siteId));
+        const seen = new Set<string>();
+        const rows = items
+          .map((it) => {
+            const variation =
+              it.remoteVariationId && it.remoteVariationId !== '0' ? it.remoteVariationId : null;
+            return {
+              siteId,
+              remoteProductId: it.remoteProductId,
+              remoteVariationId: variation,
+              name: it.name.slice(0, 500),
+              sku: it.sku ? it.sku.slice(0, 120) : null,
+              kind: it.kind ? it.kind.slice(0, 40) : null,
+            };
+          })
+          // unique index NULL'ı ayrı sayar → delete+insert içinde mükerrer (product,variation) çift
+          // satırı INSERT'i patlatmasın diye app-düzeyi dedup (ilk kazanır).
+          .filter((r) => {
+            const k = `${r.remoteProductId}::${r.remoteVariationId ?? ''}`;
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+          });
+        for (let i = 0; i < rows.length; i += 500) {
+          await tx.insert(siteRemoteProducts).values(rows.slice(i, i + 500));
+        }
+        synced = rows.length;
       }
-      return { synced: rows.length };
+
+      // Mağazanın bildirdiği admin sipariş URL şablonu (§17) — AYNI kilit/transaction içinde
+      // değerlendirilir ki eşzamanlı iki senkron farklı şablon bırakmasın. Şablon SALT YÖNLENDİRME:
+      // panel bu adrese bağlanmaz, yalnız operatörün tıklayacağı bağlantıyı üretir. Geçersizse
+      // SESSİZCE yok sayılır (warn) — katalog asıl iştir, senkron başarısız EDİLMEZ.
+      //
+      // [S5 — düzeltildi] ELLE GİRİLEN DEĞER KAZANIR, ama karar KAYNAĞA bakar (değerin dolu olup
+      // olmadığına DEĞİL): `sites.admin_order_url_template_manual` true ise şablona DOKUNULMAZ.
+      //
+      // Neden kaynak-tabanlı: eski kural "panelde dolu ⇒ dokunma" idi. Bu, İLK otomatik değerin
+      // sütunu KALICI olarak kilitlemesi demekti — mağaza 3 ay sonra HPOS'u kapatsa ya da WP'yi
+      // alt dizine taşısa mağazanın bildirdiği YENİ DOĞRU şablon bir daha asla yazılamıyor, panel
+      // ölü/yanlış bağlantı üretmeye devam ediyordu ("ya doğru ya hiç" şartının ihlali). Artık:
+      //   - manual=true  (operatör panel formundan girdi) → senkron ÜZERİNE YAZMAZ (operatör
+      //     düzeltmesi ~3 dk sonra sessizce ezilmez; S5'in asıl amacı budur),
+      //   - manual=false (mağazanın bildirdiği ya da hiç girilmemiş) → mağaza kaynaktır, dolu
+      //     olsa bile TAZE değer yazılır (mağaza taşınınca link kendiliğinden düzelir).
+      // Mağazanın açık `null`/boş göndermesi dolu alanı SİLMEZ: temizleme operatörün işidir,
+      // mağaza panelin ayarını kaldıramaz. (`manual` bayrağını YALNIZ sites.update yazar; katalog
+      // senkronu bayrağa dokunmaz → otomatik değer yazmak alanı elle-girilmiş yapmaz.)
+      let templateStatus: SyncCatalogTemplateStatus = 'absent';
+      if (hasTemplateField) {
+        // Mevcut değer + kaynak bayrağı + domain TEK okumada. FOR UPDATE (TOCTOU): okuma ile yazma
+        // arasında operatör panel formundan şablon kaydederse (sites.update, manual=true) o UPDATE
+        // bu tx bitene kadar bekler → "otomatikti sandım, yazdım" yarışı kapanır. Kilit sırası:
+        // advisory(catalog) → sites satırı (bu tx sonunda zaten aynı satırı UPDATE ediyordu).
+        const [site] = await tx
+          .select({
+            domain: sites.domain,
+            current: sites.adminOrderUrlTemplate,
+            manual: sites.adminOrderUrlTemplateManual,
+          })
+          .from(sites)
+          .where(eq(sites.id, siteId))
+          .limit(1)
+          .for('update');
+        const current = (site?.current ?? '').trim();
+        const raw = (adminOrderUrlTemplate ?? '').trim();
+        if (site?.manual === true) {
+          // Kaynak ELLE → DOKUNMA (ne yazma ne temizleme). Operatör mağazadan yeniden öğrenilmesini
+          // isterse alanı panel formundan TEMİZLER (sites.update manual=false yapar) → sonraki
+          // senkron mağazanın bildirdiğini yazar.
+          templateStatus = 'kept_manual';
+        } else if (!raw) {
+          // Mağaza boş/null gönderdi → mevcut (otomatik) değeri koru, istenen durum sağlanmış sayılır.
+          templateStatus = 'accepted';
+        } else {
+          const reason = adminOrderUrlTemplateRejection(raw, site?.domain ?? '');
+          if (reason) {
+            // Ham şablonu LOGLAMA (gereksiz veri, kimlik bilgisi içerebilir); yalnız site + sebep.
+            this.logger.warn(
+              `Katalog senkronu: adminOrderUrlTemplate yok sayıldı (site=${siteId}, sebep=${reason})`,
+            );
+            templateStatus = rejectionStatus(reason);
+          } else if (raw === current) {
+            // Değer değişmemiş → gereksiz UPDATE yazma (senkron ~3 dk'da bir koşuyor; updatedAt'i
+            // her turda kirletmek sipariş/site listelerinde yanıltıcı "az önce güncellendi" üretir).
+            templateStatus = 'accepted';
+          } else {
+            await tx
+              .update(sites)
+              .set({ adminOrderUrlTemplate: raw, updatedAt: new Date() })
+              .where(eq(sites.id, siteId));
+            templateStatus = 'accepted';
+          }
+        }
+      }
+
+      return {
+        synced,
+        // Geriye dönük uyum: alanı bilen eski WP sürümleri yalnız bu boolean'a bakar (yeni sürüm
+        // reddin SEBEBİNİ `adminOrderUrlTemplateStatus`tan okur).
+        adminOrderUrlTemplateAccepted: templateStatus === 'accepted',
+        adminOrderUrlTemplateStatus: templateStatus,
+      };
     });
   }
 
@@ -634,6 +745,21 @@ export class ProductsService {
    * Bir sitenin senkron kataloğu + her ürünün EŞLEME DURUMU (eşli → panel ürün adı + bundle; yoksa
    * null). Eşli mantığı resolveMapping ile aynı (varyasyon-özel VEYA ürün-seviyesi; en spesifik
    * tercih — DISTINCT ON). Eşlenmemiş ÜSTTE. Panelde proaktif eşleme ekranını besler.
+   *
+   * [G9] VARYASYONLU ÜRÜNÜN EBEVEYN SATIRI — eşleme semantiği DEĞİŞMEZ, yalnız SUNUM bilgisi eklenir.
+   * Katalogda variable bir ürün hem EBEVEYN satırı (kind='variable', remote_variation_id IS NULL) hem
+   * her varyasyonu (kind='variation') ile durur. Sipariş satırı her zaman bir varyasyona düşer ve
+   * eşleme varyasyon-özel kurulur; ebeveyn satırı SQL üç-değerli mantığı gereği varyasyon-özel
+   * eşlemelerle ASLA eşleşmez (m.remote_variation_id = NULL → NULL) → tüm varyasyonları doğru eşlenmiş
+   * üründe bile ebeveyn sonsuza dek `mapped=false` kalır. Dashboard sayacı (dashboard.service
+   * unmappedCatalogProducts) bu satırı zaten HARİÇ tutuyordu → iki ekran farklı sayı gösteriyor,
+   * operatör "hangisi doğru" diye tereddüt edip alarmı susturmak için TEHLİKELİ bir ürün-seviyesi
+   * catch-all eşleme kurmaya yöneliyordu. Çözüm: satırı ayırt eden bayrak + varyasyon eşleme sayacı
+   *   `isVariableParent` / `variationCount` / `mappedVariationCount`
+   * döndürülür; UI bu satırı kırmızı "eşlenmemiş" yerine nötr "varyasyonları eşleyin (N/M eşli)"
+   * olarak gösterir. Ebeveyne DOĞRUDAN eşleme kurmak hâlâ mümkündür (ürün-seviyesi eşleme meşru bir
+   * fallback'tir) — yalnız VARSAYILAN eylem değildir. Sıralamada da ebeveyn "eşlenmemiş" bloğunun
+   * başına çıkmaz (gerçekten eşlenmemiş somut satırlar üstte kalır).
    */
   async listCatalog(siteId: string) {
     const rows = await rawRows<{
@@ -647,10 +773,13 @@ export class ProductsService {
       mapped_product_id: string | null;
       bundle_qty: number | null;
       mapped_product_name: string | null;
+      is_variable_parent: boolean;
+      variation_count: number;
+      mapped_variation_count: number;
     }>(
       this.db,
       sql`
-        SELECT * FROM (
+        WITH base AS (
           SELECT DISTINCT ON (rp.id)
                  rp.id,
                  rp.remote_product_id, rp.remote_variation_id, rp.name, rp.sku, rp.kind, rp.synced_at,
@@ -664,8 +793,28 @@ export class ProductsService {
           LEFT JOIN products p ON p.id = m.product_id
           WHERE rp.site_id = ${siteId} AND rp.active = true
           ORDER BY rp.id, (m.remote_variation_id IS NOT NULL) DESC
-        ) t
-        ORDER BY (t.mapped_product_id IS NOT NULL), t.name
+        ), variation_stats AS (
+          -- Aynı mağaza ürününün VARYASYON satırları (ebeveyn hariç): kaçı eşli? Yalnız SUNUM için
+          -- (ebeveyn satırında "N/M eşli" yazabilmek); eşleme kararına HİÇ karışmaz.
+          SELECT remote_product_id,
+                 count(*)::int AS variation_count,
+                 (count(*) FILTER (WHERE mapped_product_id IS NOT NULL))::int AS mapped_variation_count
+          FROM base
+          WHERE remote_variation_id IS NOT NULL
+          GROUP BY remote_product_id
+        )
+        SELECT b.*,
+               -- coalesce ŞART: kind NULL olan ESKİ katalog satırlarında düz karşılaştırma NULL
+               -- üretir (dashboard sayacındaki aynı gerekçe) → bayrak sessizce NULL olurdu.
+               (coalesce(b.kind, '') = 'variable' AND b.remote_variation_id IS NULL) AS is_variable_parent,
+               coalesce(v.variation_count, 0) AS variation_count,
+               coalesce(v.mapped_variation_count, 0) AS mapped_variation_count
+        FROM base b
+        LEFT JOIN variation_stats v ON v.remote_product_id = b.remote_product_id
+        -- Sıralama: gerçekten eşlenmemiş SOMUT satırlar üstte; ebeveyn satırı (bilgi amaçlı) ve
+        -- eşli satırlar altta, ad'a göre (varyasyonlar zaten ebeveyn adıyla aynı öbekte toplanır).
+        ORDER BY (b.mapped_product_id IS NOT NULL
+                  OR (coalesce(b.kind, '') = 'variable' AND b.remote_variation_id IS NULL)), b.name
         LIMIT 5000
       `,
     );
@@ -681,6 +830,10 @@ export class ProductsService {
       mappedProductId: r.mapped_product_id,
       mappedProductName: r.mapped_product_name,
       bundleQty: r.bundle_qty,
+      // Sunum bayrakları (bkz. üstteki [G9] notu) — eşleme semantiği değişmez.
+      isVariableParent: r.is_variable_parent === true,
+      variationCount: Number(r.variation_count ?? 0),
+      mappedVariationCount: Number(r.mapped_variation_count ?? 0),
     }));
   }
 
@@ -814,4 +967,98 @@ export class ProductsService {
       );
     return { deleted: true };
   }
+}
+
+/**
+ * Katalog senkronunda mağazanın bildirdiği admin sipariş URL şablonunun AKIBETİ (§17). Sır
+ * içermeyen kısa sebep kodu — WP tarafı "kabul edilmedi"nin NEDENİNİ görüp operatöre anlamlı
+ * uyarı gösterebilsin (eskiden yalnız `accepted: false` dönüyordu, sebep görünmüyordu).
+ *   accepted        → yazıldı (ya da istenen boş durum zaten sağlanmış),
+ *   kept_manual     → kaynak ELLE (sites.admin_order_url_template_manual=true) → değer korundu
+ *                     (S5: operatörün panel formundan girdiği değer kazanır),
+ *   rejected_host   → şablonun hedefi sitenin alan adı değil (ya da kimlik bilgisi taşıyor),
+ *   rejected_format → şema/`{orderId}`/ayrıştırma hatası,
+ *   absent          → mağaza bu alanı hiç göndermedi.
+ */
+export type SyncCatalogTemplateStatus =
+  | 'accepted'
+  | 'kept_manual'
+  | 'rejected_host'
+  | 'rejected_format'
+  | 'absent';
+
+/** `adminOrderUrlTemplateRejection` sebepleri (log metni + status eşlemesi tek yerde tanımlı). */
+type TemplateRejectionReason =
+  | 'sema_http_degil'
+  | 'orderId_yer_tutucusu_yok'
+  | 'url_ayristirilamadi'
+  | 'kimlik_bilgisi_iceriyor'
+  | 'host_site_domaini_ile_uyusmuyor';
+
+/** Reddetme sebebi → dışarıya dönen kaba sebep kodu (hedef/authority sorunu vs biçim sorunu). */
+function rejectionStatus(reason: TemplateRejectionReason): SyncCatalogTemplateStatus {
+  return reason === 'host_site_domaini_ile_uyusmuyor' || reason === 'kimlik_bilgisi_iceriyor'
+    ? 'rejected_host'
+    : 'rejected_format';
+}
+
+/**
+ * Mağazanın katalog senkronuyla bildirdiği admin sipariş URL şablonunun güvenlik kapısı (§17).
+ * Reddetme sebebini döndürür; null ise şablon KABUL edilebilir. Kurallar:
+ *   - http:// veya https:// ZORUNLU + `new URL` ile ayrıştırılabilmeli (javascript:/data: reddedilir),
+ *   - `{orderId}` yer tutucusu ŞART (yoksa üretilen bağlantı siparişe gitmez),
+ *   - URL KİMLİK BİLGİSİ TAŞIYAMAZ (`https://kullanici:parola@host/...`): (a) tarayıcı adres
+ *     çubuğunda gerçek host'u gizleyip operatörü yanıltır (kimlik-avı), (b) sır benzeri veriyi
+ *     panele/sites tablosuna sokar. Şablon SALT yönlendirmedir, kimlik doğrulaması taşımaz.
+ *   - HOST DOĞRULAMASI: şablonun host'u sitenin KAYITLI domain'iyle uyumlu olmalı → bir site
+ *     kendi alan adı dışına (yabancı/phishing hedefine) operatör bağlantısı yazdıramaz.
+ */
+function adminOrderUrlTemplateRejection(
+  raw: string,
+  siteDomain: string,
+): TemplateRejectionReason | null {
+  if (!/^https?:\/\//i.test(raw)) return 'sema_http_degil';
+  if (!raw.includes('{orderId}')) return 'orderId_yer_tutucusu_yok';
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return 'url_ayristirilamadi';
+  }
+  if (url.username || url.password) return 'kimlik_bilgisi_iceriyor';
+  if (!hostMatchesSiteDomain(url.hostname, siteDomain))
+    return 'host_site_domaini_ile_uyusmuyor';
+  return null;
+}
+
+/**
+ * Host, sitenin kayıtlı domain'iyle uyumlu mu (F15 sertleştirmesi).
+ *
+ * KABUL: host === site.domain  VEYA  host, site.domain'in ALT alan adı (`a.endsWith('.' + b)`).
+ * RED  : host'un site.domain'i KAPSAYAN üst alan adı olması (kaldırılan `b.endsWith('.' + a)` dalı).
+ *   Senaryo (çok kiracılı kurulum): kiracı sitesi `shop1.ortak.com`. Eski kural şablon host'u olarak
+ *   `ortak.com`'u da kabul ediyordu → kiracı, sipariş detayındaki "Mağaza panelinde aç" linkini
+ *   BAŞKA bir alan adına (ortak alan / başka kiracının kontrolündeki sayfa) yazdırabiliyordu.
+ *   Panel operatörü o linke WP-admin oturumu açıkken tıklar → oturum/kimlik-avı yüzeyi. Artık bir
+ *   site yalnız KENDİ alan adına veya onun ALTINDAKİ bir ada link yazdırabilir.
+ * Normalizasyon: küçük harf + şema/port/yol/`www.`/kök noktası (`ornek.com.`) atılır; olası
+ * `user:pass@` öneki (zaten reddediliyor) savunma derinliği olarak temizlenir. Boş → false.
+ * NOT: `www.` iki tarafta da atıldığı için site domain'i `www.ornek.com` ise `ornek.com` alt
+ * alan adları da kabul edilir (www.x ≡ x geleneği) — kiracı-başına-www kurulumu varsayılmıyor.
+ */
+function hostMatchesSiteDomain(host: string, siteDomain: string): boolean {
+  const norm = (h: string) =>
+    h
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^[^/@]*@/, '')
+      .replace(/[/?#].*$/, '')
+      .replace(/:\d+$/, '')
+      .replace(/^www\./, '')
+      .replace(/\.$/, '');
+  const a = norm(host);
+  const b = norm(siteDomain);
+  if (!a || !b) return false;
+  return a === b || a.endsWith(`.${b}`);
 }

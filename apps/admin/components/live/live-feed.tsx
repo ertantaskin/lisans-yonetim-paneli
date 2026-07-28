@@ -11,14 +11,17 @@ import {
   LifeBuoy,
   Link2,
   Mail,
+  PackageSearch,
   PackageX,
   RefreshCw,
+  ShieldAlert,
   ShoppingCart,
+  Unlink,
   type LucideIcon,
 } from 'lucide-react';
 import { useLive } from './live-provider';
 import type { LiveOrder, LiveStats, LiveSupport } from '../../lib/live-types';
-import { orderStatusLabel, supportStatusLabel } from '../../lib/labels';
+import { badgeStatusLabel, orderStatusLabel, supportStatusLabel } from '../../lib/labels';
 import { cn, fmtDateTime } from '../../lib/utils';
 import { Badge, type BadgeProps } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -110,6 +113,12 @@ function orderBadge(o: LiveOrder): StatusMeta {
     return { variant: 'warning', label: orderStatusLabel('held_for_review'), icon: ClipboardCheck };
   }
   switch (o.status) {
+    // Eşlenmemiş sipariş: mağaza ürünü panel ürününe bağlanmadığı için TESLİM EDİLEMEZ —
+    // operatörün eşlemeyi yapması gerekir, o yüzden en yüksek görsel öncelik (danger).
+    // Etiket rozet sözlüğünden ("Eşlenmemiş"): `ORDER_STATUS`'te karşılığı YOK, oradan
+    // okunsa ham enum ('unmapped') operatöre çıkardı. `StatusBadge` ile birebir aynı metin.
+    case 'unmapped':
+      return { variant: 'danger', label: badgeStatusLabel('unmapped'), icon: ShieldAlert };
     case 'fulfilled':
       return { variant: 'success', label: orderStatusLabel('fulfilled'), icon: CheckCircle2 };
     case 'partial':
@@ -146,14 +155,20 @@ function supportBadge(status: string): StatusMeta {
  * Akış satırının ortak kabuğu. YENİ kayıt vurgusu: sol kenarda aksan şerit + hafif zemin,
  * CSS geçişiyle (sağlayıcı ~12 sn sonra `fresh` kümesini boşaltır → vurgu söner).
  * SÜREKLİ animasyon YOK; `prefers-reduced-motion` açıkken geçiş de kapanır.
+ *
+ * `alert` = operatör aksiyonu bekleyen satır (ör. eşlenmemiş sipariş): `fresh`ten farklı
+ * olarak SÖNMEZ — iş yapılana kadar durur, bu yüzden `fresh`ten SONRA uygulanır (twMerge
+ * son sınıfı kazandırır → sol şerit ve zemin uyarı tonuna sabitlenir).
  */
 function FeedRow({
   href,
   fresh,
+  alert = false,
   children,
 }: {
   href: string;
   fresh: boolean;
+  alert?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -164,6 +179,8 @@ function FeedRow({
           'flex items-center gap-2.5 border-l-2 border-l-transparent px-3 py-2 outline-none transition-colors duration-500 motion-reduce:transition-none',
           'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60',
           fresh && 'border-l-primary bg-accent/60',
+          alert &&
+            'border-l-destructive bg-[color-mix(in_oklch,var(--destructive)_8%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)]',
         )}
       >
         {fresh && <span className="sr-only">Yeni: </span>}
@@ -311,22 +328,94 @@ export function LiveStatus({ className }: { className?: string }) {
 
 // ── Canlı KPI şeridi ─────────────────────────────────────────────────────────
 
+/**
+ * KPI tonu — hücrenin OPERATÖRE söylediği şey:
+ *  • danger  = teslimatı fiilen durduran iş (eşleme bekleyen sipariş/satır)
+ *  • warning = sıradaki iş (bekleyen satır, inceleme, destek)
+ *  • info    = BİLGİ, alarm DEĞİL: doğru çalışan sistemde de kalıcı > 0 olabilen sayaç.
+ *              Kırmızı/sarı verilirse hiçbir doğru işlemle sönmez → alarm körlüğü.
+ */
+type KpiTone = 'warning' | 'danger' | 'info';
+
+/** Sıfırdan büyükken (hot) kullanılan renk. `info` nötr kalır: okunur ama alarm değil. */
+const KPI_TONE_TEXT: Record<KpiTone, string> = {
+  danger: 'text-destructive',
+  warning: 'text-warning',
+  info: 'text-foreground',
+};
+
 interface KpiItem {
   key: keyof LiveStats;
   label: string;
   href: string;
   icon: LucideIcon;
   /** Sıfırdan büyükken kullanılacak vurgu tonu (0 ise daima sönük). */
-  tone: 'warning' | 'danger';
+  tone: KpiTone;
+  /** Hücrenin `title` ipucu — sayaç yanlış okunuyorsa anlamını açar. */
+  hint?: string;
 }
 
 const KPI_ITEMS: KpiItem[] = [
-  { key: 'pendingLines', label: 'Bekleyen satır', href: '/pending', icon: Inbox, tone: 'warning' },
-  { key: 'unmappedLines', label: 'Eşlenmemiş satır', href: '/mappings', icon: Link2, tone: 'danger' },
+  {
+    key: 'pendingLines',
+    label: 'Bekleyen satır',
+    href: '/pending',
+    icon: Inbox,
+    tone: 'warning',
+    hint: 'Panel ürününe bağlı ama henüz teslim edilmemiş sipariş satırları (stok/tamamlama bekliyor).',
+  },
+  {
+    key: 'unmappedLines',
+    label: 'Eşlenmemiş satır',
+    href: '/mappings',
+    icon: Link2,
+    tone: 'danger',
+    hint: 'Mağaza ürünü panel ürününe bağlı olmadığı için teslim edilemeyen sipariş satırları.',
+  },
   { key: 'heldOrders', label: 'İnceleme kuyruğu', href: '/review', icon: ClipboardCheck, tone: 'warning' },
   { key: 'openSupport', label: 'Açık destek', href: '/support', icon: LifeBuoy, tone: 'warning' },
   { key: 'lowStockProducts', label: 'Düşük stok', href: '/stock', icon: PackageX, tone: 'danger' },
 ];
+
+/**
+ * YALNIZ sıfırdan büyükken çizilen ek sayaçlar. Sürekli görünen sayaçlardan AYRI tutulur
+ * çünkü: (a) API eski sürümdeyse alan hiç gelmez (undefined) — sönük "—" hücresi yanlış
+ * güven verirdi, (b) 0 iken şeritte yer kaplamamalı (dikkat yalnız iş olan yerde).
+ *
+ * TON AYRIMI kritik: yalnız `unmappedOrders` bir ALARM'dır (gerçek talep, eşleme kurulunca
+ * söner). `unmappedCatalogProducts` BİLGİ'dir — katalog mağazanın TÜM ürünlerini taşır
+ * (kargo/hizmet/fiziksel dahil), "eşlenmemiş" ≠ "eşlenmesi gereken"; kırmızı verilseydi
+ * hiçbir doğru işlemle sönmez, operatörü lisans taşımayan ürünleri de eşlemeye iterdi.
+ */
+const ALERT_KPI_ITEMS: KpiItem[] = [
+  {
+    key: 'unmappedOrders',
+    label: 'Eşleme bekleyen sipariş',
+    href: '/pending',
+    icon: Unlink,
+    tone: 'danger',
+    hint: 'En az bir kalemi panel ürününe bağlı olmayan bekleyen sipariş — o kalemler eşleme yapılana kadar teslim edilemez.',
+  },
+  {
+    key: 'unmappedCatalogProducts',
+    label: 'Panelde eşlenmemiş mağaza ürünü',
+    href: '/mappings',
+    icon: PackageSearch,
+    tone: 'info',
+    hint: 'Bilgi amaçlı: mağaza kataloğunda panel ürününe bağlanmamış ürün sayısı. Hepsinin eşlenmesi gerekmez — yalnız lisans taşıyanları eşleyin.',
+  },
+];
+
+/**
+ * Görünen hücre sayısına göre lg kolon sayısı. Şerit lg'de HER ZAMAN tek satır olmalı:
+ * `gap-px` + `bg-border` düzeninde eksik hücre, ayraç rengiyle dolu boş bir blok gibi
+ * görünür. Tailwind sınıfları statik yazılır (dinamik string derlemeye girmez).
+ */
+const LG_COLS: Record<number, string> = {
+  5: 'lg:grid-cols-5',
+  6: 'lg:grid-cols-6',
+  7: 'lg:grid-cols-7',
+};
 
 /**
  * Üstteki ince canlı sayaç şeridi — operatörün "şu an neye bakmalıyım" listesi.
@@ -337,19 +426,37 @@ export function LiveKpiStrip({ initialStats }: { initialStats?: Partial<LiveStat
   const { data, updatedAt } = useLive();
   const hasLive = updatedAt > 0;
 
+  /**
+   * Sayaç okuma — SAVUNMACI: alan gelmemişse (eski API / dağıtım sapması) `null` döner,
+   * `null` "veri yok" demektir ve alarm üretmez (yanlış alarm yok).
+   */
+  const readStat = (key: keyof LiveStats): number | null => {
+    const raw = hasLive ? data.stats[key] : initialStats?.[key];
+    return typeof raw === 'number' ? raw : null;
+  };
+
+  const cells = [
+    ...KPI_ITEMS.map((item) => ({ item, value: readStat(item.key) })),
+    // Ek sayaçlar yalnız GERÇEKTEN değer varken (>0) şeride girer.
+    ...ALERT_KPI_ITEMS.map((item) => ({ item, value: readStat(item.key) })).filter(
+      (c) => (c.value ?? 0) > 0,
+    ),
+  ];
+
   // `gap-px` + `bg-border` = 1px ayraçlar. Tek sayıda hücre 2-kolon düzeninde BOŞ hücre
   // bırakır (ayraç rengi blok gibi görünürdü) → son hücre iki kolona yayılır (`spanLast`).
   return (
     <nav
       aria-label="Canlı iş kuyrukları"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border lg:grid-cols-5"
+      className={cn(
+        'grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border',
+        LG_COLS[cells.length] ?? 'lg:grid-cols-5',
+      )}
     >
-      {KPI_ITEMS.map((item, i) => {
+      {cells.map(({ item, value }, i) => {
         const Icon = item.icon;
-        const raw = hasLive ? data.stats[item.key] : initialStats?.[item.key];
-        const value = typeof raw === 'number' ? raw : null;
         const hot = value !== null && value > 0;
-        const spanLast = i === KPI_ITEMS.length - 1 && KPI_ITEMS.length % 2 === 1;
+        const spanLast = i === cells.length - 1 && cells.length % 2 === 1;
         return (
           <Link
             key={item.key}
@@ -365,21 +472,20 @@ export function LiveKpiStrip({ initialStats }: { initialStats?: Partial<LiveStat
               className={cn(
                 'size-4 shrink-0',
                 // Sönük durumda da AA korunur: opaklık DÜŞÜRÜLMEZ, yalnız semantik renk düşer.
-                hot ? (item.tone === 'danger' ? 'text-destructive' : 'text-warning') : 'text-muted-foreground',
+                hot ? KPI_TONE_TEXT[item.tone] : 'text-muted-foreground',
               )}
               aria-hidden
             />
-            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={item.label}>
+            <span
+              className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+              title={item.hint ?? item.label}
+            >
               {item.label}
             </span>
             <span
               className={cn(
                 'shrink-0 text-base font-semibold tabular-nums',
-                hot
-                  ? item.tone === 'danger'
-                    ? 'text-destructive'
-                    : 'text-warning'
-                  : 'text-muted-foreground',
+                hot ? KPI_TONE_TEXT[item.tone] : 'text-muted-foreground',
               )}
             >
               {value !== null ? value.toLocaleString('tr-TR') : '—'}
@@ -421,8 +527,16 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
           {orders.map((o) => {
             const meta = orderBadge(o);
             const Icon = meta.icon;
+            // Eşlenmemiş sipariş akışta KAYBOLMAMALI (operatör şikâyeti): satır kalıcı uyarı
+            // tonuyla vurgulanır ve "N/M satır" sayacı yerine yapılacak iş yazılır.
+            const unmapped = o.status === 'unmapped';
             return (
-              <FeedRow key={o.id} href={`/orders/${o.id}`} fresh={fresh.has(`o:${o.id}`)}>
+              <FeedRow
+                key={o.id}
+                href={`/orders/${o.id}`}
+                fresh={fresh.has(`o:${o.id}`)}
+                alert={unmapped}
+              >
                 <TimeCell iso={o.createdAt} mounted={mounted} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-1.5">
@@ -439,13 +553,22 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
                     {o.customerEmail}
                   </span>
                 </span>
-                {o.lineCount > 0 && (
+                {unmapped ? (
                   <span
-                    className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground sm:inline"
-                    title={`${o.lineCount} satırın ${o.fulfilledLines} tanesi teslim edildi`}
+                    className="hidden shrink-0 text-[11px] font-medium text-destructive sm:inline"
+                    title="Mağaza ürünü panel ürününe eşlenmediği için bu sipariş teslim edilemiyor. Siparişi açıp eşlemeyi yapın."
                   >
-                    {o.fulfilledLines}/{o.lineCount} satır
+                    Eşleştirme gerekiyor
                   </span>
+                ) : (
+                  o.lineCount > 0 && (
+                    <span
+                      className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground sm:inline"
+                      title={`${o.lineCount} satırın ${o.fulfilledLines} tanesi teslim edildi`}
+                    >
+                      {o.fulfilledLines}/{o.lineCount} satır
+                    </span>
+                  )
                 )}
                 <Badge variant={meta.variant} className="shrink-0">
                   <Icon />

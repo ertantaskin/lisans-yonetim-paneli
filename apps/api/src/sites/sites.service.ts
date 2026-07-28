@@ -28,9 +28,16 @@ export interface SiteDetail {
     /**
      * Mağaza yönetim paneli sipariş bağlantısı şablonu (`{orderId}` yer tutucusu).
      * SALT YÖNLENDİRME — panel bu adrese bağlanmaz, yalnız tıklanabilir bağlantı üretir.
-     * null → site tipinden türetilir (WooCommerce: webhook/domain origin + wc-orders).
+     * null/boş → "Mağazada aç" bağlantısı HİÇ gösterilmez; tip-tabanlı TAHMİN üretilmez
+     * (HPOS kapalı mağazada / alt-dizin kurulumunda yanlış link çıkıyordu).
      */
     adminOrderUrlTemplate: string | null;
+    /**
+     * Şablonun KAYNAĞI (0026). true = operatör panel formundan ELLE girdi → katalog senkronu
+     * ÜZERİNE YAZMAZ. false = mağazanın bildirdiği (veya hiç girilmemiş) değer → senkron
+     * güncelleyebilir. SIR DEĞİL; operatöre "bu değer nereden geldi" bilgisini vermek için döner.
+     */
+    adminOrderUrlTemplateManual: boolean;
     salesDailyQuota: number | null;
     /** Dinamik kota (§8) açık mı — açıksa eşik aşımında sipariş held_for_review'e alınır. */
     dynamicQuotaEnabled: boolean;
@@ -78,6 +85,9 @@ export function hashApiKey(apiKey: string): string {
  * (mevcut + önceki). Rotasyon/rekey sonrası tutulan `hmacSecretPrevEnc`/`apiKeyHashPrev` de
  * sızmaz (envelope sınırı korunur). Site dönen HER yol (list/update/…) bu mapper'ı kullanır ki
  * sır kolonları tek yerde garanti strip edilsin ve gelecekte yeni bir yol yanlışlıkla sızdırmasın.
+ *
+ * NOT: sır OLMAYAN yeni kolonlar (ör. `adminOrderUrlTemplateManual`, 0026) Omit listesinde
+ * bulunmadığı için list/update yanıtlarına OTOMATİK dahil olur — ayrıca eklemek gerekmez.
  */
 export type PublicSite = Omit<
   Site,
@@ -186,9 +196,16 @@ export class SitesService {
     if (input.senderEmail !== undefined) patch.senderEmail = input.senderEmail;
     // Geri kanal webhook hedefi (§2) — null = temizle (webhook sessizce atlanır).
     if (input.webhookUrl !== undefined) patch.webhookUrl = input.webhookUrl;
-    // Mağaza admin sipariş bağlantısı şablonu (SALT YÖNLENDİRME; boş string → null = türet).
+    // Mağaza admin sipariş bağlantısı şablonu (SALT YÖNLENDİRME; boş string → null = bağlantı
+    // gösterilmez, TAHMİN üretilmez). Kaynak işareti (0026) BURADA türetilir — istemciden ASLA
+    // alınmaz: alan doldurulursa "elle girildi" (katalog senkronu ÜZERİNE YAZMAZ), temizlenirse
+    // işaret kalkar → mağazanın bildirdiği değer tekrar yazılabilir olur (operatöre kaçış yolu).
     if (input.adminOrderUrlTemplate !== undefined) {
-      patch.adminOrderUrlTemplate = input.adminOrderUrlTemplate || null;
+      // Savunmacı trim: controller Zod zaten trim'liyor, ama servis doğrudan da çağrılabilir
+      // (test/iç akış) → yalnız boşluktan ibaret şablon "dolu" sayılmasın.
+      const tpl = input.adminOrderUrlTemplate?.trim() || null;
+      patch.adminOrderUrlTemplate = tpl;
+      patch.adminOrderUrlTemplateManual = tpl !== null;
     }
     if (input.status !== undefined) patch.status = input.status;
 
@@ -400,6 +417,9 @@ export class SitesService {
         senderEmail: site.senderEmail,
         webhookUrl: site.webhookUrl,
         adminOrderUrlTemplate: site.adminOrderUrlTemplate,
+        // Şablonun kaynağı (0026) — form "elle girildi mi" notunu buna göre gösterir.
+        // Savunmacı: kolon eski satırlarda NOT NULL DEFAULT false olsa da `?? false` ile okunur.
+        adminOrderUrlTemplateManual: site.adminOrderUrlTemplateManual ?? false,
         salesDailyQuota: site.salesDailyQuota,
         dynamicQuotaEnabled: site.dynamicQuotaEnabled,
         reviewMultiplier: site.reviewMultiplier,
