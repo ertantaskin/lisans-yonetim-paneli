@@ -757,6 +757,56 @@ eşlemeler AYRI `site_product_mappings` tablosunda → katalog yenilense de kopm
   unmapped; proaktif eşle 201→dedup 409; **varyasyon çözümü** parent→ürün-seviyesi/501→varyasyon-özel/502→fallback;
   remap 200; delete 200→404; **boş-push no-op** 3→3 satır wipe YOK) · migration 0023 prod boot auto-migrate.
 
+**İŞ İSTASYONU PARTİSİ + 5-LENS DENETİM (commit 916080d→73062fe, CANLI + prod deploy, migration 0024+0025,
+eklenti v0.8.0):** Kullanıcı uyumadan önce 13 maddelik liste bıraktı ve çok-ajan orkestrasyonuna açıkça izin
+verdi. 5 backend + 6 UI + 3 düzeltme işçisi + 32-ajanlı çekişmeli denetim workflow'u ile yapıldı.
+- **[ANA ŞİKÂYET] Bekleyen satır (§3/§4):** mağaza ürünü SONRADAN eşlenince eski siparişler "eşlenmemiş"
+  kalıyor, "Kalanları Ata" no-op diyordu. Kök neden: teslimat motoru satırları `product_id` üzerinden tarar,
+  eşlemesiz satırda o alan NULL → hiçbir sweep'e girmez. YENİ `orders/pending-lines.service|controller`:
+  `GET /v1/admin/pending-lines` (gruplu özet + `mappedNow`), `GET .../diagnose/:orderId` (satır başına
+  reason/action/message), `POST .../resolve` (geriye dönük uygula). `linkLine`: advisory-lock +`FOR UPDATE` +
+  `productId` hâlâ NULL re-check (TOCTOU) · **canceled satır ASLA bağlanmaz** (H1) · **held sipariş teslim
+  edilmez** · `fulfilledQty≠0` ise dokunmaz · teslimat NORMAL `completeLine`'dan geçer (all-or-nothing/held
+  guard'ları bypass edilmez) · `fulfillment_events` `mapping_resolved` + audit `assign`/`meta.op=pending_resolve`.
+  **OTOMATİK EŞLEŞTİRME YOK** — yalnız operatörün elle kurduğu aktif eşleme uygulanır. Eşleme kurulunca
+  best-effort otomatik çalışır ("N satır bağlandı, M teslim edildi"). UI: `/mappings` "Eşleme Bekleyen Sipariş
+  Satırları" paneli + sipariş detayında tanı şeridi (tek-tık aksiyon: Eşle/Uygula/İncele/Stok).
+- **Yeni yüzeyler:** lisans envanteri (`GET/PATCH/DELETE /v1/admin/license-items`, sunucu sayfalama 25/50/100,
+  ürün detayı + `/stock` "Son Eklenen Lisanslar", teslim edilen kalemde sipariş + **mağaza admin linki —
+  SALT YÖNLENDİRME**, şablon `sites.admin_order_url_template` http(s)+`{orderId}` zorunlu) · **canlı iş
+  istasyonu** (`GET /v1/admin/live` ETag/304 + TEK paylaşılan poller: 15sn, gizli sekmede DURUR, üstel geri
+  çekilme, oturum bitince /login; SSE bilinçli REDDEDİLDİ) · bildirim çanı (ses varsayılan KAPALI, WebAudio —
+  dosya/ağ YOK) · destek yazışması (iç not müşteriye gitmez) + suistimal sayacı · karantina CSV (Envanter
+  menüsüne taşındı) · WP: işlemi yapan kullanıcı, "İptal"→**"Değiştirildi"**, ürün kalemi altında lisans kartları.
+- **Denetim (5 lens/32 ajan, bul→çürüt): 23 doğrulanmış / 4 çürütülen — hepsi düzeltildi.**
+  **[YÜKSEK]** destek yazışması HİÇ açılmıyordu: API `{messages:[...]}` sarmalı döndürürken istemci düz dizi
+  sanıyordu → `.map is not a function` → /support + sipariş detayı error boundary'ye düşüyordu.
+  **[ORTA] bundleQty ÇİFT ÖLÇEKLEME → bedava lisans** (`syncRefunds` eşlemesiz satırı da çarpıyordu, sonra
+  `linkLine` bir kez daha) **+ ÖLÇEK KAYBI → canlı anahtar geri alınıyor** (eşleme pasifleştirilince ölçek
+  sessizce 1'e düşüyor, resync satırı "aşırı teslim" sanıp müşterinin İADE ETMEDİĞİ anahtarlarını revoke
+  ediyordu) → **0025 `order_lines.bundle_qty`** teslimat-anı anlık görüntüsü + ortak `resolveLineScale`
+  (eşlemesiz→1 · anlık görüntü → o · canlı eşleme → o · **hiçbiri yoksa null ⇒ qty'ye DOKUNMA**). 3 regresyon testi.
+  **[ORTA]** karantina listesi düz-metin anahtar döküyor ama `reveal` audit yazmıyordu → per-view audit ·
+  `lowStockCount` her poll'da license_items TAM tarama (status JOIN'e taşındı + 60sn önbellek + tek-uçuş) ·
+  envanter count+rows tek sorguya (`count(*) OVER ()`), status parametre-cast'i (kolon cast'i index'i
+  öldürüyordu), `assigned_desc` LATERAL yerine kolondan · `consumeMultiUseCapacity` `assigned_at` yazmıyordu
+  (MAK'ta teslim tarihi hep boş) → `COALESCE(assigned_at, now())` · destek kuyruğu 200 kayıtla SESSİZCE
+  kırpılıyordu (sunucuda kapsam + uyarı bandı) · karantina CSV'si müşteri e-postası + tam anahtarı aynı
+  dosyada birleştiriyordu (KVKK) → "Tedarikçi bildirimi" / "İç denetim" ayrımı.
+  **[DÜŞÜK ×16]** replaceAssignment advisory-lock (revoke↔atama arasında son anahtar kapılırsa müşteri
+  lisansını KALICI kaybediyordu) · pending-lines `orderCount` çift sayımı + `truncated` · `:id` ParseUUIDPipe ·
+  site-facing yazışma OKUMA hız sınırı · WP: panel `replaced` bayrağı YETKİLİ (account'ta etiket hiç
+  çıkmıyordu), aktör kalıcı meta yerine İŞE bağlandı (oturumsuz tetikte yanlış kişi yazılıyordu), `held`
+  rozeti, kontrast AA, ağ-hatası mesajı · UI: yazışmada ardışık mesaj form reset, dürüst sonuç raporu, /notifications okundu durumu.
+- **0025 (additive):** `order_lines.bundle_qty` + 5 sıcak-yol index (`license_items_created/status_created/
+  assigned/batch_idx`, `replacement_requests_created_idx`).
+- **Doğrulama:** typecheck api+admin temiz · admin build (tüm yeni rotalar) · **VPS izole test DB: entegrasyon
+  124/124 + yarış 3/3** (6 yeni pending-lines + 3 ölçek regresyon testi) · PHP-lint 13/13 · **dev E2E:** gerçek
+  eşlenmemiş sipariş (mağaza ürünü 18 "testo") tanı→çöz→teslim edildi, TEKRAR çalıştırma no-op (çifte teslimat
+  YOK), sipariş 'fulfilled', olay zinciri `mapping_resolved`→`fulfilled`→`line_completed`, audit `pending_resolve` ·
+  prod deploy.sh (rollback'li) → **/health 200 v1.0.0**, 0024+0025 uygulandı, 12 yeni rota mapped, boot hatası 0 ·
+  eklenti v0.8.0 panele publish (201). migration 0000-0025.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
