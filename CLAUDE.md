@@ -866,6 +866,62 @@ eklenti v0.9.0):** Kullanıcı 4 şikâyet bildirdi; hepsinin kök nedeni dev'de
   prod migration 0026 (tracking 27) · `/v1/health` 200 v1.0.0 · eklenti v0.9.0 publish 201.
   migration 0000-0026.
 
+**SİSTEM GENELİ TARAMA → 35 BULGU + 6 KENDİ-REGRESYON (commit ee59e14, CANLI + migration 0027 +
+eklenti v0.9.1):** Kullanıcı "agent'larınla/işçilerle/workflow'larla sistemi genel tara, sorunları
+bul-analiz-düzelt" dedi. 8 lensli keşif (mail-kuyruk-cron · auth/RBAC/proxy · stok/tedarik ·
+müşteri-destek-güvenlik-KVKK · rapor/AI/readonly-sql · admin UI · WP eklentisi (dokunulmamış
+dosyalar) · altyapı-şema-betik-test) + 4 çekişmeli doğrulayıcı (çürütmeye çalış) → **54 ham,
+35 CONFIRMED, 19 çürütüldü**. 8 ayrık-dosya işçi düzeltti → 2 lensli re-doğrulama **6 KENDİ-regresyon**
+buldu → 4 işçi kapattı → 3 işçi glue bağladı.
+- **[YÜKSEK, CANLIDA KIRIKTI]** `/purchase-orders` + `/suppliers` sunucu eylemleri çalışmıyordu:
+  `'use server'` dosyasından obje re-export'u (`export { initial as … }`). Next 15 guard'ı ÇALIŞMA
+  ANINDA uygular → `next build` TEMİZ geçer, ekran tıklamada patlar. **9b81c9b'nin tekrarı**; önceki
+  tarama metin grep'i olduğu için `export {}` desenini kaçırmıştı. Düzeltildi + **tip-tabanlı**
+  `scripts/check-use-server.js` (TS checker; salt-tip export'ları eler, alias çözer) `pnpm typecheck`
+  ve CI'a bağlandı, negatif kontrolle yakaladığı doğrulandı → 3. tekrar imkânsız.
+- **[ORTA] QueueModule REDIS_URL'i parçalıyordu** (yalnız host+port) → parolalı/TLS Redis'te BullMQ
+  NOAUTH alır ama `/health` "redis ok" der (o ayrı bağlantı) ve enqueue hataları best-effort
+  yutulur → sipariş 201 döner, **teslimat maili + geri-kanal webhook + TÜM sweep'ler hiç çalışmaz**,
+  sistem sağlıklı görünür. Tam URL'den kuruluyor.
+- **[ORTA] /api/login** hız-sınırsız + `identifier` uzunluk-sınırsız + kilit KİMLİK başına (farklı
+  identifier ile tamamen atlanıyordu) + **senkron scrypt tek event loop'u 60-100 ms blokluyordu**
+  (aynı süreç sipariş teslimatını servis ediyor → ucuz istek seliyle teslimat yavaşlatılabiliyordu).
+  IP kovası + `.max(200)` + sha256 anahtar + asenkron scrypt; sabit-zaman/enumeration davranışı korundu.
+- **[ORTA] Değişim onayı atomik değildi**: revoke ve completeLine ayrı tx'lerde commit ediyordu →
+  `added=0` olduğunda ESKİ anahtar çoktan karantinada (müşteri lisans kaybı); üstelik `added=0`
+  "stok yok" DEMEK DEĞİL (SKIP LOCKED çekişmesi). `completeLine`'a opsiyonel `exec` eklendi, ikisi
+  TEK tx'te → rollback revoke'u da geri alır. 409 mesajı "stok yok" ↔ "şu an atanamadı" ayrıldı.
+- **[ORTA] `usageMode` multi→single** düzenlemesi MAK kapasitesini sessizce yok ediyordu (update
+  şeması create refine'larını taşımıyordu) · **KVKK anonimleştirme** `security_events`'i atlıyordu ·
+  **maliyet raporu** MAK'ta kapasite×anahtar-maliyeti çarpıyordu · **deploy-runner** kendi kilidini
+  alamıyordu (cron flock + betik flock aynı dosya → panelden dağıtım HİÇ koşmuyordu) · **WP klon
+  koruma tabanı** güncellemede kurulmuyordu (712e328'in tekrarı) · **DataTable araması** Türkçe
+  İ/I'da sessizce sonuç bulamıyordu.
+- **[ORTA] "Atanabilir stok" tanımı İKİ FARKLIYDI:** gerçek atama sorgusu süresi geçmiş kalemi
+  dışlıyor, **11 sayım noktası** dışlamıyordu → dashboard/ürün listesi/rapor/düşük-stok alarmı/
+  AI özeti/bayi katalog ucu/sipariş detayı "var olmayan stok" gösteriyordu; "neden bekliyor?" tanısı
+  "stok var" derken teslimat 0 atıyordu. Hepsi `assignment/assign.ts` içindeki paylaşılan
+  `notExpiredCond(alias)` yüklemine bağlandı. (Bilinçli istisnalar — recall/void yazma yolları ve
+  parti satılmış/satılmamış ayrımı — koda gerekçesiyle yazıldı.)
+- **migration 0027 (IDEMPOTENT, mevcut kurulumlarda TAM NO-OP):** drizzle meta snapshot'ı 0020'de
+  kalmıştı (0013-0018 + 0021-0026 elle yazılmıştı) → `db:generate` aradaki HER ŞEYİ "yeni" sanıp
+  yeniden yaratan bir migration üretiyordu; prod'a gitseydi `CREATE TABLE deployments` "already
+  exists" ile **API BOOT ETMEZDİ** (auto-migrate boot'ta koşar). Snapshot hizalandı + 0025'in elle
+  yazılan 5 index'i şemaya taşındı → `db:generate` artık **"No schema changes"**.
+- **KENDİ-REGRESYONLAR (re-doğrulama yakaladı, hepsi kapatıldı):** bildirim mailleri BullMQ'ya
+  taşınmış ama işleyiciye dal EKLENMEMİŞTİ → **hiç gitmiyordu** (5 deneme sonunda dead-letter) ·
+  `allocatableCountForLine` süre koşulunu atlıyordu → değişimde SONSUZ "tekrar deneyin" ·
+  **0027'nin journal `when` damgası 0026'dan KÜÇÜKTÜ → migration hiç uygulanmazdı** (elle yazılan
+  migration'larda uydurma zaman damgası kullanıldığında bu tuzağa dikkat) · `/ops` düzeltmesi yarım
+  kalmıştı (ölü metot + admin yeni alanları okumuyor + buton 400) · `products.update` guard'ı meşru
+  MAK kapasite ARTIRIMINI de blokluyordu · `release-plugin.sh` yeni sürüm kontrolü commit'lenmemiş
+  eklenti kodunu fark etmiyordu (git archive HEAD'den paketliyor).
+- **Doğrulama:** typecheck api+admin+shared temiz · admin production build ✓ · api birim **56/56**
+  (3 yeni mail-processor testi) · `check-use-server` 20 dosya / 65 export TEMİZ · VPS izole test DB
+  **entegrasyon 131/131 + yarış 3/3** · PHP-lint temiz · `bash -n` betikler temiz · dev smoke:
+  `/purchase-orders` + `/suppliers` **200** (önceden kırık), admin+api ERROR 0 · prod migration 0027
+  (tracking 28) · `/v1/health` 200 v1.0.0 · eklenti v0.9.1 publish 201. migration 0000-0027.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

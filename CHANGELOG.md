@@ -14,6 +14,66 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Sistem geneli tarama — 35 doğrulanmış bulgu + 6 kendi-regresyon (migration 0027, eklenti v0.9.1)
+
+8 lensli keşif (mail/kuyruk · auth/RBAC · stok/tedarik · müşteri-destek-güvenlik · rapor/AI/SQL ·
+admin UI · WP eklentisi · altyapı/şema) + 4 çekişmeli doğrulayıcı: **54 ham → 35 CONFIRMED**
+(19 çürütüldü). Sonra 8 işçi düzeltti, 2 lensli re-doğrulama **düzeltmelerin kendi açtığı 6
+regresyonu** buldu, 4 işçi onları kapattı, 3 işçi bağlantı (glue) maddelerini tamamladı.
+
+**Kırık olan (yüksek)**
+- `/purchase-orders` ve `/suppliers` sunucu eylemleri **canlıda çalışmıyordu**: `'use server'`
+  dosyasından obje re-export'u. Next 15 bu guard'ı **çalışma anında** uyguluyor — `next build`
+  temiz geçiyor, ekran ilk tıklamada patlıyor. Commit 9b81c9b'nin tekrarı (önceki tarama metin
+  grep'i olduğu için re-export desenini kaçırmıştı). Artık **tip-tabanlı** `scripts/check-use-server.js`
+  var ve `pnpm typecheck` ile CI'a bağlı; negatif kontrolle gerçekten yakaladığı doğrulandı.
+
+**Sessiz veri/para kaybı riskleri (orta)**
+- `QueueModule` `REDIS_URL`'den yalnız host+port alıyordu → parolalı veya TLS'li Redis'te BullMQ
+  sessizce ölür: `/health` yine "ok" der, sipariş 201 döner, ama **teslimat maili, geri-kanal
+  webhook ve tüm bakım işleri hiç çalışmaz**.
+- Değişim onayı atomik değildi: stok ön-kontrolü ile atama arasında son anahtar kapılırsa eski
+  anahtar çoktan karantinaya alınmış oluyordu → müşteri lisansını kaybediyordu.
+- `usageMode` multi→single düzenlemesi mevcut MAK anahtarlarının kapasitesini sessizce yok
+  ediyordu (güncelleme şeması create refine'larını taşımıyordu).
+- KVKK anonimleştirme `security_events` kayıtlarını atlıyordu (müşteri e-postası ekranda kalıyordu).
+- Maliyet raporu MAK'ta kapasite birimini anahtar-başı maliyetle çarpıyordu.
+- "Atanabilir stok" tanımı kod tabanında **iki farklıydı**: gerçek atama süresi geçmiş kalemi
+  dışlıyor, 11 sayım noktası dışlamıyordu → panel/rapor/düşük-stok alarmı/AI özeti/bayi katalog ucu
+  var olmayan stoğu gösteriyordu. Hepsi tek paylaşılan yükleme bağlandı.
+
+**Güvenlik / dayanıklılık**
+- `/api/login`: IP hız sınırı yoktu, kilit yalnız kimlik başına olduğu için farklı `identifier` ile
+  tamamen atlanabiliyordu, `identifier` uzunluk sınırsızdı ve **senkron scrypt tek event loop'u
+  60-100 ms bloklıyordu** — ucuz bir istek seliyle teslimat yavaşlatılabiliyordu. Dördü de kapandı.
+- `deploy-runner.sh` kendi kilidini alamıyordu (cron'daki dış `flock` + betik içi `flock` aynı
+  dosya) → panelden istenen dağıtım hiç koşmuyordu.
+- WP klon/staging koruma tabanı yalnız aktivasyonda kuruluyordu; eklenti **güncellemesi**
+  aktivasyonu tetiklemediği için kurulu sitelerde koruma kalıcı olarak etkisiz kalabiliyordu.
+- `/ops` mail replay'i her kaydı teslimat işi sayıyordu → bir bildirim kaydını replay etmek
+  müşteriye tüm anahtarları gönderebilirdi.
+
+**Kullanılabilirlik**
+- DataTable aramaları Türkçe İ/I harflerinde sessizce sonuç bulamıyordu (tek `lowerTr` yardımcısı).
+- 25 `error.tsx` üretimde İngilizce Next boilerplate'i gösterebiliyordu → ortak `ErrorState`
+  (Türkçe metin + "Hata kodu: <digest>").
+- Dead-letter listesi 100 kayıtta sessizce kırpılıyordu; "Tekrar dene" artık replay edilemeyen
+  kayıtta gerekçesiyle devre dışı (sessiz 400 yok).
+- Presence göstergesi hiç durmayan ikinci bir poller'dı (sekme gizliyken de atıyordu).
+
+**migration 0027 — IDEMPOTENT, mevcut kurulumlarda tam no-op**
+drizzle meta snapshot'ı 0020'de kalmıştı (0013-0018 ve 0021-0026 elle yazılmıştı) → `db:generate`
+aradaki her şeyi "yeni" sanıp yeniden yaratan bir migration üretiyordu; o dosya prod'a gitseydi
+`CREATE TABLE deployments` "already exists" ile **API'yi boot ettirmezdi**. Snapshot hizalandı ve
+0025'te elle yazılan 5 index şema dosyalarına taşındı. `db:generate` artık **"No schema changes"**.
+
+**Kendi-regresyonlar (re-doğrulama yakaladı)**
+Bildirim mailleri kuyruğa taşınmış ama tüketicisi eklenmemişti (**hiç gitmiyordu**) ·
+`allocatableCountForLine` süre koşulunu atlıyordu → değişimde sonsuz "tekrar deneyin" ·
+0027'nin journal zaman damgası geriye gidiyordu (migration **hiç uygulanmazdı**) · `/ops`
+düzeltmesi yarım kalmıştı · `products.update` guard'ı meşru kapasite artırımını da bloke ediyordu ·
+`release-plugin.sh` yeni kontrolü commit'lenmemiş kodu fark etmiyordu.
+
 ### Eşlenmemiş sipariş görünürlüğü · mağaza→panel gecikmesi · karantina süzme/indirme · mağaza admin URL (migration 0026, eklenti v0.9.0)
 
 Kullanıcının 4 şikâyeti. Dördünün de kök nedeni dev ortamında **gerçek veriyle ölçüldü** (tahmin yok);
