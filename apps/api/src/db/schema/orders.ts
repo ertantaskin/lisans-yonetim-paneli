@@ -81,6 +81,15 @@ export const orderLines = pgTable(
     remoteVariationId: text('remote_variation_id'),
     remoteName: text('remote_name'),
     qty: integer('qty').notNull(),
+    /**
+     * TESLİMAT ANINDAKİ paket adedi (mapping.bundleQty) anlık görüntüsü — `qty`/`fulfilledQty`
+     * hangi ölçekte yazıldığını sabitler. Eşleme SONRADAN pasifleştirilir/silinirse canlı
+     * `resolveMapping` null döner; ölçeği oradan türeten yollar (reconcileOrder/syncRefunds)
+     * bundleQty'yi sessizce 1'e düşürüp satırı "aşırı teslim" sanıyor ve müşterinin CANLI
+     * anahtarlarını iade YOKKEN geri alıyordu. Artık ölçek satırdan okunur (migration 0025).
+     * NULL = bilinmiyor: eşlemesiz satır (qty MAĞAZA birimindedir) ya da 0025 öncesi eski satır.
+     */
+    bundleQty: integer('bundle_qty'),
     fulfilledQty: integer('fulfilled_qty').notNull().default(0),
     status: orderLineStatusEnum('status').notNull().default('pending'),
     // İade/iptal terminal işareti (§2): revoke ile geri alınan satır TRUE olur ve otomatik/elle

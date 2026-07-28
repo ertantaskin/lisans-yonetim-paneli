@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
@@ -195,10 +196,18 @@ export interface QuarantineQuery {
   to?: string;
   /** Varsayılan 500, üst sınır 5000. */
   limit?: number;
+  /**
+   * Denetim aktörü. Karantina listesi ölü anahtarların DÜZ METNİNİ toplu döndürür (tedarikçiye
+   * değişim talebi için dışa aktarılır) — "reveal audit'e düşer" DEĞİŞMEZ kuralı bu yol için de
+   * geçerlidir. Verilmezse 'admin' yazılır.
+   */
+  actor?: string;
 }
 
 @Injectable()
 export class AdminOrdersService {
+  private readonly logger = new Logger(AdminOrdersService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     @Inject(REDIS) private readonly redis: Redis,
@@ -309,6 +318,23 @@ export class AdminOrdersService {
    * ile aynı güvence.
    */
   async replaceAssignment(assignmentId: string, reason: string, actor: string) {
+    // TOCTOU koruması (denetim bulgusu): stok ön-kontrolü ile taze atama arasında BAŞKA bir
+    // değişim aynı ürünün son anahtarını kapabiliyordu → eski atama zaten revoke edilmiş olduğu
+    // için 409 atılıyor ve müşteri lisansını KALICI kaybediyordu. Aynı ürün üzerindeki
+    // değişimleri advisory-lock ile serileştir (replacements.approve deseni). Kilit ÖNCE alınır,
+    // ön-kontrol ve revoke+atama kilit altında koşar.
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'replace:' + assignmentId}))`);
+      return this.replaceAssignmentLocked(assignmentId, reason, actor);
+    });
+  }
+
+  /**
+   * `replaceAssignment` çekirdeği — ÇAĞIRAN advisory-lock'u almış olmalıdır.
+   * revoke/completeLine mevcut imzalarıyla `this.db` kullanır (tx almaz); kilit eşzamanlı
+   * değişimleri dışladığı için bu güvenlidir (approve() ile aynı gerekçe).
+   */
+  private async replaceAssignmentLocked(assignmentId: string, reason: string, actor: string) {
     const [row] = await this.db
       .select({
         status: assignments.status,
@@ -1173,7 +1199,27 @@ export class AdminOrdersService {
       )
       .orderBy(asc(siteProductMappings.createdAt))
       .limit(1);
-    return row?.bundleQty ?? 1;
+    return row?.bundleQty ?? null;
+  }
+
+  /**
+   * Satırın MAĞAZA adedi → PANEL birimi ölçeği. `OrdersService.resolveLineScale` ile AYNI
+   * sözleşme (iki servis de aynı invaryantı korumalı — tek yerde bozulursa iade yolları
+   * ayrışır):
+   *   eşlemesiz satır → 1 · satır anlık görüntüsü (0025) → o · canlı eşleme → o · yoksa null.
+   * `null` = ölçek bilinmiyor ⇒ çağıran qty'ye DOKUNMAZ (canlı anahtar geri alınmaz).
+   */
+  private async resolveLineScale(
+    siteId: string,
+    line: { productId: string | null; bundleQty: number | null },
+    remote: { remoteProductId?: string; remoteVariationId?: string },
+  ): Promise<number | null> {
+    if (!line.productId) return 1;
+    if (line.bundleQty != null && line.bundleQty > 0) return line.bundleQty;
+    // Eski eklenti remoteProductId göndermiyorsa eşleme aranamaz → 1 (geriye dönük uyumlu:
+    // 0025 öncesi davranış zaten buydu ve bundleQty=1 kurulumlarda doğrudur).
+    if (!remote.remoteProductId) return 1;
+    return this.resolveBundleQty(siteId, remote.remoteProductId, remote.remoteVariationId);
   }
 
   async syncRefunds(
@@ -1199,20 +1245,33 @@ export class AdminOrdersService {
     let adjusted = 0;
 
     for (const l of lines) {
-      // netQty WP'den SİPARİŞ birimi gelir; panel line.qty/fulfilledQty PANEL birimidir
-      // (= sipariş adedi × bundleQty). Denetim: bundleQty ile ÖLÇEKLE — aksi halde bundleQty>1'de
-      // netQty doğrudan panel qty ile karşılaştırılıp iade edilmeyen satırlardan bile aşırı revoke
-      // ederdi. reconcileOrder ile aynı çözüm (resolveBundleQty). Eski eklenti remoteProductId
-      // göndermezse bundleQty=1 (geriye dönük uyumlu).
+      // netQty WP'den MAĞAZA birimi gelir; panel line.qty/fulfilledQty PANEL birimidir
+      // (= mağaza adedi × ölçek). Ölçeklemeden karşılaştırmak bundleQty>1'de iade edilmeyen
+      // satırlardan bile aşırı revoke ederdi.
       const orderNetQty = Math.max(0, Math.floor(l.netQty));
-      const bundleQty = await this.resolveBundleQty(site.id, l.remoteProductId, l.remoteVariationId);
-      const netQty = orderNetQty * bundleQty;
       const [line] = await this.db
         .select()
         .from(orderLines)
         .where(and(eq(orderLines.orderId, order.id), eq(orderLines.remoteLineId, l.remoteLineId)))
         .limit(1);
       if (!line || line.canceled) continue;
+
+      // ÖLÇEK satırdan çözülür — eşlemeden DEĞİL (denetim bulgusu):
+      //  · Eşlemesiz satırda (`productId` NULL) qty MAĞAZA birimindedir → ölçek 1. Eskiden
+      //    burada koşulsuz bundleQty ile çarpılıyordu; satır sonradan "Eşlemeyi uygula" ile
+      //    bağlanınca linkLine aynı qty'yi BİR KEZ DAHA çarpıyor ve müşteriye hakkından fazla
+      //    (bedava) lisans teslim ediliyordu.
+      //  · Eşleme kaldırılmış + anlık görüntü yoksa ölçek BİLİNMEZ → satır ATLANIR (qty'ye
+      //    dokunmak canlı anahtarları iade YOKKEN geri alırdı).
+      const scale = await this.resolveLineScale(site.id, line, l);
+      if (scale == null) {
+        this.logger.warn(
+          `İade uzlaştırma: satır ölçeği çözülemedi (eşleme kaldırılmış, anlık görüntü yok) — ` +
+            `atlanıyor: line=${line.id} order=${order.id} remoteProduct=${l.remoteProductId ?? '-'}`,
+        );
+        continue;
+      }
+      const netQty = orderNetQty * scale;
       if (netQty >= line.qty) continue; // Bu satırda iade yok (refund yolu qty ARTIRMAZ).
 
       // 1) Fazla teslim edilmiş birimleri geri al (fulfilled > netQty) — revokeExcess deseni:
@@ -1833,7 +1892,33 @@ export class AdminOrdersService {
             return true;
           });
 
-    return filtered.slice(0, limit);
+    const out = filtered.slice(0, limit);
+
+    // "reveal audit'e düşer" (§17) bu yol için de geçerli: karantina listesi ölü anahtarların
+    // DÜZ METNİNİ toplu döndürür (operatör tedarikçiye değişim talebi için dışa aktarır).
+    // Tek kayıt = tek görüntüleme (per-key değil per-view granülerlik, sipariş detayı deseni).
+    // best-effort: audit yazımı bu OKUMA yolunu bozmamalı (yazım hatasında liste yine döner).
+    if (out.length > 0) {
+      try {
+        await this.db.insert(auditLog).values({
+          action: 'reveal',
+          actor: params.actor || 'admin',
+          targetType: 'quarantine',
+          // Liste görünümü tek bir kayda ait değil → hedef id yok; kapsam meta'da.
+          meta: {
+            auto: true,
+            view: 'quarantine_list',
+            count: out.length,
+            // Arama METNİ yazılmaz (müşteri e-postası içerebilir); yalnız süzgeç varlığı.
+            filtered: Boolean(search || params.status || params.productId || params.supplierId),
+          },
+        });
+      } catch {
+        /* audit yazımı başarısız → liste yine de döner */
+      }
+    }
+
+    return out;
   }
 
   /**

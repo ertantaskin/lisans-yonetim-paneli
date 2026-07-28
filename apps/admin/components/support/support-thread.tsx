@@ -1,6 +1,5 @@
 'use client';
 import * as React from 'react';
-import { useActionState } from 'react';
 import { Lock, MessageSquare, RefreshCw, Send, TriangleAlert } from 'lucide-react';
 import {
   fetchThreadAction,
@@ -15,6 +14,14 @@ import { messageAuthorLabel } from '../../lib/labels';
 import { cn } from '../../lib/utils';
 
 const initialThreadState: ThreadState = { ok: false };
+
+/**
+ * Mesaj listesi savunması (deploy sapması): api ve admin AYRI imajlar olarak dağıtılır; sunucu
+ * action'ı bir gün `{messages:[...]}` sarmalı yerine ham gövde döndürürse ekran
+ * `messages.map is not a function` ile TAMAMEN çökerdi. İkinci katman: dizi değilse boş liste.
+ */
+const asMessages = (value: unknown): ThreadMessage[] =>
+  Array.isArray(value) ? (value as ThreadMessage[]) : [];
 
 /**
  * SupportThread — destek/değişim talebinin YAZIŞMASI (§13).
@@ -44,11 +51,14 @@ export function SupportThread({
   compact?: boolean;
   className?: string;
 }) {
-  const [messages, setMessages] = React.useState<ThreadMessage[]>(initialMessages ?? []);
-  const [loading, setLoading] = React.useState(!initialMessages);
+  // Sunucudan gelen ön-yükleme de dizi OLMAYABİLİR (deploy sapması) → guard'dan geçir.
+  const preloaded = Array.isArray(initialMessages) ? initialMessages : undefined;
+  const [messages, setMessages] = React.useState<ThreadMessage[]>(preloaded ?? []);
+  const [loading, setLoading] = React.useState(!preloaded);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [internal, setInternal] = React.useState(false);
-  const [state, action, pending] = useActionState(sendThreadMessageAction, initialThreadState);
+  const [state, setState] = React.useState<ThreadState>(initialThreadState);
+  const [pending, startTransition] = React.useTransition();
   const formRef = React.useRef<HTMLFormElement>(null);
 
   const load = React.useCallback(() => {
@@ -56,27 +66,51 @@ export function SupportThread({
     setLoadError(null);
     fetchThreadAction(requestId)
       .then((r) => {
-        if (r.ok && r.messages) setMessages(r.messages);
-        else setLoadError(r.error ?? 'Yazışma alınamadı');
+        if (!r.ok) {
+          setLoadError(r.error ?? 'Yazışma alınamadı');
+          return;
+        }
+        if (Array.isArray(r.messages)) {
+          setMessages(r.messages);
+          return;
+        }
+        // ok=true ama gövde beklenmedik biçimde: ÇÖKME yerine dürüst uyarı (sessizce
+        // "henüz mesaj yok" demek yanıltıcı olurdu — mesaj VAR olabilir).
+        setMessages(asMessages(r.messages));
+        setLoadError('Yazışma beklenmeyen biçimde geldi — panel ve API sürümleri farklı olabilir.');
       })
       .catch(() => setLoadError('Yazışma alınamadı'))
       .finally(() => setLoading(false));
   }, [requestId]);
 
   React.useEffect(() => {
-    if (!initialMessages) load();
+    if (!preloaded) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId]);
 
-  // Gönderim başarılıysa formu temizle + yazışmayı tazele (yeni mesaj hemen görünsün).
-  React.useEffect(() => {
-    if (state.sent) {
-      formRef.current?.reset();
+  /**
+   * Gönderim — `useActionState` yerine ELLE transition.
+   *
+   * NEDEN: `useActionState` ile başarı, `state.sent` bayrağı üzerinden bir efektle işleniyordu;
+   * ARDIŞIK ikinci başarılı mesajda bayrak `true` → `true` kaldığı için efekt TETİKLENMİYORDU →
+   * form temizlenmiyor, liste tazelenmiyordu (operatör aynı metni ikinci kez gönderip mükerrer
+   * mesaj üretebiliyordu). Burada başarı YAN ETKİSİ (reset + iç not sıfırla + yeniden yükle)
+   * action'ın dönüşünde SENKRON çalışır — bayrak karşılaştırması yok, her gönderimde çalışır.
+   */
+  const submit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (pending) return;
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    startTransition(async () => {
+      const res = await sendThreadMessageAction(initialThreadState, formData);
+      setState(res);
+      if (!res.sent) return;
+      form.reset();
       setInternal(false);
       load();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.sent]);
+    });
+  };
 
   return (
     <div className={cn('space-y-3 text-sm', className)}>
@@ -113,7 +147,7 @@ export function SupportThread({
         )}
       </div>
 
-      <form ref={formRef} action={action} className="space-y-2">
+      <form ref={formRef} onSubmit={submit} className="space-y-2">
         <input type="hidden" name="requestId" value={requestId} />
         {orderId && <input type="hidden" name="orderId" value={orderId} />}
         <input type="hidden" name="internal" value={String(internal)} />
@@ -150,8 +184,11 @@ export function SupportThread({
           </Button>
         </div>
 
-        {state.error && <p className="text-xs text-destructive">{state.error}</p>}
-        {state.sent && <p className="text-xs text-success">Mesaj kaydedildi.</p>}
+        {/* Sonuç canlı bölgede: inline metin tek başına ekran okuyucuya duyurulmaz (WCAG 4.1.3). */}
+        <div role="status" aria-live="polite">
+          {state.error && <p className="text-xs text-destructive">{state.error}</p>}
+          {state.sent && <p className="text-xs text-success">Mesaj kaydedildi.</p>}
+        </div>
         <p className="text-xs text-muted-foreground">
           Mesaj yazmak talebin durumunu değiştirmez — değişim için “Onayla”, kapatmak için
           “Reddet” işlemini kullanın.

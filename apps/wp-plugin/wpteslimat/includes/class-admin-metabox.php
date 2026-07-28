@@ -184,15 +184,16 @@ class Wpteslimat_Admin_Metabox {
     }
 
     /**
-     * Değişim sonucu ölen anahtarları tespit eder → kartta "İptal" yerine "Değiştirildi" yazılır.
+     * GERİYE DÖNÜK FALLBACK — panelin `replaced` bayrağını döndürmediği ESKİ sürümler için.
      *
-     * Panel, değişimde eski atamayı `revoked` yapar (gerçek iade ile AYNI durum kodu) ve değişim
-     * kaydını `assignment_history`'ye yazar; history satırı YENİ atamanın id'sini taşır, eskisininkini
-     * DEĞİL. Bu yüzden eski atama id ile doğrudan işaretlenemiyor. Eşleştirme sırası:
-     *   1) `oldAssignmentId` (panel ileride eklerse — KESİN eşleşme, tercih edilir),
-     *   2) `oldMasked` ↔ atamanın `maskedPayload`'ı (panelde ikisi de AYNI mask() ile üretilir;
-     *      key/kod ürünlerinde birebir tutar — bonus/değişim yolu zaten yalnız tek-kullanımlık ürün).
-     * Eşleşme bulunamazsa hiçbir şey değişmez (mevcut "İptal" etiketi korunur) — güvenli düşüş.
+     * Panel (siteAdminView) artık her atamada YETKİLİ `replaced` (bool) + `replaceReason` döndürür;
+     * normal yolda bu heuristik HİÇ çalışmaz (bkz. render_asg_row). Heuristik maskeli METİN
+     * karşılaştırmasına dayanır ve HESAP (account) tipi üründe çalışmaz: orada panel `maskedPayload`
+     * yerine alan-alan `maskedFields` döndürür, `oldMasked` ise tek satırlık maskedir → eşleşme
+     * tutmaz ve değiştirilen anahtar yanlışlıkla "İptal" görünürdü (denetim bulgusu).
+     *
+     * Eşleştirme sırası: 1) `oldAssignmentId` (varsa KESİN), 2) `oldMasked` ↔ `maskedPayload`.
+     * Eşleşme bulunamazsa hiçbir şey değişmez ("İptal" etiketi korunur) — güvenli düşüş.
      *
      * @return array{ids:array<string,true>, masked:array<string,true>} arama kümeleri
      */
@@ -209,7 +210,10 @@ class Wpteslimat_Admin_Metabox {
         return ['ids' => $ids, 'masked' => $masked];
     }
 
-    /** Atama bir DEĞİŞİM sonucu mu öldü (iade değil)? — replaced_lookup kümelerine bakar. */
+    /**
+     * Atama bir DEĞİŞİM sonucu mu öldü (iade değil)? — YALNIZ eski panel sürümü fallback'i
+     * (panel `replaced` alanını döndürüyorsa çağrılmaz). replaced_lookup kümelerine bakar.
+     */
     private static function is_replaced($a, $lookup) {
         $status = isset($a['status']) ? (string) $a['status'] : '';
         if ($status !== 'revoked' && $status !== 'quarantined') return false;
@@ -256,6 +260,9 @@ class Wpteslimat_Admin_Metabox {
         .wpt-pill--replaced{background:#f0f0f1;color:#646970;border-color:#dcdcde}
         .wpt-meta{font-size:11px;color:#646970;white-space:nowrap}
         .wpt-meta--bonus{color:#2271b1;font-weight:600}
+        /* Değişim sebebi serbest metindir → nowrap TAŞIRIRDI; sarmasına izin ver, ayrımı italikle ver
+           (renk düşürmek kontrastı bozardı). */
+        .wpt-meta--reason{white-space:normal;font-style:italic;overflow-wrap:anywhere}
         .wpt-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:12px;line-height:1.7;border:1px solid #c3c4c7;border-radius:4px;background:#fff;color:#2c3338;cursor:pointer;transition:background .1s,border-color .1s,color .1s}
         .wpt-btn .dashicons{font-size:14px;width:14px;height:14px;line-height:1}
         .wpt-btn:hover{background:#f6f7f7;border-color:#8c8f94}
@@ -278,7 +285,10 @@ class Wpteslimat_Admin_Metabox {
         .wpt-history--scroll ul{max-height:150px;overflow-y:auto}
         .wpt-history li{margin:2px 0}
         .wpt-history code{background:#f0f0f1;border-radius:3px;padding:0 4px}
-        .wpt-history__meta{color:#8c8f94}
+        /* Kontrast (WCAG AA): 11px ikincil metin en az 4.5:1 olmalı — #8c8f94 beyaz zeminde 3.1:1
+           kalıyordu. #646970 (WP admin ikincil gri) 5.35:1 sağlar; görsel ayrım rengi düşürmek
+           yerine italik ile verilir. */
+        .wpt-history__meta{color:#646970;font-style:italic}
         .wpt-side-status{display:inline-flex;align-items:center;font-size:11px;font-weight:600;line-height:1;padding:3px 9px;border-radius:999px;border:1px solid #dcdcde;background:#f6f7f7;color:#3c434a}
         </style>
         <?php
@@ -287,15 +297,24 @@ class Wpteslimat_Admin_Metabox {
     /**
      * Tek atama satırı (maskeli değer + durum pill + key-bazlı aksiyonlar).
      *
-     * @param array|null $lookup replaced_lookup() çıktısı — verilirse değişimle ölen anahtar
-     *                           "İptal" yerine "Değiştirildi" etiketiyle gösterilir.
+     * Değişimle ölen anahtar "İptal" yerine "Değiştirildi" gösterilir; kaynak PANELİN `replaced`
+     * bayrağıdır (+ `replaceReason` çipi).
+     *
+     * @param array|null $lookup replaced_lookup() çıktısı — YALNIZ panel `replaced` alanını hiç
+     *                           döndürmezse (eski sürüm) kullanılan geriye dönük fallback.
      */
     private static function render_asg_row($a, $can_reveal, $can_op, $lookup = null) {
         $aid = isset($a['id']) ? (string) $a['id'] : '';
         if ($aid === '') return;
         $status = isset($a['status']) ? (string) $a['status'] : '';
         // Değişimle ölen anahtar iade DEĞİLDİR → operatöre "Değiştirildi" olarak göster.
-        $replaced = is_array($lookup) && self::is_replaced($a, $lookup);
+        // Kaynak: PANELİN YETKİLİ `replaced` bayrağı (siteAdminView her atamada döndürür). Eklenti
+        // ince istemcidir → bu bilgiyi YENİDEN TÜRETMEZ. Eski heuristik maskeli metin karşılaştırması
+        // yapıyordu ve hesap (account) tipi üründe maske biçimi farklı olduğu için etiket HİÇ
+        // çıkmıyordu; artık yalnız panel alanı hiç gelmezse (eski panel sürümü) devreye girer.
+        $replaced = array_key_exists('replaced', $a)
+            ? !empty($a['replaced'])
+            : (is_array($lookup) && self::is_replaced($a, $lookup));
         $is_active = ($status === 'active');
         $is_suspended = ($status === 'suspended');
         $is_bonus = isset($a['remoteLineId']) && strpos((string) $a['remoteLineId'], 'bonus:') === 0;
@@ -320,6 +339,19 @@ class Wpteslimat_Admin_Metabox {
         $pill_status = $replaced ? 'replaced' : $status;
         echo '<span class="wpt-pill ' . esc_attr(self::pill_class($pill_status)) . '">'
             . esc_html(self::asg_status_label($pill_status)) . '</span>';
+        // Değişim sebebi (panel `replaceReason`): "neden değişti" bilgisi anahtarın yanında dursun.
+        // Uzun sebep kartı taşırmasın → kısaltılır, tamamı title'da (ikisi de kaçışlı).
+        if ($replaced) {
+            $rreason = (isset($a['replaceReason']) && is_scalar($a['replaceReason']))
+                ? trim((string) $a['replaceReason'])
+                : '';
+            if ($rreason !== '') {
+                $short = function_exists('mb_substr') ? mb_substr($rreason, 0, 60) : substr($rreason, 0, 60);
+                if ($short !== $rreason) $short .= '…';
+                echo '<span class="wpt-meta wpt-meta--reason" title="' . esc_attr($rreason) . '">'
+                    . esc_html($short) . '</span>';
+            }
+        }
         if ($is_bonus) echo '<span class="wpt-meta wpt-meta--bonus">' . esc_html__('Bonus', 'wpteslimat') . '</span>';
         if (!empty($a['maxUses']) && (int) $a['maxUses'] > 1) {
             echo '<span class="wpt-meta">' . esc_html((int) ($a['useCount'] ?? 0)) . '/' . esc_html((int) $a['maxUses']) . ' kullanım</span>';
@@ -698,17 +730,34 @@ class Wpteslimat_Admin_Metabox {
         wp_send_json_error(['message' => self::error_message($code, $body), 'code' => $code], 200);
     }
 
-    /** Panel/HTTP hatasını sade Türkçeye çevirir (ham kod yalnız parantez içinde ipucu olarak). */
+    /**
+     * Panel/HTTP hatasını sade Türkçeye çevirir.
+     *
+     * SIRA ÖNEMLİ (denetim bulgusu): önce KOD bazlı çeviri, sonra panelin kendi metni. Ağ
+     * hatasında (code=0) panel istemcisi gövdeye panelin değil, WP_Error'ın HAM İNGİLİZCE metnini
+     * koyar ("cURL error 28: Operation timed out"); gövde önce okunduğu için kod-0 dalı ERİŞİLEMEZ
+     * kalıyor ve operatöre Türkçe açıklama yerine bu teknik metin gidiyordu. Panelin kendi
+     * açıklaması yalnız GERÇEK HTTP hata yanıtında (>=400) anlamlıdır — orada en doğrusu odur.
+     */
     private static function error_message($code, $body) {
-        // Panelin kendi açıklaması varsa en doğrusu odur (Nest `message` dizi de olabilir).
-        $msg = isset($body['message']) ? $body['message'] : (isset($body['error']) ? $body['error'] : '');
-        if (is_array($msg)) $msg = implode(' ', array_map('strval', $msg));
-        $msg = is_scalar($msg) ? trim((string) $msg) : '';
-        if ($msg !== '') return $msg;
+        $code = (int) $code;
+        $body = is_array($body) ? $body : [];
 
+        // [1] Panele hiç ulaşılamadı (ağ/zaman aşımı) — gövde panelden GELMEZ, kullanma.
+        if ($code === 0) {
+            return __('Panele ulaşılamadı (ağ hatası veya zaman aşımı). Lütfen tekrar deneyin.', 'wpteslimat');
+        }
+
+        // [2] Panelin kendi açıklaması (Nest `message` dizi de olabilir) — yalnız HTTP hata yanıtında.
+        if ($code >= 400) {
+            $msg = isset($body['message']) ? $body['message'] : (isset($body['error']) ? $body['error'] : '');
+            if (is_array($msg)) $msg = implode(' ', array_map('strval', $msg));
+            $msg = is_scalar($msg) ? trim((string) $msg) : '';
+            if ($msg !== '') return $msg;
+        }
+
+        // [3] Panel anlamlı metin döndürmediyse koda göre sabit çeviri.
         switch (true) {
-            case $code === 0:
-                return __('Panele ulaşılamadı (ağ hatası veya zaman aşımı). Lütfen tekrar deneyin.', 'wpteslimat');
             case $code === 401:
             case $code === 403:
                 return __('Panel isteği reddetti (kimlik/imza doğrulanamadı). Ayarlar → Tanılama ile bağlantıyı kontrol edin.', 'wpteslimat');

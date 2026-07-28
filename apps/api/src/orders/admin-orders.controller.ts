@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
@@ -65,20 +74,20 @@ export class AdminOrdersController {
   }
 
   @Get('orders/:id')
-  detail(@Param('id') id: string, @AdminActor() actor: string) {
+  detail(@Param('id', new ParseUUIDPipe()) id: string, @AdminActor() actor: string) {
     return this.adminOrders.detail(id, actor);
   }
 
   /** "Kalanları Ata" (units yok) / "N Adet Ata" (?units=N) — gövdesiz (§13). */
   @Post('fulfillments/:lineId/complete')
-  complete(@Param('lineId') lineId: string, @Query('units') units?: string) {
+  complete(@Param('lineId', new ParseUUIDPipe()) lineId: string, @Query('units') units?: string) {
     const n = units ? Number.parseInt(units, 10) : undefined;
     return this.fulfillment.completeLine(lineId, n && n > 0 ? n : undefined);
   }
 
   @Post('assignments/:id/revoke')
   revoke(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(RevokeBody)) body: { reason: string },
     @AdminActor() actor: string,
   ) {
@@ -88,7 +97,7 @@ export class AdminOrdersController {
   /** Proaktif değişim (§4): kusurlu key'i aynı üründen taze key ile değiştir (reason zorunlu). */
   @Post('assignments/:id/replace')
   replace(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(RevokeBody)) body: { reason: string },
     @AdminActor() actor: string,
   ) {
@@ -97,14 +106,14 @@ export class AdminOrdersController {
 
   /** Loglu reveal (§17) — tam lisans payload'ı. */
   @Post('assignments/:id/reveal')
-  reveal(@Param('id') id: string, @AdminActor() actor: string) {
+  reveal(@Param('id', new ParseUUIDPipe()) id: string, @AdminActor() actor: string) {
     return this.adminOrders.reveal(id, actor);
   }
 
   /** Askıya al — sebep opsiyonel (gövdesiz çağrı da geçerli, geriye dönük uyumlu). */
   @Post('assignments/:id/suspend')
   suspend(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(SuspendBody)) body: { reason?: string },
     @AdminActor() actor: string,
   ) {
@@ -113,7 +122,7 @@ export class AdminOrdersController {
 
   @Post('assignments/:id/unsuspend')
   unsuspend(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(SuspendBody)) body: { reason?: string },
     @AdminActor() actor: string,
   ) {
@@ -122,7 +131,7 @@ export class AdminOrdersController {
 
   /** Teslimat mailini tekrar gönder (60sn debounce). Kim tetikledi audit'e düşer. */
   @Post('orders/:id/resend')
-  resend(@Param('id') id: string, @AdminActor() actor: string) {
+  resend(@Param('id', new ParseUUIDPipe()) id: string, @AdminActor() actor: string) {
     return this.adminOrders.resend(id, actor);
   }
 
@@ -132,10 +141,14 @@ export class AdminOrdersController {
    * CSV/Excel API'de üretilmez; yalnız JSON döner (biçimlendirme admin tarafında).
    */
   @Get('quarantine')
-  quarantine(@Query(new ZodBody(QuarantineQuerySchema)) q: QuarantineQueryInput) {
+  quarantine(
+    @Query(new ZodBody(QuarantineQuerySchema)) q: QuarantineQueryInput,
+    @AdminActor() actor: string,
+  ) {
     const status = trimmed(q.status);
     const limit = trimmed(q.limit);
     return this.adminOrders.listQuarantine({
+      actor,
       search: trimmed(q.search),
       status: status === 'quarantined' || status === 'voided' ? status : undefined,
       productId: trimmed(q.productId),
@@ -155,14 +168,14 @@ export class AdminOrdersController {
 
   /** İnceleme ONAYLA: held bayrağını kaldırır + atama makinesini çalıştırır (teslimat başlar). */
   @Post('orders/:id/release')
-  release(@Param('id') id: string, @AdminActor() actor: string) {
+  release(@Param('id', new ParseUUIDPipe()) id: string, @AdminActor() actor: string) {
     return this.adminOrders.releaseHeld(id, actor);
   }
 
   /** İnceleme REDDET: siparişi teslim etmeden kapatır (satırlar iptal, key verilmez). reason zorunlu. */
   @Post('orders/:id/reject')
   reject(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(RevokeBody)) body: { reason: string },
     @AdminActor() actor: string,
   ) {

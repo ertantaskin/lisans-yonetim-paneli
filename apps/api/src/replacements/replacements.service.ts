@@ -43,6 +43,12 @@ const MSG_PER_REQUEST_WINDOW_SEC = 600;
 /** Site+müşteri genelinde mesaj seli (talep değiştirerek sınırı atlamayı kapatır): 30 / saat. */
 const MSG_PER_CUSTOMER_MAX = 30;
 const MSG_PER_CUSTOMER_WINDOW_SEC = 3600;
+/**
+ * Yazışma OKUMA seli (site-facing): 120 istek / dk / site. Müşteri "Sorun Bildir" ekranında
+ * yazışmayı yeniler; normal kullanımda dakikada birkaç istek olur. Admin yolu KAPSAM DIŞI.
+ */
+const MSG_READ_PER_SITE_MAX = 120;
+const MSG_READ_WINDOW_SEC = 60;
 /** Talep AÇMA seli: 5 talep / 24 saat / (site + müşteri e-postası). */
 const CREATE_PER_CUSTOMER_MAX = 5;
 const CREATE_PER_CUSTOMER_WINDOW_SEC = 86_400;
@@ -551,6 +557,25 @@ export class ReplacementsService {
     opts: { includeInternal: boolean; siteId?: string },
   ): Promise<{ messages: ReplacementMessageRow[] }> {
     await this.getScopedOrThrow(requestId, opts.siteId);
+
+    // Site-facing (mağaza/müşteri) OKUMA yolu da hız sınırlı olmalı: yazma ucu sınırlıydı ama
+    // okuma sınırsızdı → tek müşteri yazışmayı saniyede onlarca kez çekip DB'yi yorabilirdi
+    // (denetim bulgusu). Admin yolunda (`siteId` yok) sınır UYGULANMAZ — panel operatörü kısıtlanmaz.
+    // `enforceLimit` KULLANILMAZ: o yol aşımı "suistimal olayı" olarak da kaydeder ve müşteri
+    // e-postası ister — okuma seli bir güvenlik olayı değil, yalnız gürültüdür. Sade 429 yeter.
+    if (opts.siteId && this.rateLimit) {
+      const ok = await this.rateLimit.hit(
+        `replacement:msg:read:${opts.siteId}`,
+        MSG_READ_PER_SITE_MAX,
+        MSG_READ_WINDOW_SEC,
+      );
+      if (!ok) {
+        throw new ReplacementRateLimitException(
+          'Çok sık yazışma sorgusu — lütfen biraz sonra tekrar deneyin.',
+          MSG_READ_WINDOW_SEC,
+        );
+      }
+    }
 
     const where = opts.includeInternal
       ? eq(replacementMessages.requestId, requestId)

@@ -98,6 +98,11 @@ export async function consumeMultiUseCapacity(
   const list = await rawRows<{ id: string }>(db, sql`
     UPDATE license_items SET
       use_count = use_count + ${units},
+      -- İLK teslimat anını damgala (COALESCE → sonraki kapasite düşümleri damgayı KAYDIRMAZ).
+      -- Tek-kullanımda assignAvailableSingleUse zaten yazıyordu; MAK/multi'de hiç yazılmıyordu →
+      -- envanter listesinde "teslim tarihi" boş kalıyor ve teslim edilmiş MAK anahtarları
+      -- assigned_at sıralamasında hiç görünmüyordu (denetim bulgusu).
+      assigned_at = COALESCE(assigned_at, now()),
       status = CASE WHEN use_count + ${units} >= max_uses THEN 'depleted' ELSE status END
     WHERE id = (
       SELECT id FROM license_items

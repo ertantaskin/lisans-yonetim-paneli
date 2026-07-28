@@ -35,15 +35,19 @@ class Wpteslimat_Order_Sync {
         add_action('woocommerce_order_refunded', [$this, 'enqueue_refund'], 20, 2);
 
         // Arka plan iş işleyicileri (Action Scheduler async) — asıl panel çağrısı burada koşar.
-        add_action('wpteslimat_async_push', [$this, 'push'], 10, 1);
-        add_action('wpteslimat_async_revoke', [$this, 'revoke'], 10, 1);
-        add_action('wpteslimat_async_resync', [$this, 'resync_items'], 10, 1);
-        add_action('wpteslimat_async_refund', [$this, 'sync_refund'], 10, 1);
+        // 2. argüman = işi TETİKLEYEN mağaza yöneticisi (yoksa ''). Aktör İŞE BAĞLIDIR; siparişte
+        // kalıcı meta olarak TUTULMAZ (bkz. enqueue_or_run). Eski (yükseltme öncesi) kuyrukta
+        // bekleyen tek-argümanlı işler varsayılan '' ile sorunsuz koşar.
+        add_action('wpteslimat_async_push', [$this, 'push'], 10, 2);
+        add_action('wpteslimat_async_revoke', [$this, 'revoke'], 10, 2);
+        add_action('wpteslimat_async_resync', [$this, 'resync_items'], 10, 2);
+        add_action('wpteslimat_async_refund', [$this, 'sync_refund'], 10, 2);
 
-        // Retry (başarısız işlerin tekrarı; Action Scheduler yoksa wp-cron).
-        add_action('wpteslimat_retry_push', [$this, 'push'], 10, 1);
-        add_action('wpteslimat_retry_revoke', [$this, 'revoke'], 10, 1);
-        add_action('wpteslimat_retry_refund', [$this, 'sync_refund'], 10, 1);
+        // Retry (başarısız işlerin tekrarı; Action Scheduler yoksa wp-cron). Aktör tekrar denemeye
+        // de taşınır → 30dk sonra koşan iş hâlâ DOĞRU kişiyi gösterir.
+        add_action('wpteslimat_retry_push', [$this, 'push'], 10, 2);
+        add_action('wpteslimat_retry_revoke', [$this, 'revoke'], 10, 2);
+        add_action('wpteslimat_retry_refund', [$this, 'sync_refund'], 10, 2);
     }
 
     /**
@@ -80,54 +84,61 @@ class Wpteslimat_Order_Sync {
         if (!Wpteslimat_Settings::is_configured()) return;
         if (Wpteslimat_Settings::is_clone()) return;
 
-        // (§7 "kim yaptı") İşi TETİKLEYEN mağaza yöneticisini siparişe kaydet: arka plan işinde
-        // (Action Scheduler) oturum YOKTUR → panel audit'i aksi halde 'system' derdi. Yalnız
-        // MAĞAZA YETKİLİSİ kaydedilir; ödeme sonrası müşteri oturumuyla tetiklenen otomatik push
-        // müşteri adına yazılmaz (audit'te yanıltıcı olurdu, panel tarafı 'system' görür).
-        self::remember_initiator($order_id);
+        // (§7 "kim yaptı") İşi TETİKLEYEN mağaza yöneticisi İŞİN KENDİSİNE bağlanır (Action
+        // Scheduler argümanı). NEDEN kalıcı sipariş meta'sı DEĞİL (denetim bulgusu): meta bir kez
+        // yazılıp hiç temizlenmiyordu; aynı sipariş sonradan ödeme geçidi webhook'u / cron gibi
+        // OTURUMSUZ bir yolla iade-iptal edildiğinde sipariş notu ve panel audit'i o ESKİ kişiyi
+        // "işlemi başlatan" gösteriyordu (yanlış izlenebilirlik). İşe bağlı aktör yalnız o işte
+        // geçerlidir; oturumsuz tetikte '' kalır → hiçbir isim UYDURULMAZ.
+        $actor = self::current_initiator();
 
         if (function_exists('as_enqueue_async_action')) {
+            // Dedupe sorgusu argümanlarla BİREBİR aynı olmalı (AS args'ı serileştirip karşılaştırır).
             if (function_exists('as_has_scheduled_action')
-                && as_has_scheduled_action($hook, [$order_id], 'wpteslimat')) {
+                && as_has_scheduled_action($hook, [$order_id, $actor], 'wpteslimat')) {
                 return;
             }
-            as_enqueue_async_action($hook, [$order_id], 'wpteslimat');
+            as_enqueue_async_action($hook, [$order_id, $actor], 'wpteslimat');
         } else {
             // Action Scheduler yok (nadir) → senkron fallback: eski, bloklayan ama çalışan davranış.
-            $this->$method($order_id);
+            // Aynı istekte koştuğu için oturum zaten mevcuttur; aktörü yine de AÇIKÇA geçiririz ki
+            // başarısızlıkta planlanan wp-cron retry'ı da doğru kişiyi taşısın (kalıcı meta gerekmez).
+            $this->$method($order_id, $actor);
         }
     }
 
     /**
-     * (§7 izlenebilirlik) İşlemi başlatan mağaza yöneticisinin kullanıcı adını sipariş meta'sına
-     * yazar. Yalnız yetkili (manage_woocommerce / edit_shop_orders) oturumda çalışır → checkout
-     * yolunda (müşteri oturumu) ek DB yazımı YAPILMAZ. Değer değişmediyse tekrar kaydetmez.
+     * (§7 izlenebilirlik) İşlemi TETİKLEYEN mağaza yöneticisinin kullanıcı adı — yoksa ''.
+     *
+     * Yalnız MAĞAZA YETKİLİSİ (manage_woocommerce / edit_shop_orders) oturumunda dolu döner:
+     * ödeme sonrası müşteri oturumuyla tetiklenen otomatik push müşteri adına yazılmaz (audit'te
+     * yanıltıcı olurdu; panel 'system' görür). DB'ye hiçbir şey yazmaz.
+     *
+     * Karakter kümesi panel istemcisinin sanitize_actor'ıyla AYNI → panelde sessiz kırpılma olmaz
+     * ve değer sipariş notuna girdiğinde HTML enjeksiyonu taşıyamaz.
      */
-    private static function remember_initiator($order_id) {
-        if (!is_user_logged_in()) return;
-        if (!current_user_can('manage_woocommerce') && !current_user_can('edit_shop_orders')) return;
+    private static function current_initiator() {
+        if (!function_exists('is_user_logged_in') || !is_user_logged_in()) return '';
+        if (!current_user_can('manage_woocommerce') && !current_user_can('edit_shop_orders')) return '';
         $user = wp_get_current_user();
-        if (!$user || !$user->exists() || !$user->user_login) return;
-        $order = wc_get_order($order_id);
-        if (!$order) return;
-        $login = (string) $user->user_login;
-        if ((string) $order->get_meta('_wpteslimat_actor') === $login) return;
-        $order->update_meta_data('_wpteslimat_actor', $login);
-        $order->save();
+        if (!$user || !$user->exists() || !$user->user_login) return '';
+        $login = preg_replace('/[^A-Za-z0-9._@+\- ]/', '', (string) $user->user_login);
+        $login = trim(preg_replace('/\s+/', ' ', (string) $login));
+        return function_exists('mb_substr') ? mb_substr($login, 0, 60) : substr($login, 0, 60);
     }
 
     /**
-     * Panel çağrısından hemen ÖNCE, işi tetikleyen kullanıcıyı (varsa) tek-seferlik aktör olarak
-     * ayarlar → arka plan işinde bile audit "wp:<yönetici>@<site>" olur. Kayıt yoksa no-op
-     * (panel istemcisi 'system'e düşer).
+     * Panel çağrısından hemen ÖNCE, İŞE BAĞLI aktörü tek-seferlik olarak ayarlar → arka plan
+     * işinde (oturum YOK) bile audit "wp:<yönetici>@<site>" olur. Boşsa no-op — panel istemcisi
+     * 'system'e düşer (uydurma isim yok).
      */
-    private static function apply_initiator($order) {
-        if (!is_a($order, 'WC_Order')) return;
-        $login = (string) $order->get_meta('_wpteslimat_actor');
-        if ($login !== '') Wpteslimat_Panel_Client::set_actor($login);
+    private static function apply_actor($actor) {
+        $actor = is_scalar($actor) ? trim((string) $actor) : '';
+        if ($actor !== '') Wpteslimat_Panel_Client::set_actor($actor);
     }
 
-    public function push($order_id) {
+    /** @param string $actor İşi tetikleyen mağaza yöneticisi (yoksa '' → panelde 'system'). */
+    public function push($order_id, $actor = '') {
         if (!Wpteslimat_Settings::is_configured()) return;
         // Kopya/staging koruması (§7): site adresi bağlanma anındakinden farklıysa CANLI
         // panele push etme (klon ortamı gerçek stoğu tüketmesin). Admin'e uyarı gösterilir.
@@ -158,7 +169,7 @@ class Wpteslimat_Order_Sync {
             'lines'         => $lines,
         ];
 
-        self::apply_initiator($order);
+        self::apply_actor($actor);
         $res = Wpteslimat_Panel_Client::post('/v1/orders', $body);
         $this->log($order_id, 'push', $body, $res);
 
@@ -185,7 +196,7 @@ class Wpteslimat_Order_Sync {
             // Başarısız → retry planla (§4 eklenti 1dk/5dk/30dk).
             $order->add_order_note(sprintf('Teslimat: panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
             $order->save();
-            $this->schedule_retry($order_id);
+            $this->schedule_retry($order_id, $actor);
         }
     }
 
@@ -246,7 +257,7 @@ class Wpteslimat_Order_Sync {
      * `woocommerce_saved_order_items` hook'u YALNIZ kalem değişiminde ateşlenir; ayrıca
      * içerideki $order->save() zinciri guard ile kendini yeniden tetikleyemez.
      */
-    public function resync_items($order_id, $items = null) {
+    public function resync_items($order_id, $actor = '') {
         if (self::$syncing) return;
         if (!Wpteslimat_Settings::is_configured()) return;
         // Kopya/staging koruması (§7): klon ortamda uzlaştırma push'u yapma.
@@ -267,7 +278,7 @@ class Wpteslimat_Order_Sync {
         ];
 
         self::$syncing = true;
-        self::apply_initiator($order);
+        self::apply_actor($actor);
         $res = Wpteslimat_Panel_Client::post('/v1/orders', $body);
         $this->log($order_id, 'resync', $body, $res);
 
@@ -285,8 +296,10 @@ class Wpteslimat_Order_Sync {
      * İade/iptal olan siparişin panel-tarafı lisanslarını geri alır (§2). Yalnız panele
      * push edilmiş siparişler için anlamlı (atama var). İdempotent: panel zaten revoked
      * ise no-op; bir kez işaretlenir. Lisans verisi WP'de tutulmadığından yalnız tetikler.
+     *
+     * @param string $actor İşi tetikleyen mağaza yöneticisi (yoksa '' → "İşlemi başlatan" YAZILMAZ).
      */
-    public function revoke($order_id) {
+    public function revoke($order_id, $actor = '') {
         if (!Wpteslimat_Settings::is_configured()) return;
         // Kopya/staging koruması (§7): klon ortamda CANLI panele revoke GÖNDERME. Klon aynı
         // api_key+hmac_secret VE `_wpteslimat_pushed` meta'sını miras alır → is_clone() true olsa
@@ -304,7 +317,7 @@ class Wpteslimat_Order_Sync {
 
         $reason = 'İade/iptal (' . wc_get_order_status_name($order->get_status()) . ')';
         $body = ['reason' => $reason];
-        self::apply_initiator($order);
+        self::apply_actor($actor);
         $res = Wpteslimat_Panel_Client::post(
             '/v1/orders/' . rawurlencode((string) $order_id) . '/revoke',
             $body
@@ -323,7 +336,10 @@ class Wpteslimat_Order_Sync {
                 $order->delete_meta_data('_wpteslimat_held_for_review');
             }
             $count = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
-            $who = (string) $order->get_meta('_wpteslimat_actor');
+            // "İşlemi başlatan" YALNIZ bu işe bağlı aktörden gelir. Oturumsuz tetikte (ödeme geçidi
+            // webhook'u / cron / retry) kayıt yoksa cümle HİÇ yazılmaz — eskiden kalıcı meta
+            // okunduğu için burada aylar önceki bir yönetici gösterilebiliyordu (yanlış izlenebilirlik).
+            $who = is_scalar($actor) ? trim((string) $actor) : '';
             $order->add_order_note(sprintf(
                 'Teslimat: %d lisans geri alındı (%s).%s',
                 $count,
@@ -332,26 +348,27 @@ class Wpteslimat_Order_Sync {
             ));
             $order->save();
         } else {
-            // Başarısız → retry planla.
+            // Başarısız → retry planla (aktör tekrar denemeye taşınır).
             $order->add_order_note(sprintf('Teslimat: lisans geri alımı panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
             $order->save();
-            $this->schedule_revoke_retry($order_id);
+            $this->schedule_revoke_retry($order_id, $actor);
         }
     }
 
-    private function schedule_retry($order_id) {
+    /** Tekrar denemeyi planlar; aktör argümanda taşınır (kalıcı meta okunmaz). */
+    private function schedule_retry($order_id, $actor = '') {
         if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_push', [$order_id], 'wpteslimat');
+            as_schedule_single_action(time() + 300, 'wpteslimat_retry_push', [$order_id, $actor], 'wpteslimat');
         } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_push', [$order_id]);
+            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_push', [$order_id, $actor]);
         }
     }
 
-    private function schedule_revoke_retry($order_id) {
+    private function schedule_revoke_retry($order_id, $actor = '') {
         if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_revoke', [$order_id], 'wpteslimat');
+            as_schedule_single_action(time() + 300, 'wpteslimat_retry_revoke', [$order_id, $actor], 'wpteslimat');
         } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_revoke', [$order_id]);
+            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_revoke', [$order_id, $actor]);
         }
     }
 
@@ -361,7 +378,7 @@ class Wpteslimat_Order_Sync {
      * düşürür + fazla teslim edilmiş birimi geri alır → autoComplete iade edileni DOLDURMAZ (bedava
      * lisans kapanır). Klon/yapılandırma guard'lı; başarısızlıkta retry.
      */
-    public function sync_refund($order_id) {
+    public function sync_refund($order_id, $actor = '') {
         if (!Wpteslimat_Settings::is_configured()) return;
         if (Wpteslimat_Settings::is_clone()) return;
         $order = wc_get_order($order_id);
@@ -399,14 +416,15 @@ class Wpteslimat_Order_Sync {
         if ($total_net >= $total_ordered) return;
 
         // Tam iade (hiç net kalmadı) → terminal revoke yoluna devret (idempotent; _wpteslimat_revoked).
+        // Aktör aynı işin parçası olarak devredilir (sipariş notu doğru kişiyi gösterir).
         if ($total_net === 0) {
-            $this->revoke($order_id);
+            $this->revoke($order_id, $actor);
             return;
         }
 
         // Kısmi iade → satır-bazlı /refund ucu.
         $body = ['reason' => 'WooCommerce kısmi iade', 'lines' => $lines];
-        self::apply_initiator($order);
+        self::apply_actor($actor);
         $res = Wpteslimat_Panel_Client::post(
             '/v1/orders/' . rawurlencode((string) $order_id) . '/refund',
             $body
@@ -419,15 +437,15 @@ class Wpteslimat_Order_Sync {
         } else {
             $order->add_order_note(sprintf('Teslimat: kısmi iade uzlaştırması panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
             $order->save();
-            $this->schedule_refund_retry($order_id);
+            $this->schedule_refund_retry($order_id, $actor);
         }
     }
 
-    private function schedule_refund_retry($order_id) {
+    private function schedule_refund_retry($order_id, $actor = '') {
         if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_refund', [$order_id], 'wpteslimat');
+            as_schedule_single_action(time() + 300, 'wpteslimat_retry_refund', [$order_id, $actor], 'wpteslimat');
         } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_refund', [$order_id]);
+            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_refund', [$order_id, $actor]);
         }
     }
 

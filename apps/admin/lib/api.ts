@@ -224,6 +224,11 @@ export interface PendingLineGroup {
 
 export interface PendingLinesSummary {
   groups: PendingLineGroup[];
+  /**
+   * Grup listesi sunucu üst sınırına dayandı mı. true ise ekran "hepsi bu kadar" DEMEMELİ
+   * (opsiyonel: eski API sürümü bu alanı döndürmez → savunmacı okunur).
+   */
+  truncated?: boolean;
   totals: {
     groupCount: number;
     lineCount: number;

@@ -73,7 +73,11 @@ export interface LiveStats {
   pendingLines: number;
   /** Eşlemesi OLMAYAN bekleyen satır (operatör eşleme yapmalı). */
   unmappedLines: number;
-  /** Düşük stok ürünü sayısı (summary().lowStockCount ile AYNI tanım). */
+  /**
+   * Düşük stok ürünü sayısı (summary().lowStockCount ile AYNI tanım — aynı önbelleği
+   * paylaşırlar). ≤60 sn bayat olabilir (bkz. LOW_STOCK_CACHE_TTL_MS); uyarı sayacı
+   * olduğu için bilinçli.
+   */
   lowStockProducts: number;
 }
 
@@ -93,6 +97,25 @@ const LIVE_MAX_LIMIT = 50;
 /** Destek talebi gerekçesinin listede gösterilen azami uzunluğu. */
 const REASON_EXCERPT_LEN = 140;
 
+/**
+ * Düşük-stok sayacının SÜREÇ-İÇİ önbellek ömrü (ms).
+ *
+ * NEDEN önbellek: bu sayaç canlı anlık görüntünün EN pahalı parçasıdır (products ×
+ * license_items agregasyonu — diğer 5 sorgu nokta-index'lidir). Panel mesai boyunca AÇIK
+ * kalan bir iş istasyonudur ve her sekme 15 sn'de bir poll eder → 3 sekme = dakikada 12
+ * agregasyon. Düşük stok DAKİKALAR ölçeğinde anlamlı bir operatör uyarısıdır (saniyeler
+ * değil), dolayısıyla ≤60 sn bayatlık kabul edilebilir ve yük "sekme sayısı × 4/dk"
+ * yerine "dakikada EN FAZLA 1"e iner.
+ *
+ * NEDEN 60 sn: poll periyodunun (15 sn) tam katı → her 4 poll'da bir tazelenir; ETag de
+ * bu yüzden gereksiz yere flap etmez (aradaki 3 poll'da sayaç sabit → 304 korunur).
+ *
+ * BİLİNÇLİ TAKAS: önbellek süreç-içidir; çok-örnekli dağıtımda örnekler arası kısa süreli
+ * sapma görülebilir. Kabul edilebilir çünkü bu YALNIZ bir uyarı sayacıdır — teslimat/atama
+ * kararları buna dayanmaz, gerçek düşük-stok alarmı ayrı cron'dan (low-stock.service) üretilir.
+ */
+const LOW_STOCK_CACHE_TTL_MS = 60_000;
+
 /** pg timestamptz (Date | string) → ISO. postgres.js Date döndürür; string de tolere edilir. */
 function toIso(value: Date | string): string {
   return new Date(value).toISOString();
@@ -107,7 +130,10 @@ export interface DashboardSummary {
   pendingLines: number;
   /** Bugün (yerel gün başı, sunucu TZ) oluşturulan sipariş sayısı. */
   todayOrders: number;
-  /** Düşük stok ürünü sayısı (low_stock_threshold IS NOT NULL AND available<=eşik). */
+  /**
+   * Düşük stok ürünü sayısı (low_stock_threshold IS NOT NULL AND available<=eşik).
+   * ≤60 sn önbellekli (LOW_STOCK_CACHE_TTL_MS) — canlı uçla aynı değer.
+   */
   lowStockCount: number;
   /** Açık değişim talebi (status IN open|info_requested). */
   openReplacements: number;
@@ -128,6 +154,39 @@ export interface DashboardSummary {
 export class DashboardService {
   constructor(@Inject(DB) private readonly db: Database) {}
 
+  /**
+   * Düşük-stok sayacı önbelleği (bkz. LOW_STOCK_CACHE_TTL_MS). Servis singleton olduğu
+   * için alan süreç ömrü boyunca yaşar; kalıcılık/invalidasyon YOKTUR (TTL yeter).
+   */
+  private lowStockCache: { value: number; at: number } | null = null;
+  /**
+   * Süren hesap. NEDEN: önbellek boşken aynı anda gelen N poll (çok sekme) aksi halde N
+   * ayrı agregasyon başlatırdı — "sürü etkisi" tam da kaçındığımız yükü geri getirirdi.
+   * Bekleyenler tek sorgunun sonucunu paylaşır.
+   */
+  private lowStockInflight: Promise<number> | null = null;
+
+  /**
+   * Düşük-stok sayacını önbellekten servis eder; TTL dolduysa TEK sorgu koşup tazeler.
+   * Hata durumunda bayat değere DÜŞÜLMEZ — hata çağırana yansır (önceki davranış korunur).
+   */
+  private async lowStockCountCached(): Promise<number> {
+    const hit = this.lowStockCache;
+    if (hit && Date.now() - hit.at < LOW_STOCK_CACHE_TTL_MS) return hit.value;
+    if (this.lowStockInflight) return this.lowStockInflight;
+
+    const run = this.lowStockCount()
+      .then((value) => {
+        this.lowStockCache = { value, at: Date.now() };
+        return value;
+      })
+      .finally(() => {
+        this.lowStockInflight = null;
+      });
+    this.lowStockInflight = run;
+    return run;
+  }
+
   /** Tüm KPI bloklarını paralel toplayıp tek özet nesnesi döndürür. */
   async summary(): Promise<DashboardSummary> {
     const [
@@ -141,7 +200,9 @@ export class DashboardService {
     ] = await Promise.all([
       this.pendingLines(),
       this.todayOrders(),
-      this.lowStockCount(),
+      // Canlı uçla AYNI önbelleği paylaşır → genel-bakış ile canlı şerit aynı sayıyı gösterir
+      // (iki ayrı hesap iki farklı değer üretip "sayı zıplıyor" izlenimi vermesin).
+      this.lowStockCountCached(),
       this.openReplacements(),
       this.openSecurityEvents(),
       this.totalAvailableStock(),
@@ -186,18 +247,28 @@ export class DashboardService {
   private async lowStockCount(): Promise<number> {
     // PERF: ürün-başına korele skalar alt-sorgu (her ürün için ayrı SELECT sum) yerine TEK geçiş —
     // LEFT JOIN license_items + GROUP BY + HAVING (low-stock.service.checkLowStock ile aynı desen).
-    // available = coalesce(sum(max_uses-use_count) FILTER status='available'). GROUP BY p.id (PK) →
-    // HAVING içinde p.low_stock_threshold'a erişilebilir. Sonuç (düşük-stok ürün sayısı) AYNEN korunur.
+    // GROUP BY p.id (PK) → HAVING içinde p.low_stock_threshold'a erişilebilir.
+    //
+    // PERF (kritik): status süzgeci BİLEREK JOIN koşulundadır, HAVING'deki FILTER'da DEĞİL.
+    // `license_items_available_idx` KISMİ bir index'tir (WHERE status='available'); süzgeç
+    // yalnız agregat FILTER'ında kalırsa planlayıcı tabloyu daraltamaz ve TÜM license_items'ı
+    // taramak zorunda kalır. Koşul JOIN'e taşındığında ise inner ilişki üzerinde bir kısıt
+    // olur → kısmi index kullanılabilir hâle gelir (canlı poll'daki 15 sn'de bir tam tarama biter).
+    //
+    // ANLAM DEĞİŞMEZ: LEFT JOIN olduğu için eşleşen 'available' satırı OLMAYAN ürün de listede
+    // kalır (li.* NULL → sum NULL → coalesce 0 ≤ eşik → düşük stok sayılır, eskisi gibi).
+    // available = Σ(max_uses − use_count) KAPASİTE mantığı (MAK/multi) aynen korunur.
     const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM (
         SELECT p.id
         FROM products p
-        LEFT JOIN license_items li ON li.product_id = p.id
+        LEFT JOIN license_items li
+          ON li.product_id = p.id
+         AND li.status = 'available'
         WHERE p.low_stock_threshold IS NOT NULL
         GROUP BY p.id
-        HAVING coalesce(sum(li.max_uses - li.use_count) FILTER (WHERE li.status = 'available'), 0)
-          <= p.low_stock_threshold
+        HAVING coalesce(sum(li.max_uses - li.use_count), 0) <= p.low_stock_threshold
       ) t;
     `);
     return Number(rows[0]?.c ?? 0);
@@ -267,7 +338,10 @@ export class DashboardService {
    * ~15 sn'de bir çağrılacağı için TASARIM GEREĞİ ucuzdur:
    *  - toplam 6 sorgu (N ayrı poller yerine tek uç),
    *  - hepsi index'li (orders_created_idx / order_lines_order_idx / notifications_created_idx /
-   *    notifications_unread_idx / orders_held_idx / order_lines_pending_product_idx),
+   *    notifications_unread_idx / orders_held_idx / order_lines_pending_product_idx /
+   *    replacement_requests_created_idx),
+   *  - tek AĞIR blok olan düşük-stok agregasyonu 60 sn önbelleklidir (LOW_STOCK_CACHE_TTL_MS)
+   *    → poll başına DEĞİL, dakikada en fazla bir kez koşar,
    *  - yanıt limit ile küçük tutulur (max 50),
    *  - `etag` ile değişiklik yoksa controller 304 döner → günün büyük kısmında bant genişliği ~0.
    *
@@ -287,7 +361,8 @@ export class DashboardService {
         this.liveNotifications(n),
         this.unreadNotificationCount(),
         this.liveCounters(),
-        this.lowStockCount(),
+        // Poll sıcak yolunun tek "ağır" sorgusu → 60 sn önbellekten (bkz. LOW_STOCK_CACHE_TTL_MS).
+        this.lowStockCountCached(),
       ]);
 
     const snapshot: LiveSnapshot = {
@@ -377,6 +452,18 @@ export class DashboardService {
   /**
    * En yeni N destek/değişim talebi. Gerekçe SQL'de kırpılır (uzun serbest metin ağı
    * gereksiz meşgul etmesin); kırpıldıysa '…' eklenir. Sır dönmez (payload/anahtar yok).
+   *
+   * PERF: sıralama+limit, JOIN'lerden ÖNCE tek tabloda (liveOrders ile aynı desen). Düz
+   * yazımda planlayıcı önce orders/sites ile birleştirip SONRA tüm sonucu sıralayabiliyordu
+   * (talep sayısı büyüdükçe her poll'da tam tarama + sort). Alt sorgu `ORDER BY created_at
+   * DESC, id DESC LIMIT n` ile `replacement_requests_created_idx`'ten yalnız N satır okur;
+   * gerekçe kırpması da içeride yapılır → uzun serbest metin dışarı hiç taşınmaz.
+   *
+   * STATÜ SÜZGECİ YOK (bilinçli): kart "Son Destek Talepleri"dir, açık kuyruk DEĞİL —
+   * tüketici (admin live-feed) `approved`/`rejected` rozetlerini de render eder, yani
+   * kapanan talebin akışta görünmesi beklenen davranıştır. Açık kuyruk sayısı zaten AYRI
+   * gelir (`liveCounters.open_support` + /support ekranı). Süzgeç eklemek ekranın anlamını
+   * değiştirirdi; index seçiciliği için gerekli de değil (sıralama zaten index'ten karşılanıyor).
    */
   private async liveSupports(limit: number): Promise<LiveSupportRow[]> {
     const rows = await rawRows<{
@@ -392,21 +479,34 @@ export class DashboardService {
       created_at: Date | string;
     }>(this.db, sql`
       SELECT r.id,
-             r.status::text AS status,
+             r.status,
              r.customer_email,
              r.order_id,
              o.remote_order_id,
              s.domain AS site_domain,
-             left(r.reason, ${REASON_EXCERPT_LEN}::int) AS reason_excerpt,
-             length(r.reason)::int AS reason_len,
+             r.reason_excerpt,
+             r.reason_len,
              r.within_warranty,
              r.created_at
-      FROM replacement_requests r
+      FROM (
+        SELECT id,
+               status::text AS status,
+               customer_email,
+               order_id,
+               site_id,
+               left(reason, ${REASON_EXCERPT_LEN}::int) AS reason_excerpt,
+               length(reason)::int AS reason_len,
+               within_warranty,
+               created_at
+        FROM replacement_requests
+        -- id tiebreak: aynı ms'deki iki talep poll'lar arasında YER DEĞİŞTİRMESİN
+        -- (sıra kararsızsa veri değişmeden ETag değişir, 304 kazanımı kaybolur).
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${limit}
+      ) r
       LEFT JOIN orders o ON o.id = r.order_id
       LEFT JOIN sites s ON s.id = r.site_id
-      -- id tiebreak → sıra kararlı (ETag flap etmez, bkz. liveOrders).
-      ORDER BY r.created_at DESC, r.id DESC
-      LIMIT ${limit};
+      ORDER BY r.created_at DESC, r.id DESC;
     `);
 
     return rows.map((r) => {

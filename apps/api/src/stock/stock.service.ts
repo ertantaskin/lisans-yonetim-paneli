@@ -490,10 +490,13 @@ export class StockService {
    * Lisans envanteri listesi — HEM ürün-bazlı (ürün detayı tablosu) HEM global
    * (/stock "son eklenen lisanslar") aynı fonksiyondan beslenir; fark yalnız `productId`.
    *
-   * PERFORMANS: TEK sorgu + join (N+1 YOK). Sayfalama SQL'de (LIMIT/OFFSET), toplam ayrı
-   * COUNT. `delivered` bilgisi LATERAL alt-sorgudan gelir (lisans başına EN İLGİLİ atama:
-   * önce aktif, sonra en yeni) → çok atamalı MAK anahtarında satır çoğalmaz. Payload çözme
-   * YALNIZ dönen sayfa için (≤100 satır) yapılır.
+   * PERFORMANS: TEK sorgu + join (N+1 YOK). Sayfa VE toplam artık aynı sorgudan gelir
+   * (`count(*) OVER ()` — ayrı COUNT taraması yok); süzgeç + sıralama + LIMIT/OFFSET bir
+   * alt-sorguda (page_slice) yalnız license_items üzerinde çalışır, sunum join'leri ve
+   * `delivered` LATERAL'i bu sayfaya (≤100 satır) uygulanır. LATERAL lisans başına EN İLGİLİ
+   * atamayı verir (önce aktif, sonra en yeni) → çok atamalı MAK anahtarında satır çoğalmaz.
+   * Payload çözme de YALNIZ dönen sayfa için yapılır. Sıralama kolonları bilerek
+   * license_items'a sınırlıdır ki index'lerden karşılansın (created / status+created / assigned).
    *
    * GÜVENLİK: admin ucudur (AdminGuard) ve sipariş detayıyla aynı politikayı izler — panel
    * kimlik-doğrulamalı olduğu için lisans TAM görünür, bu yüzden her LİSTE görüntülemesi
@@ -509,12 +512,26 @@ export class StockService {
     const offset = (page - 1) * pageSize;
     const { productId, batchId, siteId, status } = params;
 
-    // ── Filtreler (rows + count sorgusunda BİREBİR aynı fragman kullanılır) ──
+    // ── Filtreler ──
+    // Fragman TEK yerde kurulur; hem sayfa alt-sorgusu (page_slice) hem de yedek COUNT
+    // BİREBİR aynısını kullanır → toplam ile liste asla ayrışamaz.
     const conds: SQL[] = [sql`true`];
+    // Bu iki süzgeç doğrudan index'e oturur (li.product_id / li.batch_id → license_items_batch_idx).
     if (productId) conds.push(sql`li.product_id = ${productId}`);
     if (batchId) conds.push(sql`li.batch_id = ${batchId}`);
-    // ::text — enum ↔ parametre tip çıkarımını sürücüden bağımsız kıl (deterministik).
-    if (status) conds.push(sql`li.status::text = ${status}`);
+    // PERF: eski `li.status::text = $1` yazımı KOLONU fonksiyona sokuyordu → sargable değildi,
+    // yani `license_items_status_created_idx (status, created_at DESC)` hiç kullanılamazdı.
+    // Cast artık PARAMETREdedir: karşılaştırma kolonun kendi tipinde yapılır (index kullanılabilir)
+    // ve tip çıkarımı yine sürücüden bağımsız/deterministik kalır.
+    // Bilinmeyen değerde Postgres 22P02 (→500) atmasın diye enum listesi önce uygulamada
+    // doğrulanır; geçersiz statü ESKİSİYLE AYNI sonucu verir: boş liste (`false` → 0 satır).
+    if (status) {
+      conds.push(
+        (LICENSE_ITEM_STATUSES as readonly string[]).includes(status)
+          ? sql`li.status = ${status}::license_item_status`
+          : sql`false`,
+      );
+    }
     // Site süzgeci: lisansın HERHANGİ bir ataması bu siteye aitse listede kalır (lateral
     // gösterimi de aynı siteye daraltılır → "site X'e teslim edilenler" tutarlı okunur).
     if (siteId) {
@@ -555,15 +572,50 @@ export class StockService {
     const where = sql.join(conds, sql` AND `);
     // Lateral'i site süzgecine bağla (yukarıdaki EXISTS ile tutarlı gösterim).
     const lateralSite = siteId ? sql`AND o.site_id = ${siteId}` : sql`AND true`;
+    // ── Sıralama ──
+    // KURAL: sıralama YALNIZ license_items kolonlarından kurulur. Böylece sayfa alt-sorgusu
+    // (aşağıda) index'ten karşılanır ve pahalı LATERAL yalnız DÖNEN sayfa için koşar.
+    //
+    // `assigned_desc` eskiden LATERAL'in `d.assigned_at`ine (atamanın delivered/created zamanı)
+    // göre sıralıyordu → sıralayabilmek için LATERAL'in EŞLEŞEN HER satır için çalışması
+    // gerekiyordu (satır başına 3-join'li alt-sorgu). Artık `li.assigned_at` kolonu kullanılır
+    // (atama anında yazılır) → `license_items_assigned_idx (assigned_at DESC NULLS LAST)`.
+    //
+    // BİLİNEN SAPMA (tek-kullanımda pratikte aynı, iki kenar durumda değil):
+    //  · atama geri alınıp kalem 'available'a DÖNDÜYSE (all-or-nothing rollback / adet düşürme)
+    //    li.assigned_at NULL'lanır → kalem artık sona düşer. Doğrusu da budur: kalem teslim
+    //    edilmiş değildir. ('quarantined' olan iade/değişim kalemlerinde assigned_at KORUNUR.)
+    //  · MULTI/MAK kalemlerde kapasite düşümü (consumeMultiUseCapacity) assigned_at YAZMAZ →
+    //    bu kalemler teslim edilmiş olsalar bile NULLS LAST ile sona düşer. Merkezî not:
+    //    kalıcı çözüm assign.ts'te kapasite düşümüne `assigned_at = now()` eklemektir (bu
+    //    işçinin dosyası değil); o eklendiği anda sıralama MAK için de kendiliğinden düzelir.
     const orderBy =
       params.sort === 'created_asc'
         ? sql`li.created_at ASC, li.id ASC`
         : params.sort === 'assigned_desc'
-          ? sql`d.assigned_at DESC NULLS LAST, li.created_at DESC, li.id DESC`
+          ? sql`li.assigned_at DESC NULLS LAST, li.created_at DESC, li.id DESC`
           : sql`li.created_at DESC, li.id DESC`;
 
-    const [rows, countRows] = await Promise.all([
-      rawRows<LicenseItemRawRow>(this.db, sql`
+    // ── Sayfa + toplam: TEK sorgu ──
+    // Eskiden rows ve count(*) AYRI iki sorguydu; ikisi de aynı süzgeçle license_items'ı
+    // baştan tarıyordu (iki tam geçiş + iki tur ağ). Artık `count(*) OVER ()` penceresi
+    // sayfa alt-sorgusunda hesaplanır: pencere fonksiyonu WHERE'den SONRA ama ORDER BY/LIMIT'ten
+    // ÖNCE çalıştığı için değer "süzgece uyan TOPLAM kayıt"tır (sayfanınki değil) → semantik
+    // eski COUNT ile birebir.
+    //
+    // Alt sorgu ayrıca N+1'in tersini de çözer: LIMIT/OFFSET, JOIN'lerden ve LATERAL'den ÖNCE
+    // uygulanır → ürün/parti/tedarikçi join'leri ve teslimat LATERAL'i yalnız ≤100 satır için
+    // koşar (eskiden LATERAL, sıralamadan önce eşleşen HER satır için çalışabiliyordu).
+    const rows = await rawRows<LicenseItemRawRow & { total_count: number }>(this.db, sql`
+        WITH page_slice AS (
+          SELECT li.id AS id, (count(*) OVER ())::int AS total_count
+          FROM license_items li
+          -- b: yalnız arama süzgeci (b.label) için — LEFT JOIN, satır çoğaltmaz (b.id PK).
+          LEFT JOIN batches b ON b.id = li.batch_id
+          WHERE ${where}
+          ORDER BY ${orderBy}
+          LIMIT ${pageSize} OFFSET ${offset}
+        )
         SELECT
           li.id                       AS id,
           li.product_id               AS product_id,
@@ -594,8 +646,10 @@ export class StockService {
           d.site_domain               AS site_domain,
           d.site_type                 AS site_type,
           d.site_webhook_url          AS site_webhook_url,
-          d.admin_order_url_template  AS admin_order_url_template
-        FROM license_items li
+          d.admin_order_url_template  AS admin_order_url_template,
+          ps.total_count              AS total_count
+        FROM page_slice ps
+        JOIN license_items li ON li.id = ps.id
         JOIN products p ON p.id = li.product_id
         LEFT JOIN batches b ON b.id = li.batch_id
         LEFT JOIN suppliers s ON s.id = b.supplier_id
@@ -621,19 +675,24 @@ export class StockService {
           ORDER BY (a.status = 'active') DESC, a.created_at DESC
           LIMIT 1
         ) d ON TRUE
-        WHERE ${where}
-        ORDER BY ${orderBy}
-        LIMIT ${pageSize} OFFSET ${offset};
-      `),
-      rawRows<{ c: number }>(this.db, sql`
-        SELECT count(*)::int AS c
-        FROM license_items li
-        LEFT JOIN batches b ON b.id = li.batch_id
-        WHERE ${where};
-      `),
-    ]);
+        -- Süzgeç/limit page_slice'ta uygulandı; burada yalnız sıra yeniden kurulur
+        -- (join sonrası satır sırası GARANTİ DEĞİLDİR).
+        ORDER BY ${orderBy};
+      `);
 
     const mapped = rows.map((r) => this.mapInventoryRow(r));
+
+    // Toplam: normalde pencere fonksiyonundan (ek sorgu YOK). Tek istisna, OFFSET'in sonuç
+    // kümesini AŞMASIDIR: hiç satır dönmez → pencere değeri de gelmez. Bu durumda kontratı
+    // korumak için (total = süzgece uyan kayıt sayısı, sayfa boş olsa bile) yedek COUNT
+    // koşulur — yalnız page>1 iken, yani "3. sayfadayken filtre daraldı" senaryosunda.
+    // 1. sayfa boşsa toplam zaten 0'dır, gereksiz sorgu açılmaz.
+    const total =
+      rows.length > 0
+        ? Number(rows[0]?.total_count ?? 0)
+        : page > 1
+          ? await this.countLicenseItems(where)
+          : 0;
 
     // Görüntüleme audit'i (§8 "reveal audit'e düşer"): liste TAM lisans döndürdüğü için
     // her görüntüleme TEK kayda düşer (kim / ne zaman / kaç lisans gördü). best-effort.
@@ -664,7 +723,22 @@ export class StockService {
       }
     }
 
-    return { rows: mapped, total: Number(countRows[0]?.c ?? 0), page, pageSize };
+    return { rows: mapped, total, page, pageSize };
+  }
+
+  /**
+   * Toplam kayıt sayısının YEDEK sorgusu — yalnız "sayfa boş ama page>1" kenar durumunda
+   * çalışır (bkz. listLicenseItems). Süzgeç fragmanı ana sorguyla BİREBİR aynıdır; `b`
+   * join'i arama koşulundaki `b.label` içindir.
+   */
+  private async countLicenseItems(where: SQL): Promise<number> {
+    const rows = await rawRows<{ c: number }>(this.db, sql`
+      SELECT count(*)::int AS c
+      FROM license_items li
+      LEFT JOIN batches b ON b.id = li.batch_id
+      WHERE ${where};
+    `);
+    return Number(rows[0]?.c ?? 0);
   }
 
   /** HAM satır → API sözleşmesi (payload çözme + mağaza admin linki burada üretilir). */

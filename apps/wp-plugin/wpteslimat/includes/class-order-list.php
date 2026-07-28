@@ -168,18 +168,28 @@ class Wpteslimat_Order_List {
                 $oid = absint($row['remoteOrderId']);
                 $order = $oid ? wc_get_order($oid) : null;
                 if (!$order) continue;
-                $order->update_meta_data('_wpteslimat_panel_status',
-                    isset($row['status']) ? sanitize_text_field((string) $row['status']) : '');
+                // (§8) Panel YETKİLİ `held` bayrağını bulk-status'ta ayrı alan olarak döndürür
+                // (durum kolonu held siparişte 'pending' der). Operatör için ANLAMLI bilgi
+                // "incelemede"dir → kolona 'held' yazılır. Bayrak hiç gelmiyorsa (eski panel
+                // sürümü) ham duruma dokunulmaz. Bu satır olmadan status_label('held') dalı
+                // ERİŞİLEMEZ kalıyor, inceleme rozeti listede HİÇ görünmüyordu (denetim bulgusu).
+                $held = array_key_exists('held', $row) ? !empty($row['held']) : null;
+                $status = isset($row['status']) ? sanitize_text_field((string) $row['status']) : '';
+                if ($held === true) $status = 'held';
+                $order->update_meta_data('_wpteslimat_panel_status', $status);
                 $order->update_meta_data('_wpteslimat_panel_fulfilled',
                     isset($row['fulfilled']) ? (int) $row['fulfilled'] : 0);
                 $order->update_meta_data('_wpteslimat_panel_total',
                     isset($row['total']) ? (int) $row['total'] : 0);
-                // (§8 held staleness) Panel YETKİLİ `held` bayrağını bulk-status'ta da döndürür.
-                // Sipariş artık incelemede değilse bayat _wpteslimat_held_for_review işaretini temizle
-                // — toplu yenileme, incelemeden çıkmış (release/reject) siparişin rozetini de düşürsün
-                // (aksi halde meta, sipariş tek tek açılana dek 'yes' kalırdı; rejectHeld webhook atmaz).
-                if (array_key_exists('held', $row) && !$row['held']
-                    && $order->get_meta('_wpteslimat_held_for_review') === 'yes') {
+                // Yerel "inceleme bekliyor" işaretini panele göre eşitle (panel tek doğruluk kaynağı):
+                // true → işaretle (metabox/my-account rozeti görünsün), false → bayat işareti TEMİZLE
+                // (release/reject sonrası rozet düşsün; rejectHeld webhook atmaz, aksi halde meta
+                // sipariş tek tek açılana dek 'yes' kalırdı).
+                if ($held === true) {
+                    if ($order->get_meta('_wpteslimat_held_for_review') !== 'yes') {
+                        $order->update_meta_data('_wpteslimat_held_for_review', 'yes');
+                    }
+                } elseif ($held === false && $order->get_meta('_wpteslimat_held_for_review') === 'yes') {
                     $order->delete_meta_data('_wpteslimat_held_for_review');
                 }
                 $order->save();
@@ -200,6 +210,9 @@ class Wpteslimat_Order_List {
         return [
             'unmapped'  => __('Eşlemesiz', 'wpteslimat'),
             'pending'   => __('Bekleyen', 'wpteslimat'),
+            // Teslimat öncesi ayrı durum (§8 inceleme kuyruğu): handle_bulk panelin `held`
+            // bayrağını 'held' olarak yazar → operatör "onay bekleyen" siparişleri süzebilir.
+            'held'      => __('İncelemede', 'wpteslimat'),
             'partial'   => __('Kısmi', 'wpteslimat'),
             'fulfilled' => __('Teslim edildi', 'wpteslimat'),
             'revoked'   => __('İptal', 'wpteslimat'),

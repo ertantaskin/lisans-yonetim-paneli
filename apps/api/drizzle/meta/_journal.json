@@ -176,6 +176,13 @@
       "when": 1785800000000,
       "tag": "0024_workstation",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785810000000,
+      "tag": "0025_bundle_snapshot_perf",
+      "breakpoints": true
     }
   ]
 }

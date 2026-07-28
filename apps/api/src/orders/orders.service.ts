@@ -341,6 +341,9 @@ export class OrdersService {
               remoteVariationId: line.remoteVariationId ?? null,
               remoteName: line.remoteName ?? null,
               qty: requiredUnits,
+              // Held satırda da ölçek anlık görüntüsü (0025) — onaylanınca aynı birim uzayında
+              // teslim edilir, iade/resync yolları eşleme değişse de yanlış ölçekle hesaplamaz.
+              bundleQty: mapping?.bundleQty ?? null,
               status: 'pending',
               policyOverride: line.policyOverride ?? null,
             });
@@ -417,6 +420,10 @@ export class OrdersService {
               remoteVariationId: line.remoteVariationId ?? null,
               remoteName: line.remoteName ?? null,
               qty: requiredUnits,
+              // Ölçeği SATIRA yaz (0025): eşleme sonradan değişse/silinse bile bu siparişin
+              // birim uzayı sabit kalır → iade/resync yolları qty'yi yanlış ölçekte hesaplayıp
+              // teslim edilmiş anahtarları geri almaz.
+              bundleQty: mapping.bundleQty,
               status: 'pending',
               policyOverride: line.policyOverride ?? null,
             })
@@ -610,6 +617,34 @@ export class OrdersService {
    * Yalnız remoteLineId ile EŞLEŞEN mevcut satırlar uzlaştırılır; yeni satır ekleme/tam
    * satır silme bilinçli kapsam dışı (WP re-push adet güncellemesi senaryosu).
    */
+  /**
+   * Satırın MAĞAZA adedi → PANEL birimi ölçeği (bundleQty).
+   *
+   * Sıra bilinçlidir:
+   *   1. Eşlemesiz satır (`productId` NULL) → 1. `qty` mağaza birimindedir; ölçeklemek
+   *      "çift ölçekleme"ye yol açardı (satır sonradan `linkLine` ile bağlanınca bir kez daha
+   *      çarpılır → müşteriye hakkından fazla lisans).
+   *   2. Satırın ANLIK GÖRÜNTÜSÜ (`bundleQty`, 0025) → teslimat anındaki gerçek ölçek.
+   *   3. Canlı eşleme (eski satırlar için geriye dönük yol).
+   *   4. Hiçbiri yoksa `null` → ölçek BİLİNMİYOR. Çağıran qty'ye DOKUNMAMALIDIR: eşleme
+   *      kaldırıldığında ölçeği sessizce 1 saymak, teslim edilmiş CANLI anahtarları
+   *      "aşırı teslim" sanıp iade YOKKEN geri alır (§2 ihlali).
+   */
+  private async resolveLineScale(
+    siteId: string,
+    line: { productId: string | null; bundleQty: number | null },
+    remote: { remoteProductId: string; remoteVariationId?: string | null },
+  ): Promise<number | null> {
+    if (!line.productId) return 1;
+    if (line.bundleQty != null && line.bundleQty > 0) return line.bundleQty;
+    const mapping = await this.products.resolveMapping(
+      siteId,
+      remote.remoteProductId,
+      remote.remoteVariationId ?? null,
+    );
+    return mapping?.bundleQty ?? null;
+  }
+
   private async reconcileOrder(
     site: Site,
     order: Order,
@@ -624,15 +659,20 @@ export class OrdersService {
       const line = lineByRemote.get(dtoLine.remoteLineId);
       if (!line) continue; // Eşleşmeyen (yeni) satır — güvenli yoksay.
 
-      // Yeni gerekli birim = qty × bundleQty (eşlemesiz satırda bundle yok, qty=birim).
-      const mapping = line.productId
-        ? await this.products.resolveMapping(
-            site.id,
-            dtoLine.remoteProductId,
-            dtoLine.remoteVariationId,
-          )
-        : null;
-      const newQty = dtoLine.qty * (mapping?.bundleQty ?? 1);
+      // Yeni gerekli birim = mağaza adedi × ÖLÇEK. Ölçek ÖNCE satırın anlık görüntüsünden
+      // okunur (0025); yoksa (eski satır) canlı eşlemeden türetilir. Eşlemesiz satırda ölçek
+      // 1'dir (qty MAĞAZA birimindedir).
+      const scale = await this.resolveLineScale(site.id, line, dtoLine);
+      // Ölçek çözülemedi (eşleme kaldırılmış + anlık görüntü yok): qty'ye DOKUNMA. Aksi halde
+      // bundleQty sessizce 1 sayılır ve müşterinin CANLI anahtarları iade YOKKEN geri alınırdı.
+      if (scale == null) {
+        this.logger.warn(
+          `Satır ölçeği çözülemedi (eşleme kaldırılmış, anlık görüntü yok) — qty korunuyor: ` +
+            `line=${line.id} order=${order.id} remoteProduct=${dtoLine.remoteProductId}`,
+        );
+        continue;
+      }
+      const newQty = dtoLine.qty * scale;
 
       if (newQty === line.qty) continue; // (c) değişiklik yok.
 

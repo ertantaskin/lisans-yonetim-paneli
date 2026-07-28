@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -148,7 +149,7 @@ export class StockController {
    */
   @Delete('license-items/:id')
   voidLicenseItem(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(VoidLicenseItemBody)) body: VoidLicenseItemBody,
     @AdminActor() actor: string,
   ) {
@@ -158,7 +159,7 @@ export class StockController {
   /** Tekil lisans değiştirme (payload düzeltme). Teslim edilmiş lisans 409 döner. */
   @Patch('license-items/:id')
   updateLicenseItem(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(UpdateLicenseItemBody)) body: UpdateLicenseItemBody,
     @AdminActor() actor: string,
   ) {

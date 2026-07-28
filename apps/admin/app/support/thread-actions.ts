@@ -36,8 +36,15 @@ export async function fetchThreadAction(
   const id = String(requestId || '').trim();
   if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz talep' };
   try {
-    const messages = await apiGet<ThreadMessage[]>(`/v1/admin/replacements/${id}/messages`);
-    return { ok: true, messages: messages ?? [] };
+    // API `{ messages: [...] }` SARMALI döndürür (replacements.service.listMessages) — düz dizi
+    // DEĞİL. Sarmalı açmadan state'e yazmak `messages.map is not a function` ile TÜM destek
+    // ekranını error boundary'ye düşürüyordu. Her iki şekli de kabul et: eski/yeni API sürümleri
+    // arasında deploy sapması olsa da ekran çalışmaya devam etsin.
+    const data = await apiGet<{ messages?: ThreadMessage[] } | ThreadMessage[]>(
+      `/v1/admin/replacements/${id}/messages`,
+    );
+    const messages = Array.isArray(data) ? data : (data?.messages ?? []);
+    return { ok: true, messages };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Yazışma alınamadı' };
   }

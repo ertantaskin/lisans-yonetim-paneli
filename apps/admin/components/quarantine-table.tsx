@@ -278,8 +278,14 @@ const columns: ColumnDef<QuarantineItem>[] = [
   },
 ];
 
-// ── CSV (tedarikçiye gidecek sütun düzeni) ──────────────────────────────────
-const csvColumns: CsvColumn<QuarantineItem>[] = [
+// ── CSV: İKİ AYRI İÇERİK ────────────────────────────────────────────────────
+// Bu ekranın ana işi "çalışmayan anahtarların listesini TEDARİKÇİYE ilet". O dosyada müşteri
+// e-postası ve mağaza sipariş numarası İŞİ GÖRMEZ ama 3. tarafa kişisel veri taşır (KVKK) —
+// üstelik TAM düz lisans anahtarıyla AYNI satırda birleşir. Bu yüzden dışa aktarma ikiye ayrıldı:
+// tedarikçi bildirimi (kişisel veri YOK) ve iç denetim (tam set, panel dışına çıkmamalı).
+
+/** Tedarikçi bildirimi — kusurlu kalemi tanımlayan teknik/tedarik kolonları. Kişisel veri YOK. */
+const supplierCsvColumns: CsvColumn<QuarantineItem>[] = [
   { header: 'Ürün', value: (r) => r.productName ?? '' },
   { header: 'SKU', value: (r) => r.sku ?? '' },
   { header: 'Tür', value: (r) => (r.productKind ? productKindLabel(r.productKind) : '') },
@@ -290,10 +296,23 @@ const csvColumns: CsvColumn<QuarantineItem>[] = [
   { header: 'Tedarikçi', value: (r) => r.supplierName ?? '' },
   { header: 'Stok giriş tarihi', value: (r) => csvDate(r.createdAt) },
   { header: 'Karantina tarihi', value: (r) => csvDate(r.quarantinedAt) },
+];
+
+/** İç denetim — tedarikçi seti + izleme kolonları. KİŞİSEL VERİ İÇERİR (müşteri e-postası). */
+const auditCsvColumns: CsvColumn<QuarantineItem>[] = [
+  ...supplierCsvColumns,
   { header: 'Mağaza sipariş no', value: (r) => r.remoteOrderId ?? r.sourceRemoteOrderId ?? '' },
   { header: 'Site', value: (r) => r.siteDomain ?? '' },
   { header: 'Müşteri e-postası', value: (r) => r.customerEmail ?? '' },
 ];
+
+/** Dışa aktarma içeriği: tedarikçiye gidecek sürüm mü, iç denetim (tam) sürüm mü. */
+type CsvVariant = 'supplier' | 'audit';
+
+const CSV_VARIANT: Record<CsvVariant, { columns: CsvColumn<QuarantineItem>[]; file: string }> = {
+  supplier: { columns: supplierCsvColumns, file: 'karantina-tedarikci' },
+  audit: { columns: auditCsvColumns, file: 'karantina-ic-denetim' },
+};
 
 // ── Ekran ───────────────────────────────────────────────────────────────────
 export function QuarantineTable({
@@ -412,10 +431,12 @@ export function QuarantineTable({
     return { quarantined, voided, traceable };
   }, [all]);
 
-  function exportCsv(scope: 'visible' | 'all') {
+  function exportCsv(scope: 'visible' | 'all', variant: CsvVariant) {
     const data = scope === 'visible' ? filtered : all;
     if (!data.length) return;
-    downloadCsv(`karantina_${stamp()}.csv`, toCsv(data, csvColumns));
+    const { columns: cols, file } = CSV_VARIANT[variant];
+    // Dosya adı içeriği de söyler: yanlışlıkla "iç denetim" dosyasını tedarikçiye göndermek zorlaşır.
+    downloadCsv(`${file}_${stamp()}.csv`, toCsv(data, cols));
   }
 
   function reset() {
@@ -571,16 +592,50 @@ export function QuarantineTable({
                   Dışa Aktar (CSV)
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[15rem]">
-                <DropdownMenuLabel>Excel ile uyumlu (.csv)</DropdownMenuLabel>
-                <DropdownMenuSeparator />
+              <DropdownMenuContent align="end" className="min-w-[21rem]">
+                <DropdownMenuLabel>Tedarikçi bildirimi</DropdownMenuLabel>
+                <p className="px-2.5 pb-1.5 text-xs leading-snug text-muted-foreground">
+                  Ürün, SKU, tür, lisans değeri, durum, sebep, parti, tedarikçi ve tarihler.
+                  Müşteri e-postası ve sipariş no <strong className="font-medium">yok</strong>.
+                </p>
                 <DropdownMenuItem
-                  onSelect={() => exportCsv('visible')}
+                  onSelect={() => exportCsv('visible', 'supplier')}
                   disabled={filtered.length === 0}
                 >
+                  <Download aria-hidden />
                   Görünen satırlar ({filtered.length})
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => exportCsv('all')} disabled={all.length === 0}>
+                <DropdownMenuItem
+                  onSelect={() => exportCsv('all', 'supplier')}
+                  disabled={all.length === 0}
+                >
+                  <Download aria-hidden />
+                  Tümü ({all.length})
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
+                <DropdownMenuLabel>İç denetim (tüm kolonlar)</DropdownMenuLabel>
+                <p className="flex gap-1.5 px-2.5 pb-1.5 text-xs leading-snug text-warning">
+                  <ShieldAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <span>
+                    Yukarıdakilere ek olarak site, sipariş no ve{' '}
+                    <strong className="font-medium">müşteri e-postası</strong> içerir — kişisel
+                    veridir, tedarikçiye/3. tarafa göndermeyin.
+                  </span>
+                </p>
+                <DropdownMenuItem
+                  onSelect={() => exportCsv('visible', 'audit')}
+                  disabled={filtered.length === 0}
+                >
+                  <Download aria-hidden />
+                  Görünen satırlar ({filtered.length})
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => exportCsv('all', 'audit')}
+                  disabled={all.length === 0}
+                >
+                  <Download aria-hidden />
                   Tümü ({all.length})
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -588,7 +643,9 @@ export function QuarantineTable({
           </div>
         </div>
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground sm:text-right">
-          Tedarikçiye iletmek üzere çalışmayan lisansların listesini indirir (Excel ile açılır).
+          Excel ile açılır (.csv). Tedarikçiye gönderilecek dosyayı{' '}
+          <span className="text-foreground">Tedarikçi bildirimi</span> seçeneğinden indirin —
+          müşteri bilgisi içermez.
         </p>
       </Card>
 

@@ -98,6 +98,8 @@ export interface PendingGroup {
 
 export interface PendingSummary {
   groups: PendingGroup[];
+  /** Grup listesi üst sınıra dayandı mı — true ise ekranda "hepsi bu kadar" DENMEMELİ. */
+  truncated: boolean;
   totals: {
     groupCount: number;
     lineCount: number;
@@ -156,6 +158,8 @@ export interface OrderDiagnosis {
 
 /** Tek çağrıda taranacak azami satır (uzun kuyrukta istek şişmesin; truncated ile raporlanır). */
 const RESOLVE_LIMIT = 500;
+/** Özet ekranında tek seferde dönen en fazla grup — sınıra dayanırsa `truncated` bildirilir. */
+const GROUP_LIMIT = 500;
 
 @Injectable()
 export class PendingLinesService {
@@ -233,7 +237,7 @@ export class PendingLinesService {
         -- Çıktı takma-adı yerine AÇIK ifade: 'mapped_now' hem CTE kolonu hem çıktı adı olduğu
         -- için sıralamada belirsizlik doğmasın (çözülebilir gruplar önce, sonra en eski).
         ORDER BY BOOL_OR(mapped_now) DESC, MIN(created_at) ASC
-        LIMIT 500
+        LIMIT ${sql.raw(String(GROUP_LIMIT))}
       `,
     );
 
@@ -266,12 +270,29 @@ export class PendingLinesService {
       };
     });
 
+    // Sipariş sayısı GRUP TOPLAMI olamaz: iki farklı eşlemesiz mağaza ürünü içeren TEK sipariş
+    // iki grupta birden görünür → toplam şişerdi ("3 sipariş bekliyor" derken gerçekte 1 var).
+    // Global tekil sayım ayrı sorguyla alınır (grup LIMIT'inden de bağımsızdır).
+    const [distinct] = await rawRows<{ order_count: number }>(
+      this.db,
+      sql`
+        SELECT COUNT(DISTINCT ol.order_id)::int AS order_count
+        FROM order_lines ol
+        WHERE ol.product_id IS NULL
+          AND ol.canceled = false
+          AND ol.status IN ('pending', 'partial')
+      `,
+    );
+
     return {
       groups,
+      // Grup sorgusu LIMIT 500 ile sınırlı — sınıra DAYANDIYSA dürüstçe bildir (sessiz kırpma
+      // "hepsi bu kadar" izlenimi verirdi; CLAUDE.md "no silent caps").
+      truncated: rows.length >= GROUP_LIMIT,
       totals: {
         groupCount: groups.length,
         lineCount: groups.reduce((s, g) => s + g.lineCount, 0),
-        orderCount: groups.reduce((s, g) => s + g.orderCount, 0),
+        orderCount: Number(distinct?.order_count ?? 0),
         totalQty: groups.reduce((s, g) => s + g.totalQty, 0),
         resolvableGroups: groups.filter((g) => g.mappedNow).length,
         resolvableLines: groups.filter((g) => g.mappedNow).reduce((s, g) => s + g.lineCount, 0),
@@ -757,7 +778,15 @@ export class PendingLinesService {
       const qtyAfter = qtyBefore * mapping.bundleQty;
       await tx
         .update(orderLines)
-        .set({ productId: mapping.productId, qty: qtyAfter })
+        .set({
+          productId: mapping.productId,
+          qty: qtyAfter,
+          // Ölçeği SATIRA sabitle (0025): bundan sonra iade/resync yolları qty'yi canlı
+          // eşlemeden değil buradan okur → eşleme sonradan pasifleştirilse/silinse bile bu
+          // siparişin birim uzayı kaymaz (aksi halde "aşırı teslim" sanılıp canlı anahtarlar
+          // geri alınırdı) ve qty ikinci kez ölçeklenemez (çift-ölçekleme kapandı).
+          bundleQty: mapping.bundleQty,
+        })
         .where(eq(orderLines.id, lineId));
 
       // Sipariş durumu 'unmapped' kalmasın (recompute 'unmapped' üretmez; satır artık eşli).
