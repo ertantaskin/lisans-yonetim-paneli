@@ -69,6 +69,18 @@ export const sites = pgTable('sites', {
    * yöneticiye (MAIL_FROM) yönlendirilir + konu başına '[TEST MODU] ' eklenir.
    */
   sandbox: boolean('sandbox').notNull().default(false),
+  /**
+   * Sitede KURULU WP eklenti sürümü (0028) — panelde "hangi site hangi sürümde" görünürlüğü.
+   * Değer, sitenin HMAC isteğindeki `x-wpteslimat-version` başlığından ÖĞRENİLİR
+   * (HmacGuard, imza doğrulandıktan SONRA, best-effort).
+   *
+   * DİKKAT: bu başlık İMZA KAPSAMINDA DEĞİLDİR (x-wp-actor ile aynı sınıf) → değer
+   * doğrulanmamış/istemci-beyanıdır. YALNIZ gösterim/telemetri amaçlıdır; hiçbir yetki,
+   * erişim veya davranış kararı ASLA buna dayandırılmaz.
+   */
+  pluginVersion: text('plugin_version'),
+  /** `plugin_version` en son ne zaman değişti (aynı sürüm tekrar gelirse YAZILMAZ). */
+  pluginVersionAt: timestamp('plugin_version_at', { withTimezone: true }),
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

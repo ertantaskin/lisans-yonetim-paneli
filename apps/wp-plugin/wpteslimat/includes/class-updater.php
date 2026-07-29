@@ -25,6 +25,18 @@ class Wpteslimat_Updater {
     const FAIL_KEY = 'wpteslimat_update_fail';
     const FAIL_TTL = 15 * MINUTE_IN_SECONDS;
 
+    /**
+     * POZİTİF-BOŞ önbellek ("panel çalışıyor ama henüz yayınlanmış sürüm yok").
+     *
+     * Panelde hiç eklenti sürümü yayınlanmamışken uç `200 {}` (boş gövde) döndürür. Bu bir
+     * BAŞARISIZLIK DEĞİLDİR — panel erişilebilir ve doğru yanıt veriyor. Bunu FAIL_KEY'e yazmak
+     * yanıltıcıydı: "panel erişilemiyor" durumuyla "henüz yayın yok" durumu aynı kovaya düşüyordu.
+     * Ayrı ve daha kısa (1 saat) anahtarla hatırlanır → site her güncelleme kontrolünde panele
+     * gitmez, ilk yayın da en geç 1 saat içinde görünür (FAIL yolunun 15dk davranışı AYNEN kalır).
+     */
+    const EMPTY_KEY = 'wpteslimat_update_none';
+    const EMPTY_TTL = HOUR_IN_SECONDS;
+
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
         return self::$instance;
@@ -64,15 +76,20 @@ class Wpteslimat_Updater {
     }
 
     /**
-     * Panelden sürüm bilgisini çeker (12sa transient önbellekli). Başarısızlıkta null.
+     * Panelden sürüm bilgisini çeker (12sa transient önbellekli). Sürüm yoksa/başarısızlıkta null.
      * Dönen dizi panel yanıtının ham çözümlenmiş halidir (version, download_url, ...).
+     *
+     * null'ın İKİ ayrı nedeni vardır ve ayrı önbelleklenir (çağıranlar için davranış aynı):
+     *   - GERÇEK hata (ağ hatası / 4xx-5xx / bozuk JSON) → FAIL_KEY, 15dk.
+     *   - Panel çalışıyor ama YAYIN YOK (2xx + geçerli JSON, `version` alanı yok) → EMPTY_KEY, 1sa.
      */
     private static function fetch_info() {
-        // "Tekrar denetle" → hem pozitif hem negatif önbelleği sil: acil sürüm ANINDA görünsün.
+        // "Tekrar denetle" → pozitif + negatif + "yayın yok" önbelleklerini sil: acil sürüm ANINDA görünsün.
         $force = self::is_force_check();
         if ($force) {
             delete_transient(self::CACHE_KEY);
             delete_transient(self::FAIL_KEY);
+            delete_transient(self::EMPTY_KEY);
         }
 
         $cached = get_transient(self::CACHE_KEY);
@@ -83,6 +100,12 @@ class Wpteslimat_Updater {
         // Yakın zamanda başarısız olduysa panele tekrar tekrar gitme (site yavaşlamasın).
         // Force-check bu kapıyı BİLEREK atlar — operatör elle tazelemek istiyordur.
         if (!$force && get_transient(self::FAIL_KEY)) {
+            return null;
+        }
+
+        // Panelde henüz yayın olmadığı yakın zamanda GÖRÜLDÜYSE de tekrar tekrar sorma.
+        // Ayrı anahtar: bu bir hata değil, yalnız "içerik yok" durumudur (kısa TTL).
+        if (!$force && get_transient(self::EMPTY_KEY)) {
             return null;
         }
 
@@ -104,12 +127,25 @@ class Wpteslimat_Updater {
         $http = (int) wp_remote_retrieve_response_code($res);
         $data = json_decode(wp_remote_retrieve_body($res), true);
 
-        if ($http < 200 || $http >= 300 || !is_array($data) || empty($data['version'])) {
+        // GERÇEK hata: HTTP 2xx dışı ya da JSON olarak çözülemeyen gövde → panel erişilemez/bozuk
+        // sayılır, KISA negatif önbellek (mevcut davranış AYNEN korunur).
+        if ($http < 200 || $http >= 300 || !is_array($data)) {
             set_transient(self::FAIL_KEY, 1, self::FAIL_TTL);
             return null;
         }
 
+        // 2xx + geçerli JSON, ama `version` YOK → panelde HENÜZ HİÇ SÜRÜM YAYINLANMAMIŞ (`200 {}`).
+        // Panel sağlıklı; bunu "başarısızlık" saymak teknik olarak yanlıştı. FAIL_KEY'e YAZILMAZ
+        // (varsa temizlenir), yerine kısa POZİTİF-boş önbellek yazılır ve null dönülür → çağıranlar
+        // (check_update / plugin_info) bugünkü davranışlarını aynen sürdürür.
+        if (empty($data['version'])) {
+            delete_transient(self::FAIL_KEY);
+            set_transient(self::EMPTY_KEY, 1, self::EMPTY_TTL);
+            return null;
+        }
+
         delete_transient(self::FAIL_KEY);
+        delete_transient(self::EMPTY_KEY);
         set_transient(self::CACHE_KEY, $data, self::CACHE_TTL);
         return $data;
     }

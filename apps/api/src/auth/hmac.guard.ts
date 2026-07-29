@@ -14,6 +14,12 @@ import { REDIS } from '../redis/redis.module';
 import { SitesService } from '../sites/sites.service';
 import type { Site } from '../db/schema';
 
+/** Kurulu WP eklenti sürümü — İMZA KAPSAMI DIŞINDA (bkz. HmacGuard.recordPluginVersion). */
+const PLUGIN_VERSION_HEADER = 'x-wpteslimat-version';
+
+/** Katı `N.N.N` — uymayan değer sessizce yok sayılır. */
+const PLUGIN_VERSION_RE = /^\d+\.\d+\.\d+$/;
+
 /** Request'e iliştirilen doğrulanmış site (controller'lar @CurrentSite ile alır). */
 export interface AuthedRequest extends FastifyRequest {
   site?: Site;
@@ -87,8 +93,38 @@ export class HmacGuard implements CanActivate {
     const set = await this.redis.set(nonceKey, '1', 'EX', HMAC_NONCE_TTL_SEC, 'NX');
     if (set !== 'OK') throw new UnauthorizedException('Nonce tekrar kullanıldı (replay)');
 
+    // 5) Kurulu eklenti sürümünü kaydet (yalnız kimliği KANITLANMIŞ site için — imza
+    //    doğrulandıktan SONRA). Best-effort telemetri; istek yolunu bloklamaz.
+    this.recordPluginVersion(auth.site, str(h[PLUGIN_VERSION_HEADER]));
+
     req.site = auth.site;
     return true;
+  }
+
+  /**
+   * `x-wpteslimat-version` başlığından sitenin KURULU eklenti sürümünü öğrenir (0028) →
+   * panelde "hangi site hangi sürümde" görünürlüğü.
+   *
+   * GÜVENLİK NOTU: bu başlık İMZA KAPSAMINDA DEĞİLDİR (`x-wp-actor` ile aynı sınıf) —
+   * imzalanan payload yalnız method/path/timestamp/nonce/body hash'idir. Yani değer
+   * istemci-beyanıdır, doğrulanmamıştır. YALNIZ gösterim/telemetri amaçlıdır; hiçbir
+   * yetki/erişim/davranış kararı buna dayandırılmaz. En kötü hâlde site kendi satırında
+   * yanlış bir sürüm etiketi gösterir (sır sızmaz, ayrıcalık kazanılmaz).
+   *
+   * Yazım kuralları:
+   * - Yalnız katı semver-benzeri `N.N.N` kabul edilir; aksi hâlde YOK SAYILIR (çöp/enjeksiyon yok).
+   * - Değer DEĞİŞMEDİYSE yazılmaz — her HMAC isteğinde UPDATE atmak sıcak yolu yavaşlatırdı.
+   * - Fire-and-forget: await EDİLMEZ (istek beklemez) ama `.catch` ile yutulur →
+   *   unhandled rejection bırakmaz ve DB hatası isteği ASLA düşürmez.
+   */
+  private recordPluginVersion(site: Site, version: string | undefined): void {
+    try {
+      if (!version || !PLUGIN_VERSION_RE.test(version)) return;
+      if (site.pluginVersion === version) return;
+      void this.sites.recordPluginVersion(site.id, version).catch(() => {});
+    } catch {
+      // Telemetri hiçbir koşulda kimlik doğrulamayı bozmaz.
+    }
   }
 }
 

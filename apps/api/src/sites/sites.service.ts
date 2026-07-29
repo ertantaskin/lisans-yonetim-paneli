@@ -44,6 +44,13 @@ export interface SiteDetail {
     /** Dinamik eşik çarpanı (§8): 30g-ortalama × bu değer. */
     reviewMultiplier: number;
     sandbox: boolean;
+    /**
+     * Sitede KURULU WP eklenti sürümü (0028) + en son ne zaman değiştiği. Sitenin HMAC
+     * isteğindeki `x-wpteslimat-version` başlığından öğrenilir. İMZALANMIŞ DEĞİLDİR →
+     * yalnız gösterim; yetki kararı ASLA buna dayandırılmaz. Hiç istek gelmediyse null.
+     */
+    pluginVersion: string | null;
+    pluginVersionAt: string | null;
     createdAt: string;
   };
   /** Aktif ürün eşleme sayısı (site_product_mappings). */
@@ -86,8 +93,10 @@ export function hashApiKey(apiKey: string): string {
  * sızmaz (envelope sınırı korunur). Site dönen HER yol (list/update/…) bu mapper'ı kullanır ki
  * sır kolonları tek yerde garanti strip edilsin ve gelecekte yeni bir yol yanlışlıkla sızdırmasın.
  *
- * NOT: sır OLMAYAN yeni kolonlar (ör. `adminOrderUrlTemplateManual`, 0026) Omit listesinde
- * bulunmadığı için list/update yanıtlarına OTOMATİK dahil olur — ayrıca eklemek gerekmez.
+ * NOT: sır OLMAYAN yeni kolonlar (ör. `adminOrderUrlTemplateManual` 0026; `pluginVersion` +
+ * `pluginVersionAt` 0028) Omit listesinde bulunmadığı için list/update yanıtlarına OTOMATİK
+ * dahil olur — ayrıca eklemek gerekmez. Eklenti sürümü SIR DEĞİLDİR (yalnız gösterim/telemetri;
+ * imzalanmamış istemci beyanı, yetki kararı verilmez → bkz. HmacGuard.recordPluginVersion).
  */
 export type PublicSite = Omit<
   Site,
@@ -299,6 +308,29 @@ export class SitesService {
   }
 
   /**
+   * Sitenin KURULU WP eklenti sürümünü kaydeder (0028). HmacGuard imzayı doğruladıktan
+   * SONRA, `x-wpteslimat-version` başlığından best-effort çağırır.
+   *
+   * Değer İMZALANMIŞ DEĞİLDİR → yalnız gösterim/telemetri; hiçbir yetki kararı buna
+   * dayandırılmaz (bkz. HmacGuard.recordPluginVersion). Biçim doğrulaması (`N.N.N`)
+   * çağıranda yapılır.
+   *
+   * `IS DISTINCT FROM` guard'ı: aynı sürüm tekrar gelirse satıra HİÇ dokunulmaz — her HMAC
+   * isteğinde gereksiz UPDATE (+ WAL + satır şişmesi) olmaz. Guard hem burada hem çağıranda
+   * var; çağırandaki kontrol bayat `req.site` anlık görüntüsüne baktığından (eşzamanlı
+   * istekler) son söz SQL'dedir. `updatedAt` BİLEREK dokunulmaz — bu bir operatör
+   * değişikliği değil, pasif telemetridir.
+   */
+  async recordPluginVersion(siteId: string, version: string): Promise<void> {
+    await this.db
+      .update(sites)
+      .set({ pluginVersion: version, pluginVersionAt: new Date() })
+      .where(
+        and(eq(sites.id, siteId), sql`${sites.pluginVersion} IS DISTINCT FROM ${version}`),
+      );
+  }
+
+  /**
    * Site HMAC secret'ını döndürür (§4). Mevcut secret eskiye taşınır, yeni secret üretilir;
    * 24s boyunca ikisi de geçerli (findForAuth). Yeni secret YALNIZ burada bir kez döner.
    */
@@ -424,6 +456,10 @@ export class SitesService {
         dynamicQuotaEnabled: site.dynamicQuotaEnabled,
         reviewMultiplier: site.reviewMultiplier,
         sandbox: site.sandbox,
+        // Kurulu eklenti sürümü (0028) — savunmacı `?? null`: kolon henüz hiç yazılmamış
+        // olabilir (site bir kez bile push yapmadıysa) ve api/admin deploy sapmasına dayanıklı.
+        pluginVersion: site.pluginVersion ?? null,
+        pluginVersionAt: site.pluginVersionAt?.toISOString() ?? null,
         createdAt: site.createdAt.toISOString(),
       },
       mappingCount: mappingRow[0]?.count ?? 0,

@@ -28,6 +28,9 @@ const TARGET_LABEL: Record<string, string> = {
   api: 'API',
   admin: 'Admin',
   'api admin': 'API + Admin',
+  // Aynı kuyruğu WP eklentisi yayınları da kullanır (runner publish-plugin.sh'a dallanır);
+  // etiketsiz kalırsa geçmişte 'bilinmiyor' görünürdü. Yayın akışının kendisi /releases'te.
+  plugin: 'Eklenti yayını',
 };
 
 function fmt(ts: string | null): string {

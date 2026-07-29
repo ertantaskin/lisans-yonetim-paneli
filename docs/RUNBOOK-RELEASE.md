@@ -19,7 +19,8 @@ dağıtım yapacaksa bu adımları izler. Amaç: her seferinde aynı, güvenli, 
 
 İki dağıtım **hedefi** ayrıdır:
 1. **Panel** (API + Admin) → bizim sunucumuz → `scripts/deploy.sh`.
-2. **WP eklentisi** → müşterinin WordPress siteleri → `scripts/release-plugin.sh` + `/releases`.
+2. **WP eklentisi** → müşterinin WordPress siteleri → `scripts/release-plugin.sh`
+   (geliştirici makinesi) veya panelden **"Kaynaktan yayınla"** → `scripts/publish-plugin.sh` (VPS).
 
 ---
 
@@ -87,6 +88,17 @@ Aynı anda yalnız bir aktif dağıtım olur; runner çökerse 30dk'dan eski "ru
 "failed" olur (kilit açılır). İlk kez bu özelliği yayına almak için A adımını (SSH+deploy.sh) bir
 kez kullan; sonraki dağıtımlar panelden tetiklenebilir.
 
+Runner **iki hedef sınıfına** dallanır (claim yanıtındaki `target`):
+
+| `target` | Çalıştırdığı betik | Ne yapar |
+|---|---|---|
+| `api`, `admin`, `api admin` | `scripts/deploy.sh <target>` | Paneli prod'a dağıtır (rollback'li) |
+| `plugin` | `scripts/publish-plugin.sh "<note>"` | WP eklentisini **HEAD'den** paketleyip panele yayınlar |
+
+`plugin` hedefinde istekteki **`note`** alanı changelog metni olarak betiğe geçer (boşsa
+`"Sürüm <VER>"` kullanılır). Her iki hedefte de `git rev-parse --short HEAD` sonucu kayda yazılır →
+eklenti yayınında "zip hangi commit'ten paketlendi" izlenebilir.
+
 ---
 
 ## B. WP eklentisi sürümü çıkarma (kod → müşteri siteleri)
@@ -94,19 +106,81 @@ kez kullan; sonraki dağıtımlar panelden tetiklenebilir.
 Eklenti müşterinin sitesinde çalışır; güncelleme **panel üzerinden** dağıtılır (eklenti
 kendi güncelleyicisiyle `/v1/updates/plugin/info`'yu yoklar).
 
+**Sürüm artırma ve yayınlama İKİ AYRI iştir** — hangi makinede olduklarına dikkat:
+
+| Betik | Nerede çalışır | Ne yapar | Ne YAPMAZ |
+|---|---|---|---|
+| `scripts/release-plugin.sh <sürüm>` | **Geliştirici makinesi** | Sürümü `wpteslimat.php` + `readme.txt`'de günceller (sed) → yayın commit'i atar → HEAD'den zip paketler → panele publish eder | `git push` yapmaz (sen yaparsın) |
+| `scripts/publish-plugin.sh ["changelog"]` | **VPS / prod** (panelden tetiklenir) | `git pull --ff-only` → HEAD'den zip paketler → panele publish eder | **Sürüm artırmaz, commit atmaz, push gerektirmez** |
+
 1. **Geliştir + test** — yerel/izole WP dev sitesinde (`scripts/wp-dev.sh`; plugin bind-mount
    → anında yansır). Klon guard, sipariş push, teslimat, webhook akışını dene.
-2. **Yayınla:**
+2. **Yayınla** — iki yoldan biri:
+
+   **B1) Geliştirici makinesinden (tek adım):**
    ```bash
    ./scripts/release-plugin.sh <yeni-sürüm>     # ör. 0.2.0
+   git push origin main                         # yayın commit'ini uzağa gönder
    ```
-   Script: `wpteslimat.php` + `readme.txt` sürümünü günceller → temiz `.zip` paketler →
-   panele publish (`POST /v1/admin/updates/plugin`, ADMIN_TOKEN) → CHANGELOG'a not.
-   Alternatif (UI): panelde **Sürümler (/releases)** → "Yeni sürüm yayınla" (zip yükle).
+   Script: `wpteslimat.php` + `readme.txt` sürümünü günceller → yayın commit'i atar → temiz
+   `.zip` paketler → panele publish (`POST /v1/admin/updates/plugin`, ADMIN_TOKEN).
+
+   **B2) Panelden ("Kaynaktan yayınla" — SSH'siz, zip yüklemesiz):**
+   ```bash
+   # geliştirici makinesinde YALNIZ sürümü artır + commit + PUSH (yayınlama panelde yapılacak):
+   #   apps/wp-plugin/wpteslimat/wpteslimat.php → ' * Version:' + WPTESLIMAT_VERSION
+   #   apps/wp-plugin/wpteslimat/readme.txt     → 'Stable tag:'
+   git commit apps/wp-plugin/wpteslimat/wpteslimat.php apps/wp-plugin/wpteslimat/readme.txt \
+     -m "release(plugin): vX.Y.Z"
+   git push origin main
+   ```
+   (Panele erişimin varsa `release-plugin.sh` de aynı sürüm satırlarını günceller — ama o zaten
+   yayınlar; B2'yi ayrıca çalıştırmak aynı sürümü üzerine yazar, zararsızdır.)
+
+   Sonra panelde **Sürümler (/releases)** → **"Kaynaktan yayınla"** (changelog metni girilebilir).
+   Panel bir dağıtım isteği kaydeder (`target=plugin`, `note=changelog`); VPS host'undaki cron
+   runner (`deploy-runner.sh`) bunu alır ve `publish-plugin.sh`'ı çalıştırır:
+   `git pull --ff-only` → eklenti dizini temiz mi → sürümü **HEAD'den** oku (başlık +
+   `WPTESLIMAT_VERSION` tutarlı ve SemVer olmalı) → `git archive` ile zip → panele publish.
+   Sonuç (başarılı/başarısız + SHA + tam log) **/deployments** ekranında görünür.
+
+   **Alternatif (UI, elle zip):** panelde **Sürümler (/releases)** → "Yeni sürüm yayınla" (zip yükle).
 3. **Doğrula:** panelde **/releases** listesinde yeni sürüm görünür; müşteri sitesi
    WP yönetici → Güncellemeler'de eklentiyi güncelleyebilir.
 
 > SemVer: yama = hata düzeltme; minör = yeni özellik; majör = kırıcı/uyumsuz değişiklik.
+
+> Aynı sürüm numarası yeniden yayınlanırsa panel kaydı **üzerine yazar** (zip + changelog
+> güncellenir, `created_at` tazelenir). Yani başarısız bir yayını tekrar tetiklemek güvenlidir.
+
+### B3. Neden VPS'te sürüm artırılmıyor / commit-push yapılmıyor?
+
+`release-plugin.sh` VPS'te **çalışamaz** ve bu bilinçli bir sınırdır:
+
+* Prod checkout'unda (`/opt/lisans-yonetim-paneli`) `git config user.email` ve `user.name`
+  **tanımlı değil** → `git commit` hata verir.
+* Remote **HTTPS GitHub** ve kayıtlı kimlik bilgisi yok → `git push` `could not read Username`
+  ile düşer. Yani commit atılsa bile uzağa gidemez.
+* En önemlisi: prod checkout'unda **yerel commit üretmek repoyu origin'den AYIRIR** ve bir
+  sonraki `deploy.sh`'ın `git pull --ff-only` adımını **kalıcı olarak kırar** → panel dağıtımı
+  kilitlenir. (Prod checkout'u "salt-okunur ayna" gibi düşünülmeli: yalnız ileri sarar.)
+
+Bu yüzden iş ikiye bölündü: **sürüm artırımı geliştirici makinesinde** (commit + push),
+**yayınlama VPS'te** (yalnız paketle + yükle). `publish-plugin.sh` sürüm dosyalarına hiç
+dokunmaz; HEAD'de hangi sürüm yazıyorsa onu yayınlar ve HEAD'deki başlık ile
+`WPTESLIMAT_VERSION` sabiti uyuşmuyorsa (ya da SemVer değilse) **yayını durdurur**.
+
+`publish-plugin.sh` şu durumlarda da durur (hepsi anlamlı Türkçe hata + çıkış kodu 1; hata metni
+runner tarafından **/deployments** kaydına yazılır):
+
+* `jq` / `curl` yok, ya da `ADMIN_TOKEN` bulunamadı (ortam veya repo kökündeki `.env`),
+* repo **detached HEAD**'de (başarısız bir panel dağıtımının geri alması yürürlükte → HEAD eski
+  kodu gösterir; bilinçli olarak self-heal YAPILMAZ, önce `deploy.sh` ile panel düzeltilir),
+* `git pull --ff-only` başarısız (ayrışma / ağ / çalışma ağacı çakışması),
+* eklenti dizininde commit'lenmemiş veya izlenmeyen değişiklik var (zip HEAD'den paketlenir →
+  aksi halde "yayınlandı" der ama siteler farklı kodu çeker: sessiz yanlış yayın),
+* HEAD'deki `Version:` başlığı ile `WPTESLIMAT_VERSION` sabiti uyuşmuyor ya da SemVer değil,
+* üretilen zip boş, JSON gövde kurulamadı, ya da panel 200/201 dışında yanıt verdi.
 
 ---
 

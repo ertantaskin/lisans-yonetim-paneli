@@ -14,12 +14,22 @@ export const deployments = pgTable(
   'deployments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /** Ne dağıtılacak: 'api' | 'admin' | 'api admin' (deploy.sh argümanı). */
+    /**
+     * Ne dağıtılacak: 'api' | 'admin' | 'api admin' (deploy.sh argümanı) VEYA 'plugin'
+     * (deploy.sh argümanı DEĞİL — runner bu hedefte ayrı dallanıp repo HEAD'inden WP
+     * eklenti zip'i üretip panele publish eder).
+     */
     target: text('target').notNull(),
     /** pending → running → success | failed. */
     status: text('status').notNull().default('pending'),
     /** İsteği yapan admin (audit); auth kapalıysa 'panel:admin'. */
     requestedBy: text('requested_by').notNull(),
+    /**
+     * Hedefe özel serbest not (0028). 'plugin' hedefinde sürüm changelog metni burada
+     * taşınır → runner claim yanıtından okuyup yayınla adımına geçirir. Diğer hedeflerde
+     * yalnız operatör notudur (isteğe bağlı). Uzunluk servis tarafında kırpılır.
+     */
+    note: text('note'),
     /** Dağıtılan git kısa SHA (runner doldurur). */
     gitSha: text('git_sha'),
     /** deploy.sh çıktısının kuyruğu (runner doldurur; sınırlı uzunluk). */

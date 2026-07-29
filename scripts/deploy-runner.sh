@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
 # deploy-runner.sh — VPS HOST'unda çalışan dağıtım işçisi (§16). Panelden gelen
-# "Prod'a dağıt" isteklerini işler: bekleyen isteği alır → `deploy.sh`'ı çalıştırır →
-# sonucu panele geri yazar. Panel konteynerine Docker soketi VERİLMEZ (güvenlik:
-# konteynerden host'a tam erişim demek olurdu) — bu ayrım tam da bu yüzden.
+# istekleri işler: bekleyen isteği alır → ilgili betiği çalıştırır → sonucu panele
+# geri yazar. Panel konteynerine Docker soketi VERİLMEZ (güvenlik: konteynerden host'a
+# tam erişim demek olurdu) — bu ayrım tam da bu yüzden.
+#
+# İKİ HEDEF SINIFI (claim yanıtındaki `target` alanına göre dallanır):
+#   • "plugin"        → ./scripts/publish-plugin.sh "<note>"  — WP eklentisini repo HEAD'inden
+#                       paketleyip panele yayınlar (sürüm artırmaz, commit/push YAPMAZ; prod
+#                       checkout'unda git kimliği/kimlik bilgisi yoktur ve yerel commit bir
+#                       sonraki `deploy.sh` pull'unu kırardı). `note` = changelog metni.
+#   • diğer (api/admin/…) → ./scripts/deploy.sh <target>      — panelin kendisini dağıtır.
 #
 # KURULUM (VPS'te, bir kez): host cron'una dakikada bir ekle —
 #   crontab -e →
@@ -17,7 +24,8 @@
 # (Kilit dosyası ayrıca dış sarmalayıcının kullandığı addan AYRI tutuldu: eski crontab satırı
 # hâlâ duruyorsa bile self-deadlock oluşmaz, tek-örnek güvencesi yine sağlanır.)
 #
-# Gerektirir: jq, curl, git, docker (deploy.sh için). ADMIN_TOKEN repo kökündeki .env'den okunur.
+# Gerektirir: jq, curl, git, docker (deploy.sh için), base64 (publish-plugin.sh için).
+# ADMIN_TOKEN repo kökündeki .env'den okunur.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 cd "$(dirname "$0")/.."   # repo kökü (/opt/lisans-yonetim-paneli)
@@ -55,18 +63,37 @@ id="$(printf '%s' "$claim" | jq -r '.id // empty' 2>/dev/null)"
 [ -z "$id" ] && exit 0
 
 target="$(printf '%s' "$claim" | jq -r '.target // "api admin"' 2>/dev/null)"
-echo "[$(date '+%F %T')] deploy-runner: claim $id → deploy.sh $target"
+# `note` yalnız eklenti yayınında anlamlı (changelog metni). Alan yoksa boş kalır →
+# publish-plugin.sh varsayılan metne ("Sürüm <VER>") düşer; eski API ile de uyumlu.
+note="$(printf '%s' "$claim" | jq -r '.note // empty' 2>/dev/null)"
 
-# 2) deploy.sh'ı çalıştır (çıktıyı yakala; deploy.sh kendi rollback'ini yapar).
-out="$(./scripts/deploy.sh $target 2>&1)"; code=$?
-# Kalan ANSI escape kodlarını soy (deploy.sh TTY'siz zaten renk basmaz — çift savunma).
+# 2) Hedefe göre ilgili betiği çalıştır (çıktıyı yakala; betikler kendi hatalarını raporlar).
+runner_script="deploy.sh"
+if [ "$target" = "plugin" ]; then
+  runner_script="publish-plugin.sh"
+  echo "[$(date '+%F %T')] deploy-runner: claim $id → publish-plugin.sh (eklenti yayını)"
+  if [ ! -x ./scripts/publish-plugin.sh ]; then
+    # Panel bu hedefi sunuyor ama betik prod checkout'unda yok/çalıştırılabilir değil →
+    # sessiz takılma yerine anlamlı hata (repo güncel mi, exec biti korunmuş mu?).
+    out="publish-plugin.sh bulunamadı veya çalıştırılabilir değil — repo güncel mi? (git pull)"
+    code=1
+  else
+    out="$(./scripts/publish-plugin.sh "$note" 2>&1)"; code=$?
+  fi
+else
+  echo "[$(date '+%F %T')] deploy-runner: claim $id → deploy.sh $target"
+  out="$(./scripts/deploy.sh $target 2>&1)"; code=$?
+fi
+# Kalan ANSI escape kodlarını soy (iki betik de TTY'siz renk basmaz — çift savunma).
 out="$(printf '%s' "$out" | sed -E 's/\x1b\[[0-9;]*m//g')"
+# HEAD sha'sı her iki hedefte de anlamlı: panel dağıtımında "hangi sürüm canlı",
+# eklenti yayınında "zip HANGİ commit'ten paketlendi" (ikisi de pull SONRASI okunur).
 sha="$(git rev-parse --short HEAD 2>/dev/null || echo '')"
 status="success"; err=""
 if [ "$code" -ne 0 ]; then
   status="failed"
   err="$(printf '%s' "$out" | grep -E '✗|BAŞARISIZ|FAIL' | tail -1)"
-  [ -z "$err" ] && err="deploy.sh çıkış kodu $code"
+  [ -z "$err" ] && err="$runner_script çıkış kodu $code"
 fi
 
 # 3) Sonucu panele geri yaz (jq ile JSON-safe; ağ takılırsa 3 kez dene). log/error jq İÇİNDE

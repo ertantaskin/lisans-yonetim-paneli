@@ -5,7 +5,12 @@ import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { DEPLOY_TARGETS, DeploymentsService } from './deployments.service';
 
-const RequestSchema = z.object({ target: z.enum(DEPLOY_TARGETS) });
+// note: hedefe özel serbest metin — 'plugin' hedefinde sürüm changelog'u (runner claim
+// yanıtından okur). max(2000) servisin MAX_NOTE_CHARS .slice değeriyle HİZALI.
+const RequestSchema = z.object({
+  target: z.enum(DEPLOY_TARGETS),
+  note: z.string().max(2000).optional(),
+});
 type RequestInput = z.infer<typeof RequestSchema>;
 
 // log/error üst sınırları servisin .slice değerleriyle HİZALI (MAX_LOG_CHARS=20000 / 4000).
@@ -26,7 +31,8 @@ type FinishInput = z.infer<typeof FinishSchema>;
  * - PATCH /:id/finish → runner'ın sonucu (success/failed + log/sha) geri yazması.
  *
  * Panel yalnız KAYIT tutar; gerçek `deploy.sh` çağrısını host'taki runner yapar
- * (API konteynerine Docker soketi VERİLMEZ — güvenlik).
+ * (API konteynerine Docker soketi VERİLMEZ — güvenlik). 'plugin' hedefinde runner
+ * deploy.sh yerine eklenti zip'ini üretip panele publish eder (aynı istek/çalıştırma ayrımı).
  */
 @Controller('admin/deployments')
 @UseGuards(AdminGuard)
@@ -35,7 +41,7 @@ export class DeploymentsController {
 
   @Post()
   async request(@Body(new ZodBody(RequestSchema)) body: RequestInput, @AdminActor() actor: string) {
-    return this.deployments.request(body.target, actor);
+    return this.deployments.request(body.target, actor, body.note);
   }
 
   @Get()

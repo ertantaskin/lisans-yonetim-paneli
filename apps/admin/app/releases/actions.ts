@@ -1,6 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, ApiError } from '../../lib/api';
+import { getActor, isOwner } from '../../lib/session';
 // Yükleme tavanı TEK KAYNAKTAN gelir (./zip-limit): aynı sabit hem bu sunucu action'ının
 // reddetme eşiği hem de publish-form.tsx'teki ipucu metnidir. Buradaki yerel kopyalar
 // (MAX_ZIP_BYTES/MAX_ZIP_LABEL/formatBytes) kaldırıldı — iki yerde tutulunca sınır
@@ -12,6 +13,42 @@ import { MAX_ZIP_BYTES, MAX_ZIP_LABEL, formatBytes } from './zip-limit';
 export interface PublishState {
   ok: boolean;
   message: string;
+}
+
+/**
+ * KAYNAKTAN YAYINLA (önerilen yol) — panelde .zip hazırlamak gerekmez.
+ *
+ * Panel yalnız bir İSTEK kaydeder (`deployments` kuyruğuna `target='plugin'`); VPS host'undaki
+ * runner (cron) bunu görüp `scripts/publish-plugin.sh` ile repo HEAD'inden zip üretip panele
+ * yayınlar. Panel konteynerine Docker/git yazma yetkisi VERİLMEZ — dağıtımdaki ayrımın aynısı.
+ *
+ * Sürüm numarası BURADA girilmez: yayınlanan sürüm, depodaki eklenti kaynağının sürümüdür
+ * (`wpteslimat.php` başlığı + `WPTESLIMAT_VERSION` sabiti). Böylece "yayınlanan zip = HEAD"
+ * invaryantı korunur; sürüm artırımı bir kod değişikliğidir ve commit'lenerek gelir.
+ */
+export async function requestPluginRelease(
+  _prev: PublishState,
+  formData: FormData,
+): Promise<PublishState> {
+  if (!(await isOwner())) {
+    return { ok: false, message: 'Bu işlem yalnız "owner" rolüne açıktır.' };
+  }
+  const note = String(formData.get('note') ?? '')
+    .trim()
+    .slice(0, 2000);
+  try {
+    const actor = await getActor();
+    await apiPost('/v1/admin/deployments', { target: 'plugin', note: note || undefined }, actor);
+  } catch (e) {
+    return { ok: false, message: e instanceof ApiError ? e.message : 'Yayın isteği başarısız' };
+  }
+  revalidatePath('/releases');
+  return {
+    ok: true,
+    message:
+      'Yayın isteği kaydedildi. Host runner en geç 1 dakika içinde çalıştırır — ' +
+      'durumu aşağıdaki "Yayın işleri" tablosundan izleyin (sayfayı yenileyin).',
+  };
 }
 
 /**

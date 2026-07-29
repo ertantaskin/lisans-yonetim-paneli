@@ -3,12 +3,27 @@ import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { deployments, type Deployment } from '../db/schema/deployments';
 
-/** Geçerli dağıtım hedefleri = deploy.sh argümanları (whitelist — enjeksiyon yok). */
-export const DEPLOY_TARGETS = ['api', 'admin', 'api admin'] as const;
+/**
+ * Geçerli dağıtım hedefleri (whitelist — enjeksiyon yok).
+ *
+ * 'api' | 'admin' | 'api admin' → doğrudan `deploy.sh` argümanı (panel→prod dağıtımı).
+ * 'plugin'                      → deploy.sh argümanı DEĞİL; runner'ın AYRI dallandığı hedef:
+ *                                 repo HEAD'inden WP eklenti zip'i üretip panele publish eder
+ *                                 (`scripts/publish-plugin.sh`). Runner target'ı görünce şube
+ *                                 seçer; panel yine yalnız İSTEĞİ kaydeder (Docker soketi verilmez).
+ */
+export const DEPLOY_TARGETS = ['api', 'admin', 'api admin', 'plugin'] as const;
 export type DeployTarget = (typeof DEPLOY_TARGETS)[number];
 
 /** Log gövdesi DB'de sınırlı tutulur (runner deploy.sh çıktısının kuyruğunu gönderir). */
 const MAX_LOG_CHARS = 20000;
+
+/**
+ * Serbest not üst sınırı. 'plugin' hedefinde changelog metni buradan taşınır; controller'ın
+ * Zod `.max(2000)` cap'iyle HİZALI (servis doğrudan çağrıldığında da kırpılır → tutarsız
+ * sınır yüzünden sürpriz 400/DB hatası olmaz).
+ */
+const MAX_NOTE_CHARS = 2000;
 
 /**
  * DeploymentsService — panelden tetiklenen prod dağıtımlarının kaydı (§16). Panel YALNIZ
@@ -22,8 +37,11 @@ export class DeploymentsService {
   /**
    * Yeni dağıtım isteği kaydet (status='pending'). Aynı anda YALNIZ bir aktif (pending/running)
    * dağıtım olabilir → aksi halde 409 (kuyruk yığılması + eşzamanlı deploy engellenir).
+   *
+   * @param note Hedefe özel serbest not; 'plugin' hedefinde sürüm changelog metni (runner
+   *   claim yanıtından okur). MAX_NOTE_CHARS'a kırpılır; boş/whitespace → null.
    */
-  async request(target: string, requestedBy: string): Promise<Deployment> {
+  async request(target: string, requestedBy: string, note?: string): Promise<Deployment> {
     if (!DEPLOY_TARGETS.includes(target as DeployTarget)) {
       throw new BadRequestException(`Geçersiz hedef. İzinli: ${DEPLOY_TARGETS.join(', ')}`);
     }
@@ -45,7 +63,11 @@ export class DeploymentsService {
       }
       const [row] = await tx
         .insert(deployments)
-        .values({ target, requestedBy: requestedBy || 'panel:admin' })
+        .values({
+          target,
+          requestedBy: requestedBy || 'panel:admin',
+          note: note?.slice(0, MAX_NOTE_CHARS).trim() || null,
+        })
         .returning();
       return row!;
     });
@@ -63,6 +85,10 @@ export class DeploymentsService {
   /**
    * Runner: en eski PENDING isteği ATOMİK olarak claim eder (pending→running). `FOR UPDATE
    * SKIP LOCKED` ile iki runner örneği aynı isteği çalıştıramaz. Bekleyen yoksa null.
+   *
+   * Argümansız `.returning()` TÜM kolonları döndürür → runner yanıttan hem `target`
+   * (hangi dala gideceği: deploy.sh vs eklenti yayınlama) hem de `note`'u (plugin
+   * changelog metni) okuyabilir. Yeni kolon eklendiğinde ayrıca listelemek gerekmez.
    */
   async claimNext(): Promise<Deployment | null> {
     // Zombi 'running' temizliği: runner çöküp finish yazamazsa satır kalıcı 'running' kalır

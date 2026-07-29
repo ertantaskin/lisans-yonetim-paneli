@@ -119,6 +119,19 @@ class Wpteslimat_Panel_Client {
         $headers['X-Wp-Actor'] = self::current_actor();
         // Tek-seferlik geçersiz kılma tüketildi → sonraki istek kendi bağlamından çözer.
         self::$actor_override = null;
+
+        // Kurulu eklenti sürümü (§16 görünürlük): panel "hangi sitede hangi sürüm kurulu"
+        // bilgisini gösterebilsin diye taşınır — eski sürümde kalmış siteler panelden fark edilir.
+        // HMAC İMZASI KAPSAMINDA DEĞİLDİR: imza yalnız METHOD\nPATH\nTS\nNONCE\nSHA256(body)
+        // üzerinedir; bu başlık sahtelenebilir ve panel ONA DAYANARAK YETKİ KARARI VERMEZ
+        // (X-Wp-Actor ile AYNI SINIF: salt bilgi/gösterim). Yetki her zaman site HMAC secret'ıyla.
+        // Sabit tanımlı değilse (kısmi yükleme / sınıfın tek başına include edildiği bağlam)
+        // başlık HİÇ eklenmez — savunmalı okuma, fatal üretmez.
+        $plugin_version = defined('WPTESLIMAT_VERSION') ? (string) WPTESLIMAT_VERSION : '';
+        if ($plugin_version !== '') {
+            $headers['X-Wpteslimat-Version'] = $plugin_version;
+        }
+
         $args = [
             'method'  => $method,
             'headers' => $headers,

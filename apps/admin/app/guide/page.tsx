@@ -44,6 +44,7 @@ const TOC: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'musteri', label: 'Müşteriler', icon: Users },
   { id: 'rapor', label: 'Raporlar ve izleme', icon: BarChart3 },
   { id: 'sablon', label: 'Şablonlar ve ayarlar', icon: FileText },
+  { id: 'surum', label: 'Sürüm ve dağıtım', icon: Rocket },
   { id: 'guvenlik', label: 'Güvenlik ilkeleri', icon: ShieldCheck },
   { id: 'kisayol', label: 'Kısayollar ve ipuçları', icon: Keyboard },
 ];
@@ -376,6 +377,25 @@ export default function GuidePage() {
           <li><strong><R href="/settings">Ayarlar</R>:</strong> panel geneli durum ve yapılandırma.</li>
           <li><strong><R href="/admins">Yöneticiler</R>:</strong> (yalnız &quot;owner&quot; rolüne görünür) çoklu-admin yönetimi, rol ve erişim.</li>
         </Bullets>
+      </Section>
+
+      <Section
+        id="surum"
+        icon={Rocket}
+        title="Sürüm ve dağıtım"
+        description="Mağaza eklentisinin güncellenmesi ve panelin kendi dağıtımı."
+      >
+        <Bullets>
+          <li><strong><R href="/releases">Sürümler</R> → &quot;Kaynaktan yayınla&quot;:</strong> tek tuşla yeni eklenti sürümü yayınlar. Dosya hazırlamanız gerekmez — sunucu, depodaki eklenti kodundan paketi kendisi üretir. Sürüm numarası kodda tanımlıdır, formda girilmez.</li>
+          <li><strong>Sitelerdeki kurulu sürüm:</strong> aynı sayfadaki tablo her mağazanın hangi eklenti sürümünü çalıştırdığını gösterir (&quot;güncel&quot; / &quot;eski&quot;). Bilgi, mağazanın panele yaptığı imzalı isteklerden gelir.</li>
+          <li><strong>Mağaza tarafı:</strong> yayınlanan sürüm WordPress → Güncellemeler ekranında görünür. WordPress sürüm bilgisini 12 saat önbelleğe alır; hemen görmek için o ekrandaki <em>&quot;Tekrar denetle&quot;</em> bağlantısını kullanın.</li>
+          <li><strong><R href="/deployments">Dağıtımlar</R>:</strong> panelin kendi sürümünü (API/Admin) canlıya alır ve dağıtım geçmişini gösterir. Sağlık kontrolü başarısız olursa dağıtım otomatik geri alınır.</li>
+          <li>Her iki işlem de yalnız &quot;owner&quot; rolüne açıktır ve aynı kuyruğu kullanır: aynı anda tek iş çalışır.</li>
+        </Bullets>
+        <Tip>
+          Yayın ya da dağıtım isteği anında çalışmaz: sunucudaki görevli en geç bir dakika içinde
+          alır. Durumu ilgili sayfadaki iş tablosundan izleyin (sayfayı yenileyin).
+        </Tip>
       </Section>
 
       <Section

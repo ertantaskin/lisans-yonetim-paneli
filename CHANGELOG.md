@@ -14,6 +14,37 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Panelden sürüm yayınlama + sitelerdeki kurulu sürüm görünürlüğü (migration 0028, eklenti v1.0.0)
+
+Kullanıcı geri bildirimi: *"sürüm ve dağıtımı sen gerçekleştir, panel üzerinde güncellemeler
+çalışmıyor gibi anlayamadım tam olarak."* Teşhis: iki ekran da **kırık değildi**, ama panelden
+uçtan uca **kullanılamıyordu** — `/releases` elde hazır bir `.zip` istiyordu (panelde paket
+üretilemez), `/deployments` ise yalnız zaten push edilmiş kodu canlıya alıyordu. Ayrıca hangi
+mağazanın hangi eklenti sürümünü çalıştırdığı panelde **hiç görünmüyordu**.
+
+**Kaynaktan yayınla (yeni birincil akış)**
+- `/releases` → owner'a özel **"Kaynaktan yayınla"**: dosya seçmeden, tek tuşla yayın. Panel yalnız
+  bir istek kaydeder (`deployments` kuyruğu, `target='plugin'`); VPS host'undaki runner
+  `scripts/publish-plugin.sh` ile **repo HEAD'inden** paketi üretip panele yayınlar. Panel
+  konteynerine Docker/git yazma yetkisi verilmez — dağıtımdaki ayrımın aynısı.
+- Yayınlanan sürüm **kodda tanımlıdır** (formda girilmez): "yayınlanan zip = HEAD" invaryantı korunur.
+  `publish-plugin.sh` VPS'te **commit atmaz, push gerektirmez** (prod checkout'unda git kimliği ve
+  kimlik bilgisi yoktur; commit atsaydı origin'den ayrışıp sonraki `deploy.sh`'ın `git pull --ff-only`
+  adımını kırardı). Sürüm artırımı geliştirici makinesinde commit'lenip push edilir.
+- Elle `.zip` yükleme kurtarma yolu olarak kaldı (artık "gelişmiş" altında).
+
+**Sitelerdeki kurulu sürüm (görünürlük)**
+- Eklenti (v1.0.0+) her imzalı istekte `X-Wpteslimat-Version` gönderir; panel bunu site kaydına
+  yazar (değiştiğinde — her istekte UPDATE yok). Başlık **imza kapsamında değildir** (`X-Wp-Actor`
+  ile aynı sınıf): yalnız gösterim, yetki kararı verilmez.
+- `/releases` → "Sitelerdeki kurulu sürüm" tablosu: güncel / eski (vX mevcut) / bilinmiyor.
+  "Eski" damgası yalnız iki sürüm de bilindiğinde basılır — bilinmeyen sürüm "güncel değil" demek
+  değildir. **migration 0028** (additive): `sites.plugin_version`/`plugin_version_at`, `deployments.note`.
+
+**Eklenti düzeltmesi**
+- Panelde hiç yayın yokken uç `200 {}` döndürüyor; güncelleyici bunu "hata" sayıp 15 dakikalık
+  negatif önbellek yazıyordu. Artık "yayın yok" ile "panele erişilemedi" ayrı ele alınır.
+
 ### Sistem geneli tarama — 35 doğrulanmış bulgu + 6 kendi-regresyon (migration 0027, eklenti v0.9.1)
 
 8 lensli keşif (mail/kuyruk · auth/RBAC · stok/tedarik · müşteri-destek-güvenlik · rapor/AI/SQL ·
