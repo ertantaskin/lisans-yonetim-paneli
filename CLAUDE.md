@@ -922,6 +922,44 @@ buldu → 4 işçi kapattı → 3 işçi glue bağladı.
   `/purchase-orders` + `/suppliers` **200** (önceden kırık), admin+api ERROR 0 · prod migration 0027
   (tracking 28) · `/v1/health` 200 v1.0.0 · eklenti v0.9.1 publish 201. migration 0000-0027.
 
+**PANELDEN KAYNAKTAN SÜRÜM YAYINLAMA + KURULU SÜRÜM GÖRÜNÜRLÜĞÜ (commit 5a50809, CANLI, migration 0028,
+eklenti v1.0.0):** Kullanıcı "sürüm ve dağıtımı sen gerçekleştir, panel üzerinde güncellemeler çalışmıyor gibi
+anlayamadım" dedi. **Teşhis (ölçüldü, tahmin değil): iki ekran da KIRIK DEĞİLDİ** (dev'de ikisi de 200 render),
+ama panelden uçtan uca **kullanılamıyordu** — `/releases` elde hazır `.zip` istiyordu (panelde paket üretilemez),
+`/deployments` yalnız zaten push edilmiş kodu canlıya alıyordu. Ayrıca hangi mağazanın hangi eklenti sürümünü
+çalıştırdığı panelde **hiç görünmüyordu**. 3 paralel işçi (API / betik / WP) + admin UI merkezî.
+- **Kaynaktan yayınla (yeni birincil akış):** `/releases` → owner-only buton → panel yalnız İSTEK kaydeder
+  (`deployments` kuyruğu, `target='plugin'`, `note`=changelog) → host runner `scripts/publish-plugin.sh` ile
+  **repo HEAD'inden** paketleyip panele yayınlar. Panel konteynerine Docker/git yazma yetkisi VERİLMEZ (dağıtımdaki
+  ayrımın aynısı). Aynı kuyruk → "aynı anda tek iş" güvencesi ikisini birden kapsar.
+- **Neden VPS'te commit/push YOK (ölçüldü):** prod checkout'unda `git config user.email` **tanımsız** (commit düşer)
+  ve HTTPS remote kimlik bilgisi yok (`push` → "could not read Username"); dahası yerel commit prod'u origin'den
+  AYIRIR ve sonraki `deploy.sh`'ın `git pull --ff-only` adımını KALICI kırar. Bu yüzden `release-plugin.sh`
+  (geliştirici makinesi: sürüm bump + commit) ile `publish-plugin.sh` (VPS: yalnız yayınla) **bilinçli AYRI**.
+  Sürüm numarası formda GİRİLMEZ — kodda tanımlıdır → **"yayınlanan zip = HEAD"** invaryantı korunur.
+  Elle `.zip` yükleme kurtarma yolu olarak "gelişmiş" altında kaldı.
+- **Kurulu sürüm görünürlüğü:** eklenti **v1.0.0+** her imzalı istekte `X-Wpteslimat-Version` gönderir; HmacGuard
+  imza doğrulandıktan SONRA, değer DEĞİŞTİYSE site kaydına yazar (her istekte UPDATE yok; fire-and-forget, hata
+  isteği düşürmez). **Başlık İMZA KAPSAMINDA DEĞİL** (`x-wp-actor` ile aynı sınıf) → yalnız gösterim/telemetri,
+  yetki kararı ASLA buna dayandırılmaz. `/releases` "Sitelerdeki kurulu sürüm": güncel / eski (vX mevcut) /
+  bilinmiyor — "eski" damgası YALNIZ iki sürüm de bilindiğinde basılır.
+- **migration 0028** (additive): `sites.plugin_version` + `plugin_version_at`, `deployments.note`. 0027'de
+  snapshot hizalandığı için `db:generate` tam olarak bu 3 kolonu üretti. **DİKKAT (tuzak):** elle yazılan
+  0021-0027 uydurma GELECEK zaman damgaları kullanıyor; drizzle-kit gerçek saati yazınca 0028'in damgası 0027'den
+  KÜÇÜK çıktı → migration sessizce hiç uygulanmayacaktı (API var olmayan kolonlarla boot ederdi). Elle düzeltildi
+  (`when` = 0027 + 10000). **Uydurma damgalar gerçek saati geçene (2026-08-05) kadar her yeni migration'da
+  `when` elle kontrol edilmeli.**
+- **Eklenti düzeltmesi:** panelde hiç yayın yokken uç `200 {}` döndürüyor, güncelleyici bunu "hata" sayıp 15dk
+  negatif önbellek yazıyordu → "yayın yok" ile "panele erişilemedi" ayrıldı (kısa pozitif-boş önbellek).
+- **Doğrulama:** typecheck 4/4 + `check-use-server` 20 dosya/66 export temiz · api birim 56/56 · admin production
+  build · VPS izole test DB **entegrasyon 135/135** (4 yeni plugin-target testi) · PHP-lint 12/12 · prod deploy
+  (rollback'li) → `/health` 200 v1.0.0, migration tracking 29, boot ERROR 0 · **panel yolundan v1.0.0 yayını
+  uçtan uca kanıtlandı** (istek → cron runner claim → publish → success 42 sn; public update ucu v1.0.0, zip
+  94.717 bayt) · **dev E2E:** sentetik daha yeni sürümde WP "GUNCELLEME VAR → 1.0.1" (güncelleme zinciri gerçekten
+  çalışıyor; sonra temizlendi) + katalog senkronu sonrası dev panelde `plugin_version=1.0.0`. migration 0000-0028.
+- **NOT (ortam):** prod panelde yalnız 1 test sitesi + 1 sipariş var; gerçek WooCommerce testleri **dev ortamında**
+  (`dev-wp.167-233-108-12.sslip.io`) yapılıyor. Prod panele gerçek mağaza henüz bağlı DEĞİL.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
