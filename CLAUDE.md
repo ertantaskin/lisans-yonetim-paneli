@@ -960,6 +960,41 @@ ama panelden uçtan uca **kullanılamıyordu** — `/releases` elde hazır `.zip
 - **NOT (ortam):** prod panelde yalnız 1 test sitesi + 1 sipariş var; gerçek WooCommerce testleri **dev ortamında**
   (`dev-wp.167-233-108-12.sslip.io`) yapılıyor. Prod panele gerçek mağaza henüz bağlı DEĞİL.
 
+**GELECEĞE-HAZIRLIK: DAYANIKLILIK + RETENTION + PERFORMANS (commit ed3850c, CANLI, migration 0029):**
+Kullanıcı "tüm eksikleri düzelt, geleceğe hazırla, performanslı+güvenli, sistem asla sorun yaratmamalı,
+stres testi + tablo" dedi. **Çok-ajanlı 41-öngörülü arıza-modu taraması + fault-injection** (dev izole
+ortamda Redis/Postgres GERÇEKTEN kırılarak) ile sistemik açıklar kapatıldı. 4 disjoint-dosya işçi + entegratör.
+**KÖK TEMA: hiçbir katmanda zaman aşımı yoktu** → backing servis degrade olunca istekler askıda kalıyordu
+(ÖLÇÜLDÜ: Redis donunca push 12sn askı, PG advisory-lock'ta createOrder 50sn askı, /health bile yanıtsız).
+- **A (dayanıklılık):** redis.module fail-fast (`commandTimeout` 2s + `enableOfflineQueue:false` +
+  `maxRetriesPerRequest:1`; BullMQ AYRI null-retry bağlantısını korur). HMAC nonce Redis-DOWN'da
+  **fail-CLOSED-FAST** (503, askı yok); rate-limit **fail-OPEN**; health `Promise.race` 2s → hızlı degraded.
+  db.module `statement_timeout 30s`+`lock_timeout 10s`+`idle_in_transaction 60s`+`connect_timeout 10s`
+  (postgres.js `connection` option — SET LOCAL 5s AI yolu etkilenmez). main.ts Fastify `requestTimeout 30s`.
+  Redis `maxmemory 768mb+noeviction` (docker-compose; prod'a canlı CONFIG SET de uygulandı).
+- **HMAC IP başarısızlık-tavanı (KRİTİK TASARIM):** IP limiti **YALNIZ auth-FAIL** (geçersiz api_key/imza)
+  sayar — her istekte önce `peekOverLimit` ile "IP cezalı mı" bakılır (findForAuth DB lookup'ından ÖNCE),
+  sayaç yalnız başarısızlıkta artar. **Meşru mağaza (imzası hep geçerli) ASLA kısıtlanmaz.** DERS: ilk
+  tasarım "tüm istekleri say"dı; **stres testi ortaya çıkardı** ki bir mağazanın TÜM trafiği (push + katalog
+  + tüm sunucu-taraflı lisans-görüntüleme fetch'leri) tek sunucu IP'sinden geldiği için yoğun meşru mağaza
+  429 yiyordu → auth-fail-only'ye çevrildi. env `HMAC_IP_FAIL_LIMIT` (vars. 120).
+- **B (retention, migration 0029 additive index):** `RetentionService` günlük batch-delete: fulfillment_events
+  180g · outbox(delivered) 30g · security_events 365g · email_log 365g PII MASKELE+730g SİL (KVKK) · audit
+  auto-reveal gürültüsü 90g (gerçek denetim KORUNUR). reconcile 30g pencere (`RECONCILE_FULL` ile tam). Sweep
+  `@OnWorkerEvent('failed')` kritik alarm (sessiz ölüm bitti). `POST /v1/admin/maintenance/retention` manuel.
+  **migration 0029:** fulfillment_events+email_log `created_at` index; snapshot hizalandı (`db:generate` "No
+  schema changes"; spurious 0030 üretti — zaman-damgası tuzağı yine görüldü, temizlendi). env cömert varsayılan.
+- **C (perf):** stok import `autoCompleteProduct(maxLines?)` cap 200 inline + kalanı BullMQ'ya (jobId dedupe) →
+  büyük backlog import'u dakikalarca asmaz. Geriye-uyumlu (maxLines'sız = eski sınırsız davranış).
+- **FAULT-INJECTION KANITI (dev, gerçek kırma):** Redis-down push 12sn→**503/4.5sn** + health hızlı degraded;
+  PG-kilit createOrder 50sn→**500/10.5sn** + **/health 18ms** (cascade bitti). **STRES (dev, güncel ~5k sipariş):**
+  okuma **652 istek/sn @300VU 0 hata** (regresyon yok); yazma no-wedge + meşru trafik artık 429 yemiyor.
+- **Doğrulama:** typecheck+build temiz · api birim **56/56** · VPS izole test DB **entegrasyon 145/145 + yarış 3/3**
+  (çifte-satış=0) · prod deploy.sh (rollback'li) → **/health 200 v1.0.0**, migration tracking 30, boot ERROR 0,
+  0029 indeksleri canlı, retention ucu smoke OK. Yeni env hepsi opsiyonel+cömert varsayılan (.env.example). DERS:
+  [[denetim-regresyon-dersleri]] — "kendi düzeltmen yeni yol açar" (rate-limit ilk hali meşru mağazayı 429'ladı,
+  stres testi yakaladı → düzeltildi). migration 0000-0029.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

@@ -14,6 +14,45 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Geleceğe-hazırlık: dayanıklılık + retention + performans (migration 0029)
+
+Kullanıcı: *"tüm eksikleri kontrol edip düzelt, geleceğe hazırla, performanslı+güvenli, sistem asla
+sorun yaratmamalı, stres testi yap, tablo sun."* Çok-ajanlı **41-öngörülü arıza-modu taraması** +
+**fault-injection testleriyle** (dev izole ortamda Redis/Postgres'i gerçekten kırarak) bulunan sistemik
+açıklar kapatıldı. **Kök tema: hiçbir katmanda zaman aşımı yoktu** — bir backing servis yavaşlayınca
+istekler hızlı-başarısız yerine SÜRESİZ askıda kalıyordu (ölçüldü: Redis donunca 12sn, PG kilidinde 50sn,
+/health bile yanıtsız).
+
+**A — Dayanıklılık (fail-fast, her katmanda zaman aşımı):**
+- **Redis:** fail-fast bağlantı (`commandTimeout` 2s + `enableOfflineQueue:false`); BullMQ kendi
+  null-retry bağlantısını korur. HMAC nonce Redis-DOWN'da **fail-CLOSED-FAST** (503, askı yok — güvenlik
+  kontrolü doğrulanamıyorsa reddet; WP retry eder, veri kaybı yok); rate-limit **fail-OPEN**; `/health`
+  `Promise.race` 2s → hızlı `degraded` (503). `maxmemory 768mb + noeviction` (host OOM-kill'i önler).
+- **Postgres:** `statement_timeout` 30s + `lock_timeout` 10s + `idle_in_transaction_session_timeout` 60s
+  + `connect_timeout` 10s → takılan sorgu/kilit tüm havuzu askıya almaz.
+- **Fastify:** `requestTimeout` 30s. **HMAC uçlarına IP başarısızlık-tavanı** — YALNIZ auth-FAIL
+  (geçersiz api_key/imza) sayılır; her istekte önce peek ile "bu IP cezalı mı" bakılır (findForAuth DB
+  lookup'ından ÖNCE). Meşru mağaza (imzası hep geçerli) ASLA kısıtlanmaz; saldırgan sel N başarısızlıktan
+  sonra DB'ye inmeden 429. (Stres testi eski "tüm istekleri say" tasarımının yoğun mağazayı yanlışlıkla
+  429'ladığını ortaya çıkardı → düzeltildi.)
+
+**B — Retention/bakım (migration 0029, additive index):**
+- **RetentionService** (günlük, batch delete): fulfillment_events 180g SİL · outbox(delivered) 30g SİL ·
+  security_events 365g SİL · email_log 365g PII **MASKELE** + 730g SİL (KVKK) · audit_log otomatik-reveal
+  gürültüsü 90g SİL (gerçek denetim aksiyonları KORUNUR). Hepsi env ile ayarlanabilir. Manuel:
+  `POST /v1/admin/maintenance/retention`.
+- **reconcile** sıcak-yol 30 gün penceresi (tam-tablo tarama yerine; `RECONCILE_FULL` ile tam koşu).
+- **Sweep hata alarmı** (`@OnWorkerEvent('failed')` → kritik bildirim) — sessiz ölüm bitti.
+
+**C — Performans:** stok import `autoComplete` cap 200 satır inline + kalanı arka plana (BullMQ, jobId
+dedupe) → büyük backlog'da import isteği dakikalarca asılmaz (geriye-uyumlu; küçük backlog eski hızlı yol).
+
+**Fault-injection KANITI (dev'de gerçek kırma):** Redis donunca push artık **12sn askı yerine 503/4.5sn**
++ health hızlı degraded; PG advisory-lock tutulurken createOrder **50sn askı yerine 500/10.5sn** ve
+**/health 18ms'de yanıt** (cascade bitti). Çifte-satış hâlâ = 0 (yarış 3/3).
+
+
+
 ### Panelden sürüm yayınlama + sitelerdeki kurulu sürüm görünürlüğü (migration 0028, eklenti v1.0.0)
 
 Kullanıcı geri bildirimi: *"sürüm ve dağıtımı sen gerçekleştir, panel üzerinde güncellemeler
