@@ -46,6 +46,27 @@ export class RateLimitService {
       return true;
     }
   }
+
+  /**
+   * Sayacı ARTIRMADAN mevcut değerini okuyup limiti aşıp aşmadığını döndürür (peek).
+   *
+   * `hit`'ten farkı: sayaç ARTMAZ. Kullanım: yalnız BAŞARISIZ işlemleri sayan bir limitte
+   * (ör. HMAC auth-fail), her istekte önce "bu IP zaten cezalı mı?" diye BAKMAK için — meşru
+   * istekler sayacı artırmadan geçer, yalnız gerçek başarısızlıklar `hit` ile artırılır.
+   *
+   * @returns true = sayaç ≥ limit (çağıran 429 üretmeli); false = altında ya da Redis hatası (fail-OPEN).
+   */
+  async peekOverLimit(key: string, limit: number): Promise<boolean> {
+    try {
+      const raw = await this.redis.get(`rl:${key}`);
+      const count = raw != null ? Number(raw) : 0;
+      return Number.isFinite(count) && count >= limit;
+    } catch (err) {
+      // fail-OPEN: Redis erişilemezse engelleme (izin ver) — `hit` ile aynı gerekçe.
+      this.logger.warn(`RateLimit peek Redis hatası — fail-open (engellenmedi): ${String(err)}`);
+      return false;
+    }
+  }
 }
 
 /**

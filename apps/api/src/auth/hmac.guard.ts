@@ -31,10 +31,16 @@ const PLUGIN_VERSION_HEADER = 'x-wpteslimat-version';
 /** Katı `N.N.N` — uymayan değer sessizce yok sayılır. */
 const PLUGIN_VERSION_RE = /^\d+\.\d+\.\d+$/;
 
-/** IP başına dakikalık istek tavanı — CÖMERT varsayılan (meşru yüksek-hacimli mağaza engellenmez). */
-const HMAC_IP_RL_DEFAULT = 600;
-/** IP hız-sınırı penceresi (saniye). Retry-After da bu değerdir. */
-const HMAC_IP_RL_WINDOW_SEC = 60;
+/**
+ * IP başına dakikalık BAŞARISIZ kimlik-doğrulama tavanı. YALNIZ auth-FAIL (geçersiz api_key ya da
+ * geçersiz imza) sayılır — meşru bir mağazanın (imzası her zaman geçerli) sayacı ASLA artmaz, yani
+ * meşru yüksek-hacimli trafik HİÇ kısıtlanmaz. Amaç yalnız geçersiz-imza selinin `findForAuth` DB
+ * lookup'ıyla havuzu tüketmesini önlemek: bir IP bu kadar başarısızlığa ulaşınca sonraki istekleri
+ * DB'ye HİÇ inmeden (peek) 429 yer. Meşru mağaza normalde 0 başarısızlık üretir; 120 çok cömert.
+ */
+const HMAC_IP_FAIL_DEFAULT = 120;
+/** IP başarısızlık penceresi (saniye). Retry-After da bu değerdir. */
+const HMAC_IP_FAIL_WINDOW_SEC = 60;
 
 /** Request'e iliştirilen doğrulanmış site (controller'lar @CurrentSite ile alır). */
 export interface AuthedRequest extends FastifyRequest {
@@ -84,32 +90,26 @@ export class HmacGuard implements CanActivate {
       throw new UnauthorizedException('İmza zaman penceresi dışında');
     }
 
-    // 1.5) IP hız-sınırı — DB findForAuth lookup'ından ÖNCE (§4/§16 dayanıklılık). Geçersiz-imza
-    //   seli her istekte bir DB lookup (+ havuz slotu) harcar; CÖMERT bir IP limiti (varsayılan
-    //   600/dk/IP, env `HMAC_IP_RATE_LIMIT` ile) DB havuzunu bu selden korur ama meşru yüksek-hacimli
-    //   mağazayı engellemez. IP kaynağı @Ip() ile aynı: Fastify `req.ip` (trustProxy=1 → spoof yok).
-    //   RateLimitService Redis hatasında fail-OPEN döner (izin ver) → burada 429 ÜRETİLMEZ; istek
-    //   yine de aşağıda nonce adımında fail-closed olur (çift savunma tutarlı). Yalnız birim testinde
-    //   rateLimit undefined → adım atlanır (davranış-nötr).
-    if (this.rateLimit) {
-      const ip = str((req as { ip?: string }).ip) ?? 'unknown';
-      const allowed = await this.rateLimit.hit(
-        `hmac:ip:${ip}`,
-        this.ipRateLimit(),
-        HMAC_IP_RL_WINDOW_SEC,
-      );
-      if (!allowed) {
-        const res = context
-          .switchToHttp()
-          .getResponse<{ header?: (k: string, v: string) => void }>();
-        res.header?.('retry-after', String(HMAC_IP_RL_WINDOW_SEC));
-        throw new HttpException('Çok fazla istek', HttpStatus.TOO_MANY_REQUESTS);
-      }
+    // 1.5) IP başarısızlık-tavanı — DB findForAuth lookup'ından ÖNCE PEEK (§4/§16 dayanıklılık).
+    //   Geçersiz-imza seli her istekte bir DB lookup (+ havuz slotu) harcar. Sayaç YALNIZ auth-FAIL'de
+    //   artar (aşağıda), burada yalnız BAKILIR (peek, sayaç artmaz): bir IP zaten cezalıysa DB'ye
+    //   HİÇ inmeden 429 yer. Meşru mağaza (imzası geçerli) hiç başarısızlık üretmez → sayacı 0 kalır →
+    //   ASLA kısıtlanmaz (eski "tüm istekleri say" tasarımı yoğun mağazayı yanlışlıkla 429'luyordu).
+    //   IP kaynağı @Ip() ile aynı: Fastify `req.ip` (trustProxy=1 → spoof yok). Redis hatasında
+    //   peekOverLimit fail-OPEN (false) → engellemez; nonce adımı yine de fail-closed olur.
+    const ip = str((req as { ip?: string }).ip) ?? 'unknown';
+    const failKey = `hmacfail:ip:${ip}`;
+    const failLimit = this.ipFailLimit();
+    if (this.rateLimit && (await this.rateLimit.peekOverLimit(failKey, failLimit))) {
+      this.tooManyRequests(context);
     }
 
-    // 2) Site + secret
+    // 2) Site + secret. Bulunamazsa auth-FAIL → IP sayacını artır (sel koruması) ve 401.
     const auth = await this.sites.findForAuth(apiKey);
-    if (!auth) throw new UnauthorizedException('Geçersiz API anahtarı');
+    if (!auth) {
+      await this.recordAuthFailure(failKey, failLimit);
+      throw new UnauthorizedException('Geçersiz API anahtarı');
+    }
 
     // 3) İmza doğrula
     const bodyHash = createHash('sha256')
@@ -129,6 +129,8 @@ export class HmacGuard implements CanActivate {
       return CryptoService.safeEqual(signature, expected);
     });
     if (!valid) {
+      // auth-FAIL (geçerli api_key ama yanlış imza) → IP sayacını artır (sel koruması) ve 401.
+      await this.recordAuthFailure(failKey, failLimit);
       throw new UnauthorizedException('Geçersiz imza');
     }
 
@@ -182,14 +184,28 @@ export class HmacGuard implements CanActivate {
   }
 
   /**
-   * IP başına dakikalık istek tavanı. Env `HMAC_IP_RATE_LIMIT` geçerli bir pozitif sayıysa onu,
-   * aksi halde CÖMERT varsayılanı (600) kullanır. Cömert olması ŞART: meşru yüksek-hacimli mağaza
-   * engellenmemeli; amaç yalnız geçersiz-imza selinin DB havuzunu tüketmesini önlemek.
+   * IP başına pencere içi BAŞARISIZ auth tavanı. Env `HMAC_IP_FAIL_LIMIT` geçerli pozitif sayıysa
+   * onu, aksi halde varsayılanı (120) kullanır. Meşru mağaza hiç başarısızlık üretmediği için bu
+   * değer yalnız saldırgan/yanlış-yapılandırılmış istemciyi etkiler; cömert tutulur.
    */
-  private ipRateLimit(): number {
-    const raw = this.config?.get<string>('HMAC_IP_RATE_LIMIT');
+  private ipFailLimit(): number {
+    const raw = this.config?.get<string>('HMAC_IP_FAIL_LIMIT');
     const n = raw != null ? Number(raw) : NaN;
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : HMAC_IP_RL_DEFAULT;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : HMAC_IP_FAIL_DEFAULT;
+  }
+
+  /** auth-FAIL sayacını bir artırır (yalnız gerçek başarısızlıkta çağrılır). Best-effort. */
+  private async recordAuthFailure(failKey: string, failLimit: number): Promise<void> {
+    if (!this.rateLimit) return;
+    // hit sayacı artırır; dönüşü burada önemsiz (bloklamayı bir SONRAKİ isteğin peek'i yapar).
+    await this.rateLimit.hit(failKey, failLimit, HMAC_IP_FAIL_WINDOW_SEC);
+  }
+
+  /** 429 + Retry-After üretir (tekrar-suçlu IP peek ile yakalandığında). */
+  private tooManyRequests(context: ExecutionContext): never {
+    const res = context.switchToHttp().getResponse<{ header?: (k: string, v: string) => void }>();
+    res.header?.('retry-after', String(HMAC_IP_FAIL_WINDOW_SEC));
+    throw new HttpException('Çok fazla başarısız istek', HttpStatus.TOO_MANY_REQUESTS);
   }
 }
 

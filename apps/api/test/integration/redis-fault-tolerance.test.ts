@@ -49,6 +49,12 @@ function fakeSites(secret: string): { svc: SitesService; findForAuth: ReturnType
   return { svc: { findForAuth } as unknown as SitesService, findForAuth };
 }
 
+/** findForAuth null döndüren (geçersiz api_key) minimal SitesService. */
+function fakeSitesNull(): { svc: SitesService; findForAuth: ReturnType<typeof vi.fn> } {
+  const findForAuth = vi.fn(async () => null);
+  return { svc: { findForAuth } as unknown as SitesService, findForAuth };
+}
+
 describe('RateLimitService.hit — Redis hatası → fail-OPEN', () => {
   it('eval reject ederse izin verir (true) ve sessiz kalmaz', async () => {
     const throwingRedis = {
@@ -94,20 +100,16 @@ describe('HmacGuard — Redis-DOWN nonce fail-CLOSED-FAST', () => {
   });
 });
 
-describe('HmacGuard — IP hız-sınırı (findForAuth ÖNCESİ)', () => {
-  it('IP limiti aşılırsa 429 atar ve findForAuth ÇAĞRILMAZ (DB korunur)', async () => {
+describe('HmacGuard — IP başarısızlık-tavanı (yalnız auth-FAIL sayılır)', () => {
+  it('IP cezalıysa (peek over limit) 429 atar ve findForAuth ÇAĞRILMAZ (DB korunur)', async () => {
     const secret = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
     const apiKey = `ak-${randomUUID()}`;
     const { svc, findForAuth } = fakeSites(secret);
     const nonceRedis = { set: vi.fn(async () => 'OK') };
-    const denyingRateLimit = { hit: vi.fn(async () => false) };
+    // Zaten cezalı IP: peek limiti aşılmış döner → findForAuth'a inmeden 429.
+    const rateLimit = { peekOverLimit: vi.fn(async () => true), hit: vi.fn(async () => true) };
     const config = { get: vi.fn(() => undefined) };
-    const guard = new HmacGuard(
-      svc,
-      nonceRedis as never,
-      denyingRateLimit as never,
-      config as never,
-    );
+    const guard = new HmacGuard(svc, nonceRedis as never, rateLimit as never, config as never);
     const header = vi.fn();
     const req = signedReq(apiKey, secret);
 
@@ -119,32 +121,41 @@ describe('HmacGuard — IP hız-sınırı (findForAuth ÖNCESİ)', () => {
     }
     expect(caught).toBeInstanceOf(HttpException);
     expect((caught as HttpException).getStatus()).toBe(429);
-    // Kritik: hız-sınırı DB lookup'ından ÖNCE reddetti (geçersiz-imza seli DB'yi harcayamaz).
+    // Kritik: DB lookup'ından ÖNCE reddetti (geçersiz-imza seli DB'yi harcayamaz).
     expect(findForAuth).not.toHaveBeenCalled();
     expect(header).toHaveBeenCalledWith('retry-after', expect.any(String));
   });
 
-  it('env HMAC_IP_RATE_LIMIT geçersizken cömert varsayılan (600) ile hit çağrılır', async () => {
+  it('geçersiz api_key → auth-FAIL sayacı artar (hit çağrılır) + 401', async () => {
+    const secret = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+    const apiKey = `ak-${randomUUID()}`;
+    const { svc, findForAuth } = fakeSitesNull(); // findForAuth null
+    const nonceRedis = { set: vi.fn(async () => 'OK') };
+    const rateLimit = { peekOverLimit: vi.fn(async () => false), hit: vi.fn(async () => true) };
+    const config = { get: vi.fn(() => undefined) };
+    const guard = new HmacGuard(svc, nonceRedis as never, rateLimit as never, config as never);
+    const req = signedReq(apiKey, secret);
+
+    await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(HttpException);
+    expect(findForAuth).toHaveBeenCalledOnce();
+    // Sayaç YALNIZ başarısızlıkta arttı: hmacfail:ip anahtarı + varsayılan 120.
+    expect(rateLimit.hit).toHaveBeenCalledWith(expect.stringMatching(/^hmacfail:ip:/), 120, 60);
+  });
+
+  it('geçerli mağaza (imza doğru) → peek 0, hit ASLA çağrılmaz (meşru trafik kısıtlanmaz)', async () => {
     const secret = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
     const apiKey = `ak-${randomUUID()}`;
     const { svc } = fakeSites(secret);
     const nonceRedis = { set: vi.fn(async () => 'OK') };
-    const allowingRateLimit = { hit: vi.fn(async () => true) };
-    const config = { get: vi.fn(() => undefined) }; // env yok → 600
-    const guard = new HmacGuard(
-      svc,
-      nonceRedis as never,
-      allowingRateLimit as never,
-      config as never,
-    );
+    const rateLimit = { peekOverLimit: vi.fn(async () => false), hit: vi.fn(async () => true) };
+    const config = { get: vi.fn(() => undefined) }; // env yok → 120
+    const guard = new HmacGuard(svc, nonceRedis as never, rateLimit as never, config as never);
     const req = signedReq(apiKey, secret);
 
     await expect(guard.canActivate(ctxFor(req))).resolves.toBe(true);
-    expect(allowingRateLimit.hit).toHaveBeenCalledWith(
-      expect.stringMatching(/^hmac:ip:/),
-      600,
-      60,
-    );
+    expect(rateLimit.peekOverLimit).toHaveBeenCalledWith(expect.stringMatching(/^hmacfail:ip:/), 120);
+    // KRİTİK: başarılı istekte sayaç ARTMAZ → yoğun meşru mağaza asla 429 yemez.
+    expect(rateLimit.hit).not.toHaveBeenCalled();
   });
 });
 
@@ -153,9 +164,10 @@ describe('HmacGuard + RateLimitService — çift savunma (fail-open + fail-close
     const secret = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
     const apiKey = `ak-${randomUUID()}`;
     const { svc } = fakeSites(secret);
-    // Tek fake bağlantı: hem RateLimitService.eval hem guard nonce.set için reject eder.
+    // Tek fake bağlantı: peek (RateLimitService.get) fail-open, nonce (set) fail-closed eder.
+    // config get burada REDIS değil ConfigService — ayrı; downRedis yalnız ioredis yerine geçer.
     const downRedis = {
-      eval: vi.fn(async () => {
+      get: vi.fn(async () => {
         throw new Error('redis down (simüle)');
       }),
       set: vi.fn(async () => {
@@ -167,11 +179,11 @@ describe('HmacGuard + RateLimitService — çift savunma (fail-open + fail-close
     const guard = new HmacGuard(svc, downRedis as never, rateLimit, config as never);
     const req = signedReq(apiKey, secret);
 
-    // rate-limit fail-open → geçer; imza doğru → nonce'a ulaşır; nonce fail-closed → 503.
+    // peek fail-open (engellemez) → imza doğru → nonce'a ulaşır; nonce fail-closed → 503.
     await expect(guard.canActivate(ctxFor(req))).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
-    expect(downRedis.eval).toHaveBeenCalled(); // rate-limit denendi (fail-open)
-    expect(downRedis.set).toHaveBeenCalled(); // nonce denendi (fail-closed)
+    expect(downRedis.get).toHaveBeenCalled(); // peek denendi (fail-open → engellemedi)
+    expect(downRedis.set).toHaveBeenCalled(); // nonce denendi (fail-closed → 503)
   });
 });
