@@ -41,7 +41,13 @@ export const emailLog = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [index('email_log_order_idx').on(t.orderId)],
+  (t) => [
+    index('email_log_order_idx').on(t.orderId),
+    // Saklama/budama (retention) sıcak yolu: RetentionService created_at'e göre eski satırları
+    // KVKK maskeler (≥365g) ve siler (≥730g). Mevcut order_idx bu taramaya YARAMAZ (order_id
+    // prefiksli, üstelik nullable) → ayrı created_at index'i gerekir (migration 0029).
+    index('email_log_created_idx').on(t.createdAt),
+  ],
 );
 
 export type DeliveryTemplate = typeof deliveryTemplates.$inferSelect;

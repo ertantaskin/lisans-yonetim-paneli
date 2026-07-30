@@ -1,5 +1,15 @@
 import { createHash, createHmac } from 'node:crypto';
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Optional,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { FastifyRequest } from 'fastify';
 import type Redis from 'ioredis';
 import { Inject } from '@nestjs/common';
@@ -10,6 +20,7 @@ import {
   buildSignaturePayload,
 } from '@lisans/shared';
 import { CryptoService } from '../crypto/crypto.service';
+import { RateLimitService } from '../common/rate-limit.service';
 import { REDIS } from '../redis/redis.module';
 import { SitesService } from '../sites/sites.service';
 import type { Site } from '../db/schema';
@@ -19,6 +30,11 @@ const PLUGIN_VERSION_HEADER = 'x-wpteslimat-version';
 
 /** Katı `N.N.N` — uymayan değer sessizce yok sayılır. */
 const PLUGIN_VERSION_RE = /^\d+\.\d+\.\d+$/;
+
+/** IP başına dakikalık istek tavanı — CÖMERT varsayılan (meşru yüksek-hacimli mağaza engellenmez). */
+const HMAC_IP_RL_DEFAULT = 600;
+/** IP hız-sınırı penceresi (saniye). Retry-After da bu değerdir. */
+const HMAC_IP_RL_WINDOW_SEC = 60;
 
 /** Request'e iliştirilen doğrulanmış site (controller'lar @CurrentSite ile alır). */
 export interface AuthedRequest extends FastifyRequest {
@@ -41,6 +57,11 @@ export class HmacGuard implements CanActivate {
   constructor(
     private readonly sites: SitesService,
     @Inject(REDIS) private readonly redis: Redis,
+    // IP hız-sınırı (fail-fast dayanıklılık partisi) için. @Optional + `?`: üretimde @Global
+    // RateLimitModule + ConfigModule'den DI ile HER ZAMAN enjekte edilir; birim testleri guard'ı
+    // 2-arg elle new'ler → undefined kalır ve IP-limit adımı GÜVENLE atlanır (davranış-nötr).
+    @Optional() private readonly rateLimit?: RateLimitService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -61,6 +82,29 @@ export class HmacGuard implements CanActivate {
     const ts = Number(timestamp);
     if (!Number.isFinite(ts) || Math.abs(now - ts) > HMAC_TIMESTAMP_TOLERANCE_SEC) {
       throw new UnauthorizedException('İmza zaman penceresi dışında');
+    }
+
+    // 1.5) IP hız-sınırı — DB findForAuth lookup'ından ÖNCE (§4/§16 dayanıklılık). Geçersiz-imza
+    //   seli her istekte bir DB lookup (+ havuz slotu) harcar; CÖMERT bir IP limiti (varsayılan
+    //   600/dk/IP, env `HMAC_IP_RATE_LIMIT` ile) DB havuzunu bu selden korur ama meşru yüksek-hacimli
+    //   mağazayı engellemez. IP kaynağı @Ip() ile aynı: Fastify `req.ip` (trustProxy=1 → spoof yok).
+    //   RateLimitService Redis hatasında fail-OPEN döner (izin ver) → burada 429 ÜRETİLMEZ; istek
+    //   yine de aşağıda nonce adımında fail-closed olur (çift savunma tutarlı). Yalnız birim testinde
+    //   rateLimit undefined → adım atlanır (davranış-nötr).
+    if (this.rateLimit) {
+      const ip = str((req as { ip?: string }).ip) ?? 'unknown';
+      const allowed = await this.rateLimit.hit(
+        `hmac:ip:${ip}`,
+        this.ipRateLimit(),
+        HMAC_IP_RL_WINDOW_SEC,
+      );
+      if (!allowed) {
+        const res = context
+          .switchToHttp()
+          .getResponse<{ header?: (k: string, v: string) => void }>();
+        res.header?.('retry-after', String(HMAC_IP_RL_WINDOW_SEC));
+        throw new HttpException('Çok fazla istek', HttpStatus.TOO_MANY_REQUESTS);
+      }
     }
 
     // 2) Site + secret
@@ -88,9 +132,19 @@ export class HmacGuard implements CanActivate {
       throw new UnauthorizedException('Geçersiz imza');
     }
 
-    // 4) Nonce tekilliği (imza geçerliyse harcanır → replay engeli)
+    // 4) Nonce tekilliği (imza geçerliyse harcanır → replay engeli).
+    //   Redis erişilemezse (donma/OOM) fail-CLOSED-FAST: nonce bir GÜVENLİK kontrolüdür (replay);
+    //   doğrulanamıyorsa isteği REDDET (askıda BEKLEME). redis.commandTimeout=2000 sayesinde SET en
+    //   geç ~2sn'de reject eder → 12sn'lik askıda kalma biter. WP tarafı 503'ü retry eder (veri
+    //   kaybı yok). NOT: idempotency anahtarı (site+order+line) çifte-atamayı zaten önler; yine de
+    //   güvenli tarafta kalıp reddediyoruz (replay penceresini doğrulayamadan geçirmeyiz).
     const nonceKey = `nonce:${auth.site.id}:${nonce}`;
-    const set = await this.redis.set(nonceKey, '1', 'EX', HMAC_NONCE_TTL_SEC, 'NX');
+    let set: string | null;
+    try {
+      set = await this.redis.set(nonceKey, '1', 'EX', HMAC_NONCE_TTL_SEC, 'NX');
+    } catch {
+      throw new ServiceUnavailableException('Servis geçici olarak kullanılamıyor');
+    }
     if (set !== 'OK') throw new UnauthorizedException('Nonce tekrar kullanıldı (replay)');
 
     // 5) Kurulu eklenti sürümünü kaydet (yalnız kimliği KANITLANMIŞ site için — imza
@@ -125,6 +179,17 @@ export class HmacGuard implements CanActivate {
     } catch {
       // Telemetri hiçbir koşulda kimlik doğrulamayı bozmaz.
     }
+  }
+
+  /**
+   * IP başına dakikalık istek tavanı. Env `HMAC_IP_RATE_LIMIT` geçerli bir pozitif sayıysa onu,
+   * aksi halde CÖMERT varsayılanı (600) kullanır. Cömert olması ŞART: meşru yüksek-hacimli mağaza
+   * engellenmemeli; amaç yalnız geçersiz-imza selinin DB havuzunu tüketmesini önlemek.
+   */
+  private ipRateLimit(): number {
+    const raw = this.config?.get<string>('HMAC_IP_RATE_LIMIT');
+    const n = raw != null ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : HMAC_IP_RL_DEFAULT;
   }
 }
 

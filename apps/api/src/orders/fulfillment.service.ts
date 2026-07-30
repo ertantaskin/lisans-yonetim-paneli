@@ -416,8 +416,22 @@ export class FulfillmentService {
   /**
    * Stok girişinde tetiklenir (§5). partial-auto ürünlerin bekleyen satırlarını
    * FIFO (öncelik desc, created_at asc) tarar ve stok bitene kadar tamamlar.
+   *
+   * `maxLines` (perf offload): VERİLMEZSE davranış BİREBİR eskisi gibidir — tüm bekleyen
+   * satırlar (stok bitene dek) işlenir; `hasMore` daima false döner. VERİLİRSE en fazla o kadar
+   * bekleyen satır işlenir; cap'e takılıp DAHA fazla bekleyen satır kaldıysa `hasMore=true` döner.
+   * Böylece çağıran (stok import ucu) HTTP isteğini bloklamadan inline yalnız CAP satır tamamlar,
+   * kalanı arka plan kuyruğuna atar (bkz. AutocompleteProcessor). Cap, taze teslimat/atama
+   * mantığını, SKIP LOCKED erken-çıkışını, held-atlamayı ve all-or-nothing'i HİÇ değiştirmez —
+   * yalnız TEK bir turda kaç satırın taranacağını sınırlar.
+   *
+   * @returns `completed` = added>0 ile tamamlanan satır sayısı (eski `number` dönüşün karşılığı);
+   *   `hasMore` = cap'e takıldı ve işlenmemiş bekleyen satır var (çağıran kalanı arka plana atmalı).
    */
-  async autoCompleteProduct(productId: string): Promise<number> {
+  async autoCompleteProduct(
+    productId: string,
+    maxLines?: number,
+  ): Promise<{ completed: number; hasMore: boolean }> {
     // Ön sipariş kapısı: ürün stoksuz + release_at gelecekteyse stok girmiş olsa bile
     // hiçbir satır tamamlanmaz → boşuna satır taramadan erken çık (completeLine ayrıca savunur).
     const product = await this.products.getById(productId);
@@ -426,7 +440,7 @@ export class FulfillmentService {
       product.releaseAt &&
       new Date(product.releaseAt).getTime() > Date.now()
     ) {
-      return 0;
+      return { completed: 0, hasMore: false };
     }
 
     const pending = await this.db
@@ -449,8 +463,23 @@ export class FulfillmentService {
       )
       .orderBy(sql`${orderLines.priority} desc`, asc(orderLines.createdAt));
 
+    // Cap sınırı (yalnız pozitif tamsayı): 0/negatif/NaN verilirse sınırsız kabul edilir
+    // (yanlış konfig ürünü açıkta bırakmasın). undefined → eski (sınırsız) davranış.
+    const cap =
+      maxLines != null && Number.isFinite(maxLines) && maxLines > 0
+        ? Math.floor(maxLines)
+        : null;
+
     let completedLines = 0;
+    let processed = 0;
+    let hasMore = false;
     for (const { id } of pending) {
+      // Cap'e ulaşıldı ve hâlâ işlenmemiş satır VAR → kalanı çağıran arka plana atsın.
+      if (cap != null && processed >= cap) {
+        hasMore = true;
+        break;
+      }
+      processed++;
       const res = await this.completeLine(id);
       if (res.added > 0) completedLines++;
       if (res.status !== 'fulfilled') {
@@ -459,10 +488,12 @@ export class FulfillmentService {
         // kilitlediyse added=0 dönebilir — stok bitmediği halde. Bu yüzden yalnız
         // GERÇEK stok tükenişinde dur; stok hâlâ varsa (kilitli/serbest) kalan
         // satırlara devam et, aksi halde bekleyen düşük-öncelikli satırlar açıkta kalır.
+        // NOT: stok tükendiğinde hasMore=false kalır — kalanı arka plana atmanın anlamı yok
+        // (stok yok); cap'e takılmak ile stok tükenmesi bilinçli olarak AYRI durumlardır.
         if ((await this.productAvailableCount(productId)) <= 0) break;
       }
     }
-    return completedLines;
+    return { completed: completedLines, hasMore };
   }
 
   /**

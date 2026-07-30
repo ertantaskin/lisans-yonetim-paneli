@@ -21,6 +21,13 @@ async function bootstrap(): Promise<void> {
       // NOT: topoloji tek Caddy hop (CDN yok); önüne başka proxy eklenirse bu sayı güncellenmeli.
       trustProxy: 1,
       bodyLimit: 1_048_576,
+      // requestTimeout (fault-injection bulgusu): timeout olmadan bir istek süresiz açık
+      // kalabiliyordu (askıda kalan alt-katman → sonsuz bekleyen bağlantı). 30sn'de tamamlanmayan
+      // istekte Fastify 408 döndürüp bağlantıyı kapatır. Bilinçli olarak alt-katman zaman
+      // aşımlarından (PG statement/lock 30s/10s, connect 10s) biraz UZUN/eşit tutuldu: alt katman
+      // kendi anlamlı hatasını ÖNCE üretsin (ör. "statement timeout"), Fastify son çare olsun.
+      // keepAliveTimeout'a DOKUNULMADI (kalıcı bağlantı yeniden kullanımı korunur).
+      requestTimeout: 30000,
       // Trace-Id uçtan uca (§16): req.id = gelen x-trace-id (yoksa üretilir). Bu TEK
       // kimlik hem pino loglarına (pino, kendi genReqId'i yoksa Fastify req.id'sini
       // kullanır) hem de aşağıdaki onSend yanıt başlığına yansır → istek/log/yanıt aynı iz.

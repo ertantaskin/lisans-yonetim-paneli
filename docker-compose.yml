@@ -32,7 +32,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
+    # maxmemory: Redis'in HOST RAM'ini tüketip OOM-killer'ı tetiklemesini (komşu prod
+    # konteynerini de öldürebilir) engeller. Normal işletimde kullanım ~5-10MB (nonce TTL'li +
+    # BullMQ removeOnComplete ile sınırlı); 768mb devasa marj. maxmemory-policy=noeviction
+    # BİLİNÇLİ: allkeys-lru gibi bir politika aktif BullMQ işlerini/nonce'ları atabilir (veri
+    # kaybı/replay açığı); doldu diye anahtar atmaktansa yazma hatası ver → API katmanı
+    # commandTimeout ile bunu HIZLICA fail-fast olarak görür (askıda kalmaz). Yani dolma
+    # senaryosu OOM-kill yerine kontrollü, hızlı-başarısız bir degrade'e dönüşür.
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory', '768mb', '--maxmemory-policy', 'noeviction']
     volumes:
       - redisdata:/data
     healthcheck:

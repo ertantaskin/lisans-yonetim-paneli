@@ -24,6 +24,14 @@ const APP_VERSION: string = (() => {
   }
 })();
 
+/**
+ * Sağlık probu bağımlılık kontrol tavanı (ms). Redis/DB donsa (OOM/pause/ağ) bile /health bu süre
+ * içinde HIZLICA `degraded` (503) döner, ASKIDA KALMAZ. redis.commandTimeout (2sn) zaten reject
+ * eder ama bu Promise.race, komut seviyesinde YAKALANMAYAN donmalara (ör. bağlantı el sıkışması)
+ * karşı belt-and-suspenders ikinci kalkandır. DB'de de aynı tavan uygulanır.
+ */
+const PING_TIMEOUT_MS = 2000;
+
 @Injectable()
 export class HealthService {
   constructor(
@@ -43,21 +51,45 @@ export class HealthService {
     };
   }
 
-  private async pingDb(): Promise<boolean> {
+  /**
+   * `p`'yi en fazla PING_TIMEOUT_MS bekler; süre dolarsa `fallback` ile çözer (ASLA reject etmez).
+   * `p` (ping) zaten kendi içinde try/catch ile boolean döndüğünden race sonrası bekleyen taraf
+   * unhandled-rejection üretmez. Timer temizlenir (kazanan taraf ne olursa olsun event-loop'u tutmaz).
+   */
+  private async withTimeout(p: Promise<boolean>, fallback: boolean): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), PING_TIMEOUT_MS);
+    });
     try {
-      await this.db.execute(sql`select 1`);
-      return true;
-    } catch {
-      return false;
+      return await Promise.race([p, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
-  private async pingRedis(): Promise<boolean> {
-    try {
-      const pong = await this.redis.ping();
-      return pong === 'PONG';
-    } catch {
-      return false;
-    }
+  private pingDb(): Promise<boolean> {
+    const probe = (async () => {
+      try {
+        await this.db.execute(sql`select 1`);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    // Donma → kısa timeout'ta `false` (degraded), askıda kalma yok.
+    return this.withTimeout(probe, false);
+  }
+
+  private pingRedis(): Promise<boolean> {
+    const probe = (async () => {
+      try {
+        const pong = await this.redis.ping();
+        return pong === 'PONG';
+      } catch {
+        return false;
+      }
+    })();
+    return this.withTimeout(probe, false);
   }
 }

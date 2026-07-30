@@ -4,8 +4,12 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { ConfigService } from '@nestjs/config';
+import { Queue } from 'bullmq';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import {
   AccountPayloadSchema,
@@ -32,6 +36,14 @@ import { notExpiredCond } from '../assignment/assign';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 import { buildStoreAdminUrl } from '../orders/store-admin-url';
+import {
+  AUTOCOMPLETE_INLINE_CAP_DEFAULT,
+  AUTOCOMPLETE_INLINE_CAP_ENV,
+  AUTOCOMPLETE_JOB,
+  AUTOCOMPLETE_JOB_OPTS,
+  AUTOCOMPLETE_QUEUE,
+  type AutocompleteJob,
+} from './autocomplete.queue';
 
 export interface ImportRejection {
   index: number;
@@ -45,7 +57,15 @@ export interface ImportResult {
   /** Doğrulamadan geçemeyen satırlar (account şema / keyFormat) — sessizce yutulmaz. */
   rejected: number;
   rejections: ImportRejection[];
+  /** INLINE (istek içinde) tamamlanan bekleyen satır sayısı — davranış eskisiyle aynı. */
   autoCompleted: number;
+  /**
+   * Kalan backlog (inline cap'i aşan bekleyen satırlar) ARKA PLAN kuyruğuna atıldı mı? (perf).
+   * true → küçük backlog inline bitti + fazlası arka planda tamamlanacak; false → ya hepsi inline
+   * bitti ya da stok tükendi (kuyruğa gerek yok). Enqueue best-effort'tur: atma patlarsa import
+   * yine başarılı döner (yalnız inline tamamlananla), bu bayrak false kalır.
+   */
+  autoCompleteQueued?: boolean;
   /** Kuru çalıştırma (§7): true ise HİÇBİR şey commit edilmedi (yalnız doğrulama). */
   dryRun?: boolean;
   /** Kuru çalıştırma tahmini: doğrulamayı geçip (dedupe sonrası) GİRİLECEK satır sayısı. */
@@ -228,12 +248,23 @@ const DELIVERED_MSG =
 
 @Injectable()
 export class StockService {
+  private readonly logger = new Logger(StockService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly crypto: CryptoService,
     private readonly products: ProductsService,
     private readonly fulfillment: FulfillmentService,
+    private readonly config: ConfigService,
+    @InjectQueue(AUTOCOMPLETE_QUEUE) private readonly autocompleteQueue: Queue,
   ) {}
+
+  /** Inline tamamlanacak azami satır (env AUTOCOMPLETE_INLINE_CAP; geçersizse varsayılan). */
+  private inlineCap(): number {
+    const raw = this.config.get<string>(AUTOCOMPLETE_INLINE_CAP_ENV);
+    const n = raw != null ? Number(raw) : NaN;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : AUTOCOMPLETE_INLINE_CAP_DEFAULT;
+  }
 
   /**
    * Stok import (§12). Her payload şifrelenir (envelope), içerik hash'iyle mükerrer
@@ -363,9 +394,39 @@ export class StockService {
     });
 
     // Stok girişinde tamamlama motorunu tetikle (§5 partial-auto FIFO).
+    //
+    // PERF (bounded-inline + offload): eskiden burada `autoCompleteProduct(productId)` SINIRSIZ
+    // koşuyordu → büyük backlog'da (on binlerce bekleyen satır) N seri transaction import ucunun
+    // HTTP yanıtını DAKİKALARCA bloklardı. Artık inline yalnız CAP satır tamamlanır (küçük backlog
+    // anında biter → hızlı geri bildirim korunur) ve DAHA fazlası varsa (hasMore) kalan backlog
+    // arka plan kuyruğuna atılır (AutocompleteProcessor sınırsız koşar, backlog bitene dek).
+    // Davranış: küçük backlog → eski hızlı deneyim; büyük backlog → import HIZLI döner + kalan arkada.
     let autoCompleted = 0;
+    let autoCompleteQueued = false;
     if (inserted.length > 0) {
-      autoCompleted = await this.fulfillment.autoCompleteProduct(productId);
+      const cap = this.inlineCap();
+      const inline = await this.fulfillment.autoCompleteProduct(productId, cap);
+      autoCompleted = inline.completed;
+      if (inline.hasMore) {
+        // Kalanı arka plana at — best-effort (createOrder'daki mail/webhook enqueue deseni):
+        // enqueue patlarsa (Redis erişilemez vb.) import YİNE BAŞARILI döner, yalnız inline
+        // tamamlananla; operatör sonraki import ya da elle "Kalanları Ata" ile devam edebilir.
+        // jobId=productId → aynı ürün için kuyrukta zaten iş varsa BullMQ ikinciyi eklemez (dedupe).
+        try {
+          await this.autocompleteQueue.add(
+            AUTOCOMPLETE_JOB,
+            { productId } satisfies AutocompleteJob,
+            { jobId: productId, ...AUTOCOMPLETE_JOB_OPTS },
+          );
+          autoCompleteQueued = true;
+        } catch (err) {
+          this.logger.warn(
+            `Stok tamamlama backlog'u kuyruğa alınamadı (product ${productId}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
     }
 
     return {
@@ -375,6 +436,7 @@ export class StockService {
       rejected: rejections.length,
       rejections,
       autoCompleted,
+      autoCompleteQueued,
     };
   }
 

@@ -2,6 +2,7 @@ import { Controller, Post, UseGuards } from '@nestjs/common';
 import { AdminGuard } from '../auth/admin.guard';
 import { ExpiryService } from './expiry.service';
 import { ReconcileService, type ReconcileReport } from './reconcile.service';
+import { RetentionService, type RetentionReport } from './retention.service';
 
 /** Admin: bakım işleri (elle tetikleme). Tekrarlı iş zaten periyodik çalışır. */
 @Controller('admin/maintenance')
@@ -10,6 +11,7 @@ export class MaintenanceController {
   constructor(
     private readonly expiry: ExpiryService,
     private readonly reconcile: ReconcileService,
+    private readonly retention: RetentionService,
   ) {}
 
   /** Süre-bitişi taramasını elle çalıştırır (ops + doğrulama). */
@@ -22,5 +24,11 @@ export class MaintenanceController {
   @Post('reconcile')
   async runReconcile(): Promise<ReconcileReport> {
     return this.reconcile.reconcile();
+  }
+
+  /** Saklama/budama koşusunu elle çalıştırır (§9 KVKK + §16) — tablo-bazlı sayaç özeti döndürür. */
+  @Post('retention')
+  async runRetention(): Promise<RetentionReport> {
+    return this.retention.runRetention();
   }
 }

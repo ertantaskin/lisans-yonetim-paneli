@@ -50,6 +50,10 @@ const securityFake = {
   recordQuotaExceeded: async () => false,
   recordQuotaHeld: async () => false,
 } as never;
+// Inline cap için config (AUTOCOMPLETE_INLINE_CAP tanımsız → varsayılan 200) + arka plan kuyruğu.
+// Bu testlerde backlog ≤2 satır → hepsi inline biter, hasMore=false → queue.add çağrılmaz.
+const configFake = { get: () => undefined } as never;
+const autocompleteQueueFake = { add: async () => ({ id: 'fake' }) } as never;
 
 /** Bu ürün için DB'de kaç license_item var (kalıcılık kontrolü). */
 async function itemCount(productId: string): Promise<number> {
@@ -69,7 +73,14 @@ describe('StockService.import (envelope AAD + doğrulama/dedupe/dryRun)', () => 
     products = new ProductsService(db as never);
     const fulfillment = new FulfillmentService(db as never, products, mailFake, webhookFake);
     const admin = new AdminOrdersService(db as never, redisFake, crypto, mailFake, fulfillment);
-    stock = new StockService(db as never, crypto, products, fulfillment);
+    stock = new StockService(
+      db as never,
+      crypto,
+      products,
+      fulfillment,
+      configFake,
+      autocompleteQueueFake,
+    );
     orders = new OrdersService(
       db as never,
       products,

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type Redis from 'ioredis';
 import { REDIS } from '../redis/redis.module';
 
@@ -14,6 +14,8 @@ import { REDIS } from '../redis/redis.module';
  */
 @Injectable()
 export class RateLimitService {
+  private readonly logger = new Logger(RateLimitService.name);
+
   constructor(@Inject(REDIS) private readonly redis: Redis) {}
 
   /**
@@ -25,14 +27,24 @@ export class RateLimitService {
    * @returns true = izin ver (sayaç ≤ limit); false = kota aşıldı (çağıran 429 üretmeli).
    */
   async hit(key: string, limit: number, windowSec: number): Promise<boolean> {
-    // INCR ile artır; sonuç 1 ise (pencerenin ilk vuruşu) TTL kur. Tek Lua eval → atomik.
-    const count = (await this.redis.eval(
-      HIT_SCRIPT,
-      1,
-      `rl:${key}`,
-      String(windowSec),
-    )) as number;
-    return count <= limit;
+    try {
+      // INCR ile artır; sonuç 1 ise (pencerenin ilk vuruşu) TTL kur. Tek Lua eval → atomik.
+      const count = (await this.redis.eval(
+        HIT_SCRIPT,
+        1,
+        `rl:${key}`,
+        String(windowSec),
+      )) as number;
+      return count <= limit;
+    } catch (err) {
+      // fail-OPEN: Redis erişilemezse (donma/OOM/commandTimeout) isteğe İZİN VER — limitleme
+      // geçici olarak devre dışı kalır. Gerekçe: hız-sınırı bir KORUMA, kimlik doğrulama DEĞİL;
+      // Redis düşünce TÜM trafiği bloklamak erişilebilirliği daha çok bozardı. Güvenlik-kritik
+      // kontroller (nonce replay) çağıran tarafta AYRICA fail-CLOSED olur (HmacGuard §4) → çift
+      // savunma tutarlı: koruma açılır, güvenlik kapanır. Sessiz kalmasın diye warn'lanır.
+      this.logger.warn(`RateLimit Redis hatası — fail-open (izin verildi): ${String(err)}`);
+      return true;
+    }
   }
 }
 

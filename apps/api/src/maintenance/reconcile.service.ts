@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { Job } from 'bullmq';
 import { Queue } from 'bullmq';
 import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SweepAlarmService } from './sweep-alarm.service';
 
 export const RECONCILE_QUEUE = 'reconcile';
 
@@ -40,6 +41,30 @@ const NOTIFY_DEDUPE_WINDOW_HOURS = 12;
  * status='active' saysaydı her suspend/expire yanlış-pozitif kritik alarm üretirdi.
  */
 const STANDING_STATUSES = sql`('active', 'suspended', 'expired')`;
+
+/** SICAK-yol pencere varsayılanı (gün) — env RECONCILE_WINDOW_DAYS ile geçersiz kılınır. */
+const RECONCILE_WINDOW_DAYS_DEFAULT = 30;
+
+/**
+ * SICAK-yol pencere yüklemi (§16 ölçek). RECONCILE_FULL=true ise BOŞ döner (TAM tablo taraması);
+ * aksi halde `AND <createdAt> > now() - (windowDays * interval '1 day')` → son N günü tarar.
+ * Env (`process.env`) ile okunur → ReconcileService ctor imzası DEĞİŞMEZ (mevcut testler korunur).
+ *
+ * CORRECTNESS NOTU (bilinçli sınır): pencere yalnız SICAK yolu (line_fulfillment/single_occupancy)
+ * son N güne daraltır → çok eski kayıtlarda teorik bir drift (ör. 30 günden eski bir çifte-satış,
+ * her iki atama da eskiyse) bu koşuda KAÇABİLİR. Karşı-önlemler: (1) YENİ ihlaller her zaman
+ * pencerede oluşur (drift satış anında, taze kayıtta yakalanır); (2) haftalık/aylık TAM mutabakat
+ * için `RECONCILE_FULL=true` ile pencere kaldırılıp elle (POST /admin/maintenance/reconcile) veya
+ * ayrı bir cron ile tetiklenmeli. TODO(ops): haftalık RECONCILE_FULL tam koşu zamanlaması ekle.
+ * multi_capacity pencereye TABİ DEĞİL (license_items üzerinde ucuz filtreli tarama, GROUP BY yok).
+ */
+function recentFilter(createdAt: SQL): SQL {
+  if (process.env.RECONCILE_FULL === 'true') return sql``;
+  const raw = process.env.RECONCILE_WINDOW_DAYS;
+  const parsed = raw && raw.trim() !== '' ? Number.parseInt(raw, 10) : NaN;
+  const days = Number.isFinite(parsed) && parsed > 0 ? parsed : RECONCILE_WINDOW_DAYS_DEFAULT;
+  return sql`AND ${createdAt} > now() - (${days} * interval '1 day')`;
+}
 
 /** Denetim ihlali — düzeltme yapılmaz, yalnız raporlanır ve kritik loglanır (§16). */
 export type ReconcileViolation =
@@ -281,6 +306,7 @@ export class ReconcileService implements OnModuleInit {
         COALESCE(SUM(a.units) FILTER (WHERE a.status IN ${STANDING_STATUSES}), 0)::int AS standing_units
       FROM order_lines ol
       LEFT JOIN assignments a ON a.line_id = ol.id
+      WHERE true ${recentFilter(sql`ol.created_at`)}
       GROUP BY ol.id, ol.order_id, ol.fulfilled_qty
       HAVING ol.fulfilled_qty
         <> COALESCE(SUM(a.units) FILTER (WHERE a.status IN ${STANDING_STATUSES}), 0);
@@ -300,7 +326,11 @@ export class ReconcileService implements OnModuleInit {
           `fulfilled_qty=${fulfilledQty} <> Σ(ayakta atama units)=${standingUnits} (sayaç sapması)`,
       );
     }
-    return await this.count(sql`SELECT count(*)::int AS c FROM order_lines;`);
+    // `checked` sayacı da SICAK-yol penceresini yansıtır (dürüst rapor: kaç satır GERÇEKTEN tarandı).
+    return await this.count(sql`
+      SELECT count(*)::int AS c FROM order_lines ol
+      WHERE true ${recentFilter(sql`ol.created_at`)};
+    `);
   }
 
   /**
@@ -319,6 +349,7 @@ export class ReconcileService implements OnModuleInit {
       JOIN license_items li ON li.id = a.license_item_id
       WHERE li.max_uses = 1
         AND a.status IN ${STANDING_STATUSES}
+        ${recentFilter(sql`a.created_at`)}
       GROUP BY a.license_item_id
       HAVING COUNT(*) > 1;
     `);
@@ -334,7 +365,17 @@ export class ReconcileService implements OnModuleInit {
           `ayakta_atama=${standingAssignments} > 1 (tek-kullanım çift atama — çifte satış)`,
       );
     }
-    return await this.count(sql`SELECT count(*)::int AS c FROM license_items WHERE max_uses = 1;`);
+    // `checked` sayacı taranan AYAKTA tek-kullanım atamalarını yansıtır (scan ile aynı pencere/yüklem)
+    // → dürüst rapor. Eski sürümdeki "tüm tek-kullanım license_item sayısı" yerine gerçekten
+    // denetlenen satır kümesi sayılır (ihlal TESPİTİ değişmez; yalnız `checked` bilgi sayacı).
+    return await this.count(sql`
+      SELECT count(*)::int AS c
+      FROM assignments a
+      JOIN license_items li ON li.id = a.license_item_id
+      WHERE li.max_uses = 1
+        AND a.status IN ${STANDING_STATUSES}
+        ${recentFilter(sql`a.created_at`)};
+    `);
   }
 
   /** Tek satırlık count(*)::int sorgusunu çalıştırıp sayıyı döndürür. */
@@ -347,12 +388,25 @@ export class ReconcileService implements OnModuleInit {
 /** Tekrarlı mutabakat denetimini çalıştırır (§16). ExpiryProcessor deseniyle aynı. */
 @Processor(RECONCILE_QUEUE)
 export class ReconcileProcessor extends WorkerHost {
-  constructor(private readonly reconcile: ReconcileService) {
+  constructor(
+    private readonly reconcile: ReconcileService,
+    private readonly alarm: SweepAlarmService,
+  ) {
     super();
   }
 
   async process(_job: Job): Promise<{ checked: number; violations: number }> {
     const report = await this.reconcile.reconcile();
     return { checked: report.checked, violations: report.violations.length };
+  }
+
+  /**
+   * İş patlarsa kritik alarm (dedupe'lu) + logger.error — sessiz ölüm bitti (§16). Bu, İHLAL
+   * alarmından (reconcile() içi, veri tutarsızlığı) AYRIDIR: burada işin KENDİSİ patlar (DB
+   * erişimi/timeout) → tutarlılık denetimi HİÇ koşamaz, o yüzden ayrı 'sweep_failed' türü.
+   */
+  @OnWorkerEvent('failed')
+  async onFailed(job: Job, err: Error): Promise<void> {
+    await this.alarm.report(RECONCILE_QUEUE, job?.name ?? 'sweep', err);
   }
 }
