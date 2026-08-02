@@ -28,3 +28,13 @@ export async function getActor(): Promise<string> {
   const user = await getSessionUser();
   return user ? `admin:${user.email}` : 'panel:admin';
 }
+
+/**
+ * Doğrulanmış oturumun rolü ('owner' | 'admin') veya null (auth kapalı / oturum yok).
+ * YAZMA API çağrılarında `x-admin-role` başlığıyla iletilir (lib/api.ts) → API OwnerGuard
+ * owner-only uçları tek bir eksik Next-katmanı isOwner() kontrolünde bile korur (savunma-derinliği).
+ */
+export async function getSessionRole(): Promise<string | null> {
+  const user = await getSessionUser();
+  return user?.role ?? null;
+}

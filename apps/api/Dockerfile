@@ -25,5 +25,9 @@ ENV NODE_ENV=production
 COPY --from=build /app /app
 WORKDIR /app/apps/api
 EXPOSE 3001
+# En az ayrıcalık (güvenlik denetimi): servis root yerine hazır 'node' kullanıcısıyla çalışır.
+# Uygulama diske YAZMAZ (stateless); root-sahipli dosyalar node için okunabilir/çalıştırılabilir.
+# Bir çalışma-zamanı RCE'sinde konteyner-kaçış/host etki yüzeyini daraltır (savunma-derinliği).
+USER node
 # Migration compose command'ında koşturulur; imaj yalnız servisi başlatır.
 CMD ["node", "dist/main.js"]

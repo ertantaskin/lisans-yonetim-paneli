@@ -15,6 +15,7 @@ import {
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { RateLimitService } from '../common/rate-limit.service';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { UpdatesService, type PluginReleaseMeta } from './updates.service';
@@ -45,8 +46,10 @@ type PublishInput = z.infer<typeof PublishSchema>;
 export class UpdatesAdminController {
   constructor(private readonly updates: UpdatesService) {}
 
-  /** Yeni sürüm yayınla (aynı version varsa günceller). */
+  /** Yeni sürüm yayınla (aynı version varsa günceller). OwnerGuard: savunma-derinliği (denetim H1) —
+   *  tüm müşteri sitelerine kod dağıtan bu uç, Next isOwner() kontrolüne EK olarak API'de de owner ister. */
   @Post('plugin')
+  @UseGuards(OwnerGuard)
   async publish(@Body(new ZodBody(PublishSchema)) body: PublishInput) {
     const release = await this.updates.publish(body.version, body.changelog, body.zipB64);
     return { id: release.id, version: release.version, createdAt: release.createdAt };

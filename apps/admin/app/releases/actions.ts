@@ -57,6 +57,14 @@ export async function requestPluginRelease(
  * sürüm varsa API upsert yapar. Zip kökü 'wpteslimat/' olmalı (WP doğru klasöre açsın).
  */
 export async function publishRelease(_prev: PublishState, formData: FormData): Promise<PublishState> {
+  // GÜVENLİK (H1): manuel .zip yükleme de owner-only'dir. Bu action kardeşi requestPluginRelease
+  // gibi bir 'use server' POST ucudur → form render edilmese bile geçerli oturumla çağrılabilir.
+  // Guard olmadan düşük-yetkili bir admin, TÜM müşteri sitelerine (public updater otomatik kurar)
+  // keyfi PHP taşıyan bir paket yayınlayabilirdi (tedarik-zinciri RCE). API tarafında ayrıca
+  // OwnerGuard vardır (savunma-derinliği), ama birincil kapı buradaki isOwner() kontrolüdür.
+  if (!(await isOwner())) {
+    return { ok: false, message: 'Bu işlem yalnız "owner" rolüne açıktır.' };
+  }
   const version = String(formData.get('version') ?? '').trim();
   const changelog = String(formData.get('changelog') ?? '').trim();
   const file = formData.get('zip');

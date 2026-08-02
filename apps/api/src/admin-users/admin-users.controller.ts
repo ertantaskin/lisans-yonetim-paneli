@@ -17,6 +17,7 @@ import {
 import type { FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { RateLimitService } from '../common/rate-limit.service';
 import { ZodBody } from '../common/zod-validation.pipe';
 import {
@@ -51,6 +52,9 @@ const LOGIN_RL_MAX = 30;
 
 const ValidateBody = z.object({ sub: z.string().uuid(), ver: z.number().int().nonnegative() });
 type ValidateBody = z.infer<typeof ValidateBody>;
+
+const LogoutBody = z.object({ sub: z.string().uuid() });
+type LogoutBody = z.infer<typeof LogoutBody>;
 
 const CreateBody = z.object({
   email: z.string().email(),
@@ -111,6 +115,16 @@ export class AdminAuthController {
     const user = await this.users.validateSession(body.sub, body.ver);
     return { valid: user !== null, user: user ?? undefined };
   }
+
+  /**
+   * Oturum SONLANDIRMA (denetim P3): logout'ta admin'in tokenVersion'ı +1 → çalınmış/kopyalanmış
+   * token dahil o ana kadarki TÜM oturum token'ları anında geçersizleşir. Next /api/logout route'u
+   * cookie'yi silmeden ÖNCE best-effort çağırır (cookie silme = yalnız o tarayıcı; bu = tüm cihazlar).
+   */
+  @Post('logout')
+  async logout(@Body(new ZodBody(LogoutBody)) body: LogoutBody) {
+    return this.users.logout(body.sub);
+  }
 }
 
 /** Admin yönetimi (listele/ekle/pasifleştir/parola/sil). ADMIN_TOKEN gerektirir. */
@@ -124,17 +138,22 @@ export class AdminUsersController {
     return this.users.list();
   }
 
+  // OwnerGuard (denetim H1/P7 savunma-derinliği): admin oluşturma/pasifleştirme/parola/silme
+  // yalnız owner'a açıktır — Next isOwner() kontrolüne EK olarak API katmanında da zorlanır.
   @Post()
+  @UseGuards(OwnerGuard)
   create(@Body(new ZodBody(CreateBody)) body: CreateBody) {
     return this.users.create(body);
   }
 
   @Patch(':id')
+  @UseGuards(OwnerGuard)
   patch(@Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodBody(PatchBody)) body: PatchBody) {
     return this.users.setDisabled(id, body.disabled);
   }
 
   @Post(':id/password')
+  @UseGuards(OwnerGuard)
   resetPassword(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(PasswordBody)) body: PasswordBody,
@@ -143,6 +162,7 @@ export class AdminUsersController {
   }
 
   @Delete(':id')
+  @UseGuards(OwnerGuard)
   remove(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.users.remove(id);
   }

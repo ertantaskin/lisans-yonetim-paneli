@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/co
 import { z } from 'zod';
 import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { DEPLOY_TARGETS, DeploymentsService } from './deployments.service';
 
@@ -39,7 +40,10 @@ type FinishInput = z.infer<typeof FinishSchema>;
 export class DeploymentsController {
   constructor(private readonly deployments: DeploymentsService) {}
 
+  // OwnerGuard: savunma-derinliği (denetim H1) — prod dağıtımı tetikleyen bu uç, Next isOwner()
+  // kontrolüne EK olarak API'de de owner rolü ister (tek eksik UI kontrolü yükselmeyi sağlamasın).
   @Post()
+  @UseGuards(OwnerGuard)
   async request(@Body(new ZodBody(RequestSchema)) body: RequestInput, @AdminActor() actor: string) {
     return this.deployments.request(body.target, actor, body.note);
   }

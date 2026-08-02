@@ -1,5 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
+import { getSessionRole } from './session';
 
 /**
  * Sunucu-taraflı API istemcisi. ADMIN_TOKEN yalnız Next sunucusunda kalır,
@@ -8,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 const API_URL = process.env.API_URL ?? 'http://localhost:3001';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? '';
 
-function headers(withBody: boolean, actor?: string): Record<string, string> {
+function headers(withBody: boolean, actor?: string, role?: string | null): Record<string, string> {
   const h: Record<string, string> = { 'x-admin-token': ADMIN_TOKEN };
   if (withBody) h['content-type'] = 'application/json';
   // Trace-Id uçtan uca (§16): her Next sunucu→API çağrısına yeni bir trace-id
@@ -18,6 +19,10 @@ function headers(withBody: boolean, actor?: string): Record<string, string> {
   // Eylemi yapan admin (audit attribution, §8). getActor() ile session'dan gelir;
   // ADMIN_TOKEN ile aynı güven düzeyi (token'sız istemci API'ye erişemez).
   if (actor) h['x-admin-actor'] = actor;
+  // Owner-rol savunma-derinliği (denetim H1): YAZMA çağrılarında doğrulanmış oturum rolü
+  // API'ye iletilir → owner-only uçlar (OwnerGuard) tek bir eksik Next-katmanı isOwner()
+  // kontrolünde bile korunur. Auth kapalı/oturum yoksa role null → başlık eklenmez.
+  if (role) h['x-admin-role'] = role;
   return h;
 }
 
@@ -70,9 +75,10 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown, actor?: string): Promise<T> {
+  const role = await getSessionRole();
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
-    headers: headers(body !== undefined, actor),
+    headers: headers(body !== undefined, actor, role),
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
@@ -86,9 +92,10 @@ export async function apiSend<T>(
   body?: unknown,
   actor?: string,
 ): Promise<T> {
+  const role = await getSessionRole();
   const res = await fetch(`${API_URL}${path}`, {
     method,
-    headers: headers(body !== undefined, actor),
+    headers: headers(body !== undefined, actor, role),
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });

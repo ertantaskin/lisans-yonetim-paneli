@@ -7,6 +7,9 @@
 .github
 docs
 *.md
-.env
-.env.*
-!.env.example
+# Özyinelemeli (Docker desenleri .gitignore gibi özyinelemeli DEĞİL): iç içe env dosyaları
+# (ör. apps/admin/.env.local) da build bağlamı DIŞINDA tutulmalı — aksi halde canlı sırlar
+# (ADMIN_TOKEN vb.) build-aşaması katmanına sızabilir (güvenlik denetim bulgusu).
+**/.env
+**/.env.*
+!**/.env.example

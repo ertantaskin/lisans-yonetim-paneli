@@ -87,6 +87,20 @@ async function setupMultiProduct(maxUses: number): Promise<{
   return { product, licenseItemId: licenseItemId!, remoteProductId };
 }
 
+/** Tek-kullanımlık ürün + `count` ayrı key + eşleme (her qty birimi = 1 key = 1 atama). */
+async function setupSingleProduct(count: number): Promise<{ remoteProductId: string }> {
+  const product = await createProduct(db, {
+    tag,
+    kind: 'key',
+    usageMode: 'single',
+    fulfillmentPolicy: 'partial-auto',
+  });
+  await insertLicenseItems(db, crypto, { productId: product.id, count, tag });
+  const remoteProductId = `rp-${randomUUID().slice(0, 8)}`;
+  await products.createMapping({ siteId: site.id, productId: product.id, remoteProductId });
+  return { remoteProductId };
+}
+
 /** Doğrudan (createOrder'sız) tek MAK atama kurar: order+line qty=units fulfilled, atama units, use_count=units. */
 async function seedMultiAssignment(units: number, maxUses: number): Promise<{
   assignmentId: string;
@@ -287,5 +301,84 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     const line = await lineRow(seed.lineId);
     expect(line.fulfilledQty).toBe(0); // 4 - 4
     expect(line.canceled).toBe(false);
+  });
+
+  // ── DENETİM M1: reconcileOrder advisory-lock + TAM-revoke sayaç doğruluğu (over-revoke YOK) ──
+
+  it('re-push qty 5→2 (tek-kullanım, 5 key) → TAM 3 atama revoke, 2 aktif; tekrar re-push no-op (idempotent)', async () => {
+    const { remoteProductId } = await setupSingleProduct(5);
+    const siteObj = siteObjOf(site);
+    const remoteOrderId = `ord-${randomUUID().slice(0, 8)}`;
+    const dto = (qty: number): CreateOrderRequest => ({
+      remoteOrderId,
+      customerEmail: `${tag}@example.test`,
+      lines: [{ remoteLineId: 'line-1', remoteProductId, qty }],
+    });
+
+    // qty=5 → 5 ayrı tek-kullanım atama (units=1 each).
+    const first = await orders.createOrder(siteObj, dto(5));
+    expect(first.httpStatus).toBe(201);
+    expect(first.body.assignments).toHaveLength(5);
+    const asgIds = first.body.assignments.map((a) => a.assignmentId);
+
+    // qty=2 re-push → TAM olarak 3 atama revoke edilmeli (over-revoke YOK — sayaç yalnız gerçek revoke'ta ilerler).
+    const edited = await orders.createOrder(siteObj, dto(2));
+    expect(edited.body.orderId).toBe(first.body.orderId);
+    const statuses = await Promise.all(asgIds.map((id) => assignmentRow(id).then((r) => r.status)));
+    expect(statuses.filter((s) => s === 'active')).toHaveLength(2);
+    expect(statuses.filter((s) => s === 'revoked')).toHaveLength(3);
+
+    const [ol] = await db
+      .select({
+        fulfilledQty: schema.orderLines.fulfilledQty,
+        qty: schema.orderLines.qty,
+        canceled: schema.orderLines.canceled,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, edited.body.orderId))
+      .limit(1);
+    expect(ol!.qty).toBe(2);
+    expect(ol!.fulfilledQty).toBe(2);
+    expect(ol!.canceled).toBe(false); // adet düşür = iade DEĞİL → satır yeniden atanabilir kalır
+
+    // İdempotent: AYNI azaltılmış adet tekrar gelirse HİÇ değişiklik olmamalı (fazladan revoke YOK).
+    await orders.createOrder(siteObj, dto(2));
+    const statuses2 = await Promise.all(asgIds.map((id) => assignmentRow(id).then((r) => r.status)));
+    expect(statuses2.filter((s) => s === 'active')).toHaveLength(2);
+    expect(statuses2.filter((s) => s === 'revoked')).toHaveLength(3);
+  });
+
+  it('reconcile İADE/İPTAL (canceled) satıra DOKUNMAZ (§2 — terminal işaret korunur)', async () => {
+    const { remoteProductId } = await setupSingleProduct(3);
+    const siteObj = siteObjOf(site);
+    const remoteOrderId = `ord-${randomUUID().slice(0, 8)}`;
+    const dto = (qty: number): CreateOrderRequest => ({
+      remoteOrderId,
+      customerEmail: `${tag}@example.test`,
+      lines: [{ remoteLineId: 'line-1', remoteProductId, qty }],
+    });
+
+    const first = await orders.createOrder(siteObj, dto(2));
+    expect(first.body.assignments).toHaveLength(2);
+    const asgIds = first.body.assignments.map((a) => a.assignmentId);
+    const orderId = first.body.orderId;
+
+    // Satırı iade/iptal terminal işaretiyle işaretle (revokeOrderForSite deseni: refund → canceled).
+    await db
+      .update(schema.orderLines)
+      .set({ canceled: true })
+      .where(eq(schema.orderLines.orderId, orderId));
+
+    // qty=1 azalt re-push → canceled satır ATLANIR: hiçbir atama revoke EDİLMEZ, qty DEĞİŞMEZ.
+    await orders.createOrder(siteObj, dto(1));
+    const statuses = await Promise.all(asgIds.map((id) => assignmentRow(id).then((r) => r.status)));
+    expect(statuses.filter((s) => s === 'active')).toHaveLength(2); // dokunulmadı
+    const [ol] = await db
+      .select({ qty: schema.orderLines.qty, canceled: schema.orderLines.canceled })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, orderId))
+      .limit(1);
+    expect(ol!.qty).toBe(2); // qty düşürülmedi (canceled satıra dokunulmadı)
+    expect(ol!.canceled).toBe(true);
   });
 });

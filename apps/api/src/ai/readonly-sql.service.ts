@@ -76,8 +76,27 @@ const ROW_WRAP_DENYLIST = [
   'cursor_to_xml',
   'xmlelement',
   'xmlforest',
+  // Denetim (P4): composite/row → tek skaler değere serialize eden EK vektörler. format('%s', t) /
+  // concat(t) TÜM satırı (sır kolonları dahil) tek metne çevirip metin+dönen-kolon süzgeçlerini atlar.
+  'format',
+  'concat',
+  'concat_ws',
+  'json_populate_record',
+  'jsonb_populate_record',
 ] as const;
 const ROW_WRAP_RE = new RegExp(`\\b(?:${ROW_WRAP_DENYLIST.join('|')})\\b`, 'i');
+
+/**
+ * Composite/row → skaler-metin CAST bypass'ı (denetim P4): `s::text`, `cast(s as text)` gibi bir
+ * SATIR/kayıt değişkenini metne çeviren ifade TÜM satırı (sır kolonları dahil) tek skaler text
+ * (OID 25) kolonu olarak döndürür → dönen-tip (json/xml/record) + kolon-adı + row-wrap süzgeçlerinin
+ * HEPSİNİ atlar (`SELECT s::text FROM sites s` → hmac_secret_enc vb. sızar). Metin düzeyinde bir
+ * SATIR mı yoksa KOLON mu cast edildiği ayırt edilemez → güvenli tarafta kalınır: text/varchar/char/
+ * bytea'ya YAPILAN TÜM cast'ler reddedilir (fail-safe; NL→SQL raporlar bunlara nadiren muhtaçtır).
+ * Otoriter/kesin katman DB kolon-düzeyi REVOKE'tur (ayrı ops önerisi); bu, metin-düzeyi sertleştirme.
+ */
+const CAST_TO_SCALAR_RE =
+  /::\s*(?:text|varchar|character\s+varying|char|bpchar|bytea)\b|\bcast\s*\([^;]*\bas\s+(?:text|varchar|character(?:\s+varying)?|char|bpchar|bytea)\b/i;
 
 /**
  * AUTH/kimlik tabloları — rapor akışının ASLA okumaya ihtiyacı yoktur ama scrypt parola hash'i

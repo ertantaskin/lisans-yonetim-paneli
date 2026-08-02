@@ -22,8 +22,13 @@ export const envSchema = z.object({
    */
   MASTER_KEY: z.string().min(1),
 
-  /** Admin uçları (site/ürün/stok yönetimi) için basit yönetici token'ı. */
-  ADMIN_TOKEN: z.string().min(1),
+  /**
+   * Admin uçları (site/ürün/stok yönetimi) için yönetici token'ı. Min 24 karakter (fail-closed):
+   * `openssl rand -hex 24` (48 karakter) ile üretilir → gerçek token her zaman ≥24; yalnız elle
+   * yazılmış zayıf token (ör. 'changeme') API boot'unu engeller. MASTER_KEY'in katı doğrulamasıyla
+   * simetri (crypto.service 32-byte zorunlu) — güvensiz-varsayılan denetim bulgusu.
+   */
+  ADMIN_TOKEN: z.string().min(24),
 
   /**
    * İlk admin bootstrap (§8). admin_users tablosu BOŞSA ve ikisi de verilmişse açılışta

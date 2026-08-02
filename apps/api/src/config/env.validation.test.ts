@@ -6,7 +6,8 @@ describe('validateEnv', () => {
     DATABASE_URL: 'postgres://u:p@localhost:5432/db',
     REDIS_URL: 'redis://localhost:6379',
     MASTER_KEY: 'x'.repeat(44),
-    ADMIN_TOKEN: 'test-admin-token',
+    // Güvenlik denetimi: ADMIN_TOKEN min 24 karakter (gerçek `openssl rand -hex 24` = 48 karakter).
+    ADMIN_TOKEN: 'a'.repeat(48),
   };
 
   it('geçerli konfigi ayrıştırır ve varsayılanları uygular', () => {
@@ -26,5 +27,12 @@ describe('validateEnv', () => {
 
   it('geçersiz URL reddedilir', () => {
     expect(() => validateEnv({ ...base, DATABASE_URL: 'not-a-url' })).toThrow();
+  });
+
+  it('zayıf (kısa) ADMIN_TOKEN reddedilir (min 24 — fail-closed)', () => {
+    expect(() => validateEnv({ ...base, ADMIN_TOKEN: 'changeme' })).toThrow(/doğrulaması başarısız/);
+    expect(() => validateEnv({ ...base, ADMIN_TOKEN: 'x'.repeat(23) })).toThrow();
+    // Sınırda (24) geçer.
+    expect(() => validateEnv({ ...base, ADMIN_TOKEN: 'x'.repeat(24) })).not.toThrow();
   });
 });

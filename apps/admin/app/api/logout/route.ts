@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { SESSION_COOKIE } from '@/lib/auth';
+import { SESSION_COOKIE, verifySession } from '@/lib/auth';
+import { apiPost } from '@/lib/api';
 
 /**
  * Logout — native form POST. Cookie'yi siler ve /login'e döner (303, GÖRELİ Location).
@@ -17,6 +18,15 @@ export async function POST(req: NextRequest) {
       ok = false;
     }
     if (!ok) return new NextResponse('forbidden', { status: 403 });
+  }
+  // Gerçek oturum iptali (denetim P3): cookie silmek YETMEZ — çalınmış bir token 12sa TTL boyunca
+  // geçerli kalırdı. Logout'ta admin'in tokenVersion'ını +1 yap (API) → token ANINDA geçersizleşir
+  // (tüm cihazlar). Best-effort: API erişilemezse logout yine tamamlanır (cookie silinir).
+  try {
+    const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
+    if (session) await apiPost('/v1/admin/auth/logout', { sub: session.sub });
+  } catch {
+    /* best-effort — logout akışını asla bozma */
   }
   const res = new NextResponse(null, { status: 303, headers: { location: '/login' } });
   res.cookies.set(SESSION_COOKIE, '', { httpOnly: true, path: '/', maxAge: 0 });

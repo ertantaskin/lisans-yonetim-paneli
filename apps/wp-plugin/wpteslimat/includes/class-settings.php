@@ -214,9 +214,11 @@ class Wpteslimat_Settings {
     /**
      * Panel URL güvenli mi? "Panele Bağlan" yanıtı sırları düz metin döndürdüğü
      * için https zorunludur; yalnız yerel geliştirme adresleri (localhost/127.0.0.1/::1)
-     * http'ye izinlidir.
+     * http'ye izinlidir. PUBLIC (denetim W1): panel-client istek yolu ve eklenti güncelleyici
+     * de bu kapıyı kullanır → düz-metin panelde sır sızıntısı + MITM ile kötücül eklenti
+     * kurulumu (RCE) önlenir (connect akışının dışında da güvenli kanal zorlanır).
      */
-    private static function is_secure_panel_url($url) {
+    public static function is_secure_panel_url($url) {
         $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
         if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1') {
             return true;

@@ -19,6 +19,16 @@ export async function middleware(req: NextRequest) {
   }
 
   if (!authEnabled()) {
+    // Fail-closed opt-in (denetim P1): REQUIRE_AUTH set edilmişse ve SESSION_SECRET yoksa panel
+    // AÇIK bırakılmasın — istekleri 503 ile reddet. Prod'da yanlışlıkla "auth kapalı" deploy'u
+    // LOUD yakalar. Varsayılan (REQUIRE_AUTH tanımsız) davranış DEĞİŞMEZ: dev/izole ortam açık
+    // kalır (UI sarı uyarı bandı gösterir). Prod'a REQUIRE_AUTH=true eklenmesi önerilir.
+    if (process.env.REQUIRE_AUTH === 'true' || process.env.REQUIRE_AUTH === '1') {
+      return new NextResponse(
+        'Auth zorunlu (REQUIRE_AUTH=true) ama SESSION_SECRET tanımlı değil — yapılandırmayı düzeltin.',
+        { status: 503 },
+      );
+    }
     // Auth kapalıyken /login gereksiz; login/page.tsx'in redirect('/')'ı async root
     // layout stream'i yüzünden meta-refresh'e düşer (kök '/' ile aynı sınıf bug).
     // Render'dan önce middleware'de temiz 307 ver.
@@ -42,6 +52,12 @@ export async function middleware(req: NextRequest) {
     // API erişilemezse ('error') fail-open — imzalı token yeterli, kilitlenme yok.
     // Kısa-ömürlü önbellekli (5sn): navigasyon/prefetch bursts API'yi yormaz, iptal ≤5sn yansır.
     const state = await validateSessionCached(session.sub, session.ver);
+    // Fail-open GÖZLEMİ (denetim P3): API doğrulaması erişilemezse ('error') imzalı token yeterli
+    // sayılır (kilitlenme yok) AMA sessiz kalmamalı — iptal edilmiş bir admin bu pencerede erişimini
+    // koruyabilir. Uyarı logla ki kesinti/anormallik izlenebilsin.
+    if (state === 'error') {
+      console.warn('[auth] oturum uzak-doğrulaması erişilemez — fail-open (iptal gecikebilir)');
+    }
     if (state !== 'invalid') return NextResponse.next();
   }
 

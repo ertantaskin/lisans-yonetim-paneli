@@ -232,6 +232,19 @@ export class AdminUsersService implements OnModuleInit {
     });
   }
 
+  /**
+   * Oturum SONLANDIRMA (denetim P3): tokenVersion +1 → o ana kadar üretilmiş TÜM imzalı oturum
+   * token'ları (çalınmış olanlar dahil) middleware validate'inde ver-uyuşmazlığı görüp geçersizleşir.
+   * Best-effort: bulunamayan id no-op (logout akışı yine tamamlanır). Tüm cihazlarda çıkış yapar.
+   */
+  async logout(id: string): Promise<{ ok: true }> {
+    await this.db
+      .update(adminUsers)
+      .set({ tokenVersion: sql`${adminUsers.tokenVersion} + 1`, updatedAt: sql`now()` })
+      .where(eq(adminUsers.id, id));
+    return { ok: true };
+  }
+
   /** Parola sıfırla + tokenVersion +1 (eski oturumlar geçersizleşir). */
   async resetPassword(id: string, password: string): Promise<PublicAdminUser> {
     if (password.length < 8) throw new BadRequestException('Parola en az 8 karakter olmalı.');

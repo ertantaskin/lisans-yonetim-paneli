@@ -210,7 +210,11 @@ function hostMatchesSite(webhookUrl: string, siteDomain: string): boolean {
     const host = norm(new URL(webhookUrl).hostname);
     const dom = norm(siteDomain);
     if (!host || !dom) return false;
-    return host === dom || host.endsWith(`.${dom}`) || dom.endsWith(`.${host}`);
+    // Yalnız AYNI alan adı veya sitenin ALT alan adı kabul edilir. ÜST/ATA alan adı (eski
+    // `dom.endsWith('.'+host)` dalı) KALDIRILDI: çok-kiracılı bir kurulumda site
+    // shop.tenant.example.com iken webhook'un paylaşılan ata alan adına (example.com)
+    // yazılmasına izin veriyordu. store-admin-url'deki daraltılmış mantıkla birebir hizalı.
+    return host === dom || host.endsWith(`.${dom}`);
   } catch {
     return false;
   }

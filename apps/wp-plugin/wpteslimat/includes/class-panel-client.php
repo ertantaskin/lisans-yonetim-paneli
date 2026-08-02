@@ -91,7 +91,16 @@ class Wpteslimat_Panel_Client {
      * @return array{code:int, body:array} — HTTP kodu + çözümlenmiş JSON.
      */
     private static function request($method, $path, $body, $timeout = 15) {
-        $url = Wpteslimat_Settings::panel_url() . $path;
+        $panel = Wpteslimat_Settings::panel_url();
+        // GÜVENLİK (denetim W1): sırlar (api_key + HMAC imzalı istek) ve reveal yanıtları DÜZ-METİN
+        // kanaldan GEÇMEZ. panel_url https değilse (localhost hariç) isteği hiç YAPMA → MITM ile
+        // anahtar/e-posta sızıntısı + sahte panel yanıtı engellenir. Panel her zaman TLS (Caddy)
+        // arkasındadır; http yalnız yerel geliştirmede (localhost) meşrudur. Fail-safe: kod 0 döner
+        // (çağıranlar mevcut graceful/hata yolunu izler; sessiz düz-metin gönderim olmaz).
+        if (!Wpteslimat_Settings::is_secure_panel_url($panel)) {
+            return ['code' => 0, 'body' => ['error' => 'insecure_panel_url']];
+        }
+        $url = $panel . $path;
         $body_str = $body === null ? '' : wp_json_encode($body);
         $ts = (string) time();
         $nonce = wp_generate_uuid4();

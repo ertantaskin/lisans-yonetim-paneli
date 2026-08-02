@@ -288,14 +288,24 @@ export default async function ReleasesPage() {
           <CardTitle icon={UploadCloud}>Elle .zip yükle (gelişmiş)</CardTitle>
         </CardHeader>
         <CardContent>
-          <details className="group">
-            <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-              Hazır bir eklenti paketiniz varsa doğrudan yükleyin — normalde gerekmez.
-            </summary>
-            <div className="mt-4">
-              <PublishForm />
-            </div>
-          </details>
+          {owner ? (
+            <details className="group">
+              <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+                Hazır bir eklenti paketiniz varsa doğrudan yükleyin — normalde gerekmez.
+              </summary>
+              <div className="mt-4">
+                <PublishForm />
+              </div>
+            </details>
+          ) : (
+            <Alert>
+              <Lock />
+              <AlertTitle>Yetki gerekli</AlertTitle>
+              <AlertDescription>
+                Elle paket yüklemeyi yalnız "owner" rolündeki yöneticiler yapabilir.
+              </AlertDescription>
+            </Alert>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -14,10 +14,10 @@ import { OrderLineStatus, OrderStatus, ProductKind } from '../domain/enums';
 // ── İstek ───────────────────────────────────────────────────────────────────
 export const CreateOrderLine = z.object({
   /** Eklenti tarafındaki satır kimliği (idempotency parçası). */
-  remoteLineId: z.string().min(1),
-  remoteProductId: z.string().min(1),
+  remoteLineId: z.string().min(1).max(200),
+  remoteProductId: z.string().min(1).max(200),
   // İstemciler varyasyonsuz üründe null gönderebilir — undefined/null ikisi de kabul.
-  remoteVariationId: z.string().min(1).nullish(),
+  remoteVariationId: z.string().min(1).max(200).nullish(),
   /** Mağaza ürün adı (opsiyonel — eski eklenti göndermez). Panel eşleştirme doğrulaması +
    *  "eşlenmemiş gelen ürünler" ekranı için saklar; teslimat mantığını ETKİLEMEZ.
    *  KRİTİK: kritik-olmayan bu alan siparişi ASLA reddetmemeli → max() ile 400 atmak yerine
@@ -28,16 +28,21 @@ export const CreateOrderLine = z.object({
     .transform((s) => s.slice(0, 255))
     .nullish()
     .catch(null),
-  qty: z.number().int().positive(),
+  // Üst sınır (DoS + int4 taşması savunması): qty tek kalemde makul bir tavana bağlanır.
+  // Kardeş site-facing DTO'lar (SyncRefunds .max(200), BulkStatus .max(100)) zaten kaplı;
+  // sınırsız qty hem tek transaction'da devasa atama işi hem int4 overflow → 500 üretiyordu.
+  qty: z.number().int().positive().max(100000),
   /** Ürün varsayılan politikasını sipariş bazında ezme (opsiyonel). */
   policyOverride: z.enum(['partial-auto', 'partial-approval', 'all-or-nothing']).optional(),
 });
 export type CreateOrderLine = z.infer<typeof CreateOrderLine>;
 
 export const CreateOrderRequest = z.object({
-  remoteOrderId: z.string().min(1),
-  customerEmail: z.string().email(),
-  lines: z.array(CreateOrderLine).min(1),
+  remoteOrderId: z.string().min(1).max(200),
+  customerEmail: z.string().email().max(320),
+  // Üst sınır: tek siparişte satır sayısı tavana bağlı (hedefli DoS savunması — createOrder
+  // her satırı tek transaction'da işler; sınırsız satır kritik teslimat yolunu tıkayabilirdi).
+  lines: z.array(CreateOrderLine).min(1).max(200),
 });
 export type CreateOrderRequest = z.infer<typeof CreateOrderRequest>;
 

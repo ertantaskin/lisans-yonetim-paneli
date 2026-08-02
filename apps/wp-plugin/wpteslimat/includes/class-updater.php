@@ -114,6 +114,15 @@ class Wpteslimat_Updater {
             return null;
         }
 
+        // GÜVENLİK (denetim W1): eklenti güncellemesi güvenilmez/DÜZ-METİN kanaldan ALINMAZ.
+        // panel_url https değilse (localhost hariç) güncelleme denetimini ATLA → ağ yolundaki
+        // bir saldırganın (MITM) sahte "yeni sürüm + kötücül download_url" enjekte edip WP'ye
+        // keyfi PHP kurdurması (RCE) yolu kapanır. Orders/HMAC ayrı kanaldır; bu yalnız updater.
+        if (!Wpteslimat_Settings::is_secure_panel_url($panel)) {
+            set_transient(self::FAIL_KEY, 1, self::FAIL_TTL);
+            return null;
+        }
+
         $res = wp_remote_get($panel . '/v1/updates/plugin/info', [
             'timeout' => 12,
             'headers' => ['Accept' => 'application/json'],
@@ -151,6 +160,28 @@ class Wpteslimat_Updater {
     }
 
     /**
+     * Kurulacak paket URL'i güvenli mi? (denetim W1) YALNIZ panelin KENDİ host'undan + https
+     * (localhost hariç) indirilebilir → MITM ile enjekte edilmiş düz-metin/yabancı-host bir .zip
+     * WP çekirdeğine KURDURULMAZ (RCE savunması). Panel host'u ile birebir eşleşme + şema kontrolü.
+     */
+    private static function is_valid_package_url($download) {
+        if ($download === '') {
+            return false;
+        }
+        $scheme = strtolower((string) wp_parse_url($download, PHP_URL_SCHEME));
+        $host = strtolower((string) wp_parse_url($download, PHP_URL_HOST));
+        $panel_host = strtolower((string) wp_parse_url(Wpteslimat_Settings::panel_url(), PHP_URL_HOST));
+        if ($host === '' || $panel_host === '') {
+            return false;
+        }
+        $is_local = ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1');
+        if (!$is_local && $scheme !== 'https') {
+            return false;
+        }
+        return $host === $panel_host;
+    }
+
+    /**
      * `pre_set_site_transient_update_plugins` kancası: panelde daha yeni sürüm
      * varsa transient'in `response` alanına bu eklenti için güncelleme kaydı ekler.
      */
@@ -167,6 +198,9 @@ class Wpteslimat_Updater {
         $new_version = (string) $info['version'];
         $basename = self::basename();
         $download = isset($info['download_url']) ? (string) $info['download_url'] : '';
+        // GÜVENLİK (denetim W1): kurulacak paket URL'i doğrulanır — yalnız panel host'u + https.
+        // Geçersizse boş bırakılır ve AŞAĞIDA güncelleme HİÇ sunulmaz (kötücül kurulum önlenir).
+        $safe_download = self::is_valid_package_url($download) ? $download : '';
 
         if (version_compare($new_version, WPTESLIMAT_VERSION, '<=')) {
             // (#13) Panel sürümü mevcut sürümden YENİ DEĞİL. Erken dönmek yerine `no_update`
@@ -180,9 +214,15 @@ class Wpteslimat_Updater {
                 'slug'        => 'wpteslimat',
                 'plugin'      => $basename,
                 'new_version' => WPTESLIMAT_VERSION,
-                'package'     => $download,
+                'package'     => $safe_download,
                 'url'         => Wpteslimat_Settings::panel_url(),
             ];
+            return $transient;
+        }
+
+        // Yeni sürüm var AMA paket URL'i güvenli değil (plaintext / yabancı host) → güncelleme
+        // SUNMA (RCE savunması). WP "güncelleme yok" görür; operatör panel_url'i https yapınca çözülür.
+        if ($safe_download === '') {
             return $transient;
         }
 

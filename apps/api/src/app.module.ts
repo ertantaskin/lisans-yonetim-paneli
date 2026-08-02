@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
+import { stdSerializers } from 'pino';
 import { SentryExceptionFilter } from './observability/sentry-exception.filter';
 import { validateEnv } from './config/env.validation';
 import { DbModule } from './db/db.module';
@@ -66,6 +67,20 @@ import { RateLimitModule } from './common/rate-limit.module';
             'req.body.payload',
           ],
           remove: true,
+        },
+        // PII maskeleme (§9/KVKK, denetim bulgusu): müşteri e-postası bazı uçlarda URL path/query'de
+        // taşınır (GET /admin/customers/:email, GET /admin/search?q=). pino-http varsayılan req
+        // serializer'ı req.url'i loglar → e-posta uygulama erişim loglarına düşer (anonymize/retention
+        // KAPSAMI DIŞI → silme garantisi log tarihçesinde eksik kalırdı). std serializer'ı sarıp
+        // URL'deki e-posta benzeri desenleri maskele; diğer alanlar (method/headers) korunur.
+        serializers: {
+          req: stdSerializers.wrapRequestSerializer((r) => {
+            const rec = r as { url?: unknown };
+            if (typeof rec.url === 'string') {
+              rec.url = rec.url.replace(/[^/?&=\s]+(?:@|%40)[^/?&=\s]+/gi, '[email]');
+            }
+            return r;
+          }),
         },
       },
     }),

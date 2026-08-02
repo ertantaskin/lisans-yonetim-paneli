@@ -23,9 +23,25 @@ export interface SessionPayload {
   exp: number; // unix saniye
 }
 
+/**
+ * SESSION_SECRET minimum uzunluğu (fail-closed). Gerçek secret (`openssl rand -hex 32` = 64 /
+ * `-base64 32` = 44) her zaman ≥24; yalnız elle yazılmış zayıf değer (ör. 'changeme') buraya düşer.
+ */
+const MIN_SESSION_SECRET_LEN = 24;
+
 export function sessionSecret(): string | undefined {
   const s = process.env.SESSION_SECRET;
-  return s && s.length > 0 ? s : undefined;
+  if (!s || s.length === 0) return undefined; // BOŞ = auth kapalı (dev/izole; değişmedi)
+  if (s.length < MIN_SESSION_SECRET_LEN) {
+    // SET edilmiş ama ZAYIF secret imzalı oturum token'ının taklidini kolaylaştırır. Sessizce
+    // auth'u KAPATMAK yerine (footgun) LOUD hata ver → operatör düzeltmeye zorlanır (güvenlik
+    // denetimi: MASTER_KEY'in katı doğrulamasıyla simetri). Boş secret bu yola HİÇ düşmez.
+    throw new Error(
+      `SESSION_SECRET çok kısa (${s.length} karakter, min ${MIN_SESSION_SECRET_LEN}). ` +
+        `Güçlü bir değer üretin: openssl rand -hex 32`,
+    );
+  }
+  return s;
 }
 
 export function authEnabled(): boolean {

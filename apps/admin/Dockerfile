@@ -24,9 +24,12 @@ FROM node:22-slim AS runtime
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app
-# Next standalone çıktısı: sunucu + gerekli node_modules.
-COPY --from=build /app/apps/admin/.next/standalone ./
-COPY --from=build /app/apps/admin/.next/static ./apps/admin/.next/static
-COPY --from=build /app/apps/admin/public ./apps/admin/public
+# Next standalone çıktısı: sunucu + gerekli node_modules. Dosyalar 'node' kullanıcısına ait
+# olacak şekilde kopyalanır (Next runtime kendi geçici alanlarına yazabilsin diye --chown).
+COPY --chown=node:node --from=build /app/apps/admin/.next/standalone ./
+COPY --chown=node:node --from=build /app/apps/admin/.next/static ./apps/admin/.next/static
+COPY --chown=node:node --from=build /app/apps/admin/public ./apps/admin/public
 EXPOSE 3000
+# En az ayrıcalık (güvenlik denetimi): root yerine hazır 'node' kullanıcısıyla çalışır.
+USER node
 CMD ["node", "apps/admin/server.js"]

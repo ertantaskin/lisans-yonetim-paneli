@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import type {
   CreateOrderRequest,
   CreateOrderResponse,
@@ -650,59 +650,86 @@ export class OrdersService {
     order: Order,
     dto: CreateOrderRequest,
   ): Promise<CreateOrderOutcome | null> {
-    const lines = await this.db.select().from(orderLines).where(eq(orderLines.orderId, order.id));
-    const lineByRemote = new Map(lines.map((l) => [l.remoteLineId, l]));
-
+    // DENETİM M1 (para / §2-§3 bütünlüğü): eskiden bu gövde advisory-lock'suz + çok-transaction'lıydı.
+    // İki eşzamanlı qty-azaltan re-push (WP'nin Action Scheduler + hook çift-tetiği — syncRefunds F1
+    // düzeltmesinin gerekçesiyle AYNI sınıf) BAYAT fulfilledQty okuyup fazlalık birimleri İKİ KEZ geri
+    // alabiliyor → müşterinin İADE ETMEDİĞİ CANLI anahtarlar karantinaya YANIYOR + partial-auto taze
+    // stokla dolduruyordu. Artık TÜM azalış/qty-yazımı, sipariş advisory kilidinin (hashtext(order.id)
+    // — syncRefunds/revokeOrderForSite/linkLine ile AYNI ad alanı) altında TEK transaction'da ve satır
+    // kilitleri döngüden ÖNCE alınarak (kilit sırası: advisory→assignments→order_lines) koşar; qty
+    // kilit altında TAZE okunur → say-sonra-yaz yarışı kapanır, çapraz-yol (reconcile↔syncRefunds)
+    // serileşir. ARTIŞ dolumu (completeLine) kendi satır-kilidiyle serileştiğinden commit SONRASI
+    // çalışır (linkLine→completeLine deseni) — advisory kilidini dolum süresince tutmaz.
+    const increasedPartialAuto: string[] = [];
     const changedLineIds: string[] = [];
 
-    for (const dtoLine of dto.lines) {
-      const line = lineByRemote.get(dtoLine.remoteLineId);
-      if (!line) continue; // Eşleşmeyen (yeni) satır — güvenli yoksay.
-
-      // Yeni gerekli birim = mağaza adedi × ÖLÇEK. Ölçek ÖNCE satırın anlık görüntüsünden
-      // okunur (0025); yoksa (eski satır) canlı eşlemeden türetilir. Eşlemesiz satırda ölçek
-      // 1'dir (qty MAĞAZA birimindedir).
-      const scale = await this.resolveLineScale(site.id, line, dtoLine);
-      // Ölçek çözülemedi (eşleme kaldırılmış + anlık görüntü yok): qty'ye DOKUNMA. Aksi halde
-      // bundleQty sessizce 1 sayılır ve müşterinin CANLI anahtarları iade YOKKEN geri alınırdı.
-      if (scale == null) {
-        this.logger.warn(
-          `Satır ölçeği çözülemedi (eşleme kaldırılmış, anlık görüntü yok) — qty korunuyor: ` +
-            `line=${line.id} order=${order.id} remoteProduct=${dtoLine.remoteProductId}`,
-        );
-        continue;
-      }
-      const newQty = dtoLine.qty * scale;
-
-      if (newQty === line.qty) continue; // (c) değişiklik yok.
-
-      if (newQty > line.qty) {
-        // (a) Artış: önce line.qty yükselt (completeLine kalanı = qty−fulfilled ile hesaplar).
-        await this.db.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
-        if (line.productId) {
-          const product = await this.products.getById(line.productId);
-          const policy = line.policyOverride ?? product.fulfillmentPolicy;
-          // Yalnız partial-auto otomatik atanır — mevcut fulfillment mantığı (allocate +
-          // SKIP LOCKED + kapasite) stok elverdiğince farkı (ve varsa eski pending'i) kapatır.
-          if (policy === 'partial-auto') {
-            await this.fulfillment.completeLine(line.id);
-          }
-        }
-      } else {
-        // (b) Azalış: aşırı-teslim varsa (fulfilled > yeni qty) fazlayı geri al, sonra qty düş.
-        if (line.fulfilledQty > newQty) {
-          await this.revokeExcess(site, line.id, line.fulfilledQty - newQty);
-        }
-        await this.db.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
-      }
-
-      changedLineIds.push(line.id);
-    }
-
-    if (changedLineIds.length === 0) return null; // Hiç adet değişmedi → idempotent yol.
-
-    // Değişen satır + sipariş durumunu tek transaction'da yeniden hesapla + edit izi.
     await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${order.id}))`);
+      // Kilit sırası (proje sözleşmesi): advisory → assignments → order_lines → orders. Siparişin
+      // tüm atama + satır kilitleri döngüden ÖNCE alınır (ABBA deadlock önlenir; syncRefunds deseni).
+      await tx
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(eq(assignments.orderId, order.id))
+        .orderBy(asc(assignments.id))
+        .for('update');
+      await tx
+        .select({ id: orderLines.id })
+        .from(orderLines)
+        .where(eq(orderLines.orderId, order.id))
+        .orderBy(asc(orderLines.id))
+        .for('update');
+
+      for (const dtoLine of dto.lines) {
+        // Satırı TAZE oku (kilit altında) — remoteLineId ile eşle.
+        const [line] = await tx
+          .select()
+          .from(orderLines)
+          .where(
+            and(eq(orderLines.orderId, order.id), eq(orderLines.remoteLineId, dtoLine.remoteLineId)),
+          )
+          .limit(1);
+        if (!line) continue; // Eşleşmeyen (yeni) satır — güvenli yoksay.
+        if (line.canceled) continue; // İade/iptal terminal satır — DOKUNMA (§2).
+
+        // Yeni gerekli birim = mağaza adedi × ÖLÇEK. Ölçek satırın anlık görüntüsünden (0025) →
+        // yoksa canlı eşlemeden; eşlemesiz satırda 1 (qty MAĞAZA birimindedir).
+        const scale = await this.resolveLineScale(site.id, line, dtoLine);
+        if (scale == null) {
+          // Ölçek çözülemedi (eşleme kaldırılmış + anlık görüntü yok): qty'ye DOKUNMA. Aksi halde
+          // bundleQty sessizce 1 sayılır → müşterinin CANLI anahtarları iade YOKKEN geri alınırdı.
+          this.logger.warn(
+            `Satır ölçeği çözülemedi (eşleme kaldırılmış, anlık görüntü yok) — qty korunuyor: ` +
+              `line=${line.id} order=${order.id} remoteProduct=${dtoLine.remoteProductId}`,
+          );
+          continue;
+        }
+        const newQty = dtoLine.qty * scale;
+        if (newQty === line.qty) continue; // (c) değişiklik yok.
+
+        if (newQty > line.qty) {
+          // (a) Artış: qty'yi yükselt; DOLUM commit SONRASI (completeLine kendi satır kilidiyle
+          // serileşir → advisory kilidini dolum süresince tutmaya gerek yok, ABBA/kilit-uzatma riski yok).
+          await tx.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
+          if (line.productId) {
+            const product = await this.products.getById(line.productId);
+            const policy = line.policyOverride ?? product.fulfillmentPolicy;
+            if (policy === 'partial-auto') increasedPartialAuto.push(line.id);
+          }
+        } else {
+          // (b) Azalış: aşırı-teslim varsa (fulfilled > yeni qty) fazlayı AYNI tx'te (kilit altında)
+          // geri al, sonra qty düş. revokeExcess artık tx'i (exec) alır → nested SAVEPOINT olarak koşar.
+          if (line.fulfilledQty > newQty) {
+            await this.revokeExcess(tx, site, line.id, line.fulfilledQty - newQty);
+          }
+          await tx.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
+        }
+        changedLineIds.push(line.id);
+      }
+
+      if (changedLineIds.length === 0) return; // Hiç adet değişmedi → idempotent yol (tx boş).
+
+      // Değişen satır + sipariş durumunu AYNI tx'te yeniden hesapla + edit izi.
       for (const lineId of changedLineIds) {
         const [l] = await tx.select().from(orderLines).where(eq(orderLines.id, lineId)).limit(1);
         if (!l) continue;
@@ -718,17 +745,32 @@ export class OrdersService {
       });
     });
 
+    if (changedLineIds.length === 0) return null; // Hiç adet değişmedi → idempotent yol.
+
+    // ARTIŞ dolumu (commit SONRASI): partial-auto satırlarda stok elverdiğince farkı kapat.
+    // completeLine kendi tx'i + satır FOR UPDATE'iyle over-delivery'yi önler (linkLine→completeLine deseni).
+    for (const lineId of increasedPartialAuto) {
+      await this.fulfillment.completeLine(lineId);
+    }
+
     const [fresh] = await this.db.select().from(orders).where(eq(orders.id, order.id)).limit(1);
     return this.buildOutcome(await this.loadOrderResult(fresh ?? order));
   }
 
   /**
-   * Bir satırın AKTİF atamalarını (en yeni önce) `excessUnits` birim karşılanana dek
-   * mevcut idempotent revoke akışıyla geri alır (#16 azalış). revokeAssignment lisansı
-   * karantinaya/kapasiteye döndürür, satır sayacını düşer — çift satış/hak invaryantı korunur.
+   * Bir satırın AKTİF atamalarını (en yeni önce) `excessUnits` birim karşılanana dek geri alır
+   * (#16 azalış). ÇAĞIRANIN advisory-kilitli transaction'ı (`exec`) İÇİNDE koşar → aktif küme TAZE
+   * ve kilitli okunur, revoke'lar nested SAVEPOINT olarak aynı bağlantı/kilitlerde gider (DENETİM M1).
+   * Sayaç YALNIZ GERÇEK revoke'ta ilerler: revokeAssignment idempotent `{already:true}` (no-op) dönerse
+   * (yarışta başka yol revoke etmiş) fazladan atama geri almamak için sayılmaz (over-revoke düzeltmesi).
    */
-  private async revokeExcess(site: Site, lineId: string, excessUnits: number): Promise<void> {
-    const active = await this.db
+  private async revokeExcess(
+    exec: Database,
+    site: Site,
+    lineId: string,
+    excessUnits: number,
+  ): Promise<void> {
+    const active = await exec
       .select({ id: assignments.id, units: assignments.units })
       .from(assignments)
       .where(and(eq(assignments.lineId, lineId), eq(assignments.status, 'active')))
@@ -742,17 +784,15 @@ export class OrdersService {
       const need = excessUnits - revoked;
       if (a.units <= need) {
         // Bu atamanın TAMAMI fazlalığa sığıyor → tam revoke (tek→karantina, multi→kapasite geri).
-        // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (iade/iptal değil); ileride adet
-        // tekrar artarsa autoComplete meşru şekilde doldurabilmeli — 'canceled' bunu kalıcı bloklardı.
-        await this.adminOrders.revokeAssignment(a.id, reason, actor, false);
-        revoked += a.units;
+        // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (ileride adet artarsa doldurulabilir).
+        const res = await this.adminOrders.revokeAssignment(a.id, reason, actor, false, exec);
+        // Yalnız GERÇEK revoke sayılır — idempotent {already:true} no-op fazladan atama geri aldırmaz.
+        if (!('already' in res)) revoked += a.units;
       } else {
-        // #19 birim-granüler: atama fazladan büyük (multi/MAK'te tek key birden çok birim taşır) →
-        // yalnız `need` birimi geri al, atamayı imha ETME. Kapasite tam `need` kadar döner; kalan
-        // birim müşteride aktif kalır. Tek-kullanımda a.units=1 ⇒ need≥1 ⇒ bu dala hiç girilmez
-        // (eski davranış birebir korunur); yalnız çok-kullanımlıkta over-revoke düzelir.
-        await this.adminOrders.revokePartialUnits(a.id, need, reason, actor);
-        revoked += need;
+        // #19 birim-granüler: atama fazladan büyük (multi/MAK) → yalnız `need` birimi geri al, imha etme.
+        // Kapasite tam `need` kadar döner; tek-kullanımda a.units=1 ⇒ need≥1 ⇒ bu dala hiç girilmez.
+        const res = await this.adminOrders.revokePartialUnits(a.id, need, reason, actor, exec);
+        revoked += res.revoked; // gerçekten geri alınan birim (atama aktif değilse 0)
       }
     }
   }
