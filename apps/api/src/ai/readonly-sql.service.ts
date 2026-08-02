@@ -139,6 +139,7 @@ const TABLE_DENYLIST_RE = new RegExp(`\\b(?:${TABLE_DENYLIST.join('|')})\\b`, 'i
  * (ops önerisi); bu, o rol gelene kadar da geçerli olan kod-düzeyi sertleştirmedir.
  */
 const DANGEROUS_FUNCTION_DENYLIST = [
+  // Dosya okuma (core)
   'pg_read_file',
   'pg_read_binary_file',
   'pg_stat_file',
@@ -147,7 +148,21 @@ const DANGEROUS_FUNCTION_DENYLIST = [
   'pg_ls_waldir',
   'pg_ls_tmpdir',
   'pg_ls_archive_statusdir',
+  // Denetim (sweep tamlık): PG16/17 dizin-listeleme varyantları (yalnız meta-veri ama tamlık için).
+  'pg_ls_logicalmapdir',
+  'pg_ls_logicalsnapdir',
+  'pg_ls_replslotdir',
+  'pg_ls_summariesdir',
   'pg_read_server_files',
+  // Denetim (sweep tamlık): adminpack eklentisi (varsayılan postgres:17-alpine'de YÜKLÜ DEĞİL —
+  // koşullu, ama CREATE EXTENSION adminpack sonrası keyfi dosya okur/yazar → önceden kapat).
+  'pg_file_read',
+  'pg_file_write',
+  'pg_file_unlink',
+  'pg_file_rename',
+  'pg_file_sync',
+  'pg_logdir_ls',
+  // Ağ / büyük-nesne dosya köprüsü
   'dblink',
   'dblink_exec',
   'dblink_connect',
@@ -158,6 +173,10 @@ const DANGEROUS_FUNCTION_DENYLIST = [
   'lo_put',
   'loread',
   'lowrite',
+  // Yapılandırma (GUC) okuma — dosya yolları / topoloji ifşası (iş raporu ASLA muhtaç değil).
+  'current_setting',
+  'pg_read_all_settings',
+  // DoS (statement_timeout ile de kapalı; savunma-derinliği)
   'pg_sleep',
   'pg_sleep_for',
   'pg_sleep_until',

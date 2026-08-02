@@ -49,8 +49,15 @@ export class ComplianceService {
    */
   async anonymize(email: string, actor: string): Promise<AnonymizeResult> {
     const normalized = email.trim().toLowerCase();
-    const original = email.trim();
     const redacted = this.redactedFor(normalized);
+    // (Denetim M3 — sweep) Serbest-metin PII maskesi BÜYÜK-KÜÇÜK harf DUYARSIZ olmalı: e-posta
+    // yerel/alan kısmı pratikte case-insensitive'dir; müşteri mesajı "Ali@GMAIL.COM" yazmışsa da
+    // temizlenmeli. Eski `replace(replace(x, original, ..), normalized, ..)` yalnız iki kasayı
+    // yakalıyordu → WHERE (lower/strpos) satırı seçip sayaç artarken üçüncü kasada PII gövdede
+    // KALIYORDU (audit "maskelendi" der ama kalır). regexp_replace(...,'gi') tüm kasaları kapatır.
+    // Regex meta-karakterleri (. + vb.) JS'te kaçırılır; 'i' bayrağı `original`ı da gereksiz kılar.
+    // redacted düz-metindir ('\'/'&'/backref içermez) → değiştirme dizesi güvenli.
+    const emailRe = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     return this.db.transaction(async (tx) => {
       // orders.customer_email maskele (lowercase eşleştir; zaten maskeliyse etkilenmez).
@@ -71,8 +78,8 @@ export class ComplianceService {
       const replRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE replacement_requests
         SET customer_email = ${redacted},
-            reason = replace(replace(reason, ${original}, ${redacted}), ${normalized}, ${redacted}),
-            resolution_note = replace(replace(resolution_note, ${original}, ${redacted}), ${normalized}, ${redacted}),
+            reason = regexp_replace(reason, ${emailRe}, ${redacted}, 'gi'),
+            resolution_note = regexp_replace(resolution_note, ${emailRe}, ${redacted}, 'gi'),
             updated_at = now()
         WHERE lower(customer_email) = ${normalized}
         RETURNING id;
@@ -80,21 +87,22 @@ export class ComplianceService {
       const anonymizedReplacements = replRows.length;
 
       // replacement_messages.body (destek yazışması, §13) da serbest-metin PII taşır: müşteri
-      // mesajlarında e-posta/ad geçebilir. Bu müşterinin talep kümesindeki (yukarıda dönen id'ler)
-      // mesajların gövdesinde adres geçen yerleri maskele. Kapsam talep-id ile sınırlı (başka
-      // müşterinin yazışması etkilenmez). Talep yoksa (boş küme) sorgu HİÇ koşmaz.
-      let anonymizedMessages = 0;
-      const requestIds = replRows.map((r) => r.id);
-      if (requestIds.length > 0) {
-        const msgRows = await rawRows<{ id: string }>(tx, sql`
-          UPDATE replacement_messages
-          SET body = replace(replace(body, ${original}, ${redacted}), ${normalized}, ${redacted})
-          WHERE request_id = ANY(${requestIds}::uuid[])
-            AND (strpos(body, ${original}) > 0 OR strpos(lower(body), ${normalized}::text) > 0)
-          RETURNING id;
-        `);
-        anonymizedMessages = msgRows.length;
-      }
+      // mesajlarında e-posta/ad geçebilir. Kapsam bu müşterinin TALEPLERİ ile sınırlı: m.request_id
+      // → replacement_requests JOIN'i, YUKARIDA maskelenmiş (customer_email = redacted) taleplere
+      // bağlanır (başka müşterinin yazışması etkilenmez). ANY(array) DEĞİL JOIN: drizzle `sql` şablonu
+      // JS dizisini virgülle ayırdığı için `ANY(${arr}::uuid[])` bozuk SQL üretir ("malformed array
+      // literal"). strpos filtresi: yalnız gerçekten adres geçen mesajı say (idempotent: 2. çağrıda
+      // gövde zaten temiz → 0). replRows.id KULLANILMAZ (JOIN yeterli).
+      const msgRows = await rawRows<{ id: string }>(tx, sql`
+        UPDATE replacement_messages m
+        SET body = regexp_replace(m.body, ${emailRe}, ${redacted}, 'gi')
+        FROM replacement_requests r
+        WHERE m.request_id = r.id
+          AND r.customer_email = ${redacted}
+          AND strpos(lower(m.body), ${normalized}::text) > 0
+        RETURNING m.id;
+      `);
+      const anonymizedMessages = msgRows.length;
 
       // email_log.to_email de PII taşır (§9): teslimat mailleri gerçek müşteri e-postasını
       // saklar → anonimleştirmede ATLANIRSA unutulma hakkı eksik kalır (audit bulgusu).
@@ -102,7 +110,7 @@ export class ComplianceService {
       const emailRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE email_log
         SET to_email = ${redacted},
-            subject = replace(replace(subject, ${original}, ${redacted}), ${normalized}, ${redacted})
+            subject = regexp_replace(subject, ${emailRe}, ${redacted}, 'gi')
         WHERE lower(to_email) = ${normalized}
         RETURNING id;
       `);
@@ -121,7 +129,7 @@ export class ComplianceService {
       const securityRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE security_events
         SET subject = CASE WHEN lower(subject) = ${normalized} THEN ${redacted} ELSE subject END,
-            detail = replace(replace(detail, ${original}, ${redacted}), ${normalized}, ${redacted})
+            detail = regexp_replace(detail, ${emailRe}, ${redacted}, 'gi')
         WHERE lower(subject) = ${normalized}
            -- strpos + AÇIK cast (LIKE değil): e-postada geçebilen '_' / '%' karakterleri
            -- joker gibi davranıp YANLIŞ satır maskelemesin; ::text belirsiz parametre

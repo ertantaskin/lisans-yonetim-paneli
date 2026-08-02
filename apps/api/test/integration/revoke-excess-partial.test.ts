@@ -348,6 +348,44 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     expect(statuses2.filter((s) => s === 'revoked')).toHaveLength(3);
   });
 
+  // ── DENETİM H1 sınıfı (sweep): adet-düşür yolu ASKIDAKİ atamayı da geri almalı ──
+
+  it('re-push qty 2→1 (tek-kullanım) ASKIDAKİ atama varken → fazlalık suspended geri alınır (bedava lisans yok)', async () => {
+    // Sweep bulgusu: revokeExcess yalnız active geri alsaydı, fazlalık YALNIZ suspended'dayken hiç
+    // geri alınamaz → satır over-fulfilled kalır + suspended sağ kalır → "Geri aç" ile bedava lisans.
+    const { remoteProductId } = await setupSingleProduct(2);
+    const siteObj = siteObjOf(site);
+    const remoteOrderId = `ord-${randomUUID().slice(0, 8)}`;
+    const dto = (qty: number): CreateOrderRequest => ({
+      remoteOrderId,
+      customerEmail: `${tag}@example.test`,
+      lines: [{ remoteLineId: 'line-1', remoteProductId, qty }],
+    });
+
+    // qty=2 → 2 tek-kullanım atama; ikisini de ASKIYA AL (fraud incelemesi, §4).
+    const first = await orders.createOrder(siteObj, dto(2));
+    expect(first.body.assignments).toHaveLength(2);
+    const asgIds = first.body.assignments.map((a) => a.assignmentId);
+    await db
+      .update(schema.assignments)
+      .set({ status: 'suspended' })
+      .where(eq(schema.assignments.orderId, first.body.orderId));
+
+    // qty=1 re-push → excess=fulfilledQty(2)-1=1 → TAM 1 (askıdaki) atama revoke edilmeli.
+    await orders.createOrder(siteObj, dto(1));
+    const statuses = await Promise.all(asgIds.map((id) => assignmentRow(id).then((r) => r.status)));
+    expect(statuses.filter((s) => s === 'revoked')).toHaveLength(1); // fix: suspended geri alındı
+    expect(statuses.filter((s) => s === 'suspended')).toHaveLength(1); // kalan hâlâ askıda
+
+    const [ol] = await db
+      .select({ fulfilledQty: schema.orderLines.fulfilledQty, qty: schema.orderLines.qty })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.orderId, first.body.orderId))
+      .limit(1);
+    expect(ol!.qty).toBe(1);
+    expect(ol!.fulfilledQty).toBe(1); // over-fulfilled DEĞİL (fix'ten önce 2 kalırdı)
+  });
+
   // ── DENETİM C2: §2 "MAK/multi'de iadede hak otomatik dönmez" invaryantı ──
 
   it('MAK İADE (returnMultiCapacity=false) → kapasite havuza DÖNMEZ (§2); re-assign → döner', async () => {

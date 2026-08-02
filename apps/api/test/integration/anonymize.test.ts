@@ -62,16 +62,19 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
         lineId: order.lineId,
         customerEmail: email,
         reason: `IT test talebi ${tag} — iletişim: ${email}`,
-        resolutionNote: `Çözüldü; müşteri ${email} bilgilendirildi.`,
+        // (Denetim M3 — sweep) ÜÇÜNCÜ KASA: eski replace(original/normalized) bunu YAKALAYAMAZDI
+        // (regexp_replace 'gi' yakalar) — büyük-küçük harf duyarsızlığını kanıtlar.
+        resolutionNote: `Çözüldü; müşteri ${email.toUpperCase()} bilgilendirildi.`,
       })
       .returning({ id: schema.replacementRequests.id });
 
-    // (Denetim M3) replacement_messages.body — destek yazışması serbest metni; e-posta içerir.
+    // (Denetim M3) replacement_messages.body — destek yazışması serbest metni; e-posta İÇERİR
+    // (ÜÇÜNCÜ KASA → case-insensitive maske kanıtı).
     await db.insert(schema.replacementMessages).values({
       requestId: repl!.id,
       authorType: 'customer',
       authorName: 'Müşteri',
-      body: `Merhaba, siparişimle ilgili sorun var. Bana ${email} adresinden dönün.`,
+      body: `Merhaba, siparişimle ilgili sorun var. Bana ${email.toUpperCase()} adresinden dönün.`,
     });
 
     // email_log — to_email PII (§9). Konuda da e-posta geçir (subject replace yolunu test et).
@@ -130,11 +133,14 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
     `);
     const replTextList = replText as unknown as Array<{ reason: string; resolution_note: string | null }>;
     expect(replTextList.length).toBeGreaterThanOrEqual(1);
+    const upper = email.toUpperCase();
     for (const row of replTextList) {
       expect(row.reason).not.toContain(email);
       expect(row.reason).not.toContain(normalized);
+      // (Denetim M3 — sweep) case-insensitive: ÜÇÜNCÜ KASA (upper) de temizlenmeli.
       expect(row.resolution_note ?? '').not.toContain(email);
       expect(row.resolution_note ?? '').not.toContain(normalized);
+      expect(row.resolution_note ?? '').not.toContain(upper);
     }
 
     // (Denetim M3) replacement_messages.body serbest metninde ham e-posta KALMADI + sayaç.

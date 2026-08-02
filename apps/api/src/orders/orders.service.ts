@@ -793,10 +793,16 @@ export class OrdersService {
     lineId: string,
     excessUnits: number,
   ): Promise<void> {
+    // (Denetim H1 sınıfı — adversaryel sweep) active + suspended: askıdaki atama da fulfilledQty'ye
+    // dahildir ve CANLI hak taşır (sonradan "Geri aç" ile aktifleşir). Adet-düşür yolu yalnız
+    // active geri alsaydı, fazlalık yalnız suspended'dayken hiç geri alınamaz → satır over-fulfilled
+    // kalır ve suspended atama sağ kalır → geri açılınca adedi düşürülen siparişte bedava lisans.
+    // revokeAssignment/revokePartialUnits ikisi de suspended'ı işler (H1 düzeltmesiyle); markLineCanceled
+    // =false + returnMultiCapacity=true (adet-düşür = iade DEĞİL, kapasite döner, satır re-fill'e açık).
     const active = await exec
       .select({ id: assignments.id, units: assignments.units })
       .from(assignments)
-      .where(and(eq(assignments.lineId, lineId), eq(assignments.status, 'active')))
+      .where(and(eq(assignments.lineId, lineId), inArray(assignments.status, ['active', 'suspended'])))
       .orderBy(desc(assignments.createdAt));
 
     const actor = `site:${site.domain ?? site.id}`;
