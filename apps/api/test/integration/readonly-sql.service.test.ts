@@ -108,4 +108,21 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     expect(res.rows).toHaveLength(200);
     expect(res.truncated).toBe(false);
   });
+
+  it('satır→metin CAST (s::text / cast(s AS text)) reddedilir — composite serialize bypass (denetim P4)', async () => {
+    // Bir SATIR/kayıt değişkenini metne çevirmek TÜM satırı (sır kolonları dahil) tek skaler text
+    // (OID 25) olarak döndürüp dönen-tip/kolon-adı/row-wrap süzgeçlerinin HEPSİNİ atlardı. CAST_TO_SCALAR_RE
+    // artık runSelect'e bağlı → bu vektör kapalı (regresyon koruması: fix "tanımlı ama bağlanmamış"tı).
+    await expectRejected('SELECT s::text FROM sites s');
+    await expectRejected('SELECT cast(s AS text) FROM sites s');
+    await expectRejected('SELECT l::varchar FROM license_items l');
+    await expectRejected('SELECT s::bytea FROM sites s');
+  });
+
+  it('satır-serialize yardımcıları (format/concat + to_jsonb/array_agg) reddedilir', async () => {
+    await expectRejected("SELECT format('%s', s) FROM sites s");
+    await expectRejected('SELECT concat(s) FROM sites s');
+    await expectRejected('SELECT to_jsonb(s) AS r FROM sites s');
+    await expectRejected('SELECT array_agg(s) AS r FROM sites s');
+  });
 });

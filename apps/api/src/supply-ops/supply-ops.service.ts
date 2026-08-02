@@ -313,26 +313,50 @@ export class SupplyOpsService {
         continue;
       }
 
-      // 1) Eskiyi geri al (single → karantina, multi → kapasite iadesi; audit'e düşer).
-      // markLineCanceled=false: recall/bulkReplace da revoke sonrası MEŞRU yeniden-atama yapar
-      // (değişim deseni); satır 'canceled' işaretlenirse completeLine no-op eder → yanlış "stok yok".
-      // Revoke sonucundan eski key id'sini al (soyağacı için).
-      const revoked = await this.adminOrders.revokeAssignment(c.assignment_id, 'replace', actor, false);
-
-      // 2) Yenisini ata — açılan yere 1 birim (atomik atama makinesi). Stok araya girip
-      // tükendiyse added=0 dönebilir → o kalemi atlanmış say (eski zaten revoke edildi;
-      // completeLine sonraki stok girişinde partial-auto ile tamamlanabilir).
-      const res = await this.fulfillment.completeLine(c.line_id, 1, true);
-      if (res.added > 0) {
-        replaced++;
-        // Soyağacı (§3): eski→yeni assignment_history (recall-toplu-değiştir yolu da izlenir).
-        await recordReplacementLineage(this.db, {
-          lineId: c.line_id,
-          oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
-          reason: 'recall-bulk-replace',
-          actor,
+      // ATOMİKLİK (denetim — approve/replaceAssignment H1-atomiklik düzeltmesinin ikizi): revoke +
+      // completeLine ARTIK advisory-lock ALTINDA TEK transaction'da koşar. Eskiden ikisi AYRI tx'te
+      // commit ediyordu → completeLine SKIP LOCKED çekişmesinde added=0 dönerse (stok VARKEN de
+      // dönebilir) eski key çoktan karantinaya düşmüş + yeni key yazılmamış oluyordu (müşteri, recall
+      // bağlamında bile, partial-auto refill'ine dek boşta kalıyordu). Artık added<=0 ⇒ throw ⇒
+      // rollback ⇒ revoke da geri alınır ⇒ eski key CANLI kalır. markLineCanceled=false: satır
+      // yeniden-atanabilir kalır. Yan etkiler (mail/webhook) COMMIT SONRASI (rollback'ta duyurulmaz).
+      try {
+        const out = await this.db.transaction(async (tx) => {
+          await tx.execute(
+            sql`SELECT pg_advisory_xact_lock(hashtext(${'replace:' + c.assignment_id}))`,
+          );
+          const revoked = await this.adminOrders.revokeAssignment(
+            c.assignment_id,
+            'replace',
+            actor,
+            false,
+            tx,
+          );
+          // Yarışta başka yol (iade/eşzamanlı değişim) atamayı zaten geri almış → no-op (tx boş commit).
+          if ('already' in revoked) return { added: 0, completion: null };
+          const res = await this.fulfillment.completeLine(c.line_id, 1, true, tx);
+          if (res.added <= 0) {
+            // added=0 "stok yok" DEĞİL (SKIP LOCKED çekişmesi olabilir) → throw ⇒ rollback ⇒ eski canlı.
+            throw new Error('bulk-replace: atama açılamadı (çekişme/stok)');
+          }
+          // Soyağacı (§3): eski→yeni assignment_history (recall-toplu-değiştir yolu da izlenir).
+          await recordReplacementLineage(tx, {
+            lineId: c.line_id,
+            oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
+            reason: 'recall-bulk-replace',
+            actor,
+          });
+          return { added: res.added, completion: res };
         });
-      } else {
+        if (out.added > 0 && out.completion) {
+          replaced++;
+          await this.fulfillment.emitCompletionEffects(out.completion);
+        } else {
+          skippedNoStock++;
+        }
+      } catch {
+        // Rollback oldu → eski atama CANLI kaldı (müşteri kaybı yok); sonraki stok girişinde
+        // partial-auto meşru şekilde doldurur. Bu adayı "stok yok" say (özet dürüst kalır).
         skippedNoStock++;
       }
     }

@@ -166,9 +166,9 @@ export class ReadonlySqlService {
     // ifadeler TÜM satırı (sır kolonları dahil) sır-OLMAYAN bir takma ad altında tek JSON değerinde
     // döndürerek HEM metin denylist'ini HEM dönen-kolon süzgecini atlar. Aynı şekilde `alias.*` /
     // çıplak `SELECT *` tüm kolonları seçer. İkisini de metin düzeyinde reddet (count(*) etkilenmez).
-    if (ROW_WRAP_RE.test(q) || WILDCARD_RE.test(q)) {
+    if (ROW_WRAP_RE.test(q) || WILDCARD_RE.test(q) || CAST_TO_SCALAR_RE.test(q)) {
       throw new HttpException(
-        'Satır/JSON-sarma ifadeleri güvenlik için reddedilir.',
+        'Satır/JSON-sarma veya satır→metin cast ifadeleri güvenlik için reddedilir.',
         HttpStatus.BAD_REQUEST,
       );
     }
