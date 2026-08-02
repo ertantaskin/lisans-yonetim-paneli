@@ -1029,6 +1029,32 @@ wp-abilities / variant-analysis / dependency-auditor). 14 ajan → **14 doğrula
   `apps/admin/.env.local` canlı ADMIN_TOKEN (OPERATÖR rotasyonu gerekir — .dockerignore ile imaj sızıntısı kapandı) ·
   site-facing katalog tüm-ürün (owner-woocommerce için tasarım; reseller/marketplace kanalı zaten scope'lu).
 
+**ODAKLI DENETİM — ADMIN + WP + WOOCOMMERCE (commit 0734b1c→5efffec, CANLI prod+dev, migration YOK):**
+Kullanıcı isteğiyle üç alan (admin yönetimi / WP eklentisi / WooCommerce entegrasyonu) 5-lensli çekişmeli
+workflow'la DERİN denetlendi → 12 bulgu (1 çürütüldü) + 2 KULLANICI KARARI. Hepsi düzeltildi + deploy.
+- **[A1 — KULLANICI KARARI: owner-only düz-metin]** Sipariş detayı + lisans envanteri + ürün detayı düz
+  lisans/parola artık YALNIZ owner'a; owner-olmayan 'admin' MASKELİ görür (getDeliveries disiplini).
+  `AdminRole` decorator + `canRevealPlaintext` (rol SUNUM kararında; OwnerGuard yetki kararında) +
+  `detail()`/`listLicenseItems` `reveal` param + `apiGet` actor+rol iletir. reveal audit yalnız GERÇEK
+  düz-metin gösteriminde (owner). reveal + KVKK anonymize uçlarına API **OwnerGuard** [A3]. **NOT:** önceki
+  "maskeleme yapma" kararı OWNER içindi; owner-olmayan admin maskeli — kullanıcı onayıyla değişti.
+- **[A2]** sipariş-detayı görüntüleme audit'i artık gerçek admin'e attribute edilir (apiGet x-admin-actor).
+  **[A4]** admin auth/hesap yaşam döngüsü (login/başarısız-login/create/disable/reset/remove) → `security_events`
+  (brute-force /security'de görünür; type/severity serbest metin → migration YOK).
+- **[C2 — KULLANICI KARARI: §2 invaryantı doğru]** MAK/multi İADE'de kapasite havuza DÖNMEZ
+  (`revokeAssignment`/`revokePartialUnits` `returnMultiCapacity`; refund yolları [revokeOrderForSite +
+  syncRefunds] `false`, re-assign [replace/adet-düşür/recall] `true`). markLineCanceled'dan AYRI param
+  (syncRefunds markLineCanceled=false ama iade → false). Sessiz aşırı-satış kapandı. Süre-bitişi deseniyle simetrik.
+- **[WP/Woo]** silinen ürünün sipariş satırı push+iade uzlaştırmasında ATLANMAZ (order-item ID'den türetilir,
+  eksik teslimat + under-revoke önlendi) [C1]; reconcile'da sonradan eklenen kalem görünür uyarı olayı bırakır
+  [C3]; `resolveBundleQty` tipi `Promise<number|null>` [C5]; order_key giriş yapmışta DOM'a gömülmez (misafir-only,
+  handle() view_order fallback'i zaten var) [B1]; `plugin_info` download_link host/şema doğrulaması [B3].
+- **Çürütüldü:** operatör mağaza ön-yüzünden BAŞKA müşterinin siparişini göremez (WooCommerce `view_order`
+  sahip-özel meta yetki). **Doğrulama:** typecheck 4/4 · api birim 65/65 (canRevealPlaintext) · VPS izole test DB
+  **entegrasyon 151/151 + yarış 3/3** (+2 C2 MAK-iade + güncellenen sync-refunds — davranış-değişimi testi) ·
+  PHP-lint 12/12 · deploy.sh rollback'li → /health 200 v1.0.0. DERS [[denetim-regresyon-dersleri]]: kullanıcı
+  KARARIYLA davranış değişince eski davranışı kodlayan testi güncelle (sync-refunds MAK).
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

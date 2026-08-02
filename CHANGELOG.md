@@ -388,6 +388,18 @@ kiracılıda komşu siteye link yazdırma) → yalnız aynı alan adı veya alt 
   (bu sürümde yalnız görünen adlar; iç tanımlayıcılar bir sonraki sürümde tamamen
   sadeleştirildi — bkz. [Yayınlanmamış] › Değişti).
 
+### Odaklı denetim (admin yönetimi + WP eklentisi + WooCommerce; 5-lens) → 12 bulgu + 2 karar
+- **[A1] owner-only düz-metin** (kullanıcı kararı): sipariş detayı + lisans envanteri + ürün detayı
+  düz lisans/parola YALNIZ owner'a; owner-olmayan 'admin' MASKELİ görür. reveal + KVKK anonymize
+  uçlarına API `OwnerGuard` (A3); görüntüleme audit'i gerçek admin'e (A2).
+- **[A4]** admin auth/hesap yaşam döngüsü (login/başarısız-login/create/disable/reset/remove) →
+  `security_events` (brute-force görünür; migration YOK).
+- **[C2] §2 invaryantı** (kullanıcı kararı): MAK/multi İADE'de kapasite havuza DÖNMEZ
+  (`returnMultiCapacity`; revokeOrderForSite + syncRefunds false; değişim/adet-düşür/recall true).
+- **WP/Woo:** silinen ürünün satırı push+iade'de atlanmaz (C1); reconcile eklenen yeni-kalem uyarısı (C3);
+  order_key misafir-only DOM (B1); plugin_info paket-URL doğrulama (B3); resolveBundleQty tipi (C5).
+- **Çürütüldü:** operatör mağaza ön-yüzünden başka müşterinin siparişini göremez (view_order sahip-özel).
+
 ### Güvenlik denetimi (7-lens harici skill workflow → 14 bulgu + sıfırdan re-audit)
 - **[HIGH]** `releases/publishRelease` owner-guard eksikti (owner-olmayan admin → tüm müşteri
   sitelerine keyfi eklenti .zip = tedarik-zinciri RCE); Next isOwner() + form-gate + API `OwnerGuard`.
