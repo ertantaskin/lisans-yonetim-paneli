@@ -388,6 +388,16 @@ kiracılıda komşu siteye link yazdırma) → yalnız aynı alan adı veya alt 
   (bu sürümde yalnız görünen adlar; iç tanımlayıcılar bir sonraki sürümde tamamen
   sadeleştirildi — bkz. [Yayınlanmamış] › Değişti).
 
+### Güvenlik denetimi (7-lens harici skill workflow → 14 bulgu + sıfırdan re-audit)
+- **[HIGH]** `releases/publishRelease` owner-guard eksikti (owner-olmayan admin → tüm müşteri
+  sitelerine keyfi eklenti .zip = tedarik-zinciri RCE); Next isOwner() + form-gate + API `OwnerGuard`.
+- **[MED]** `reconcileOrder` advisory-lock + tek-tx (eşzamanlı qty-azalt re-push'ta over-revoke /
+  canlı-lisans yanması); `bulkReplaceBatch` atomikliği (aynı sınıf); `readonly-sql` composite→text
+  cast bypass kapatıldı (re-audit self-regresyonunu yakaladı).
+- **Sertleştirme:** DTO üst sınırları, onboarding SSRF host, PII log maskeleme (KVKK), SESSION/
+  ADMIN_TOKEN min-24 fail-closed + REQUIRE_AUTH, logout tokenVersion iptal, Docker non-root,
+  `.dockerignore` özyinelemeli, `next`→15.5.22 + `nodemailer`→8.0.4, WP updater HTTPS+paket doğrulama.
+
 ### Son düzeltmeler (1.0.0 öncesi denetimler)
 - 5-lens sistem denetimi → 9 bulgu: `completeLine` webhook kaybı (mail/webhook ayrı
   try/catch), WP klon guard tabanı (const/manuel kurulumda), satış-hızı/stok-önizleme

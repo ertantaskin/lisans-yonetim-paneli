@@ -995,6 +995,40 @@ ortamda Redis/Postgres GERÇEKTEN kırılarak) ile sistemik açıklar kapatıld�
   [[denetim-regresyon-dersleri]] — "kendi düzeltmen yeni yol açar" (rate-limit ilk hali meşru mağazayı 429'ladı,
   stres testi yakaladı → düzeltildi). migration 0000-0029.
 
+**GÜVENLİK DENETİMİ + SIFIRDAN RE-AUDIT (commit c1e313e→ac4e10c, CANLI prod+dev, eklenti v1.0.1, migration YOK):**
+Kullanıcı isteğiyle iki HARİCİ güvenlik-skill kütüphanesindeki (VoltAgent/awesome-agent-skills +
+alirezarezvani/claude-skills) ilgili skiller **7-lensli çekişmeli-doğrulamalı workflow'a** dönüştürüldü
+(her lens gerçek bir skille bağlı: threat-model / best-practices / insecure-defaults / constant-time /
+wp-abilities / variant-analysis / dependency-auditor). 14 ajan → **14 doğrulanmış bulgu (1 HIGH + 1 MED +
+12 LOW)**; hepsi düzeltildi, prod+dev'e deploy edildi, sonra **AYNI workflow sıfırdan yeniden koşuldu**
+(bias'sız re-audit) — 14 bulgunun kapandığı doğrulandı + **1 SELF-REGRESYON yakalandı** (aşağıda) + kapatıldı.
+- **[HIGH] publishRelease RBAC bypass → tedarik-zinciri RCE:** owner-olmayan admin `/releases` "Elle .zip
+  yükle" ile TÜM müşteri sitelerine keyfi PHP taşıyan eklenti yayınlayabiliyordu (public updater oto-kurar).
+  `isOwner()` guard + form owner-gate + API **`OwnerGuard`** (Next YAZMA çağrılarında `x-admin-role` iletir;
+  plugin-publish/deployments/admin-CRUD owner-only — tek eksik UI kontrolü yükselemez).
+- **[MED] reconcileOrder over-revoke:** advisory-lock'suz/çok-tx → eşzamanlı qty-azalt re-push'ta müşterinin
+  İADE ETMEDİĞİ canlı anahtarlar yanıyordu. Tek advisory-lock'lu tx (syncRefunds deseni) + TAZE re-read +
+  `already`-sayaç + canceled-satır skip. Aynı sınıf **bulkReplaceBatch atomikliği** (re-audit MED) da kapatıldı
+  (approve/replaceAssignmentLocked deseni: added<=0 ⇒ rollback ⇒ eski key canlı).
+- **[LOW×12] sertleştirme:** readonly-sql composite→text cast bypass (CAST_TO_SCALAR_RE) · CreateOrder DTO
+  üst sınırları (DoS/int4) · onboarding webhook SSRF host (üst/ata alan reddi) · müşteri e-postası PII log
+  maskeleme (KVKK pino serializer) · SESSION_SECRET/ADMIN_TOKEN min-24 fail-closed + `REQUIRE_AUTH` opt-in ·
+  logout `tokenVersion` gerçek iptal + fail-open gözlem logu · Docker non-root (`USER node`) · `.dockerignore`
+  özyinelemeli · `next`→15.5.22 + `nodemailer`→8.0.4 (drizzle CVE erişilemez→ertelendi) · **[WP W1]** updater
+  HTTPS zorlama + paket-URL host/şema doğrulama (MITM RCE) + panel-client https guard.
+- **RE-AUDIT SELF-REGRESYONU (yakalandı+kapatıldı):** `CAST_TO_SCALAR_RE` tanımlıydı ama `runSelect`'e
+  `.test()` ile HİÇ bağlanmamıştı → `s::text` bypass'ı açıktı; build+typecheck yakalamadı, sıfırdan re-audit
+  yakaladı. Ders [[denetim-regresyon-dersleri]] #17: yeni güvenlik sabiti/regex/guard'ın enforcement yolunda
+  GERÇEKTEN çağrıldığını grep'le + regresyon testiyle doğrula; fix'i bağımsız re-audit'le re-doğrula.
+- **Doğrulama:** typecheck 4/4 + check-use-server temiz · api birim 61/61 · admin build · VPS izole test DB
+  **entegrasyon 149/149 + yarış 3/3** (+4 yeni: M1 over-revoke/canceled-skip + readonly-sql cast reddi) ·
+  PHP-lint 12/12 · deploy.sh rollback'li (prod+dev) → /health 200 v1.0.0 · eklenti v1.0.1. **migration YOK**
+  (tüm düzeltmeler kod/config/şema-nötr). **Kalan (kabul edilen LOW/by-design, raporlandı):** account-lockout
+  DoS (anti-enumeration tasarım tercihi) · SESSION_SECRET boş=açık (belgeli env-gate, prod'da auth AÇIK +
+  REQUIRE_AUTH eklendi) · webhook internal-host (dev/docker `http://wordpress` meşru kullanır → filtrelenmedi) ·
+  `apps/admin/.env.local` canlı ADMIN_TOKEN (OPERATÖR rotasyonu gerekir — .dockerignore ile imaj sızıntısı kapandı) ·
+  site-facing katalog tüm-ürün (owner-woocommerce için tasarım; reseller/marketplace kanalı zaten scope'lu).
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
