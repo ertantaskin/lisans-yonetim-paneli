@@ -286,7 +286,10 @@ describe('AdminOrdersService.syncRefunds (kısmi iade uzlaştırması)', () => {
     expect(res.revoked).toBe(2);
     expect(res.adjustedLines).toBe(1);
 
-    // Atama HÂLÂ aktif, units 5→3 (over-revoke YOK); kapasite tam 2 döndü (use_count 5→3).
+    // Atama HÂLÂ aktif, units 5→3 (over-revoke YOK). §2 (denetim C2 — kullanıcı kararı): bu bir
+    // İADE olduğundan MAK kapasitesi havuza DÖNMEZ → use_count 5'te KALIR (harcanan aktivasyon geri
+    // gelmez; sessiz aşırı-satış önlenir). units (3) < use_count (5) farkı = iade edilen ama tüketilmiş
+    // aktivasyonlar (beklenen; reconcile yalnız use_count ≤ max_uses kapasite sınırını denetler).
     const [asg] = await db
       .select({ status: schema.assignments.status, units: schema.assignments.units })
       .from(schema.assignments)
@@ -299,7 +302,7 @@ describe('AdminOrdersService.syncRefunds (kısmi iade uzlaştırması)', () => {
       .from(schema.licenseItems)
       .where(eq(schema.licenseItems.id, seed.licenseItemId))
       .limit(1);
-    expect(li!.useCount).toBe(3);
+    expect(li!.useCount).toBe(5); // §2: iadede MAK kapasitesi geri DÖNMEZ (eski beklenti 3'tü — davranış bilinçli değişti)
 
     // Satır: qty=3, fulfilledQty=3, canceled DEĞİL (adet düşür = iade değil).
     const [line] = await db
