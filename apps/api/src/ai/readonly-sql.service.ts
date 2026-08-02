@@ -40,6 +40,12 @@ const SECRET_COLUMN_DENYLIST = [
   'code_hash',
   'password_hash',
   'scrypt',
+  // Denetim M2: Postgres rol/sistem katalogları parola-hash kolonları — superuser rolünde okunabilir.
+  // Tablo-kapısı (pg_authid/pg_shadow) bunları zaten reddeder; kolon-adı katmanı bir görünüm/alias
+  // üzerinden dönmeleri ihtimaline karşı savunma-derinliği.
+  'rolpassword',
+  'passwd',
+  'umoptions',
 ] as const;
 const SECRET_COLUMN_RE = new RegExp(`\\b(?:${SECRET_COLUMN_DENYLIST.join('|')})\\b`, 'i');
 /** Dönen kolon adı denetimi için hızlı küme (küçük harf; tam-ad eşleşmesi). */
@@ -106,8 +112,57 @@ const CAST_TO_SCALAR_RE =
  * (denylist genişletmesi her yeni PG fonksiyonuyla delinirdi; tablo-kapısı sağlam). İş raporları
  * orders/assignments/products/license_items… üzerinde çalışır; bu tablolara ihtiyaç duymaz.
  */
-const TABLE_DENYLIST = ['admin_users', 'site_connect_tokens'] as const;
+const TABLE_DENYLIST = [
+  'admin_users',
+  'site_connect_tokens',
+  // Denetim M2: Postgres kimlik/rol katalogları — superuser DB rolünde parola hash'i (pg_authid.
+  // rolpassword), passwd (pg_shadow), yabancı sunucu kimlik bilgileri (pg_user_mapping.umoptions)
+  // taşırlar. İş raporları bunlara ASLA ihtiyaç duymaz → tablo-kapısında reddedilir.
+  'pg_authid',
+  'pg_shadow',
+  'pg_user_mapping',
+  'pg_user_mappings',
+] as const;
 const TABLE_DENYLIST_RE = new RegExp(`\\b(?:${TABLE_DENYLIST.join('|')})\\b`, 'i');
+
+/**
+ * Denetim M2 — TEHLİKELİ fonksiyon kapısı. SALT-OKUNUR transaction YAZMAYI engeller ama
+ * uygulamanın DB rolü superuser olduğunda aşağıdaki fonksiyonlar SELECT bağlamında bile
+ * sunucu dosya sistemi / ağ okuması yapar:
+ *   · pg_read_file / pg_read_binary_file / pg_stat_file / pg_ls_dir* → sunucudaki keyfi dosya
+ *     (ör. .env, MASTER_KEY, TLS anahtarı) OKUNUR.
+ *   · dblink* → dışa ağ bağlantısı (SSRF / veri sızdırma).
+ *   · lo_import/lo_export/lo_get/lo_put → büyük nesne dosya köprüsü.
+ *   · pg_sleep* → zaman-tabanlı DoS (statement_timeout ile de kapatılır; savunma-derinliği).
+ * NL→SQL iş raporları bu fonksiyonlara ASLA muhtaç değildir → metin düzeyinde reddedilir.
+ * Kesin/otoriter katman uygulamayı superuser-OLMAYAN salt-okunur bir DB rolüyle çalıştırmaktır
+ * (ops önerisi); bu, o rol gelene kadar da geçerli olan kod-düzeyi sertleştirmedir.
+ */
+const DANGEROUS_FUNCTION_DENYLIST = [
+  'pg_read_file',
+  'pg_read_binary_file',
+  'pg_stat_file',
+  'pg_ls_dir',
+  'pg_ls_logdir',
+  'pg_ls_waldir',
+  'pg_ls_tmpdir',
+  'pg_ls_archive_statusdir',
+  'pg_read_server_files',
+  'dblink',
+  'dblink_exec',
+  'dblink_connect',
+  'dblink_connect_u',
+  'lo_import',
+  'lo_export',
+  'lo_get',
+  'lo_put',
+  'loread',
+  'lowrite',
+  'pg_sleep',
+  'pg_sleep_for',
+  'pg_sleep_until',
+] as const;
+const DANGEROUS_FUNCTION_RE = new RegExp(`\\b(?:${DANGEROUS_FUNCTION_DENYLIST.join('|')})\\b`, 'i');
 
 /**
  * Skaler-OLMAYAN builtin dönüş tip OID'leri — bir kolon bu tiplerden döndüyse TÜM satırı tek değere
@@ -172,11 +227,20 @@ export class ReadonlySqlService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    // AUTH/kimlik tablosu kapısı: rapor bu tablolara (scrypt hash / bağlan-kodu) ASLA erişmemeli →
-    // adları geçen sorgu reddedilir (çıplak-record/::text dahil TÜM sızıntı vektörlerini kapatır).
+    // AUTH/kimlik tablosu kapısı: rapor bu tablolara (scrypt hash / bağlan-kodu / rol katalogları)
+    // ASLA erişmemeli → adları geçen sorgu reddedilir (çıplak-record/::text dahil TÜM sızıntı
+    // vektörlerini kapatır).
     if (TABLE_DENYLIST_RE.test(q)) {
       throw new HttpException(
         'Sorgu kimlik/auth tablolarına erişemez.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    // Denetim M2: tehlikeli fonksiyon kapısı (dosya/ağ/LO/sleep). SALT-OKUNUR tx yazmayı engeller
+    // ama superuser rolünde pg_read_file/dblink SELECT bağlamında sunucu dosyası/ağı okur → reddet.
+    if (DANGEROUS_FUNCTION_RE.test(q)) {
+      throw new HttpException(
+        'Sorgu dosya/ağ/sistem fonksiyonlarına erişemez.',
         HttpStatus.BAD_REQUEST,
       );
     }

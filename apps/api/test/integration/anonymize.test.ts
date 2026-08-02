@@ -52,13 +52,26 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
       customerEmail: email,
     });
 
-    // replacement_requests — site + order zorunlu; reason notNull.
-    await db.insert(schema.replacementRequests).values({
-      siteId: site.id,
-      orderId: order.orderId,
-      lineId: order.lineId,
-      customerEmail: email,
-      reason: `IT test talebi ${tag}`,
+    // replacement_requests — site + order zorunlu; reason notNull. (Denetim M3) reason +
+    // resolution_note SERBEST METİN PII: içine e-postayı da geçir → maskeleme yolunu test et.
+    const [repl] = await db
+      .insert(schema.replacementRequests)
+      .values({
+        siteId: site.id,
+        orderId: order.orderId,
+        lineId: order.lineId,
+        customerEmail: email,
+        reason: `IT test talebi ${tag} — iletişim: ${email}`,
+        resolutionNote: `Çözüldü; müşteri ${email} bilgilendirildi.`,
+      })
+      .returning({ id: schema.replacementRequests.id });
+
+    // (Denetim M3) replacement_messages.body — destek yazışması serbest metni; e-posta içerir.
+    await db.insert(schema.replacementMessages).values({
+      requestId: repl!.id,
+      authorType: 'customer',
+      authorName: 'Müşteri',
+      body: `Merhaba, siparişimle ilgili sorun var. Bana ${email} adresinden dönün.`,
     });
 
     // email_log — to_email PII (§9). Konuda da e-posta geçir (subject replace yolunu test et).
@@ -111,6 +124,29 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
     `);
     expect((replRows as unknown as unknown[]).length).toBe(0);
 
+    // (Denetim M3) replacement_requests.reason + resolution_note serbest metninde ham e-posta KALMADI.
+    const replText = await db.execute<{ reason: string; resolution_note: string | null }>(sql`
+      SELECT reason, resolution_note FROM replacement_requests WHERE lower(customer_email) = ${redacted}
+    `);
+    const replTextList = replText as unknown as Array<{ reason: string; resolution_note: string | null }>;
+    expect(replTextList.length).toBeGreaterThanOrEqual(1);
+    for (const row of replTextList) {
+      expect(row.reason).not.toContain(email);
+      expect(row.reason).not.toContain(normalized);
+      expect(row.resolution_note ?? '').not.toContain(email);
+      expect(row.resolution_note ?? '').not.toContain(normalized);
+    }
+
+    // (Denetim M3) replacement_messages.body serbest metninde ham e-posta KALMADI + sayaç.
+    expect(result.anonymizedMessages).toBeGreaterThanOrEqual(1);
+    const msgRemaining = await db.execute<{ id: string }>(sql`
+      SELECT m.id FROM replacement_messages m
+      JOIN replacement_requests r ON r.id = m.request_id
+      WHERE lower(r.customer_email) = ${redacted}
+        AND (strpos(m.body, ${email}) > 0 OR strpos(lower(m.body), ${normalized}) > 0)
+    `);
+    expect((msgRemaining as unknown as unknown[]).length).toBe(0);
+
     // REGRESYON: email_log.to_email de maskelenmeli (eskiden atlanıyordu).
     const emailRemaining = await db.execute<{ to_email: string }>(sql`
       SELECT to_email FROM email_log WHERE lower(to_email) = ${normalized}
@@ -149,6 +185,8 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
     expect(result.anonymizedOrders).toBe(0);
     expect(result.anonymizedReplacements).toBe(0);
     expect(result.anonymizedEmails).toBe(0);
+    // (Denetim M3) 2. çağrıda eşleşen talep yok → mesaj maskeleme de 0 (kapsam talep-id ile sınırlı).
+    expect(result.anonymizedMessages).toBe(0);
     // Aynı maske deterministik olarak yeniden üretilir.
     expect(result.redactedEmail).toBe(redacted);
   });

@@ -152,6 +152,7 @@ export class AdminOrdersController {
   quarantine(
     @Query(new ZodBody(QuarantineQuerySchema)) q: QuarantineQueryInput,
     @AdminActor() actor: string,
+    @AdminRole() role: string,
   ) {
     const status = trimmed(q.status);
     const limit = trimmed(q.limit);
@@ -164,6 +165,8 @@ export class AdminOrdersController {
       from: trimmed(q.from),
       to: trimmed(q.to),
       limit: limit ? Number(limit) : undefined,
+      // (Denetim A1/M1) owner (veya auth KAPALI) → TAM anahtar; owner-OLMAYAN admin → maskeli.
+      reveal: canRevealPlaintext(role),
     });
   }
 

@@ -125,4 +125,32 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     await expectRejected('SELECT to_jsonb(s) AS r FROM sites s');
     await expectRejected('SELECT array_agg(s) AS r FROM sites s');
   });
+
+  it('tehlikeli fonksiyonlar (dosya/ağ/LO/sleep) reddedilir (denetim M2)', async () => {
+    // SALT-OKUNUR tx yazmayı engeller ama superuser rolünde bunlar SELECT bağlamında sunucu
+    // dosyası/ağı okur → metin kapısında reddedilmeli. (Fonksiyon var olmasa bile kapı ADdan
+    // yakalar; sözdizim doğru olduğu için READ ONLY'ye ulaşmadan 400 döner.)
+    await expectRejected("SELECT pg_read_file('/etc/passwd')");
+    await expectRejected("SELECT pg_read_binary_file('postgresql.conf')");
+    await expectRejected("SELECT pg_ls_dir('.')");
+    await expectRejected("SELECT pg_stat_file('base')");
+    await expectRejected("SELECT dblink('host=x', 'SELECT 1')");
+    await expectRejected("SELECT lo_import('/etc/hostname')");
+    await expectRejected('SELECT pg_sleep(10)');
+  });
+
+  it('sistem/kimlik katalogları (pg_authid/pg_shadow/pg_user_mapping) reddedilir (denetim M2)', async () => {
+    // Rol katalogları superuser rolünde parola-hash'i (rolpassword/passwd) taşır → tablo kapısında red.
+    await expectRejected('SELECT rolname FROM pg_authid');
+    await expectRejected('SELECT usename FROM pg_shadow');
+    await expectRejected('SELECT umoptions FROM pg_user_mapping');
+    await expectRejected('SELECT * FROM pg_user_mappings');
+  });
+
+  it('parola-hash kolon adları (rolpassword/passwd/umoptions) metin kapısında reddedilir (denetim M2)', async () => {
+    // Tablo adı geçmese bile (görünüm/alias) kolon-adı katmanı yakalar (savunma-derinliği).
+    await expectRejected('SELECT rolpassword FROM some_view');
+    await expectRejected('SELECT passwd FROM some_view');
+    await expectRejected('SELECT umoptions FROM some_view');
+  });
 });

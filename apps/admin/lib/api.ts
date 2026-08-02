@@ -120,7 +120,12 @@ export async function apiRaw(
   opts?: { body?: unknown; actor?: string; ifNoneMatch?: string },
 ): Promise<Response> {
   const withBody = opts?.body !== undefined;
-  const h = headers(withBody, opts?.actor);
+  // (Denetim H2) apiRaw da oturum rolünü İLETİR: apiPost/apiGet gibi. Aksi halde reveal-gate'li
+  // uçlar (ör. envanter /license-items — @AdminRole → canRevealPlaintext) apiRaw üzerinden
+  // çağrıldığında rol başlığı DÜŞER → API rolü '' sanar (canRevealPlaintext('')=true) →
+  // owner-OLMAYAN admine düz-metin döner. getSessionRole() ağ değil (yalnız imzalı çerez okur).
+  const role = await getSessionRole();
+  const h = headers(withBody, opts?.actor, role);
   // Koşullu istek (canlı akış poll'u): ETag eşleşirse API 304 döner → gövde hiç taşınmaz.
   if (opts?.ifNoneMatch) h['if-none-match'] = opts.ifNoneMatch;
   return fetch(`${API_URL}${path}`, {

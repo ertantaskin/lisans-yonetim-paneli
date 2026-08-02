@@ -156,6 +156,12 @@ export interface QuarantineQuery {
    * geçerlidir. Verilmezse 'admin' yazılır.
    */
   actor?: string;
+  /**
+   * Düz-metin görme yetkisi (denetim A1/M1). owner (veya auth KAPALI) → TAM anahtar; owner-OLMAYAN
+   * admin → maskeli önizleme (key: son-4; account: yalnız secret-olmayan alanlar). Sipariş detayı /
+   * envanter maskesiyle simetrik. reveal audit'i YALNIZ gerçek düz-metin döndüğünde (reveal=true) yazılır.
+   */
+  reveal?: boolean;
 }
 
 @Injectable()
@@ -1049,7 +1055,11 @@ export class AdminOrdersService {
         .limit(1)
         .for('update');
       if (!asg) throw new NotFoundException('Atama bulunamadı');
-      if (asg.status !== 'active') return { assignmentId, revoked: 0 };
+      // (Denetim H1 sınıfı) active VE suspended geri alınabilir: askıdaki atama da CANLI hak taşır
+      // (iadede kısmi geri alım suspended'ı da kapsamalı). terminal (revoked/expired/replaced) no-op.
+      if (asg.status !== 'active' && asg.status !== 'suspended') {
+        return { assignmentId, revoked: 0 };
+      }
 
       const take = Math.min(units, asg.units);
       const full = take >= asg.units;
@@ -1199,13 +1209,21 @@ export class AdminOrdersService {
       await recomputeOrderStatus(tx, order.id);
     });
 
-    // AKTİF atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor). Tarama advisory-tx
-    // COMMIT'inden SONRA → completeLine'ın (row-lock nedeniyle iade'den önce commit'lediği) atamaları
-    // da bu kümede görünür. revokeAssignment tek→karantina, multi→kapasite geri (idempotent 'already').
+    // AKTİF + ASKIDAKİ atamalar geri alınır (revoked/expired/replaced zaten teslim edilmiyor).
+    // (Denetim H1 sınıfı) 'suspended' de CANLI bir hak: askıdaki atama sonradan "Geri aç" ile
+    // aktifleşebilir → tam iade edilen müşteriye çalışan lisans kalırdı. Bu yüzden iadede
+    // suspended da geri alınır. Tarama advisory-tx COMMIT'inden SONRA → completeLine'ın (row-lock
+    // nedeniyle iade'den önce commit'lediği) atamaları da bu kümede görünür. revokeAssignment
+    // tek→karantina, multi→kapasite geri değil (returnMultiCapacity=false, §2), idempotent 'already'.
     const active = await this.db
       .select({ id: assignments.id })
       .from(assignments)
-      .where(and(eq(assignments.orderId, order.id), eq(assignments.status, 'active')));
+      .where(
+        and(
+          eq(assignments.orderId, order.id),
+          inArray(assignments.status, ['active', 'suspended']),
+        ),
+      );
 
     let revoked = 0;
     for (const a of active) {
@@ -1407,10 +1425,19 @@ export class AdminOrdersService {
         // en yeni atamadan başlayarak `excess` birim karşılanana dek; tek→karantina, multi→kapasite.
         const excess = line.fulfilledQty - netQty;
         if (excess > 0) {
+          // (Denetim H1 sınıfı) active + suspended: askıdaki atama da fulfilledQty'ye dahildir ve
+          // CANLI hak taşır → kısmi iadede geri alınabilir kümeye girer. Aksi halde fazlalık yalnız
+          // suspended'dayken döngü aktifi geri alamaz, suspended sağ kalır (sonradan geri açılırsa
+          // iade edilen birim çalışır).
           const active = await tx
             .select({ id: assignments.id, units: assignments.units })
             .from(assignments)
-            .where(and(eq(assignments.lineId, line.id), eq(assignments.status, 'active')))
+            .where(
+              and(
+                eq(assignments.lineId, line.id),
+                inArray(assignments.status, ['active', 'suspended']),
+              ),
+            )
             .orderBy(desc(assignments.createdAt));
           let revoked = 0;
           for (const a of active) {
@@ -1424,8 +1451,10 @@ export class AdminOrdersService {
               await this.revokeAssignment(a.id, reason, actor, false, tx, false);
               revoked += a.units;
             } else {
-              await this.revokePartialUnits(a.id, need, reason, actor, tx, false);
-              revoked += need;
+              // GERÇEK dönüşü say (revokeExcess deseni) — over-count savunması: yardımcı beklenmedik
+              // biçimde 0 döndürürse (yarış) sayaç şişmez.
+              const res = await this.revokePartialUnits(a.id, need, reason, actor, tx, false);
+              revoked += res.revoked;
             }
           }
           totalRevoked += revoked;
@@ -1796,6 +1825,10 @@ export class AdminOrdersService {
    * aksi halde tarih süzgeci satırları kırptığında liste EKSİKKEN uyarı `false` çıkıyordu (G6).
    */
   async listQuarantine(params: QuarantineQuery = {}) {
+    // (Denetim A1/M1) Düz-metin yetkisi: controller canRevealPlaintext(role)'ü geçer. Servis
+    // varsayılanı true (geriye dönük: reveal geçmeyen iç çağrılar — CSV export vb. — tam metin alır;
+    // export owner-only rota; owner-olmayan gate controller'da). owner-OLMAYAN admin → maskeli.
+    const reveal = params.reveal ?? true;
     const limit = Math.min(Math.max(Math.trunc(params.limit ?? 500), 1), 5000);
     // Satır çoğalması (leftJoin fan-out: aynı ölü key'in birden çok atama/soyağacı satırı) SQL
     // LIMIT'i tüketebildiği için lisans-satırı bazında dedupe'tan ÖNCE daha geniş çekilir, sonra
@@ -2076,6 +2109,7 @@ export class AdminOrdersService {
             r.licenseItemId,
             r.productKind,
             r.payloadSchema,
+            reveal,
           ),
           // Tedarik izi (§12) — tedarikçiye "şu partiden şu anahtarlar bozuk" diye iletilebilsin.
           batchId: r.batchId ?? null,
@@ -2140,7 +2174,9 @@ export class AdminOrdersService {
     // DÜZ METNİNİ toplu döndürür (operatör tedarikçiye değişim talebi için dışa aktarır).
     // Tek kayıt = tek görüntüleme (per-key değil per-view granülerlik, sipariş detayı deseni).
     // best-effort: audit yazımı bu OKUMA yolunu bozmamalı (yazım hatasında liste yine döner).
-    if (out.length > 0) {
+    // (Denetim M1) Audit YALNIZ gerçek düz-metin döndüğünde (reveal=true) yazılır — maskeli
+    // liste (owner-olmayan) hiçbir sır ifşa etmez, dolayısıyla reveal kaydı üretmez.
+    if (reveal && out.length > 0) {
       try {
         await this.db.insert(auditLog).values({
           action: 'reveal',
@@ -2168,27 +2204,34 @@ export class AdminOrdersService {
   }
 
   /**
-   * Karantina listesi için anahtar önizlemesi. key/code/custom → TAM düz anahtar (ölü/karantina
-   * anahtar sır değil; kullanıcı isteği "gizleme yapma"). account → yalnız secret-OLMAYAN alanlar
-   * (ör. "kullanıcı: ahmet") — bir LİSTEDE onlarca parolayı toplu dökmemek için; tam hesap kaynak
-   * siparişte (maskesiz) görünür.
+   * Karantina listesi için anahtar önizlemesi. `reveal` (denetim A1/M1) düz-metin yetkisidir:
+   *   · reveal=true (owner / auth KAPALI): key/code/custom → TAM düz anahtar (ölü/karantina anahtar
+   *     sır değil); account → yalnız secret-OLMAYAN alanlar (bir LİSTEDE onlarca parolayı toplu
+   *     dökmemek için; tam hesap kaynak siparişte görünür).
+   *   · reveal=false (owner-OLMAYAN admin): key/code/custom → maskeli (••••••+son-4); account →
+   *     tüm alanlar maskeli (secret kuyruksuz). Sipariş detayı / envanter maskesiyle simetrik.
    */
   private quarantineKeyPreview(
     payloadEnc: string,
     licenseItemId: string,
     kind: string,
     payloadSchema: unknown,
+    reveal: boolean,
   ): string {
     const plain = this.crypto.decrypt(payloadEnc, CryptoService.licenseItemAad(licenseItemId));
     if (kind === 'account') {
       const parsed = AccountPayloadSchema.safeParse(payloadSchema);
       if (parsed.success) {
-        const shown = parseAccountPayload(parsed.data, plain).filter((f) => !f.secret);
+        const fields = parseAccountPayload(parsed.data, plain);
+        // owner-OLMAYAN: TÜM alanlar maskeli (secret kuyruksuz). owner: yalnız secret-olmayanları göster.
+        const shown = reveal
+          ? fields.filter((f) => !f.secret)
+          : maskAccountFields(fields);
         return shown.length ? shown.map((f) => `${f.label}: ${f.value}`).join(' · ') : '—';
       }
       return '—';
     }
-    return plain;
+    return reveal ? plain : maskSecret(plain);
   }
 
   // ─── İnceleme Kuyruğu (§8 held_for_review — dinamik kota) ──────────────────────────

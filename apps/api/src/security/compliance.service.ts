@@ -15,6 +15,11 @@ export interface AnonymizeResult {
    * "PII maskelendi" derken hangi kümelerin maskelendiği görünür olsun).
    */
   anonymizedSecurityEvents: number;
+  /**
+   * Maskelenen destek yazışması (replacement_messages) mesaj sayısı (denetim M3). Müşteri
+   * mesaj gövdesi serbest-metin PII (e-posta/ad) taşıyabilir → "unutulma hakkı" kapsamında maskelenir.
+   */
+  anonymizedMessages: number;
   redactedEmail: string;
 }
 
@@ -57,14 +62,39 @@ export class ComplianceService {
       `);
       const anonymizedOrders = orderRows.length;
 
-      // replacement_requests.customer_email maskele.
+      // replacement_requests.customer_email maskele. AYRICA serbest-metin PII (denetim M3):
+      //   · reason — müşterinin KENDİ yazdığı açıklama (adını/e-postasını cümle içinde taşıyabilir),
+      //   · resolution_note — admin notu (müşteriye atıfta bulunabilir).
+      // email_log.subject / security_events.detail deseniyle best-effort replace: adres geçtiği yerde
+      // maskeyle değişir (operasyonel/audit bağlamı korunur, doğrudan tanımlayıcı silinir = KVKK
+      // pseudonimizasyon). RETURNING id → mesaj gövdelerini AYNI talep kümesine kapsamak için.
       const replRows = await rawRows<{ id: string }>(tx, sql`
         UPDATE replacement_requests
-        SET customer_email = ${redacted}, updated_at = now()
+        SET customer_email = ${redacted},
+            reason = replace(replace(reason, ${original}, ${redacted}), ${normalized}, ${redacted}),
+            resolution_note = replace(replace(resolution_note, ${original}, ${redacted}), ${normalized}, ${redacted}),
+            updated_at = now()
         WHERE lower(customer_email) = ${normalized}
         RETURNING id;
       `);
       const anonymizedReplacements = replRows.length;
+
+      // replacement_messages.body (destek yazışması, §13) da serbest-metin PII taşır: müşteri
+      // mesajlarında e-posta/ad geçebilir. Bu müşterinin talep kümesindeki (yukarıda dönen id'ler)
+      // mesajların gövdesinde adres geçen yerleri maskele. Kapsam talep-id ile sınırlı (başka
+      // müşterinin yazışması etkilenmez). Talep yoksa (boş küme) sorgu HİÇ koşmaz.
+      let anonymizedMessages = 0;
+      const requestIds = replRows.map((r) => r.id);
+      if (requestIds.length > 0) {
+        const msgRows = await rawRows<{ id: string }>(tx, sql`
+          UPDATE replacement_messages
+          SET body = replace(replace(body, ${original}, ${redacted}), ${normalized}, ${redacted})
+          WHERE request_id = ANY(${requestIds}::uuid[])
+            AND (strpos(body, ${original}) > 0 OR strpos(lower(body), ${normalized}::text) > 0)
+          RETURNING id;
+        `);
+        anonymizedMessages = msgRows.length;
+      }
 
       // email_log.to_email de PII taşır (§9): teslimat mailleri gerçek müşteri e-postasını
       // saklar → anonimleştirmede ATLANIRSA unutulma hakkı eksik kalır (audit bulgusu).
@@ -111,6 +141,7 @@ export class ComplianceService {
         anonymizedReplacements,
         anonymizedEmails,
         anonymizedSecurityEvents,
+        anonymizedMessages,
       });
       await tx.execute(sql`
         INSERT INTO audit_log (action, actor, target_type, target_id, meta)
@@ -119,13 +150,15 @@ export class ComplianceService {
 
       this.logger.warn(
         `KVKK anonimleştirme: ${anonymizedOrders} sipariş + ${anonymizedReplacements} değişim + ` +
-          `${anonymizedEmails} mail + ${anonymizedSecurityEvents} güvenlik kaydı maskelendi (aktör=${actor})`,
+          `${anonymizedEmails} mail + ${anonymizedSecurityEvents} güvenlik kaydı + ` +
+          `${anonymizedMessages} destek mesajı maskelendi (aktör=${actor})`,
       );
       return {
         anonymizedOrders,
         anonymizedReplacements,
         anonymizedEmails,
         anonymizedSecurityEvents,
+        anonymizedMessages,
         redactedEmail: redacted,
       };
     });

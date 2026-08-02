@@ -103,7 +103,10 @@ const CreateMappingBody = z.object({
   // "Eşlenmemiş gelen ürünler" tek-tıkla eşleme, varyasyonsuz ürün için null gönderebilir →
   // nullish (service '0'/boş/null → null normalize eder). optional-only olsaydı null 400 yerdi.
   remoteVariationId: z.string().nullish(),
-  bundleQty: z.number().int().positive().optional(),
+  // Üst sınır site-mappings.controller ile HİZALI (.max(1000)) — denetim LOW: sınırsız bundleQty
+  // sipariş satırını ×N lisansla teslim eder (aşırı-teslim DoS / stok yanması). İki yazar aynı kolonu
+  // (site_product_mappings.bundle_qty) beslediğinden doğrulama da tek üst sınırda buluşmalı.
+  bundleQty: z.number().int().min(1).max(1000).optional(),
 });
 type CreateMappingBody = z.infer<typeof CreateMappingBody>;
 
@@ -113,7 +116,10 @@ const UpdateMappingBody = z
   .object({
     active: z.boolean().optional(),
     productId: z.string().uuid().optional(),
-    bundleQty: z.number().int().positive().optional(),
+    // Üst sınır site-mappings.controller ile HİZALI (.max(1000)) — denetim LOW: sınırsız bundleQty
+  // sipariş satırını ×N lisansla teslim eder (aşırı-teslim DoS / stok yanması). İki yazar aynı kolonu
+  // (site_product_mappings.bundle_qty) beslediğinden doğrulama da tek üst sınırda buluşmalı.
+  bundleQty: z.number().int().min(1).max(1000).optional(),
   })
   .refine(
     (b) => b.active !== undefined || b.productId !== undefined || b.bundleQty !== undefined,

@@ -160,4 +160,64 @@ describe('H1 gerçek-iade canceled=true yolu (revokeOrderForSite → autoComplet
       .limit(1);
     expect(bAfter!.status).toBe('available');
   });
+
+  it('(H1 sınıfı) tam iadede ASKIDAKİ (suspended) atama da geri alınır', async () => {
+    // Denetim H1: revokeOrderForSite eskiden yalnız status='active' geri alıyordu → askıdaki atama
+    // iadede SAĞ KALIR; admin sonradan "Geri aç" derse iade edilen müşteride ÇALIŞAN lisans olurdu.
+    const product = await createProduct(db, {
+      tag,
+      kind: 'key',
+      usageMode: 'single',
+      fulfillmentPolicy: 'partial-auto',
+    });
+    const [item] = await insertLicenseItems(db, crypto, { productId: product.id, count: 1, tag });
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: 1,
+      tag,
+      status: 'fulfilled',
+    });
+
+    // Teslim edilmiş + SONRA askıya alınmış: item 'assigned', atama status='suspended', satır fulfilled.
+    await db
+      .update(schema.licenseItems)
+      .set({ status: 'assigned', assignedAt: new Date() })
+      .where(eq(schema.licenseItems.id, item!));
+    const [asg] = await db
+      .insert(schema.assignments)
+      .values({
+        orderId: order.orderId,
+        lineId: order.lineId,
+        licenseItemId: item!,
+        units: 1,
+        status: 'suspended',
+        deliveredAt: new Date(),
+      })
+      .returning({ id: schema.assignments.id });
+    await db
+      .update(schema.orderLines)
+      .set({ fulfilledQty: 1, status: 'fulfilled' })
+      .where(eq(schema.orderLines.id, order.lineId));
+
+    // TAM İADE.
+    const siteRow = { id: site.id, domain: site.domain } as unknown as Site;
+    const res = await admin.revokeOrderForSite(siteRow, order.remoteOrderId, 'WooCommerce: refunded');
+    // Fix: suspended de sayılır → revoked=1 (fix'ten önce 0'dı, suspended sağ kalıyordu).
+    expect(res.revoked).toBe(1);
+
+    // Askıdaki atama artık 'revoked'; item karantinada (iade → satışa dönmez, §2).
+    const [after] = await db
+      .select({ status: schema.assignments.status })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.id, asg!.id))
+      .limit(1);
+    expect(after!.status).toBe('revoked');
+    const [itemAfter] = await db
+      .select({ status: schema.licenseItems.status })
+      .from(schema.licenseItems)
+      .where(eq(schema.licenseItems.id, item!))
+      .limit(1);
+    expect(itemAfter!.status).toBe('quarantined');
+  });
 });
