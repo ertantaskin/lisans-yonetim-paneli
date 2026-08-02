@@ -1055,6 +1055,41 @@ workflow'la DERİN denetlendi → 12 bulgu (1 çürütüldü) + 2 KULLANICI KARA
   PHP-lint 12/12 · deploy.sh rollback'li → /health 200 v1.0.0. DERS [[denetim-regresyon-dersleri]]: kullanıcı
   KARARIYLA davranış değişince eski davranışı kodlayan testi güncelle (sync-refunds MAK).
 
+**DERİN-DENETİM DÜZELTMELERİ + ADVERSARYEL DOĞRULAMA (commit fada750→86dcc22, CANLI prod+dev, migration YOK):**
+Kullanıcı "tüm eksikleri ve sorunları gider; sistem stabil/güvenli/performans" dedi → derin-denetimde bulunan
+gerçek + güvenli-düzeltilebilir açıklar düzeltildi, sonra **9-ajanlı adversaryel doğrulama workflow'u** (her
+düzeltmeyi çürütmeye çalış + 2 kapsam taraması) koşuldu → H1×2/H2/M1/bundleQty **SOUND**; M2/M3 CONCERN +
+**sweep 1 kaçırılan H1-yolu (HIGH)** → 3 follow-up bulgu deploy-ÖNCESİ kapatıldı. **DERS
+[[denetim-regresyon-dersleri]]:** H1 sınıfı ("terminal-durumu yeni bir kümeye ekleyince TÜM revoke/refund/deliver
+yollarını gözden geçir") 4. kez tekrar etti — bu kez `suspended`'ı iade kümesine eklerken revoke'un ÜÇ yolu
+(revokeOrderForSite/syncRefunds/revokeExcess) var; ilk iki düzeltme yapıldı, ÜÇÜNCÜSÜ (revokeExcess adet-düşür)
+yalnız adversaryel sweep'te yakalandı → yeni bir davranış eklerken o davranışın TÜM eş-yollarını grep'le.
+- **[H1 — bedava lisans, 3 yol]** iade/adet-düşür yollarının üçü de yalnız `status='active'` geri alıyordu →
+  ASKIDAKİ (`suspended`) atama iadede/adet-düşürde CANLI kalıp "Geri aç" ile bedava lisans üretiyordu (§2).
+  `revokeOrderForSite`+`syncRefunds`+`revokeExcess` aday kümesi `active+suspended`; `revokePartialUnits` guard
+  suspended kabul; syncRefunds else gerçek dönüşü sayar (over-count savunması). §2 korunur (MAK iadede kapasite
+  dönmez, satır canceled). +3 regresyon testi (h1 suspended-refund, revokeExcess suspended qty-düşür).
+- **[H2 — latent]** `apiRaw` oturum rolünü DÜŞÜRÜYORDU → envanter reveal-gate'i owner-olmayan admine düz-metin
+  gösterebilirdi (`canRevealPlaintext('')=true`) → `getSessionRole()` ile iletir (apiPost/apiGet ile simetrik;
+  ikincil admin hesabı YOK → latent). role-plaintext-consistency sweep SOUND.
+- **[M1]** karantina listesi rol'e bakmadan TAM düz anahtar döndürüyordu → A1 kararıyla rol-farkında maske
+  (`listQuarantine` `reveal` param + controller `canRevealPlaintext(role)`; owner düz, owner-olmayan maskeli;
+  reveal audit yalnız düz-metinde). +quarantine-mask testi.
+- **[M2] readonly-sql (§15, AI KAPALI)** salt-okunur tx yazmayı engeller ama uygulamanın DB rolü superuser
+  olduğundan `pg_read_file`/`dblink`/`lo_*`/adminpack (`pg_file_read`) dosya-ağ + `pg_authid`/`pg_shadow`
+  parola-hash katalogları okunabiliyordu → DANGEROUS_FUNCTION denylist + sistem-katalog tablo denylist +
+  parola-kolon denylist (savunma-derinliği; otoriter katman superuser-olmayan DB rolü = ops). +M2 vektör testleri.
+- **[M3]** KVKK anonymize serbest-metin (`reason`/`resolution_note`/`message.body` + mevcut `subject`/`detail`)
+  atlıyor VE farklı-kasada PII bırakıp sayacı "maskelendi" diyordu → **case-insensitive** `regexp_replace(...,'gi')`;
+  mesaj gövdeleri talep JOIN'i ile kapsanır (drizzle `ANY(${arr}::uuid[])` **bozuk SQL üretiyordu** — entegrasyon
+  testi yakaladı → JOIN'e çevrildi). +üçüncü-kasa regresyon assert'i.
+- **[LOW]** `bundleQty` products.controller `.positive()`→`.min(1).max(1000)` (site-mappings ile hizalı; aşırı-teslim DoS).
+- **Doğrulama:** typecheck 4/4 + check-use-server temiz · api birim 65/65 · admin build · **VPS izole test DB
+  entegrasyon 157/157 + yarış 3/3** · adversaryel workflow (9 ajan) SOUND · prod+dev deploy.sh rollback'li → ikisi
+  de /health 200 v1.0.0. **Migration YOK.** Kalan (kabul edilen, raporlandı): M4 migration-`when` konvansiyonu
+  (prod `__drizzle_migrations` cerrahisi riski > fayda; bekleyen migration yok → sonraki migration'da `when` bump);
+  superuser-olmayan salt-okunur DB rolü (M2 otoriter katman, ops).
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

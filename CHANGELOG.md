@@ -14,6 +14,45 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Derin-denetim düzeltmeleri: H1 suspended-refund + rol-farkında maske + KVKK + readonly-sql (migration YOK)
+
+Kullanıcı: *"tüm eksikleri ve sorunları gider, sistem stabil güvenli performans bir şekilde."*
+Derin-denetimde bulunan gerçek + güvenli-düzeltilebilir açıklar kapatıldı; her düzeltme
+**9-ajanlı adversaryel doğrulama workflow'undan** (çürütmeye çalış + kapsam taraması) geçirildi
+ve o workflow **kaçırdığım üçüncü bir H1-yolunu (HIGH) + 2 tamlık boşluğunu** ortaya çıkardı —
+hepsi deploy-öncesi kapatıldı.
+
+- **[H1 — bedava lisans] iade/adet-düşür yollarının ÜÇÜ de** yalnız `status='active'` atamayı geri
+  alıyordu → ASKIDAKİ (`suspended`) atama iadede/adet-düşürde CANLI kalıyor, admin sonradan "Geri aç"
+  derse iade edilen müşteride çalışan lisans oluyordu (§2 ihlali). Düzeltildi: `revokeOrderForSite`
+  (tam iade) + `syncRefunds` (kısmi iade) + `revokeExcess` (adet-düşür re-push; **adversaryel sweep
+  bulgusu**) aday kümesi `active + suspended`; `revokePartialUnits` guard'ı suspended kabul eder;
+  syncRefunds else-branch gerçek dönüşü sayar (over-count savunması). §2 korunur: MAK iadede kapasite
+  havuza dönmez, satır `canceled` işaretlenir.
+- **[H2 — düz-metin sızıntısı, latent] `apiRaw`** oturum rolünü iletmeyerek envanter reveal-gate'ini
+  owner-olmayan admin için etkisiz bırakıyordu (`canRevealPlaintext('')=true`). `getSessionRole()` ile
+  rol artık `apiRaw`'da da iletilir (apiPost/apiGet ile simetrik). *Latent: ikincil admin hesabı yok.*
+- **[M1] Karantina listesi** rol'e bakmadan TAM düz anahtar döndürüyordu → A1 kararıyla hizalandı:
+  owner düz görür, owner-olmayan admin maskeli (key son-4 / account secret maskeli); reveal audit'i
+  yalnız gerçek düz-metin dönüşünde yazılır.
+- **[M2] readonly-sql (§15, AI varsayılan KAPALI)** salt-okunur tx yazmayı engelliyor ama uygulamanın
+  DB rolü superuser olduğundan `pg_read_file`/`dblink`/`lo_*`/adminpack dosya-ağ okuması + `pg_authid`/
+  `pg_shadow` parola-hash katalogları okunabiliyordu → tehlikeli-fonksiyon + sistem-katalog tablo +
+  parola-hash kolon denylist'i (savunma-derinliği; otoriter katman = superuser-olmayan DB rolü, ops).
+- **[M3] KVKK anonimleştirme** serbest-metin PII'yi (`replacement_requests.reason`/`resolution_note`,
+  `replacement_messages.body` + mevcut `email_log.subject`/`security_events.detail`) atlıyor VE
+  farklı-kasada yazılmış e-postayı gövdede bırakırken sayacı "maskelendi" diyordu → hepsi
+  **büyük-küçük harf duyarsız** `regexp_replace(...,'gi')`; mesaj gövdeleri talep JOIN'i ile kapsanır
+  (drizzle `ANY(${arr}::uuid[])` bozuk SQL'i JOIN'e çevrildi — entegrasyon testi yakaladı).
+- **[LOW] `bundleQty`** products.controller'da `.positive()` (sınırsız) → `.min(1).max(1000)`
+  (site-mappings ile hizalı; sınırsız bundleQty aşırı-teslim DoS).
+
+**Doğrulama:** typecheck 4/4 + check-use-server temiz · api birim 65/65 · admin production build ·
+VPS izole test DB **entegrasyon 157/157 + yarış 3/3** (yeni: h1 suspended-refund, revokeExcess
+suspended, quarantine-mask, readonly-sql M2 vektörleri, anonymize M3 case-insensitive) · adversaryel
+doğrulama workflow (9 ajan) SOUND · prod + dev deploy (deploy.sh rollback'li, ikisi de /health 200).
+Migration YOK (tüm düzeltmeler kod/mantık; şemaya dokunulmadı).
+
 ### Geleceğe-hazırlık: dayanıklılık + retention + performans (migration 0029)
 
 Kullanıcı: *"tüm eksikleri kontrol edip düzelt, geleceğe hazırla, performanslı+güvenli, sistem asla
