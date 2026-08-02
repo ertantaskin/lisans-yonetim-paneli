@@ -10,7 +10,9 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
+import { AdminRole, canRevealPlaintext } from '../auth/admin-role.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { AdminOrdersService } from './admin-orders.service';
 import { FulfillmentService } from './fulfillment.service';
@@ -74,8 +76,13 @@ export class AdminOrdersController {
   }
 
   @Get('orders/:id')
-  detail(@Param('id', new ParseUUIDPipe()) id: string, @AdminActor() actor: string) {
-    return this.adminOrders.detail(id, actor);
+  detail(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @AdminActor() actor: string,
+    @AdminRole() role: string,
+  ) {
+    // A1: düz-metin lisans/parola yalnız owner'a; owner-olmayan 'admin' maskeli detay alır.
+    return this.adminOrders.detail(id, actor, canRevealPlaintext(role));
   }
 
   /** "Kalanları Ata" (units yok) / "N Adet Ata" (?units=N) — gövdesiz (§13). */
@@ -104,8 +111,9 @@ export class AdminOrdersController {
     return this.adminOrders.replaceAssignment(id, body.reason, actor);
   }
 
-  /** Loglu reveal (§17) — tam lisans payload'ı. */
+  /** Loglu reveal (§17) — tam lisans payload'ı. OwnerGuard (A1/A3): düz-metin sır yalnız owner'a. */
   @Post('assignments/:id/reveal')
+  @UseGuards(OwnerGuard)
   reveal(@Param('id', new ParseUUIDPipe()) id: string, @AdminActor() actor: string) {
     return this.adminOrders.reveal(id, actor);
   }

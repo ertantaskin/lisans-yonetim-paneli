@@ -758,8 +758,14 @@ class Wpteslimat_Order_Sync {
     private function collect_lines($order) {
         $lines = [];
         foreach ($order->get_items() as $item_id => $item) {
+            // C1 (denetim): ürün SİLİNMİŞ olsa bile ($item->get_product()===false) sipariş kalemi
+            // product_id/variation_id'yi KORUR → satır ATLANMAZ (eksik teslimat + iade under-revoke önlenir).
+            // get_product_id() = parent (variation'da) / self (basit) = eski `get_parent_id() ?: get_id()`
+            // ile BİREBİR aynı; get_variation_id() = varyasyon (basit üründe 0). Ürün nesnesi yalnız ad için.
             $product = $item->get_product();
-            if (!$product) continue;
+            $item_product_id = (int) $item->get_product_id();
+            $item_variation_id = (int) $item->get_variation_id();
+            if ($item_product_id <= 0) continue; // gerçekten kimliksiz kalem → atla
             // NET adet = brüt − iade edilen (get_qty_refunded_for_item). KRİTİK (§2): WooCommerce iade
             // ile order item qty'sini DÜŞÜRMEZ. BRÜT push edilirse, kısmi iade sonrası bir re-sync
             // (woocommerce_saved_order_items) panel line.qty'sini brüte geri çıkarır → autoComplete iade
@@ -779,7 +785,7 @@ class Wpteslimat_Order_Sync {
             // tek tıkla eşler (teslimatı ETKİLEMEZ). Kalem adı ($item->get_name()) varyasyon etiketini de
             // içerir (ideal); boşsa ürün adına düş; panel 255 char'a sınırlar (burada da kırpılır).
             $remote_name = trim((string) $item->get_name());
-            if ($remote_name === '') {
+            if ($remote_name === '' && $product) {
                 $remote_name = trim((string) $product->get_name());
             }
             $remote_name = function_exists('mb_substr')
@@ -787,12 +793,12 @@ class Wpteslimat_Order_Sync {
                 : substr($remote_name, 0, 255);
             $line = [
                 'remoteLineId'    => (string) $item_id,
-                'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
+                'remoteProductId' => (string) $item_product_id,
                 'remoteName'      => $remote_name,
                 'qty'             => $net,
             ];
-            if ($product->is_type('variation')) {
-                $line['remoteVariationId'] = (string) $product->get_id();
+            if ($item_variation_id > 0) {
+                $line['remoteVariationId'] = (string) $item_variation_id;
             }
             $lines[] = $line;
         }
@@ -962,8 +968,11 @@ class Wpteslimat_Order_Sync {
         $total_net = 0;
         $total_ordered = 0;
         foreach ($order->get_items() as $item_id => $item) {
-            $product = $item->get_product();
-            if (!$product) continue;
+            // C1 (denetim): ürün SİLİNMİŞ olsa bile order-item product_id/variation_id korunur → satır
+            // ATLANMAZ (kısmi iade under-revoke önlenir: silinmiş ürünün iade edilen birimi de revoke edilir).
+            $item_product_id = (int) $item->get_product_id();
+            $item_variation_id = (int) $item->get_variation_id();
+            if ($item_product_id <= 0) continue;
             $qty = (int) $item->get_quantity();
             // get_qty_refunded_for_item NEGATİF döner (iade edilen adet) → abs ile net hesapla.
             $refunded = abs((int) $order->get_qty_refunded_for_item($item_id));
@@ -975,10 +984,10 @@ class Wpteslimat_Order_Sync {
             $line = [
                 'remoteLineId'    => (string) $item_id,
                 'netQty'          => $net,
-                'remoteProductId' => (string) ($product->get_parent_id() ?: $product->get_id()),
+                'remoteProductId' => (string) $item_product_id,
             ];
-            if ($product->is_type('variation')) {
-                $line['remoteVariationId'] = (string) $product->get_id();
+            if ($item_variation_id > 0) {
+                $line['remoteVariationId'] = (string) $item_variation_id;
             }
             $lines[] = $line;
         }

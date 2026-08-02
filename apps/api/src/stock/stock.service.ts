@@ -15,6 +15,8 @@ import {
   AccountPayloadSchema,
   parseAccountPayload,
   serializeAccountPayload,
+  maskSecret,
+  maskAccountFields,
   type AccountPayloadSchema as AccountPayloadSchemaT,
 } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
@@ -671,6 +673,8 @@ export class StockService {
   async listLicenseItems(
     params: ListLicenseItemsParams = {},
     actor = 'panel:admin',
+    // A1: düz-metin lisans YALNIZ owner'a. owner-olmayan 'admin' maskeli görür (sipariş detayıyla aynı politika).
+    reveal = true,
   ): Promise<LicenseInventoryPage> {
     const page = params.page && params.page > 0 ? Math.floor(params.page) : 1;
     const pageSize = clampPageSize(params.pageSize);
@@ -865,7 +869,7 @@ export class StockService {
         ORDER BY ${orderBy};
       `);
 
-    const mapped = rows.map((r) => this.mapInventoryRow(r));
+    const mapped = rows.map((r) => this.mapInventoryRow(r, reveal));
 
     // Toplam: normalde pencere fonksiyonundan (ek sorgu YOK). Tek istisna, OFFSET'in sonuç
     // kümesini AŞMASIDIR: hiç satır dönmez → pencere değeri de gelmez. Bu durumda kontratı
@@ -879,9 +883,9 @@ export class StockService {
           ? await this.countLicenseItems(where)
           : 0;
 
-    // Görüntüleme audit'i (§8 "reveal audit'e düşer"): liste TAM lisans döndürdüğü için
-    // her görüntüleme TEK kayda düşer (kim / ne zaman / kaç lisans gördü). best-effort.
-    if (mapped.length > 0) {
+    // Görüntüleme audit'i (§8 "reveal audit'e düşer"): YALNIZ düz-metin gerçekten gösterildiğinde
+    // (owner, reveal=true) yazılır — owner-olmayan 'admin' maskeli gördüğünden reveal değildir (A1).
+    if (reveal && mapped.length > 0) {
       try {
         await this.db.insert(auditLog).values({
           action: 'reveal',
@@ -927,8 +931,8 @@ export class StockService {
   }
 
   /** HAM satır → API sözleşmesi (payload çözme + mağaza admin linki burada üretilir). */
-  private mapInventoryRow(r: LicenseItemRawRow): LicenseInventoryRow {
-    const decoded = this.decodeInventoryPayload(r);
+  private mapInventoryRow(r: LicenseItemRawRow, reveal = true): LicenseInventoryRow {
+    const decoded = this.decodeInventoryPayload(r, reveal);
     const maxUses = Number(r.max_uses ?? 1);
     const useCount = Number(r.use_count ?? 0);
     return {
@@ -987,7 +991,10 @@ export class StockService {
    * değer. Çözme hatası (bozuk kayıt / AAD uyuşmazlığı) listeyi DÜŞÜRMEZ — value/fields
    * null döner (UI "okunamadı" gösterir).
    */
-  private decodeInventoryPayload(r: LicenseItemRawRow): {
+  private decodeInventoryPayload(
+    r: LicenseItemRawRow,
+    reveal = true,
+  ): {
     kind: 'key' | 'account';
     value: string | null;
     fields: LicenseInventoryField[] | null;
@@ -999,21 +1006,26 @@ export class StockService {
     } catch {
       return { kind: isAccount ? 'account' : 'key', value: null, fields: null };
     }
-    if (!isAccount) return { kind: 'key', value: plain, fields: null };
+    // A1: owner-olmayan 'admin' → maskeli (key son-4; account alan-alan kuyruksuz maske).
+    if (!isAccount) return { kind: 'key', value: reveal ? plain : maskSecret(plain), fields: null };
 
     const parsed = AccountPayloadSchema.safeParse(r.payload_schema);
     if (!parsed.success) {
-      // Şema bozuk/eksik → ham JSON'u kolonlara DÖKMEK yerine tek alan olarak göster.
+      // Şema bozuk/eksik → ham JSON'u kolonlara DÖKMEK yerine tek alan olarak göster (maskeli değilse maskele).
       return {
         kind: 'account',
         value: null,
-        fields: [{ key: 'payload', label: 'Lisans (ham)', value: plain, secret: false }],
+        fields: [
+          { key: 'payload', label: 'Lisans (ham)', value: reveal ? plain : maskSecret(plain), secret: false },
+        ],
       };
     }
+    const parsedFields = parseAccountPayload(parsed.data, plain);
+    const shown = reveal ? parsedFields : maskAccountFields(parsedFields);
     return {
       kind: 'account',
       value: null,
-      fields: parseAccountPayload(parsed.data, plain).map((f) => ({
+      fields: shown.map((f) => ({
         key: f.key,
         label: f.label,
         value: f.value,

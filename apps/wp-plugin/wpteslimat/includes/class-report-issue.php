@@ -40,8 +40,12 @@ class Wpteslimat_Report_Issue {
                 <input type="hidden" name="action" value="wpteslimat_report">
                 <input type="hidden" name="order_id" value="<?php echo esc_attr($order_id); ?>">
                 <input type="hidden" name="assignment_id" value="<?php echo esc_attr((string) $assignment_id); ?>">
-                <?php // Misafir (guest checkout) sahiplik kanıtı — handle() order_key ile doğrular. ?>
+                <?php // Sahiplik kanıtı (denetim B1): GİRİŞ YAPMIŞ müşteride handle() current_user_can(
+                      // 'view_order') ile doğrular → order_key DOM'a GÖMÜLMEZ (gereksiz bearer-token ifşası).
+                      // MİSAFİR (guest checkout) için order_key tek sahiplik kanıtıdır → yalnız orada basılır. ?>
+                <?php if (!is_user_logged_in()) : ?>
                 <input type="hidden" name="order_key" value="<?php echo esc_attr($order->get_order_key()); ?>">
+                <?php endif; ?>
                 <?php wp_nonce_field('wpteslimat_report_' . $order_id); ?>
                 <label for="<?php echo esc_attr($fid); ?>" style="display:block;font-size:.85em;color:#555;margin-bottom:4px">
                     <?php echo esc_html__('Sorununuzu kısaca açıklayın (ör. lisans çalışmıyor):', 'wpteslimat'); ?>

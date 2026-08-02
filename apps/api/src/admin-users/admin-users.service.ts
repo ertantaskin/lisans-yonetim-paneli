@@ -16,6 +16,7 @@ import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';
 import { REDIS } from '../redis/redis.module';
 import { adminUsers, type AdminUser } from '../db/schema';
+import { securityEvents } from '../db/schema/securityEvents';
 import { hashPassword, verifyPassword, dummyHash } from '../auth/password';
 
 /** Parola hash'i olmadan dışa dönük admin görünümü. */
@@ -121,6 +122,10 @@ export class AdminUsersService implements OnModuleInit {
           role: input.role === 'owner' ? 'owner' : 'admin',
         })
         .returning();
+      await this.recordAuthEvent('admin_created', 'warning', row!.email, 'Yeni admin oluşturuldu', {
+        userId: row!.id,
+        role: row!.role,
+      });
       return this.toPublic(row!);
     } catch (e) {
       if (String(e).toLowerCase().includes('unique') || String(e).includes('23505')) {
@@ -139,6 +144,33 @@ export class AdminUsersService implements OnModuleInit {
    * her seferinde taze bir kova açar (ve her deneme bir scrypt maliyeti doğurur). Bu boşluğu
    * controller'daki IP başına hız sınırı kapatır (bkz. AdminAuthController.login).
    */
+  /**
+   * Admin auth/hesap YAŞAM DÖNGÜSÜ denetim izi (denetim A4): en yetkili yüzey artık security_events'e
+   * düşer (login/başarısız-login → brute-force /security + anomali/velocity'de görünür; create/disable/
+   * reset/remove → kalıcı hesap izi). Best-effort: yazım hatası auth/CRUD akışını ASLA bozmaz.
+   * security_events.type/severity serbest metin (migration gerekmez); sır/parola ASLA meta'ya girmez.
+   */
+  private async recordAuthEvent(
+    type: string,
+    severity: 'info' | 'warning' | 'critical',
+    subject: string | null,
+    detail: string,
+    meta: Record<string, unknown> = {},
+  ): Promise<void> {
+    try {
+      await this.db.insert(securityEvents).values({
+        type,
+        severity,
+        siteId: null,
+        subject: subject ? subject.slice(0, 200) : null,
+        detail,
+        meta,
+      });
+    } catch {
+      /* denetim izi best-effort — auth/CRUD akışını bozmaz */
+    }
+  }
+
   async verifyCredentials(identifier: string, password: string): Promise<PublicAdminUser | null> {
     const raw = identifier.trim();
     // Boş / aşırı uzun kimlik: DB sorgusu ve scrypt maliyeti ÖDENMEDEN reddedilir. Controller
@@ -182,7 +214,19 @@ export class AdminUsersService implements OnModuleInit {
       // Bilinen hesapta YANLIŞ parola → hesap-kimliği kovası (e-posta+kullanıcı adı tek kovada).
       // Bilinmeyen kimlik → kimlik-dizesi kovası (varlık sızdırmadan yine de hız-limitli).
       const failKey = acctKey ?? idKey;
-      await this.redis.multi().incr(failKey).expire(failKey, FAIL_WINDOW_SEC).exec();
+      const failRes = await this.redis.multi().incr(failKey).expire(failKey, FAIL_WINDOW_SEC).exec();
+      const failCount = Number(failRes?.[0]?.[1] ?? 0);
+      // A4: başarısız giriş kalıcı güvenlik iznine düşer (Redis sayacı 15dk sonra silinir; brute-force
+      // /security akışında + anomali/velocity'de görünür kalsın). Kilit eşiğinde severity=critical.
+      await this.recordAuthEvent(
+        'admin_login_failed',
+        failCount >= MAX_FAILS ? 'critical' : 'warning',
+        raw.slice(0, 200),
+        failCount >= MAX_FAILS
+          ? 'Başarısız admin girişi — hesap 15 dk kilitlendi (brute-force şüphesi)'
+          : 'Başarısız admin girişi',
+        { known: !!user, failCount },
+      );
       return null;
     }
 
@@ -193,6 +237,11 @@ export class AdminUsersService implements OnModuleInit {
       .update(adminUsers)
       .set({ lastLoginAt: sql`now()` })
       .where(eq(adminUsers.id, user.id));
+    // A4: başarılı giriş de ize düşer (kim/ne zaman girdi — çoklu-admin sorumluluğu).
+    await this.recordAuthEvent('admin_login', 'info', user.email, 'Admin girişi başarılı', {
+      userId: user.id,
+      role: user.role,
+    });
     return this.toPublic(user);
   }
 
@@ -228,6 +277,13 @@ export class AdminUsersService implements OnModuleInit {
         })
         .where(eq(adminUsers.id, id))
         .returning();
+      await this.recordAuthEvent(
+        disabled ? 'admin_disabled' : 'admin_reactivated',
+        'warning',
+        row!.email,
+        disabled ? 'Admin pasifleştirildi (oturumlar iptal edildi)' : 'Admin yeniden aktifleştirildi',
+        { userId: row!.id },
+      );
       return this.toPublic(row!);
     });
   }
@@ -259,6 +315,13 @@ export class AdminUsersService implements OnModuleInit {
       .where(eq(adminUsers.id, id))
       .returning();
     if (!row) throw new NotFoundException('Admin bulunamadı.');
+    await this.recordAuthEvent(
+      'admin_password_reset',
+      'warning',
+      row.email,
+      'Admin parolası sıfırlandı (oturumlar iptal edildi)',
+      { userId: row.id },
+    );
     return this.toPublic(row);
   }
 
@@ -276,6 +339,9 @@ export class AdminUsersService implements OnModuleInit {
         if (n <= 1) throw new BadRequestException('Son aktif admin silinemez.');
       }
       await tx.delete(adminUsers).where(eq(adminUsers.id, id));
+      await this.recordAuthEvent('admin_removed', 'warning', target.email, 'Admin silindi', {
+        userId: target.id,
+      });
       return { ok: true as const };
     });
   }

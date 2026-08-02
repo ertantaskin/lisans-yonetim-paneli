@@ -259,6 +259,11 @@ class Wpteslimat_Updater {
         }
 
         $download  = isset($info['download_url']) ? (string) $info['download_url'] : '';
+        // GÜVENLİK (denetim B3): check_update ile TUTARLI ol — paket URL'i yalnız panel host'u + https
+        // ise geçerli; değilse boş bırak (WP "Ayrıntıları görüntüle" penceresi güvensiz indirme sunmaz).
+        if ($download !== '' && !self::is_valid_package_url($download)) {
+            $download = '';
+        }
         // Panel changelog'u sections:{changelog} altında NEST'ler → önce nest'li yoldan oku (eskiden
         // yalnız üst-düzey okunuyordu → detay penceresi Değişiklik Günlüğü hep boştu). Üst-düzey uyum fallback.
         $changelog = isset($info['sections']['changelog'])

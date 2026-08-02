@@ -1,6 +1,6 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
-import { getSessionRole } from './session';
+import { getSessionRole, getActorAndRole } from './session';
 
 /**
  * Sunucu-taraflı API istemcisi. ADMIN_TOKEN yalnız Next sunucusunda kalır,
@@ -66,8 +66,11 @@ async function toApiError(method: string, path: string, res: Response): Promise<
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
+  // Okuma çağrıları da aktör + rol iletir: (A2) en hassas görüntüleme (sipariş detayı düz-metin)
+  // gerçek admin'e attribute edilir; (A1) API rol'e göre maskeli/düz döndürebilir (owner-only düz metin).
+  const { actor, role } = await getActorAndRole();
   const res = await fetch(`${API_URL}${path}`, {
-    headers: headers(false),
+    headers: headers(false, actor, role),
     cache: 'no-store',
   });
   if (!res.ok) throw await toApiError('GET', path, res);

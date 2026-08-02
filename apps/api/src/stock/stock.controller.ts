@@ -13,6 +13,7 @@ import {
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
+import { AdminRole, canRevealPlaintext } from '../auth/admin-role.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { LICENSE_ITEM_STATUSES, StockService } from './stock.service';
 
@@ -126,6 +127,7 @@ export class StockController {
   listLicenseItems(
     @Query(new ZodBody(ListLicenseItemsQuery)) query: ListLicenseItemsQuery,
     @AdminActor() actor: string,
+    @AdminRole() role: string,
   ) {
     // Boş string ('' = filtre yok) → undefined; sayısal alanlar burada Number'a çevrilir.
     return this.stock.listLicenseItems(
@@ -140,6 +142,7 @@ export class StockController {
         sort: query.sort || undefined,
       },
       actor,
+      canRevealPlaintext(role),
     );
   }
 

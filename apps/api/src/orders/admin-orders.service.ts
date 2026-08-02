@@ -484,7 +484,7 @@ export class AdminOrdersService {
   }
 
   /** Admin sipariş detayı: satırlar + atamalar (maskeli) + timeline (§7 meta box). */
-  async detail(orderId: string, actor = 'admin') {
+  async detail(orderId: string, actor = 'admin', reveal = true) {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
@@ -711,7 +711,9 @@ export class AdminOrdersService {
     // detayı görüntülemesi TEK reveal kaydına düşer (kim, ne zaman, kaç lisans gördü). Böylece
     // maskeyi kaldırmak "reveal audit'e düşer" değişmez kuralını ihlal etmez, yalnız granülerliği
     // per-key'den per-görüntülemeye taşır.
-    if (asgRows.length > 0) {
+    // A1: reveal audit YALNIZ düz-metin GERÇEKTEN gösterildiğinde (owner) yazılır — owner-olmayan
+    // 'admin' maskeli gördüğünden bir "reveal" değildir (yanıltıcı audit üretmez).
+    if (reveal && asgRows.length > 0) {
       // best-effort: audit yazımı bu OKUMA yolunu (GET) bozmamalı — yazım hatasında (DB baskısı/
       // bağlantı kesintisi) detay yine de yüklenir, 500 atmaz (denetim robustluk bulgusu).
       try {
@@ -808,11 +810,11 @@ export class AdminOrdersService {
           oldLicenseItemId: h.oldLicenseItemId ?? null,
           newLicenseItemId: h.newLicenseItemId ?? null,
           oldMasked: oldPlain !== null ? mask(oldPlain) : '—',
-          // key-tipi ölü anahtar TAM gösterilir (operatör hangi key'in değiştiğini net görür);
-          // account-tipi → null (frontend maskeli oldMasked'e düşer, parola sızmaz).
-          oldValue: oldPlain !== null && h.productKind === 'key' ? oldPlain : null,
+          // key-tipi ölü anahtar TAM gösterilir (operatör hangi key'in değiştiğini net görür) —
+          // ANCAK yalnız owner'a (A1); owner-olmayan 'admin' maskeli oldMasked'e düşer.
+          oldValue: reveal && oldPlain !== null && h.productKind === 'key' ? oldPlain : null,
           newMasked: newPlain !== null ? mask(newPlain) : '—',
-          newValue: newPlain !== null && h.productKind === 'key' ? newPlain : null,
+          newValue: reveal && newPlain !== null && h.productKind === 'key' ? newPlain : null,
         };
       }),
       assignments: asgRows.map((a) => {
@@ -843,8 +845,10 @@ export class AdminOrdersService {
           originRemoteLineId: resolveOriginRemoteLineId(a.remoteLineId),
           isBonus: isBonusRemoteLineId(a.remoteLineId),
           remoteName: a.remoteName ?? null,
-          payload: plain,
-          fields,
+          // §8/A1: düz-metin sır YALNIZ owner'a (reveal=true). owner-olmayan 'admin' maskeli görür
+          // (key/code son-4; account alanları kuyruksuz maske) — müşteri/getDeliveries ile aynı disiplin.
+          payload: reveal ? plain : maskSecret(plain),
+          fields: reveal ? fields : fields ? maskAccountFields(fields) : null,
           // Terminal atamada iptal sebebi (aktifte null) — "Geçmiş" satırında gösterilir.
           revokeReason: revokeReasonByAsg.get(a.id) ?? null,
           // DEĞİŞİMLE geri alındıysa "iptal" DEĞİL "değiştirildi" (türetilmiş; durum makinesi
@@ -925,6 +929,12 @@ export class AdminOrdersService {
     actor: string,
     markLineCanceled = true,
     exec: Database = this.db,
+    // §2 (denetim C2): MAK/çok-kullanımlı kapasitenin geri alımda havuza dönüp dönmeyeceği.
+    // GERÇEK İADE yollarında (revokeOrderForSite tam iade, syncRefunds kısmi iade) `false` geçilir →
+    // 'iadede hak otomatik dönmez' (aktivasyon Microsoft'ta harcandı; sessiz aşırı-satış önlenir).
+    // MEŞRU yeniden-atama yolları (değişim/adet-düşür/recall, varsayılan `true`) kapasiteyi geri verir.
+    // Tek-kullanımlık üründe etkisiz (o zaten karantinaya gider).
+    returnMultiCapacity = true,
   ) {
     return exec.transaction(async (tx) => {
       const [asg] = await tx
@@ -950,12 +960,16 @@ export class AdminOrdersService {
         .limit(1);
       if (li) {
         if (li.maxUses > 1) {
-          await tx.execute(sql`
-            UPDATE license_items SET
-              use_count = GREATEST(0, use_count - ${asg.units}),
-              status = CASE WHEN status = 'depleted' THEN 'available' ELSE status END
-            WHERE id = ${asg.licenseItemId};
-          `);
+          // §2 (C2): yalnız MEŞRU yeniden-atamada kapasite havuza döner. İADE'de (returnMultiCapacity
+          // =false) use_count'a DOKUNULMAZ → harcanan aktivasyon geri gelmez (süre-bitişi deseniyle simetrik).
+          if (returnMultiCapacity) {
+            await tx.execute(sql`
+              UPDATE license_items SET
+                use_count = GREATEST(0, use_count - ${asg.units}),
+                status = CASE WHEN status = 'depleted' THEN 'available' ELSE status END
+              WHERE id = ${asg.licenseItemId};
+            `);
+          }
         } else {
           await tx
             .update(licenseItems)
@@ -1023,6 +1037,8 @@ export class AdminOrdersService {
     reason: string,
     actor: string,
     exec: Database = this.db,
+    // §2 (denetim C2): İADE'de MAK kapasitesi havuza DÖNMEZ (false). Adet-düşür/re-assign'de döner (true).
+    returnMultiCapacity = true,
   ) {
     if (units <= 0) return { assignmentId, revoked: 0 };
     return exec.transaction(async (tx) => {
@@ -1057,12 +1073,16 @@ export class AdminOrdersService {
         .limit(1);
       if (li) {
         if (li.maxUses > 1) {
-          await tx.execute(sql`
-            UPDATE license_items SET
-              use_count = GREATEST(0, use_count - ${take}),
-              status = CASE WHEN status = 'depleted' THEN 'available' ELSE status END
-            WHERE id = ${asg.licenseItemId};
-          `);
+          // §2 (C2): İADE'de (returnMultiCapacity=false) MAK kapasitesi havuza dönmez; assignment.units
+          // yine düşürülür (müşteri o birimleri iade etti) ama harcanan aktivasyon geri gelmez.
+          if (returnMultiCapacity) {
+            await tx.execute(sql`
+              UPDATE license_items SET
+                use_count = GREATEST(0, use_count - ${take}),
+                status = CASE WHEN status = 'depleted' THEN 'available' ELSE status END
+              WHERE id = ${asg.licenseItemId};
+            `);
+          }
         } else if (full) {
           await tx
             .update(licenseItems)
@@ -1189,7 +1209,8 @@ export class AdminOrdersService {
 
     let revoked = 0;
     for (const a of active) {
-      const res = await this.revokeAssignment(a.id, reason, actor);
+      // Tam İADE (§2, C2): markLineCanceled=true (terminal) + returnMultiCapacity=false (MAK hakkı dönmez).
+      const res = await this.revokeAssignment(a.id, reason, actor, true, this.db, false);
       // already=true → yarışta başka yol revoke etmiş; revoked sayacına katma.
       if (!('already' in res)) revoked++;
     }
@@ -1219,7 +1240,9 @@ export class AdminOrdersService {
     // F1: çağıran bir transaction içindeyse okuma da AYNI bağlantıdan yapılır (ayrı bağlantı
     // dış tx'in kilitlediği satırları bekleyebilir + farklı anlık görüntü okur).
     exec: Database = this.db,
-  ): Promise<number> {
+    // Denetim C5: eşleme YOKSA `null` döner (tip yalanı düzeltildi — çağıran resolveLineScale
+    // null'ı 'ölçek bilinmiyor → qty'ye dokunma' olarak ele alır; Promise<number> yanıltıcıydı).
+  ): Promise<number | null> {
     if (!remoteProductId) return 1;
     const variation =
       remoteVariationId && remoteVariationId !== '0' ? remoteVariationId : null;
@@ -1396,10 +1419,12 @@ export class AdminOrdersService {
             // tx GEÇİLİR: yardımcılar aynı bağlantıda SAVEPOINT olarak koşar (ayrı bağlantı
             // bizim tuttuğumuz satır kilidini bekler ve asla dönmezdi).
             if (a.units <= need) {
-              await this.revokeAssignment(a.id, reason, actor, false, tx);
+              // Kısmi İADE (§2, C2): markLineCanceled=false (satır re-fill'e açık) AMA returnMultiCapacity
+              // =false — bu bir iadedir, MAK hakkı havuza dönmez (aşırı-satış önlenir).
+              await this.revokeAssignment(a.id, reason, actor, false, tx, false);
               revoked += a.units;
             } else {
-              await this.revokePartialUnits(a.id, need, reason, actor, tx);
+              await this.revokePartialUnits(a.id, need, reason, actor, tx, false);
               revoked += need;
             }
           }

@@ -348,6 +348,30 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     expect(statuses2.filter((s) => s === 'revoked')).toHaveLength(3);
   });
 
+  // ── DENETİM C2: §2 "MAK/multi'de iadede hak otomatik dönmez" invaryantı ──
+
+  it('MAK İADE (returnMultiCapacity=false) → kapasite havuza DÖNMEZ (§2); re-assign → döner', async () => {
+    // İADE yolu: use_count 3 → 3 (değişmez), atama 'revoked'. Aktivasyon Microsoft'ta harcandı sayılır.
+    const refund = await seedMultiAssignment(3, 500); // use_count=3 kurulu
+    const rr = await admin.revokeAssignment(refund.assignmentId, 'iade', ACTOR, true, undefined, false);
+    expect('already' in rr).toBe(false);
+    expect((await licenseItemRow(refund.licenseItemId)).useCount).toBe(3); // §2: DÖNMEDİ
+    expect((await assignmentRow(refund.assignmentId)).status).toBe('revoked');
+
+    // MEŞRU YENİDEN-ATAMA yolu (returnMultiCapacity=true, varsayılan): kapasite havuza döner (3 → 0).
+    const reassign = await seedMultiAssignment(3, 500);
+    await admin.revokeAssignment(reassign.assignmentId, 'degisim', ACTOR, false, undefined, true);
+    expect((await licenseItemRow(reassign.licenseItemId)).useCount).toBe(0); // döndü (değişim/adet-düşür)
+  });
+
+  it('MAK kısmi İADE (revokePartialUnits, returnMultiCapacity=false) → kapasite dönmez, atama units düşer', async () => {
+    const seed = await seedMultiAssignment(5, 500); // atama units=5, use_count=5
+    const res = await admin.revokePartialUnits(seed.assignmentId, 2, 'kısmi iade', ACTOR, undefined, false);
+    expect(res.revoked).toBe(2);
+    expect((await assignmentRow(seed.assignmentId)).units).toBe(3); // birim düştü (müşteri 2 iade etti)
+    expect((await licenseItemRow(seed.licenseItemId)).useCount).toBe(5); // §2: kapasite DÖNMEDİ
+  });
+
   it('reconcile İADE/İPTAL (canceled) satıra DOKUNMAZ (§2 — terminal işaret korunur)', async () => {
     const { remoteProductId } = await setupSingleProduct(3);
     const siteObj = siteObjOf(site);

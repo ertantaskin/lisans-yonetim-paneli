@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ComplianceService, type AnonymizeResult } from './compliance.service';
@@ -34,7 +35,10 @@ export class SecurityController {
    * KVKK anonimleştirme (§9) — verilen e-postaya ait tüm PII'yi maskeler. Tek yönlü;
    * kritik aksiyon → audit'e düşer. GET yok.
    */
+  // OwnerGuard (denetim A3): KVKK PII imhası GERİ ALINAMAZ → owner-only (deployments/releases/admin-CRUD
+  // emsalleriyle simetrik savunma-derinliği). Next zaten isOwner() + x-admin-role iletir.
   @Post('compliance/anonymize')
+  @UseGuards(OwnerGuard)
   anonymize(
     @Body(new ZodBody(AnonymizeBody)) body: { email: string },
     @AdminActor() actor: string,

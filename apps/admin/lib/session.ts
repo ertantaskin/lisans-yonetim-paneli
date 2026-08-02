@@ -38,3 +38,13 @@ export async function getSessionRole(): Promise<string | null> {
   const user = await getSessionUser();
   return user?.role ?? null;
 }
+
+/**
+ * Aktör + rolü TEK oturum okumasıyla döndürür (apiGet her okumada ikisini de iletir: audit
+ * attribution [denetim A2] + düz-metin/maskeli sunum kararı [denetim A1]). Ayrı ayrı çağırmak
+ * getSessionUser'ı iki kez (2× HMAC doğrulama) çalıştırırdı.
+ */
+export async function getActorAndRole(): Promise<{ actor: string; role: string | null }> {
+  const user = await getSessionUser();
+  return { actor: user ? `admin:${user.email}` : 'panel:admin', role: user?.role ?? null };
+}

@@ -662,6 +662,8 @@ export class OrdersService {
     // çalışır (linkLine→completeLine deseni) — advisory kilidini dolum süresince tutmaz.
     const increasedPartialAuto: string[] = [];
     const changedLineIds: string[] = [];
+    // C3: mevcut siparişe SONRADAN eklenen (eşleşmeyen) kalemler — reconcileOrder onları teslim etmez.
+    const unmatchedNewLines: string[] = [];
 
     await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${order.id}))`);
@@ -689,7 +691,13 @@ export class OrdersService {
             and(eq(orderLines.orderId, order.id), eq(orderLines.remoteLineId, dtoLine.remoteLineId)),
           )
           .limit(1);
-        if (!line) continue; // Eşleşmeyen (yeni) satır — güvenli yoksay.
+        if (!line) {
+          // C3: mevcut siparişe SONRADAN eklenen kalem. reconcileOrder yalnız EŞLEŞEN satırları
+          // uzlaştırır (yeni satırı yalnız ilk createOrder yolu insert+atar). Sessiz yok saymak
+          // izsiz eksik-teslimat üretiyordu → operatör görebilsin diye aşağıda uyarı olayı yazılır.
+          unmatchedNewLines.push(dtoLine.remoteLineId);
+          continue;
+        }
         if (line.canceled) continue; // İade/iptal terminal satır — DOKUNMA (§2).
 
         // Yeni gerekli birim = mağaza adedi × ÖLÇEK. Ölçek satırın anlık görüntüsünden (0025) →
@@ -725,6 +733,21 @@ export class OrdersService {
           await tx.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
         }
         changedLineIds.push(line.id);
+      }
+
+      // C3: eşleşmeyen yeni kalem varsa GÖRÜNÜR iz bırak (sessiz eksik-teslimat yerine). adet
+      // değişmese bile yazılır → operatör "eklenen kalem işlenmedi" sinyalini sipariş detayında görür.
+      if (unmatchedNewLines.length > 0) {
+        await tx.insert(fulfillmentEvents).values({
+          orderId: order.id,
+          type: 'order_edited',
+          message:
+            `Siparişe sonradan eklenen ${unmatchedNewLines.length} kalem panelde İŞLENMEDİ ` +
+            `(re-push yeni kalemi teslim etmez): ${unmatchedNewLines.join(', ')}. Gerekirse mağazadan yeniden senkronlayın.`,
+        });
+        this.logger.warn(
+          `reconcileOrder: eşleşmeyen yeni kalem(ler) order=${order.id}: ${unmatchedNewLines.join(',')}`,
+        );
       }
 
       if (changedLineIds.length === 0) return; // Hiç adet değişmedi → idempotent yol (tx boş).
