@@ -42,7 +42,10 @@ type MailJobData = DeliveryJob | ReplacementNoticeJob;
  * mailini HİÇ almıyordu. İş adı sabitleri TEK KAYNAKTAN (mail.service) okunur; hem üretici
  * (MailService.enqueue*) hem tüketici (burası) hem /ops replay'i aynı sabitleri kullanır.
  */
-@Processor(MAIL_QUEUE)
+// concurrency 5 (varsayılan 1'di): tek sıkışan sendMail (yavaş relay) TÜM mail kuyruğunu baş-blok
+// yapmasın — teslimat mailleri + değişim bildirimleri paralel akar. SMTP fail-fast timeout'larıyla
+// (mail.transport) birlikte: bir iş en fazla ~20s tutar ve diğer 4 slot bu sırada meşgul değildir.
+@Processor(MAIL_QUEUE, { concurrency: 5 })
 export class MailProcessor extends WorkerHost {
   private readonly logger = new Logger(MailProcessor.name);
   private transporter: Transporter | null = null;

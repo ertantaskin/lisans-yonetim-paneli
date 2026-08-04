@@ -340,9 +340,14 @@ export class SupplyOpsService {
             throw new Error('bulk-replace: atama açılamadı (çekişme/stok)');
           }
           // Soyağacı (§3): eski→yeni assignment_history (recall-toplu-değiştir yolu da izlenir).
+          // newAssignmentId KESİN yolla geçilir (bu turda oluşturulan atama) — aksi halde
+          // recordReplacementLineage "satırın en yeni aktif ataması" tahmin dalına düşer ve AYNI
+          // satırda eşzamanlı bir değişim (replaceAssignment/replacements.approve) koşarsa soyağacı
+          // yanlış atamaya bağlanabilir. Diğer üç çağıranla (approve/replaceAssignment) simetri.
           await recordReplacementLineage(tx, {
             lineId: c.line_id,
             oldLicenseItemId: ('licenseItemId' in revoked ? revoked.licenseItemId : null) ?? null,
+            newAssignmentId: res.createdAssignmentIds?.[0] ?? null,
             reason: 'recall-bulk-replace',
             actor,
           });

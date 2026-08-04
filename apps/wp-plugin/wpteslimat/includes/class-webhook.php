@@ -50,13 +50,15 @@ class Wpteslimat_Webhook {
 
         // Nonce replay koruması (§4): imza DOĞRULANDIKTAN sonra, aksiyon almadan ÖNCE
         // nonce'u harca. Zaman penceresi ±300sn olduğundan replay [T−300, T+300] aralığında
-        // olabilir → transient TTL bunu güvenle kapsayacak şekilde 600sn (tolerans+pay).
+        // olabilir. TTL TAM 2×tolerans (600) olursa saat kayması + saniye-altı zamanlamayla
+        // transient tam expiry anına denk gelen bir replay penceresi kalır → paylaşılan sözleşme
+        // (packages/shared HMAC_NONCE_TTL_SEC = 2×300+60 = 660) marj ekler; WP tarafını da hizala.
         // Aynı nonce ikinci kez gelirse (replay) aksiyon TEKRARLANMAZ → no-op 200.
         $nonce_key = 'jl_wh_' . md5((string) $nonce);
         if (get_transient($nonce_key)) {
             return new WP_REST_Response(['ok' => true, 'duplicate' => true], 200);
         }
-        set_transient($nonce_key, 1, 600);
+        set_transient($nonce_key, 1, 660);
 
         $body = json_decode($raw, true);
         if (!is_array($body) || empty($body['remoteOrderId'])) {

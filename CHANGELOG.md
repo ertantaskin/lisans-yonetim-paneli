@@ -14,6 +14,42 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Tam test doğrulaması + odaklı eksik-giderme (5-boyutlu denetim; eklenti v1.0.2; migration YOK)
+
+Kullanıcı: *"tüm projeyi test et, eksikler var ise onları güvenli, performans şekilde tamamla tam
+olarak."* Önce bekleyen doğrulama koşuldu (86dcc22 sonrası VPS entegrasyon+yarış hiç koşulmamıştı):
+izole docker (pg17+redis7+node22) — **yarış 3/3, entegrasyon 157/157, birim 65/65, typecheck 4/4,
+build 3/3, PHP-lint 12/12, şema drift YOK**. Ardından 5 paralel denetim ajanı (API güvenlik ·
+correctness · perf/dayanıklılık · WP eklentisi · admin+test-kapsamı) — güvenlik/WP/admin boyutları
+DOĞRULANMIŞ TEMİZ; yalnız gerçek boşluklar kapatıldı:
+
+- **[perf/dayanıklılık] SMTP fail-fast timeout** (`mail.transport.ts`): sistemdeki timeout kalkanının
+  tek deliğiydi — nodemailer varsayılanları (connect ~2dk, socket ~10dk) yüzünden relay TCP'yi kabul
+  edip yanıtı black-hole yaparsa mail worker dakikalarca sıkışıp TÜM lisans teslim maillerini
+  baş-bloklardı. `connectionTimeout/greetingTimeout 10s + socketTimeout 20s` → hızlı-başarısız →
+  BullMQ retry. Ayrıca **mail worker `concurrency: 5`** (varsayılan 1'di; `mail.processor.ts`).
+- **[correctness] `bulkReplaceBatch` soyağacı `newAssignmentId`** (`supply-ops.service.ts`): eskiden
+  geriye-dönük "en yeni aktif atama" tahmin dalına düşüyordu (dosyanın kendi sözleşmesini ihlal) →
+  AYNI satırda eşzamanlı değişimde soyağacı yanlış atamaya bağlanabilirdi (yalnız denetim-izi/görüntü;
+  §2 invaryantları etkilenmiyordu). Diğer üç çağıranla simetri.
+- **[test] `syncRefunds` suspended kısmi-iade REGRESYON testleri** (`sync-refunds.test.ts` f+g): bir
+  önceki batch'in H1-düzeltmesi üç revoke yolunu suspended'ı kapsayacak şekilde değiştirdi; ikisinin
+  testi vardı ama üçüncü yol (`syncRefunds` WooCommerce kısmi-iade) regresyonsuzdu → aday kümesi
+  `['active']`'e döndürülse tüm testler geçer ama bedava-lisans bug'ı sessizce dönerdi. **Mutasyon
+  testiyle kanıtlandı** (aday kümesi→active-only → f+g KIRMIZI). single (revokeAssignment yolu) +
+  multi/MAK (revokePartialUnits + over-count savunması).
+- **[güvenlik, savunma-derinliği] readonly-sql unicode-escape kapısı** (`readonly-sql.service.ts`):
+  `U&'\0061dmin'` / `U&"..."` kod-noktası kaçışı denylist adlarını obfuscate edip TÜM metin
+  denylist'lerini atlatabilirdi → sözdizimi tümden reddedilir (+test).
+- **[WP tutarlılık, eklenti v1.0.2] webhook nonce transient TTL 600→660** (`class-webhook.php`):
+  paylaşılan `HMAC_NONCE_TTL_SEC = 2×300+60` sözleşmesiyle hizalandı (WP tam sınırdaydı, replay marjı yoktu).
+
+**Doğrulama (izole docker, düzeltmeler sonrası):** yarış 3/3 · entegrasyon **160/160** (+3 yeni) · birim
+65/65 · typecheck 4/4 · build 3/3 · PHP-lint 12/12 · mutasyon testi (aday→active-only) f+g KIRMIZI
+(guard doğrulandı) · şema drift YOK. Kapsam-dışı (bilinçli): global-arama trgm/GIN index (ölçek-kapılı,
+extension+migration), WP IPv6 literal localhost (dev-kolaylığı, prod etkisi yok), reconcile
+checkMultiCapacity recentFilter (arka plan, statement_timeout korumalı). Migration YOK.
+
 ### Derin-denetim düzeltmeleri: H1 suspended-refund + rol-farkında maske + KVKK + readonly-sql (migration YOK)
 
 Kullanıcı: *"tüm eksikleri ve sorunları gider, sistem stabil güvenli performans bir şekilde."*

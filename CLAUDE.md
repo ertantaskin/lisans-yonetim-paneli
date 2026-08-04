@@ -1055,6 +1055,21 @@ workflow'la DERİN denetlendi → 12 bulgu (1 çürütüldü) + 2 KULLANICI KARA
   PHP-lint 12/12 · deploy.sh rollback'li → /health 200 v1.0.0. DERS [[denetim-regresyon-dersleri]]: kullanıcı
   KARARIYLA davranış değişince eski davranışı kodlayan testi güncelle (sync-refunds MAK).
 
+**TAM TEST DOĞRULAMASI + ODAKLI EKSİK-GİDERME (CANLI prod+dev+WP v1.0.2, migration YOK):** Kullanıcı "tüm
+projeyi test et, eksikler var ise güvenli+performans tamamla" dedi. Önce 86dcc22 sonrası hiç koşulmamış VPS
+entegrasyon+yarış koşuldu (izole docker pg17+redis7+node22): **yarış 3/3, entegrasyon 157/157, birim 65/65,
+build 3/3, PHP-lint 12/12, drift YOK**. Sonra **5 paralel denetim ajanı** (güvenlik/correctness/perf/WP/admin+
+test) — güvenlik+WP+admin DOĞRULANMIŞ TEMİZ; kapatılan gerçek boşluklar: **[perf] SMTP fail-fast timeout**
+(connect/greeting 10s + socket 20s; timeout kalkanının tek deliğiydi — yavaş relay tüm teslim maillerini
+baş-bloklardı) + mail worker `concurrency:5`; **[correctness] `bulkReplaceBatch` soyağacı `newAssignmentId`**
+(eşzamanlı değişimde yanlış-atama etiketi; yalnız denetim-izi, §2 etkilenmiyordu); **[test] `syncRefunds`
+suspended kısmi-iade regresyon testleri (f+g)** — H1-düzeltmesinin 3. yolu (WooCommerce kısmi-iade) testsizdi,
+**mutasyonla kanıtlandı** (aday→active-only → f+g KIRMIZI); **[güvenlik, savunma-derinliği] readonly-sql
+unicode-escape kapısı** (`U&'...'`/`U&"..."` denylist obfuscation); **[WP v1.0.2] webhook nonce TTL 600→660**
+(paylaşılan HMAC_NONCE_TTL_SEC hizası). Doğrulama: yarış 3/3 · **entegrasyon 160/160** (+3) · birim 65/65 ·
+typecheck 4/4 · build 3/3 · PHP-lint 12/12. Kapsam-dışı (bilinçli): global-arama trgm/GIN (ölçek-kapılı,
+extension+migration), WP IPv6 dev-kolaylığı, reconcile checkMultiCapacity recentFilter (arka plan, korumalı).
+
 **DERİN-DENETİM DÜZELTMELERİ + ADVERSARYEL DOĞRULAMA (commit fada750→86dcc22, CANLI prod+dev, migration YOK):**
 Kullanıcı "tüm eksikleri ve sorunları gider; sistem stabil/güvenli/performans" dedi → derin-denetimde bulunan
 gerçek + güvenli-düzeltilebilir açıklar düzeltildi, sonra **9-ajanlı adversaryel doğrulama workflow'u** (her

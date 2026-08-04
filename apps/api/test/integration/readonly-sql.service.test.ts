@@ -153,4 +153,12 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     await expectRejected('SELECT passwd FROM some_view');
     await expectRejected('SELECT umoptions FROM some_view');
   });
+
+  it('unicode-escape sözdizimi (U&"..." / U&\'...\') reddedilir — denylist obfuscation kapısı', async () => {
+    // U&'\0061dmin_users' gibi kod-noktası kaçışı denylist ADlarını gizleyip TÜM metin
+    // denylist'lerini (tablo/kolon/fonksiyon) atlatabilir → sözdizimini tümden reddet.
+    await expectRejected('SELECT n FROM U&"\\0070g_authid"'); // identifier: pg_authid gizli (yıldızsız)
+    await expectRejected("SELECT U&'\\0072olpassword' FROM t"); // string: rolpassword gizli
+    await expectRejected('SELECT 1 WHERE U&"col" = 1'); // çıplak U& identifier de reddedilir
+  });
 });

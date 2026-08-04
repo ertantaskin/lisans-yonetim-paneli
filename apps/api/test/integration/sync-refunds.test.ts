@@ -376,4 +376,99 @@ describe('AdminOrdersService.syncRefunds (kısmi iade uzlaştırması)', () => {
       .limit(1);
     expect(line!.qty).toBe(3);
   });
+
+  // ── REGRESYON (fada750/86dcc22 H1-sınıfı, 3. yol): syncRefunds kısmi iadede ASKIDAKİ (suspended)
+  // atama da geri-alınabilir kümede olmalı. Aday kümesi ['active','suspended'] yerine ['active']'e
+  // düşürülürse (H1 regresyonu) fulfilledQty'ye dahil suspended fazlalık geri ALINAMAZ → satır
+  // over-fulfilled kalır ve suspended atama "Geri aç"ta canlı hak taşır (bedava lisans). Bu iki
+  // test o düşürmede revoked=0 üretip KIRMIZI döner (mevcut testlerin hepsi ACTIVE ile geçiyordu).
+  it('(f) suspended single kısmi iade: fulfilledQty’ye dahil askıdaki fazlalık revoke edilir (revokeAssignment yolu)', async () => {
+    const seed = await seedSingleDelivered(3);
+    // 3 atamanın HEPSİNİ askıya al → activeCount=0 ama fulfilledQty (satır sayacı) hâlâ 3.
+    await db
+      .update(schema.assignments)
+      .set({ status: 'suspended' })
+      .where(eq(schema.assignments.lineId, seed.lineId));
+
+    // netQty=1 → excess = fulfilledQty(3) − 1 = 2. Aday kümesi suspended içermezse revoke=0 kalır.
+    const res = await admin.syncRefunds(
+      siteRow(site),
+      seed.remoteOrderId,
+      [{ remoteLineId: seed.remoteLineId, netQty: 1 }],
+      'kısmi iade — suspended',
+    );
+    expect(res.revoked).toBe(2); // regresyonda 0 → bu satır guard'dır
+    expect(res.adjustedLines).toBe(1);
+
+    // Satır NET'e indi (qty=1, fulfilled=1, fulfilled durumu) — over-fulfilled DEĞİL.
+    const [line] = await db
+      .select({
+        qty: schema.orderLines.qty,
+        fulfilledQty: schema.orderLines.fulfilledQty,
+        status: schema.orderLines.status,
+      })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.id, seed.lineId))
+      .limit(1);
+    expect(line!.qty).toBe(1);
+    expect(line!.fulfilledQty).toBe(1);
+    expect(line!.status).toBe('fulfilled');
+
+    // 2 suspended atama revoke edildi (yalnız 1 suspended sağ kaldı = netQty); iade edilen 2 key karantina.
+    const suspended = await db
+      .select({ id: schema.assignments.id })
+      .from(schema.assignments)
+      .where(
+        and(
+          eq(schema.assignments.lineId, seed.lineId),
+          eq(schema.assignments.status, 'suspended'),
+        ),
+      );
+    expect(suspended.length).toBe(1);
+    const counts = await statusCounts(seed.product.id);
+    expect(counts['quarantined'] ?? 0).toBe(2);
+    expect(counts['assigned'] ?? 0).toBe(1);
+  });
+
+  it('(g) suspended multi/MAK kısmi iade: revokePartialUnits suspended’da birim düşürür + over-count savunması', async () => {
+    const seed = await seedMultiDelivered(5, 500);
+    // Tek MAK atamasını askıya al (units=5, use_count=5).
+    await db
+      .update(schema.assignments)
+      .set({ status: 'suspended' })
+      .where(eq(schema.assignments.id, seed.assignmentId));
+
+    // netQty=3 → excess=2; a.units(5) > need(2) → revokePartialUnits(suspended, 2) yolu.
+    const res = await admin.syncRefunds(
+      siteRow(site),
+      seed.remoteOrderId,
+      [{ remoteLineId: seed.remoteLineId, netQty: 3 }],
+      'kısmi iade — suspended MAK',
+    );
+    expect(res.revoked).toBe(2); // regresyonda 0 (aday kümesi suspended içermez) → guard
+
+    // Atama HÂLÂ suspended (adet düşür durumu değiştirmez), units 5→3 (over-revoke YOK).
+    const [asg] = await db
+      .select({ status: schema.assignments.status, units: schema.assignments.units })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.id, seed.assignmentId))
+      .limit(1);
+    expect(asg!.status).toBe('suspended');
+    expect(asg!.units).toBe(3);
+    // §2: iadede MAK kapasitesi havuza DÖNMEZ → use_count 5'te KALIR.
+    const [li] = await db
+      .select({ useCount: schema.licenseItems.useCount })
+      .from(schema.licenseItems)
+      .where(eq(schema.licenseItems.id, seed.licenseItemId))
+      .limit(1);
+    expect(li!.useCount).toBe(5);
+
+    const [line] = await db
+      .select({ qty: schema.orderLines.qty, fulfilledQty: schema.orderLines.fulfilledQty })
+      .from(schema.orderLines)
+      .where(eq(schema.orderLines.id, seed.lineId))
+      .limit(1);
+    expect(line!.qty).toBe(3);
+    expect(line!.fulfilledQty).toBe(3);
+  });
 });

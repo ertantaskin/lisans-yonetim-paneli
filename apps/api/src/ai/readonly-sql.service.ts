@@ -207,6 +207,15 @@ const NONSCALAR_TYPE_OIDS = new Set<number>([
 const WILDCARD_RE = /\b\w+\s*\.\s*\*|\bselect\s+(?:distinct\s+)?\*/i;
 
 /**
+ * PostgreSQL unicode-escape sözdizimi kapısı (savunma-derinliği): `U&'\0061dmin'` (string) ve
+ * `U&"\0061dmin_users"` (identifier) denylist kelimelerini (tablo/kolon/fonksiyon adları)
+ * kod-noktalarıyla obfuscate ederek metin-tabanlı denylist'lerin HEPSİNİ atlatabilir. Meşru
+ * analitik SELECT'ler bu sözdizimine ASLA ihtiyaç duymaz → tümden reddet. (Asıl garanti yine
+ * salt-okunur tx + superuser-olmayan DB rolü; bu, metin katmanındaki son bypass'ı kapatır.)
+ */
+const UNICODE_ESCAPE_RE = /\bu&\s*["']/i;
+
+/**
  * ReadonlySqlService — doğal dilde rapor (§15 "salt-okunur DB rolü, üretilen SQL gösterilir")
  * için AI'nın ürettiği sorguyu GÜVENLE çalıştırır. Katmanlı güvence:
  *   1) Tek ifade (noktalı virgülle ifade zincirleme reddedilir).
@@ -260,6 +269,14 @@ export class ReadonlySqlService {
     if (DANGEROUS_FUNCTION_RE.test(q)) {
       throw new HttpException(
         'Sorgu dosya/ağ/sistem fonksiyonlarına erişemez.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    // Unicode-escape obfuscation kapısı (savunma-derinliği): U&'...' / U&"..." denylist adlarını
+    // kod-noktalarıyla gizleyip yukarıdaki metin denylist'lerini atlatabilir → tümden reddet.
+    if (UNICODE_ESCAPE_RE.test(q)) {
+      throw new HttpException(
+        'Unicode-escape sözdizimi (U&) güvenlik için reddedilir.',
         HttpStatus.BAD_REQUEST,
       );
     }
