@@ -1105,6 +1105,35 @@ yalnız adversaryel sweep'te yakalandı → yeni bir davranış eklerken o davra
   (prod `__drizzle_migrations` cerrahisi riski > fayda; bekleyen migration yok → sonraki migration'da `when` bump);
   superuser-olmayan salt-okunur DB rolü (M2 otoriter katman, ops).
 
+**WP SENKRON KESİNTİSİ + YAZILIMSAL DENETİM DÜZELTMELERİ (commit 9face29→6d24ea9, CANLI prod+dev,
+eklenti v1.0.3, migration YOK):** Kullanıcı "dev'de atanan lisanslar WP'de görünmüyor; bazı
+siparişlerde 'Lisans bilgileriniz şu an görüntülenemiyor'" dedi.
+- **KÖK NEDEN — kendi W1 güvenlik düzeltmem:** `is_secure_panel_url()` http'ye YALNIZ localhost izni
+  veriyordu; panel+WP aynı Docker ağındayken adres `http://api:3001` (İÇ servis adı) → guard false →
+  eklenti isteği HİÇ yapmadan `code=0` dönüyordu. **Ölçüm:** WP'den `http://api:3001/v1/health` 200
+  (ağ sağlam) ama dev API'de 24 saatte SIFIR site-facing istek. Sipariş push/iade/katalog senkronu da
+  sessizce durmuştu. **Düzeltme:** https her zaman; http yalnız KANITLANABİLİR özel adres (loopback ·
+  tek-etiketli Docker servis adı · özel IPv4/IPv6 · .local/.internal/.test) — gerçek alan adı + http
+  HÂLÂ RED (10-vaka matrisi). Blok artık GÖRÜNÜR (`insecure_panel_notice` admin uyarısı).
+  **DERS [[denetim-regresyon-dersleri]]:** güvenlik kapısı eklerken MEŞRU dağıtım topolojilerini
+  (aynı sunucu / Docker iç ağı) test matrisine koy; **fail-safe bir kapı SESSİZ olursa arıza teşhis
+  edilemez** (günlerce fark edilmedi).
+- **Yazılımsal denetim maddeleri:** sessiz-mail guard (`MailConfigGuardService`: üretimde SMTP hedefi
+  mailpit/localhost ise açılışta kritik alarm; fail-closed DEĞİL — **prod'da ilk boot'ta ateşledi ve
+  gerçek hatayı buldu: prod SMTP_HOST tanımsız→mailpit**) · docker-compose'un GEÇİRMEDİĞİ env'ler
+  (admin `REQUIRE_AUTH`+`TZ`+`APP_VERSION`; api `HMAC_IP_FAIL_LIMIT`/`AUTOCOMPLETE_INLINE_CAP`/
+  7×`RETENTION_*`/`RECONCILE_*`/`SWEEP_ALARM_*` — `.env`'e yazmak sessizce ETKİSİZDİ) · log rotasyonu
+  (`x-logging` 10m×5, tüm servisler) · api+admin **healthcheck** · `deploy.sh` disk temizliği
+  (**prod %57→%13, 64 GB**) · ADMIN-ONLY `GET /v1/admin/system/status` (yalnız boolean; public
+  /health'e KOYULMADI) → /settings'te "Telegram hep kapalı" + "sürüm 0.0.0" yanlışları düzeldi,
+  "Mail gönderimi" kutucuğu eklendi · CI'a **WP PHP-lint** + **migration drift** denetimi.
+- **Bonus (healthcheck ortaya çıkardı):** Next standalone bind adresini `process.env.HOSTNAME`'den
+  alır, Docker onu konteyner ID'sine ayarlar → admin loopback'e bind OLMUYORDU → `HOSTNAME=0.0.0.0`.
+- **Doğrulama:** typecheck 4/4 · api birim 72/72 · **entegrasyon 160/160 + yarış 3/3** · PHP-lint 12/12 ·
+  dev E2E (WP→panel HMAC 200 · metabox admin-view 200 · deliveries 200 gerçek anahtar) · prod+dev
+  /health 200 v1.0.0, api+admin **healthy**. **Kalan (ops, kod değil):** otomatik+offsite yedek YOK
+  (kritik — MASTER_KEY kopyası dahil) · dışarıdan izleme/alarm yok · firewall/fail2ban · kalıcı domain.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

@@ -14,6 +14,56 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### WP senkron kesintisi (kendi güvenlik düzeltmemin yan etkisi) + yazılımsal denetim maddeleri (eklenti v1.0.3, migration YOK)
+
+**Kullanıcı raporu:** dev'de atanan lisanslar WordPress'te görünmüyor; bazı siparişlerde
+"Lisans bilgileriniz şu an görüntülenemiyor" çıkıyor.
+
+**Kök neden (ölçüldü):** güvenlik denetiminde eklediğim W1 HTTPS zorlaması (`is_secure_panel_url`)
+http'ye YALNIZ `localhost/127.0.0.1/::1` için izin veriyordu. Panel ile WP aynı Docker ağındayken
+adres `http://api:3001` (İÇ servis adı) → guard `false` → eklenti panele **hiç istek yapmadan**
+`code=0` dönüyordu. Kanıt: WP konteynerinden `http://api:3001/v1/health` **200 OK** (ağ sağlam)
+ama dev API loglarında **24 saatte sıfır** site-facing istek. Sipariş push / iade / katalog
+senkronu da aynı sebeple **sessizce** durmuştu.
+
+- **Düzeltme:** https her zaman geçer; http YALNIZ kanıtlanabilir ÖZEL adreste (loopback ·
+  tek-etiketli Docker servis adı — public DNS'te çözülemez · 10/8, 172.16/12, 192.168/16,
+  169.254/16 · IPv6 ULA/link-local · `.local/.internal/.test/.localhost/.home.arpa`).
+  **Gerçek alan adı + http HÂLÂ REDDEDİLİR** (MITM tehdit modeli korunur — 10 vakalık matris).
+- **Blok artık sessiz değil:** `insecure_panel_notice()` — panel adresi reddedilirse WP admin'de
+  kırmızı uyarı ("sipariş iletimi ve lisans görüntüleme DEVRE DIŞI"). Bu arıza günlerce görünmezdi.
+
+**Yazılımsal denetim maddeleri (kullanıcı önceliği "yazılımsal taraf"):**
+- **Sessiz mail arızası** — `SMTP_HOST` varsayılanı `mailpit` ve mailpit PROD compose'da ayakta:
+  operatör gerçek relay yazmazsa mail 250 OK alır, `email_log` 'sent' olur, panel yeşil görünür,
+  müşteri lisans mailini ASLA almaz. Yeni `MailConfigGuardService`: ÜRETİMDE dev-sink hedefte
+  açılışta `logger.error` + **kritik bildirim**. Fail-closed DEĞİL (mail tek kanal değil; sinyal
+  ver, sistemi kırma). **Prod'da ilk boot'ta ATEŞLEDİ — gerçek bir yapılandırma hatası buldu.**
+- **docker-compose env'leri geçirmiyordu** (`.env`'e yazmak sessizce etkisizdi): admin →
+  `REQUIRE_AUTH` (fail-closed emniyet kemeri ATIL kalıyordu), `TZ` (panel saatleri 3 saat
+  sapıyordu), `APP_VERSION`; api → `HMAC_IP_FAIL_LIMIT`, `AUTOCOMPLETE_INLINE_CAP`,
+  7×`RETENTION_*`, `RECONCILE_WINDOW_DAYS/FULL`, `SWEEP_ALARM_DEDUPE_HOURS`.
+- **Log rotasyonu yoktu** (json-file sınırsız → disk dolarsa PostgreSQL durur = tüm teslimat
+  durur) → `x-logging` anchor, tüm servislerde 10m × 5. **Healthcheck yoktu** → api `/v1/health`,
+  admin `/login`. **deploy.sh disk sızdırıyordu** (68 GB build cache) → başarılı dağıtımdan sonra
+  dangling imaj + 7 günden eski cache temizliği (**prod: %57 → %13 dolu, 64 GB geri kazanıldı**).
+- **`/settings` yanlış bilgi veriyordu:** Telegram HER ZAMAN "kapalı" (admin env'ine bakıyordu;
+  oysa API konteynerinde yaşar), sürüm HER ZAMAN `0.0.0`. Yeni **ADMIN-ONLY**
+  `GET /v1/admin/system/status` (yalnız boolean; public `/v1/health`'e KOYULMADI — gereksiz
+  yapılandırma ifşası) → gerçek Telegram/Sentry/AI durumu + "Mail gönderimi" kutucuğu
+  (gerçek relay / DEV yakalayıcı) + API erişilemezse dürüst "Bilinmiyor".
+- **CI kapsamı:** müşteri sitelerine giden WP eklentisinin PHP'si hiç kontrol edilmiyordu →
+  `php -l`; ayrıca **migration/şema sapma denetimi** (`db:generate` yeni dosya üretirse CI kırılır
+  — bu sınıf iki kez üretimi kırma eşiğine gelmişti).
+- **Bonus (healthcheck ortaya çıkardı):** Next standalone `server.js` bind adresini
+  `process.env.HOSTNAME`'den alır, Docker onu konteyner ID'sine ayarlar → admin **loopback'e bind
+  olmuyordu** (yalnız konteyner IP'si). `HOSTNAME=0.0.0.0` (kanonik Next-in-Docker ayarı).
+
+**Doğrulama:** typecheck 4/4 + check-use-server temiz · api birim **72/72** (+7 yeni) · admin
+production build (uyarısız) · VPS izole test DB **entegrasyon 160/160 + yarış 3/3** · PHP-lint 12/12
+· `docker compose config` geçerli · dev E2E (WP→panel HMAC 200, metabox 200, deliveries 200 gerçek
+anahtar) · prod+dev deploy → **/health 200 v1.0.0, api+admin healthy**. Migration YOK.
+
 ### Tam test doğrulaması + odaklı eksik-giderme (5-boyutlu denetim; eklenti v1.0.2; migration YOK)
 
 Kullanıcı: *"tüm projeyi test et, eksikler var ise onları güvenli, performans şekilde tamamla tam
