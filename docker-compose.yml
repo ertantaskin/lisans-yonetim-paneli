@@ -172,6 +172,12 @@ services:
       - api
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      # Next standalone `server.js` BIND ADRESİ olarak process.env.HOSTNAME kullanır; Docker ise
+      # HOSTNAME'i konteyner ID'sine ayarlar → sunucu YALNIZ konteynerin kendi IP'sine bağlanıyordu,
+      # 127.0.0.1'e DEĞİL (healthcheck eklerken ortaya çıktı: loopback ECONNREFUSED). Ağ üzerinden
+      # erişim (Caddy → admin:3000) çalıştığı için fark edilmiyordu. 0.0.0.0 = kanonik Next-in-Docker
+      # ayarı; dış maruziyeti DEĞİŞTİRMEZ (admin portu dışarı publish edilmez, yalnız Docker ağı).
+      HOSTNAME: 0.0.0.0
       # Sunucu-taraflı basılan tarihler (sipariş detayı, /releases, /deployments…) API+PG ile
       # AYNI saat diliminde olsun. GEÇİRİLMEZSE konteyner UTC kalır → panelde saatler 3 saat
       # geride görünürdü (gece 01:30 siparişi "önceki gün 22:30").
