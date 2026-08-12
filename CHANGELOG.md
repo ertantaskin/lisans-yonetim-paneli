@@ -14,6 +14,48 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### UI/UX bağlam denetimi: çok siteli görünürlük + held sipariş körlüğü (36 bulgu, migration YOK)
+
+Kullanıcı: *"/pending'de hangi site olduğu belirtilmiyor, çok siteli yönetimde karışıklık;
+detayları atlamamalısın, başka yerlerde de UI/UX sorunları varsa tespit edip düzelt."*
+5 ekran-grubu taraması + çekişmeli doğrulama (45 ajan): **56 ham → 36 doğrulanmış**
+(3 kozmetik, 1 çürütüldü) → 4 ayrık-dosya işçi düzeltti.
+
+**Bildirilen kusur (kök neden):** `pending()` ve `list()` yalnız `orders` kolonlarını
+döndürüyordu — site bilgisi olarak sadece okunamaz `siteId` (UUID) vardı ve tabloda kolon yoktu.
+API artık `sites` leftJoin ile `siteDomain`+`siteType` döndürür (sır kolonu seçilmez);
+`/pending` ve `/orders`'a **Site** kolonu, `/orders`'a **veriden türeyen site süzgeci** (tek
+mağazada gizlenir) ve mağaza adını kapsayan arama eklendi.
+
+**En kritik ek bulgu — İNCELEMEDEKİ (held) sipariş körlüğü:** dinamik kota ile beklemeye alınan
+sipariş DB'de `status='pending'` durur → kuyrukta sıradan "Bekliyor" görünüyordu. Operatör bunu
+stok beklemesi sanıp stok girer; `autoComplete` held siparişi **atlar** → hiçbir şey olmaz,
+sipariş günlerce çürür (gerçek eylem `/review`'da). Held bayrağı artık ham durumu **ezer**:
+"İncelemede" rozeti + sebep + `/review` linki + liste üstünde uyarı bandı; `/orders` durum
+süzgecine "İncelemede" seçeneği.
+
+**[YÜKSEK] `/sites/new` sihirbaz çıkmazı:** site oluşmuş ama bağlan kodu üretilememişse panelde
+kurtarma yolu yoktu ve operatör **var olmayan bir butona** yönlendiriliyordu.
+
+**Diğer düzeltmeler:** `/pending` "Ürün / eksik adet" kolonu + ürün bazında "stok bekleyen talep"
+şeridi (tek korelasyonlu alt sorgu, N+1 yok; incelemedekiler talebe dahil edilmez) · `/orders`
+200-kayıt penceresi dürüstleşti ("listede yok = panelde yok DEĞİL") · `/review`'de satırdan
+siparişe/müşteriye link + "Onayla" sonucu **gerçek** durumu raporluyor (stok yoksa yeşil değil) ·
+stok düzeltme formu stoku değiştirmeden yeşil "Eklendi" demiyor (kalem seçimi zorunlu) · parti
+alanı ham UUID yerine seçim · `/stock` "Satıldığı siteler" kolonu + eşleme süzgeci (eşlemesiz
+ürün artık görünür) · `/batches` linkleri + Türkçe arama + tek kaynaklı durum etiketi · `/support`
+site + ürün/lisans bağlamı · `/customers/[email]` site + tıklanabilir talepler · `/security`
+yönetici-giriş olayları Türkçe + süzgeç + kırpılma uyarısı · `/notifications` ve `/mappings` ham
+enum temizliği · `/mappings` varyasyon-ebeveyn yanlış uyarısı + sonuç raporu · `/deployments` log
+görünürlüğü + otomatik yenileme · terim birliği (Ctrl+K "Tamamlandı" → "Teslim edildi";
+doğrulamada kendi ürettiğim "Mağaza" başlığı panelin yerleşik **"Site"** terimine hizalandı).
+
+**Doğrulama:** typecheck 4/4 + check-use-server (21 dosya/67 export) · api birim 72/72 · admin
+production build · VPS izole test DB **entegrasyon 160/160 + yarış 3/3** · **dev E2E:** 21 rota
+200 (hata sınırı yok), Site kolonu 3 gerçek mağazayla doğrulandı, **held rozeti canlı kanıtlandı**
+(gerçek sipariş incelemeye alındı → üç ekranda göründü → geri alındı) · prod+dev deploy, /health
+200 v1.0.0, api+admin **healthy**. Migration YOK.
+
 ### WP senkron kesintisi (kendi güvenlik düzeltmemin yan etkisi) + yazılımsal denetim maddeleri (eklenti v1.0.3, migration YOK)
 
 **Kullanıcı raporu:** dev'de atanan lisanslar WordPress'te görünmüyor; bazı siparişlerde
