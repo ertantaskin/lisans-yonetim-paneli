@@ -27,6 +27,8 @@ class Wpteslimat_Settings {
         // (#10) Klon/staging koruması taban çizgisini mevcut adrese sıfırlama (yeniden bağla).
         add_action('admin_post_wpteslimat_rebind', [$this, 'handle_rebind']);
         add_action('admin_notices', [$this, 'clone_notice']);
+        // Panel adresi güvenlik kapısına takılırsa SESSİZ kalma — operatör nedenini görsün.
+        add_action('admin_notices', [$this, 'insecure_panel_notice']);
         // §7 admin bar sağlık göstergesi — her yönetici sayfasında panel bağlantı rozeti.
         add_action('admin_bar_menu', [$this, 'admin_bar_health'], 100);
     }
@@ -220,10 +222,74 @@ class Wpteslimat_Settings {
      */
     public static function is_secure_panel_url($url) {
         $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
-        if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1') {
+        $scheme = strtolower((string) wp_parse_url($url, PHP_URL_SCHEME));
+        if ($scheme === 'https') {
             return true;
         }
-        return strtolower((string) wp_parse_url($url, PHP_URL_SCHEME)) === 'https';
+        // http YALNIZ kanıtlanabilir şekilde ÖZEL/yerel adreslerde kabul edilir. Tehdit modeli
+        // MITM'dir: trafik makineyi/özel ağı TERK ETMİYORSA araya girecek bir ağ yoktur. Panel ile
+        // WP aynı sunucuda/Docker ağındayken (yaygın tek-sunucu kurulumu ve bizim izole dev yığınımız)
+        // adres `http://api:3001` gibi İÇ bir addır ve TLS sonlandırıcı (Caddy) devrede değildir.
+        // (REGRESYON DERSİ: bu kapı önce yalnız localhost'a izin veriyordu → iç adresli kurulumda
+        // eklenti panele HİÇ istek yapmadı, teslimatlar WP'de görünmez oldu; hata SESSİZDİ.)
+        return self::is_private_host($host);
+    }
+
+    /**
+     * Host kanıtlanabilir şekilde ÖZEL/yönlendirilemez mi? (public DNS'te var olamayacak adresler)
+     *   · loopback: localhost / 127.0.0.0/8 / ::1
+     *   · TEK ETİKETLİ ad (nokta YOK): Docker/Compose servis adı (`api`, `panel`) — public DNS'te çözülemez
+     *   · özel IPv4: 10/8, 172.16/12, 192.168/16, 169.254/16 (link-local)
+     *   · özel IPv6: fc00::/7 (ULA), fe80::/10 (link-local)
+     *   · ayrılmış son ekler: .local .internal .test .localhost .home.arpa
+     * Bunların DIŞINDAKİ her ad (gerçek alan adı) http ile REDDEDİLİR → sır düz metin gitmez.
+     */
+    private static function is_private_host($host) {
+        if ($host === '') {
+            return false;
+        }
+        $host = trim($host, '[]'); // IPv6 literal köşeli parantezleri
+        if ($host === 'localhost' || $host === '::1') {
+            return true;
+        }
+        // Tek etiketli ad (nokta içermeyen, IP olmayan) → yalnız iç ağda çözülebilir.
+        if (strpos($host, '.') === false && strpos($host, ':') === false
+            && !filter_var($host, FILTER_VALIDATE_IP)) {
+            return true;
+        }
+        foreach (['.local', '.internal', '.test', '.localhost', '.home.arpa'] as $suffix) {
+            if (substr($host, -strlen($suffix)) === $suffix) {
+                return true;
+            }
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            // Özel/ayrılmış aralık DIŞINDAKİ (yani genel yönlendirilebilir) IP'ler reddedilir.
+            $public = filter_var(
+                $host,
+                FILTER_VALIDATE_IP,
+                FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+            );
+            return $public === false;
+        }
+        return false;
+    }
+
+    /**
+     * Panel adresi güvenlik kapısına takıldıysa yöneticiye GÖRÜNÜR uyarı bas. Eskiden bu blok
+     * SESSİZDİ: eklenti hiçbir istek yapmıyor, sipariş/teslimat panele gitmiyor ama operatör
+     * yalnız "Lisans bilgileriniz şu an görüntülenemiyor" mesajını görüp nedenini bilemiyordu.
+     */
+    public function insecure_panel_notice() {
+        if (!current_user_can('manage_options')) return;
+        $panel = self::panel_url();
+        if ($panel === '' || self::is_secure_panel_url($panel)) return;
+        echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
+            'Teslimat eklentisi: Panel adresi (%s) güvenli değil — sırlar düz metin kanaldan ' .
+            'gönderilmesin diye panele HİÇBİR istek yapılmıyor (sipariş iletimi ve lisans görüntüleme ' .
+            'DEVRE DIŞI). Adresi https:// yapın; iç ağ/aynı sunucu kurulumunda http yalnız yerel ' .
+            'adreslerde (localhost, 10.x, 192.168.x, Docker servis adı, *.local) kabul edilir.',
+            $panel
+        )) . '</p></div>';
     }
 
     public function menu() {
