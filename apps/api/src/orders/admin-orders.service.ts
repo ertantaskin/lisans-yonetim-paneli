@@ -412,8 +412,16 @@ export class AdminOrdersService {
   }
 
   async list(status?: string) {
+    // MAĞAZA BAĞLAMI: sipariş listesi de çok sitelidir → domain + kanal tipi JOIN ile döner
+    // (pending kuyruğuyla AYNI sözleşme; ekranlar arasında tutarlı kolon). Sır kolonu seçilmez.
+    const selection = { ...getTableColumns(orders), siteDomain: sites.domain, siteType: sites.type };
     if (!status) {
-      return this.db.select().from(orders).orderBy(desc(orders.createdAt)).limit(200);
+      return this.db
+        .select(selection)
+        .from(orders)
+        .leftJoin(sites, eq(sites.id, orders.siteId))
+        .orderBy(desc(orders.createdAt))
+        .limit(200);
     }
     // F5: doğrulanmamış ?status= değeri (`as never` cast'iyle) pg-enum karşılaştırmasına ulaşıp
     // "invalid input value for enum" → 500 üretiyordu. Enum üyeliğini SORGUDAN ÖNCE doğrula: geçerli
@@ -421,8 +429,9 @@ export class AdminOrdersService {
     const match = orderStatusEnum.enumValues.find((v) => v === status);
     if (!match) return [];
     return this.db
-      .select()
+      .select(selection)
       .from(orders)
+      .leftJoin(sites, eq(sites.id, orders.siteId))
       .where(eq(orders.status, match))
       .orderBy(desc(orders.createdAt))
       .limit(200);
@@ -466,18 +475,31 @@ export class AdminOrdersService {
     )`;
     const columns = getTableColumns(orders);
 
+    // MAĞAZA BAĞLAMI (operatör şikâyeti): kuyruk ÇOK SİTELİDİR — satırın hangi mağazadan
+    // geldiği görünmezse operatör yanlış mağazanın stoğuna/eşlemesine gider. `siteId` (UUID)
+    // tek başına okunabilir değil → domain + kanal tipi JOIN ile döner (sipariş detayı deseni).
+    // SIR KOLONU SEÇİLMEZ (hmac/api_key asla); yalnız domain + type.
+    const selection = {
+      ...columns,
+      hasUnmappedLine,
+      siteDomain: sites.domain,
+      siteType: sites.type,
+    };
+
     const [waiting, unmapped] = await Promise.all([
       // Stok/kalan bekleyenler (klasik kuyruk).
       this.db
-        .select({ ...columns, hasUnmappedLine })
+        .select(selection)
         .from(orders)
+        .leftJoin(sites, eq(sites.id, orders.siteId))
         .where(inArray(orders.status, ['pending', 'partial']))
         .orderBy(desc(orders.createdAt))
         .limit(200),
       // Eşlemesiz siparişler AYRI kotada — kendi seli yalnız kendi kovasını doldurur.
       this.db
-        .select({ ...columns, hasUnmappedLine })
+        .select(selection)
         .from(orders)
+        .leftJoin(sites, eq(sites.id, orders.siteId))
         .where(eq(orders.status, 'unmapped'))
         .orderBy(desc(orders.createdAt))
         .limit(100),

@@ -17,11 +17,27 @@ const columns: ColumnDef<OrderRow>[] = [
     meta: { title: 'Sipariş No' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Sipariş No" />,
     cell: ({ row }) => <span className="font-medium tabular-nums">{row.original.remoteOrderId}</span>,
-    // Arama: sipariş no VEYA müşteri e-postası. Türkçe-duyarlı karşılaştırma (`includesTr`):
-    // ham `toLowerCase()` ile "İ"/"I" içeren e-postalar (İsim.Soyisim@…) bulunamıyordu.
+    // Arama: sipariş no VEYA müşteri e-postası VEYA mağaza. Türkçe-duyarlı karşılaştırma
+    // (`includesTr`): ham `toLowerCase()` ile "İ"/"I" içeren e-postalar bulunamıyordu.
     filterFn: (row, _id, value) =>
       includesTr(row.original.remoteOrderId, value) ||
-      includesTr(row.original.customerEmail, value),
+      includesTr(row.original.customerEmail, value) ||
+      includesTr(row.original.siteDomain ?? '', value),
+  },
+  {
+    // ÇOK SİTELİ BAĞLAM: hangi mağazadan geldiği (operatör şikâyeti). Facet ile filtrelenebilir.
+    // `accessorFn` — alan API'den gelmezse (sürüm sapması) '—' basılır, satır yine listelenir.
+    id: 'siteDomain',
+    accessorFn: (row) => row.siteDomain ?? '',
+    meta: { title: 'Mağaza' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Mağaza" />,
+    cell: ({ row }) =>
+      row.original.siteDomain ? (
+        <span className="whitespace-nowrap">{row.original.siteDomain}</span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+    filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
   {
     accessorKey: 'customerEmail',
@@ -61,27 +77,43 @@ const columns: ColumnDef<OrderRow>[] = [
   },
 ];
 
-const facets: FacetConfig[] = [
-  {
-    columnId: 'status',
-    title: 'Durum',
-    options: [
-      { label: 'Bekliyor', value: 'pending', icon: Clock },
-      { label: 'Kısmi', value: 'partial', icon: Clock },
-      { label: 'Teslim edildi', value: 'fulfilled', icon: CheckCircle2 },
-      { label: 'Geri alındı', value: 'revoked', icon: Ban },
-      { label: 'Eşlenmemiş', value: 'unmapped', icon: ShieldAlert },
-    ],
-  },
-];
+const statusFacet: FacetConfig = {
+  columnId: 'status',
+  title: 'Durum',
+  options: [
+    { label: 'Bekliyor', value: 'pending', icon: Clock },
+    { label: 'Kısmi', value: 'partial', icon: Clock },
+    { label: 'Teslim edildi', value: 'fulfilled', icon: CheckCircle2 },
+    { label: 'Geri alındı', value: 'revoked', icon: Ban },
+    { label: 'Eşlenmemiş', value: 'unmapped', icon: ShieldAlert },
+  ],
+};
 
 export function OrdersTable({ orders }: { orders: OrderRow[] }) {
+  // Mağaza facet'i VERİDEN türetilir (sabit liste değil): yalnız gerçekten sipariş gelmiş
+  // mağazalar listelenir. TEK mağaza varsa facet GÖSTERİLMEZ — tek seçenekli filtre gürültüdür.
+  const facets = React.useMemo<FacetConfig[]>(() => {
+    const domains = Array.from(
+      new Set(orders.map((o) => o.siteDomain).filter((d): d is string => !!d)),
+    ).sort((a, b) => a.localeCompare(b, 'tr'));
+    return domains.length > 1
+      ? [
+          statusFacet,
+          {
+            columnId: 'siteDomain',
+            title: 'Mağaza',
+            options: domains.map((d) => ({ label: d, value: d })),
+          },
+        ]
+      : [statusFacet];
+  }, [orders]);
+
   return (
     <DataTable
       columns={columns}
       data={orders}
       searchColumnId="remoteOrderId"
-      searchPlaceholder="Sipariş no veya e-posta…"
+      searchPlaceholder="Sipariş no, e-posta veya mağaza…"
       facets={facets}
       initialSorting={[{ id: 'createdAt', desc: true }]}
       emptyLabel="Kayıt yok."

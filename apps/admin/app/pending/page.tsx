@@ -9,6 +9,7 @@ import { Badge, StatusBadge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../../components/ui/table';
 import { cn, relativeTime, waitTone } from '../../lib/utils';
+import { siteTypeLabel } from '../../lib/labels';
 
 export const dynamic = 'force-dynamic';
 
@@ -217,6 +218,9 @@ export default async function DashboardPage() {
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Sipariş No</TableHead>
+                    {/* ÇOK SİTELİ KURULUMDA ZORUNLU BAĞLAM (operatör şikâyeti): hangi mağazanın
+                        siparişi olduğu görünmezse yanlış mağazanın stoğu/eşlemesi incelenir. */}
+                    <TableHead>Mağaza</TableHead>
                     <TableHead>Müşteri</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead>Bekleme</TableHead>
@@ -238,6 +242,22 @@ export default async function DashboardPage() {
                         )}
                       >
                         <TableCell className="font-medium text-foreground">{o.remoteOrderId}</TableCell>
+                        {/* Mağaza: domain + (birden çok kanal tipi varsa anlamlı olan) kanal etiketi.
+                            Alan gelmemişse (api/admin sürüm sapması) uydurma değer basma → '—'. */}
+                        <TableCell className="whitespace-nowrap">
+                          {o.siteDomain ? (
+                            <span className="flex flex-col">
+                              <span className="text-foreground/90">{o.siteDomain}</span>
+                              {o.siteType && (
+                                <span className="text-[11px] text-muted-foreground">
+                                  {siteTypeLabel(o.siteType)}
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-foreground/80">{o.customerEmail}</TableCell>
                         <TableCell>
                           <span className="flex flex-wrap items-center gap-1.5">

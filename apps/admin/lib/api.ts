@@ -143,6 +143,15 @@ export interface OrderRow {
   customerEmail: string;
   status: string;
   createdAt: string;
+  /**
+   * Siparişin geldiği MAĞAZA (operatör şikâyeti: çok siteli kurulumda hangi siteden geldiği
+   * görünmüyordu → yanlış mağazanın stoğuna/eşlemesine gidiliyordu). API `/v1/admin/orders` ve
+   * `/v1/admin/pending` bunu JOIN ile döndürür. OPSİYONEL: api/admin ayrı imajlar olduğundan
+   * sürüm sapmasında alan gelmeyebilir → ekranlar `?? null` ile savunmacı okur (uydurma değer yok).
+   */
+  siteDomain?: string | null;
+  /** Satış kanalı tipi (woocommerce | marketplace | reseller) — platform-farkında etiket için. */
+  siteType?: string | null;
 }
 
 export interface PayloadFieldDef {
