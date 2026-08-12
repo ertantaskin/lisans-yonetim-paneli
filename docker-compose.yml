@@ -7,6 +7,12 @@
 #
 # API stateless — üretimde `deploy.replicas` ile çoğaltılabilir.
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -26,6 +32,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    logging: *default-logging
     # Dışa KAPALI (§8) — yalnız iç ağ. Lokal geliştirmede erişim için aç:
     # ports: ['5432:5432']
 
@@ -48,6 +55,7 @@ services:
       timeout: 5s
       retries: 10
     # ports: ['6379:6379']  # yalnız gerekirse
+    logging: *default-logging
 
   # Dev SMTP yakalama sunucusu — gerçek mail göndermez, web UI :8025.
   mailpit:
@@ -55,6 +63,7 @@ services:
     restart: unless-stopped
     environment:
       MP_MAX_MESSAGES: 5000
+    logging: *default-logging
     # Web arayüzü lokalde: override ile 127.0.0.1:8025 yayınlanır.
 
   api:
@@ -117,10 +126,42 @@ services:
       # edilmez (tam no-op). DSN kullanıcı sırrıdır. SENTRY_ENVIRONMENT opsiyonel (yoksa NODE_ENV).
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
+      # ── Dayanıklılık / bakım ayarları (denetim: bunlar GEÇİRİLMİYORDU → .env'e yazmak
+      # sessizce ETKİSİZ kalıyordu; kod cömert varsayılana düşüyordu ama operatör ayar
+      # yaptığını sanıyordu). Hepsi opsiyonel: boş bırakılırsa kod içi varsayılan geçerli.
+      # HMAC uçlarında IP başına BAŞARISIZ auth tavanı (vars. 120) — meşru mağaza etkilenmez.
+      HMAC_IP_FAIL_LIMIT: ${HMAC_IP_FAIL_LIMIT:-}
+      # Stok import sonrası inline tamamlanacak azami satır; kalanı BullMQ'ya devredilir (vars. 200).
+      AUTOCOMPLETE_INLINE_CAP: ${AUTOCOMPLETE_INLINE_CAP:-}
+      # Retention (§9/§16) gün eşikleri — boşsa: 180/30/365/365/730/90, audit-all KAPALI.
+      RETENTION_FULFILLMENT_DAYS: ${RETENTION_FULFILLMENT_DAYS:-}
+      RETENTION_OUTBOX_DAYS: ${RETENTION_OUTBOX_DAYS:-}
+      RETENTION_SECURITY_DAYS: ${RETENTION_SECURITY_DAYS:-}
+      RETENTION_EMAIL_MASK_DAYS: ${RETENTION_EMAIL_MASK_DAYS:-}
+      RETENTION_EMAIL_DELETE_DAYS: ${RETENTION_EMAIL_DELETE_DAYS:-}
+      RETENTION_AUDIT_REVEAL_DAYS: ${RETENTION_AUDIT_REVEAL_DAYS:-}
+      RETENTION_AUDIT_ALL_DAYS: ${RETENTION_AUDIT_ALL_DAYS:-}
+      # Mutabakat taraması penceresi (gün) + tam-tablo koşum anahtarı + sweep alarm dedupe (saat).
+      RECONCILE_WINDOW_DAYS: ${RECONCILE_WINDOW_DAYS:-}
+      RECONCILE_FULL: ${RECONCILE_FULL:-}
+      SWEEP_ALARM_DEDUPE_HOURS: ${SWEEP_ALARM_DEDUPE_HOURS:-}
     # Açılışta migration'ları uygula, sonra servisi başlat.
     command: ['sh', '-c', 'node dist/db/migrate.js && node dist/main.js']
     expose:
       - '3001'
+    # Asılı/ölü süreç 'çalışıyor' görünmesin: /v1/health (db+redis) sorgulanır. Degrade (503)
+    # unhealthy sayılır → `docker ps` ve restart politikası gerçeği yansıtır.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"require('http').get({host:'127.0.0.1',port:3001,path:'/v1/health',timeout:4000},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    # Konteyner logları json-file ile SINIRSIZ büyüyordu (tek VPS'te disk dolarsa PostgreSQL
+    # durur = tüm teslimat durur). Döndürülmüş, üst sınırlı log (x-logging).
+    logging: *default-logging
 
   admin:
     build:
@@ -131,6 +172,10 @@ services:
       - api
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      # Sunucu-taraflı basılan tarihler (sipariş detayı, /releases, /deployments…) API+PG ile
+      # AYNI saat diliminde olsun. GEÇİRİLMEZSE konteyner UTC kalır → panelde saatler 3 saat
+      # geride görünürdü (gece 01:30 siparişi "önceki gün 22:30").
+      TZ: ${TZ:-Europe/Istanbul}
       # Sunucu-taraflı fetch container ağı içinde api'ye gider —
       # NEXT_PUBLIC_ DEĞİL, runtime'da okunur, build'e gömülmez.
       API_URL: http://api:3001
@@ -139,10 +184,25 @@ services:
       # Oturum imza sırrı (§8). SET EDİLİRSE auth AKTİF olur → /login zorunlu, kimlik
       # admin_users'a karşı doğrulanır. BOŞSA auth kapalı (panel açık). Üret: openssl rand -hex 32
       SESSION_SECRET: ${SESSION_SECRET:-}
+      # Fail-closed emniyet kemeri (§8): true iken SESSION_SECRET yoksa panel AÇILMAZ (503) —
+      # kazara sırsız deploy'da panelin sessizce herkese açık kalmasını önler. GEÇİRİLMEZSE
+      # .env'e yazmak sessizce ETKİSİZDİ (denetim bulgusu). ÜRETİMDE true önerilir.
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-}
+      # Panel sürümü (/settings + görünür sürüm). Boşsa admin kendi package.json'ından okur.
+      APP_VERSION: ${APP_VERSION:-}
       # Tarayıcı-taraflı çağrılar (ileride) Caddy üzerinden dış URL'e gider.
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.localhost}
     expose:
       - '3000'
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"require('http').get({host:'127.0.0.1',port:3000,path:'/login',timeout:4000},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging: *default-logging
 
   caddy:
     image: caddy:2-alpine
@@ -166,6 +226,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    logging: *default-logging
 
 volumes:
   pgdata:

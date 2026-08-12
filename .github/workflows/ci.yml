@@ -51,6 +51,39 @@ jobs:
       - name: Birim testleri
         run: pnpm test
 
+      # WP EKLENTİSİ PHP SÖZDİZİMİ (denetim bulgusu): eklenti MÜŞTERİ SİTELERİNE dağıtılıyor
+      # ama CI onu hiç kontrol etmiyordu — bozuk bir PHP dosyası tüm mağazayı beyaz ekran
+      # yapabilirdi (panel testleri PHP'ye dokunmaz). `php -l` her dosyada; ilk hatada CI kırılır.
+      - name: WP eklentisi PHP sözdizimi (php -l)
+        run: |
+          set -euo pipefail
+          COUNT=0
+          while IFS= read -r -d '' f; do
+            php -l "$f" > /dev/null
+            COUNT=$((COUNT + 1))
+          done < <(find apps/wp-plugin -name '*.php' -print0)
+          echo "PHP-lint temiz — $COUNT dosya"
+
+      # ŞEMA/MIGRATION SAPMASI (denetim bulgusu): drizzle şeması ile migration snapshot'ı
+      # ayrışırsa `db:generate` aradaki HER ŞEYİ yeniden yaratan bir migration üretir; prod'a
+      # giderse "already exists" ile API BOOT ETMEZ (bu iki kez üretimi kırma eşiğine geldi).
+      # CI'da generate koşulur: yeni dosya üretilirse (= sapma) build KIRILIR.
+      - name: Migration/şema sapma denetimi
+        run: |
+          set -euo pipefail
+          BEFORE=$(find apps/api/drizzle -maxdepth 1 -name '*.sql' | wc -l)
+          pnpm --filter @lisans/api db:generate > /tmp/drizzle-gen.log 2>&1 || {
+            cat /tmp/drizzle-gen.log; echo "db:generate BAŞARISIZ"; exit 1;
+          }
+          AFTER=$(find apps/api/drizzle -maxdepth 1 -name '*.sql' | wc -l)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "ŞEMA SAPMASI: db:generate yeni migration üretti ($BEFORE → $AFTER)."
+            echo "Şema ile snapshot ayrışmış — üretilen dosyayı commit'leyin veya snapshot'ı hizalayın."
+            git --no-pager diff --stat -- apps/api/drizzle || true
+            exit 1
+          fi
+          echo "Şema drift YOK (db:generate yeni dosya üretmedi)"
+
   # ── YARIŞ TESTİ (§16 — zorunlu): çifte atama = 0 ───────────────────────────
   race:
     runs-on: ubuntu-latest

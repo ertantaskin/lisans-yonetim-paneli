@@ -98,6 +98,18 @@ OKH=0; for i in $(seq 1 30); do if all_healthy; then OKH=1; break; fi; sleep 2; 
 if [ "$OKH" = 1 ]; then
   ok "Sağlıklı. Dağıtım tamam: $NEW ($SERVICES)"
   printf '%s\t%s\t%s\t%s\tOK\n' "$STAMP" "$NEW" "$SERVICES" "deploy" >> "$LOG"
+
+  # DİSK SIZINTISI TEMİZLİĞİ (denetim bulgusu): her dağıtım yeni imaj katmanı + build cache
+  # üretiyor, eskisi ASLA silinmiyordu → tek VPS'te disk doluyor (ölçüldü: 68 GB build cache,
+  # 150 GB diskin %56'sı). Disk dolarsa PostgreSQL yazamaz = TÜM teslimat durur.
+  # YALNIZ başarılı dağıtımdan SONRA ve YALNIZ dangling/eski önbellek: çalışan konteynerlerin
+  # imajları ve rollback için gereken ÖNCEKİ imaj etkilenmez (`-a` KULLANILMAZ). Hata olursa
+  # dağıtımı BAŞARISIZ sayma (temizlik kritik değil) → `|| true`.
+  say "Disk temizliği (dangling imaj + 7 günden eski build cache)…"
+  docker image prune -f >/dev/null 2>&1 || true
+  docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || true
+  ok "Temizlik bitti. Kalan disk: $(df -h / | awk 'NR==2{print $4" boş ("$5" dolu)"}')"
+
   say "docs/DEPLOY-LOG.md'ye satır eklemeyi unutma (görünür geçmiş)."
 else
   err "SAĞLIK BAŞARISIZ ($NEW)."

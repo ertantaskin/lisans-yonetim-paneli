@@ -32,7 +32,7 @@ function StateBadge({ on, onLabel, offLabel }: { on: boolean; onLabel: string; o
 }
 
 export function SettingsView({ data }: { data: SystemStatus }) {
-  const { authEnabled, telegramConfigured, env, sites, runtime } = data;
+  const { authEnabled, telegramConfigured, apiFlags, env, sites, runtime } = data;
 
   // Üst özet: kritik durum kartları.
   const authIcon: LucideIcon = authEnabled ? ShieldCheck : ShieldOff;
@@ -48,12 +48,36 @@ export function SettingsView({ data }: { data: SystemStatus }) {
           icon={authIcon}
           tone={authEnabled ? 'success' : 'warning'}
         />
+        {/* Telegram API konteynerinde yapılandırılır → değer API'den gelir; erişilemezse
+            "bilinmiyor" (eskiden admin env'ine bakıp HER ZAMAN "Kapalı" diyordu = yanlış bilgi). */}
         <StatTile
           label="Telegram bildirimi"
-          value={telegramConfigured ? 'Açık' : 'Kapalı'}
-          hint={telegramConfigured ? 'Bot + sohbet yapılandırıldı' : 'Yapılandırılmadı'}
+          value={telegramConfigured === null ? 'Bilinmiyor' : telegramConfigured ? 'Açık' : 'Kapalı'}
+          hint={
+            telegramConfigured === null
+              ? 'API erişilemedi'
+              : telegramConfigured
+                ? 'Bot + sohbet yapılandırıldı'
+                : 'Yapılandırılmadı (API env)'
+          }
           icon={Send}
           tone={telegramConfigured ? 'success' : 'neutral'}
+        />
+        {/* Sessiz mail arızası görünürlüğü: dev yakalayıcı = mailler müşteriye ULAŞMIYOR. */}
+        <StatTile
+          label="Mail gönderimi"
+          value={
+            apiFlags === null ? 'Bilinmiyor' : apiFlags.mailRelay ? 'Gerçek relay' : 'DEV yakalayıcı'
+          }
+          hint={
+            apiFlags === null
+              ? 'API erişilemedi'
+              : apiFlags.mailRelay
+                ? `SMTP relay${apiFlags.mailAuth ? ' (kimlikli)' : ''}`
+                : 'Mailler müşteriye ULAŞMIYOR — SMTP_HOST ayarlayın'
+          }
+          icon={Send}
+          tone={apiFlags === null ? 'neutral' : apiFlags.mailRelay ? 'success' : 'warning'}
         />
         <StatTile
           label="Sandbox site"

@@ -1,5 +1,7 @@
 import 'server-only';
-import { version as APP_VERSION } from '../../package.json';
+// Default import: named export ('version') kullanımı Next'te "only default export is available
+// soon" uyarısı üretiyor — paketin tamamını alıp alanı okuyoruz (aynı sonuç, uyarısız).
+import pkg from '../../package.json';
 import { apiGet } from '../../lib/api';
 import { authEnabled } from '../../lib/auth';
 
@@ -27,11 +29,26 @@ export interface SitesSummary {
   live: number;
 }
 
+/**
+ * API konteynerinin yapılandırma bayrakları (`GET /v1/admin/system/status`) — yalnız boolean.
+ * Bu değerler API env'inde yaşar; admin konteyneri onları GÖREMEZ (eski kod admin env'ine
+ * bakıp Telegram'ı her zaman "kapalı" gösteriyordu — yanlış bilgi).
+ */
+export interface ApiFlags {
+  mailRelay: boolean;
+  mailAuth: boolean;
+  telegram: boolean;
+  sentry: boolean;
+  ai: boolean;
+}
+
 export interface SystemStatus {
   /** Çoklu-admin oturum kapısı açık mı (SESSION_SECRET set). */
   authEnabled: boolean;
-  /** Telegram bildirimi (§12) yapılandırılmış mı — bot token + chat id birlikte. */
-  telegramConfigured: boolean;
+  /** Telegram bildirimi (§12) yapılandırılmış mı — API'den gelir; API erişilemezse null. */
+  telegramConfigured: boolean | null;
+  /** API tarafı yapılandırma bayrakları — erişilemezse null (ekran "bilinmiyor" gösterir). */
+  apiFlags: ApiFlags | null;
   /** Sunucu-taraflı env yansımaları (yalnız yapılandırıldı/kapalı). */
   env: EnvFlag[];
   /** Site özeti (sandbox/canlı) — API erişilemezse null. */
@@ -75,22 +92,52 @@ export async function getSystemStatus(): Promise<SystemStatus> {
     sitesError = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 
+  // API tarafı bayrakları (mail relay / Telegram / Sentry / AI) — bunlar API konteynerinin
+  // env'indedir; admin env'ine bakmak YANLIŞ sonuç veriyordu. Erişilemezse null → "bilinmiyor".
+  let apiFlags: ApiFlags | null = null;
+  try {
+    apiFlags = await apiGet<ApiFlags>('/v1/admin/system/status');
+  } catch {
+    /* API kapalı/eski sürüm → bilinmiyor (ekran dürüstçe böyle gösterir) */
+  }
+
   const env: EnvFlag[] = [
     { label: 'API_URL', configured: isSet('API_URL'), hint: 'Panel API adresi' },
     { label: 'ADMIN_TOKEN', configured: isSet('ADMIN_TOKEN'), hint: 'Sunucu-içi API kimliği (sır)' },
     { label: 'SESSION_SECRET', configured: isSet('SESSION_SECRET'), hint: 'Oturum imzalama anahtarı (sır)' },
-    { label: 'TELEGRAM_BOT_TOKEN', configured: isSet('TELEGRAM_BOT_TOKEN'), hint: 'Telegram bot anahtarı (sır)' },
-    { label: 'TELEGRAM_CHAT_ID', configured: isSet('TELEGRAM_CHAT_ID'), hint: 'Telegram hedef sohbeti' },
+    // Aşağıdakiler API konteynerinden okunur (admin env'inde YOKTUR) — kaynak farkı hint'te belirtilir.
+    {
+      label: 'SMTP (gerçek relay)',
+      configured: apiFlags?.mailRelay ?? false,
+      hint: apiFlags
+        ? apiFlags.mailRelay
+          ? `API: gerçek relay${apiFlags.mailAuth ? ' (kimlikli)' : ''}`
+          : 'API: DEV yakalayıcı — mailler müşteriye ULAŞMIYOR'
+        : 'API erişilemedi — bilinmiyor',
+    },
+    {
+      label: 'TELEGRAM (alarm kanalı)',
+      configured: apiFlags?.telegram ?? false,
+      hint: apiFlags ? 'API konteyneri env' : 'API erişilemedi — bilinmiyor',
+    },
+    {
+      label: 'SENTRY',
+      configured: apiFlags?.sentry ?? false,
+      hint: apiFlags ? 'API konteyneri env (opsiyonel)' : 'API erişilemedi — bilinmiyor',
+    },
   ];
 
   return {
     authEnabled: authEnabled(),
-    telegramConfigured: isSet('TELEGRAM_BOT_TOKEN') && isSet('TELEGRAM_CHAT_ID'),
+    telegramConfigured: apiFlags ? apiFlags.telegram : null,
+    apiFlags,
     env,
     sites,
     sitesError,
     runtime: {
-      version: process.env.APP_VERSION ?? '0.0.0',
+      // package.json TEK doğruluk kaynağı: env geçilmezse sürüm '0.0.0' görünüyordu (import
+      // edilmiş APP_VERSION kullanılmıyordu — ölü import). Artık env > package.json sırası.
+      version: process.env.APP_VERSION?.trim() || pkg.version,
       node: process.version,
       env: process.env.NODE_ENV ?? 'development',
     },
