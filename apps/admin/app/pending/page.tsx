@@ -359,7 +359,7 @@ export default async function DashboardPage() {
                     <TableHead>Sipariş No</TableHead>
                     {/* ÇOK SİTELİ KURULUMDA ZORUNLU BAĞLAM (operatör şikâyeti): hangi mağazanın
                         siparişi olduğu görünmezse yanlış mağazanın stoğu/eşlemesi incelenir. */}
-                    <TableHead>Mağaza</TableHead>
+                    <TableHead>Site</TableHead>
                     <TableHead>Müşteri</TableHead>
                     {/* "Neyi stoklayacağım" bu ekranın ASIL sorusu — ürün kırılımı satırda durur. */}
                     <TableHead>Ürün / eksik adet</TableHead>
@@ -390,7 +390,7 @@ export default async function DashboardPage() {
                         )}
                       >
                         <TableCell className="font-medium text-foreground">{o.remoteOrderId}</TableCell>
-                        {/* Mağaza: domain + (birden çok kanal tipi varsa anlamlı olan) kanal etiketi.
+                        {/* Site (mağaza): domain + (birden çok kanal tipi varsa anlamlı olan) kanal etiketi.
                             Alan gelmemişse (api/admin sürüm sapması) uydurma değer basma → '—'. */}
                         <TableCell className="whitespace-nowrap">
                           {o.siteDomain ? (

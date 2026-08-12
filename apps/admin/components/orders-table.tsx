@@ -57,8 +57,8 @@ const columns: ColumnDef<OrdersTableRow>[] = [
     // `accessorFn` — alan API'den gelmezse (sürüm sapması) '—' basılır, satır yine listelenir.
     id: 'siteDomain',
     accessorFn: (row) => row.siteDomain ?? '',
-    meta: { title: 'Mağaza' },
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Mağaza" />,
+    meta: { title: 'Site' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Site" />,
     cell: ({ row }) =>
       row.original.siteDomain ? (
         <span className="whitespace-nowrap">{row.original.siteDomain}</span>
@@ -144,7 +144,7 @@ export function OrdersTable({ orders }: { orders: OrdersTableRow[] }) {
           statusFacet,
           {
             columnId: 'siteDomain',
-            title: 'Mağaza',
+            title: 'Site',
             options: domains.map((d) => ({ label: d, value: d })),
           },
         ]
@@ -181,7 +181,7 @@ export function OrdersTable({ orders }: { orders: OrdersTableRow[] }) {
         columns={columns}
         data={orders}
         searchColumnId="remoteOrderId"
-        searchPlaceholder="Sipariş no, e-posta veya mağaza…"
+        searchPlaceholder="Sipariş no, e-posta veya site…"
         facets={facets}
         initialSorting={[{ id: 'createdAt', desc: true }]}
         emptyLabel={
