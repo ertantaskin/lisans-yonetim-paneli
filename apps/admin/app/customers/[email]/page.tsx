@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
+  Globe,
   Users,
   ShoppingCart,
   KeyRound,
@@ -154,6 +155,7 @@ export default async function CustomerDetailPage({
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Sipariş No</TableHead>
+                    <TableHead>Site</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead>Tarih</TableHead>
                     <TableHead className="text-right">Detay</TableHead>
@@ -164,6 +166,19 @@ export default async function CustomerDetailPage({
                     <TableRow key={o.id}>
                       <TableCell className="font-medium tabular-nums text-foreground">
                         {o.remoteOrderId}
+                      </TableCell>
+                      {/* ÇOK MAĞAZA: sipariş no'ları mağazalara göre çakışabilir — hangi
+                          mağazadan geldiği burada da görünmeli (liste ekranıyla simetri).
+                          Alan eski API'de yoksa uydurma değer değil '—' basılır. */}
+                      <TableCell className="text-muted-foreground">
+                        {o.siteDomain ? (
+                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <Globe className="size-3.5 shrink-0" aria-hidden />
+                            {o.siteDomain}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={o.status} />
@@ -202,6 +217,7 @@ export default async function CustomerDetailPage({
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Sebep</TableHead>
+                    <TableHead>Sipariş</TableHead>
                     <TableHead>Durum</TableHead>
                     <TableHead>Tarih</TableHead>
                   </TableRow>
@@ -211,6 +227,33 @@ export default async function CustomerDetailPage({
                     <TableRow key={r.id} className="align-top">
                       <TableCell className="max-w-xs text-foreground">
                         <span className="line-clamp-2">{r.reason}</span>
+                      </TableCell>
+                      {/* Talep artık TIKLANABİLİR: siparişe git (Siparişler kartındaki "Aç" ile
+                          simetri). Sipariş çözülemiyorsa /support'a düşülür — operatör talebi
+                          metinle aramak zorunda kalmasın. */}
+                      <TableCell>
+                        {r.orderId ? (
+                          <Link
+                            href={`/orders/${r.orderId}`}
+                            className="tabular-nums text-primary underline-offset-2 hover:underline"
+                            title="Sipariş detayına git"
+                          >
+                            {r.remoteOrderId ? `#${r.remoteOrderId}` : 'Siparişi aç'}
+                          </Link>
+                        ) : (
+                          <Link
+                            href="/support"
+                            className="text-primary underline-offset-2 hover:underline"
+                            title="Destek kuyruğunu aç"
+                          >
+                            Destek
+                          </Link>
+                        )}
+                        {r.siteDomain && (
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {r.siteDomain}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={r.status} />

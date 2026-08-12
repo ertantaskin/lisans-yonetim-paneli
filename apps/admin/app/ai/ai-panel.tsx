@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
 import {
   Sparkles,
   Bot,
@@ -451,6 +452,25 @@ function TriageSection({ enabled }: { enabled: boolean }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {/*
+          Bu serbest alan artık GELİŞMİŞ yoldur: talep numarası panelin hiçbir listesinde
+          görünmediği için özellik pratikte kullanılamıyordu. Asıl akış destek ekranındadır —
+          talebi açıp "AI önerisi al" demek yeterli (numara oradan kopyalanabilir de).
+        */}
+        <Alert variant="info">
+          <LifeBuoy />
+          <div>
+            <AlertTitle>Önerilen yol: Destek ekranı</AlertTitle>
+            <AlertDescription>
+              Talebi{' '}
+              <Link href="/support" className="text-primary underline underline-offset-2">
+                Destek
+              </Link>{' '}
+              ekranından açıp “AI önerisi al” butonunu kullanın — talep numarasını elle
+              yazmanız gerekmez. Buradaki alan numarayı zaten bildiğinizde işe yarar.
+            </AlertDescription>
+          </div>
+        </Alert>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="ai-triage-id">Talep numarası</Label>
           <div className="flex flex-col gap-2 sm:flex-row">

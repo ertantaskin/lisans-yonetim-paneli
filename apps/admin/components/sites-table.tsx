@@ -4,10 +4,10 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Ban, CircleCheck, KeyRound, MoreHorizontal, TriangleAlert, X } from 'lucide-react';
 import type { SiteRow } from '../lib/api';
-import { includesTr } from '../lib/utils';
+import { fmtDateTime, includesTr, relativeTime } from '../lib/utils';
 import { siteTypeLabel } from '../lib/labels';
 import { rotateSecretAction, setSiteStatusAction } from '../app/sites/actions';
-import { StatusBadge } from './ui/badge';
+import { Badge, StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import {
@@ -20,7 +20,37 @@ import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
-const baseColumns: ColumnDef<SiteRow>[] = [
+/**
+ * Liste satırı = `SiteRow` + BAĞLANTI SAĞLIĞI alanları.
+ *
+ * NEDEN ayrı tip: `lib/api.ts` `SiteRow` bu iki kolonu henüz taşımıyor, ama API yanıtında
+ * VARLAR (`toPublicSite` sır olmayan tüm kolonları geçirir; 0028). Alanlar OPSİYONEL okunur —
+ * api ve admin ayrı imajlar, sürüm sapmasında gelmeyebilir → o durumda "bilinmiyor" gösterilir
+ * (uydurma "bağlı" DEĞİL).
+ */
+export type SiteListRow = SiteRow & {
+  /** Sitede kurulu WP eklenti sürümü (imzalı istekteki `x-wpteslimat-version`). */
+  pluginVersion?: string | null;
+  /** Bu sürümün en son ne zaman bildirildiği (ISO) — fiilî "son bağlantı" kanıtı. */
+  pluginVersionAt?: string | null;
+};
+
+/** Bağlantı süzgeci/kolonu için üç kova: hiç bağlanmadı / bağlı / bilinmiyor. */
+type ConnectionBucket = 'never' | 'connected' | 'unknown';
+
+function connectionBucket(site: SiteListRow): ConnectionBucket {
+  // Alanın kendisi yoksa (eski API) "hiç bağlanmadı" DEME — bu yanlış alarm olurdu.
+  if (site.pluginVersion === undefined && site.pluginVersionAt === undefined) return 'unknown';
+  return site.pluginVersion ? 'connected' : 'never';
+}
+
+const CONNECTION_LABEL: Record<ConnectionBucket, string> = {
+  connected: 'Bağlı',
+  never: 'Hiç bağlanmadı',
+  unknown: 'Bilinmiyor',
+};
+
+const baseColumns: ColumnDef<SiteListRow>[] = [
   {
     accessorKey: 'domain',
     meta: { title: 'Domain' },
@@ -58,6 +88,44 @@ const baseColumns: ColumnDef<SiteRow>[] = [
     cell: ({ row }) => <StatusBadge status={row.original.status} />,
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
+  {
+    // 'Durum' rozeti YALNIZ "askıya alınmadı" demektir: eklentisi hiç kurulmamış bir site de
+    // 'aktif' görünür. Operatörün ilk sorusu ("hangi mağaza gerçekten bağlı?") bu kolonda
+    // yanıtlanır — kanıt, sitenin imzalı isteğinde bildirdiği eklenti sürümüdür (0028).
+    id: 'connection',
+    accessorFn: (row) => connectionBucket(row),
+    meta: { title: 'Bağlantı' },
+    header: 'Bağlantı',
+    cell: ({ row }) => {
+      const site = row.original;
+      const bucket = connectionBucket(site);
+      if (bucket === 'unknown') {
+        return <span className="text-muted-foreground">—</span>;
+      }
+      if (bucket === 'never') {
+        return (
+          <Badge variant="warning">
+            <TriangleAlert />
+            hiç bağlanmadı
+          </Badge>
+        );
+      }
+      const at = site.pluginVersionAt ?? null;
+      // relativeTime 'az önce' de dönebilir → "az önce önce" yazmamak için ayrı ele alınır.
+      const rel = at ? relativeTime(at) : null;
+      return (
+        <span className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="success">v{site.pluginVersion}</Badge>
+          {at && rel && (
+            <span className="text-xs text-muted-foreground" title={fmtDateTime(at)}>
+              {rel === 'az önce' ? rel : `${rel} önce`}
+            </span>
+          )}
+        </span>
+      );
+    },
+    filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
+  },
 ];
 
 /** Rotasyon başarısında bir kez gösterilecek secret bilgisi. */
@@ -69,7 +137,7 @@ function SiteRowActions({
   onRotated,
   onError,
 }: {
-  site: SiteRow;
+  site: SiteListRow;
   onRotated: (notice: RotatedNotice) => void;
   onError: (message: string) => void;
 }) {
@@ -129,7 +197,7 @@ function SiteRowActions({
   );
 }
 
-export function SitesTable({ sites }: { sites: SiteRow[] }) {
+export function SitesTable({ sites }: { sites: SiteListRow[] }) {
   const [rotated, setRotated] = React.useState<RotatedNotice | null>(null);
   const [rotateError, setRotateError] = React.useState<string | null>(null);
 
@@ -142,7 +210,7 @@ export function SitesTable({ sites }: { sites: SiteRow[] }) {
     setRotateError(message);
   }, []);
 
-  const columns = React.useMemo<ColumnDef<SiteRow>[]>(
+  const columns = React.useMemo<ColumnDef<SiteListRow>[]>(
     () => [
       ...baseColumns,
       {
@@ -161,10 +229,26 @@ export function SitesTable({ sites }: { sites: SiteRow[] }) {
   );
 
   const facets: FacetConfig[] = React.useMemo(() => {
+    const list: FacetConfig[] = [];
     const types = Array.from(new Set(sites.map((s) => s.type))).sort();
-    return types.length > 1
-      ? [{ columnId: 'type', title: 'Tip', options: types.map((t) => ({ label: siteTypeLabel(t), value: t })) }]
-      : [];
+    if (types.length > 1) {
+      list.push({
+        columnId: 'type',
+        title: 'Tip',
+        options: types.map((t) => ({ label: siteTypeLabel(t), value: t })),
+      });
+    }
+    // Bağlantı süzgeci yalnız VERİDE gerçekten bulunan kovalarla üretilir → "sistemde yalnız
+    // bu durumlar var" izlenimi doğru kalır (boş kova seçeneği sunulmaz).
+    const buckets = Array.from(new Set(sites.map(connectionBucket)));
+    if (buckets.length > 1) {
+      list.push({
+        columnId: 'connection',
+        title: 'Bağlantı',
+        options: buckets.map((b) => ({ label: CONNECTION_LABEL[b], value: b })),
+      });
+    }
+    return list;
   }, [sites]);
 
   return (

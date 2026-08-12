@@ -34,6 +34,15 @@ export interface SiteDetail {
     dynamicQuotaEnabled: boolean;
     /** Dinamik eşik çarpanı (30g-ort × N, taban 20). */
     reviewMultiplier: number;
+    /**
+     * Sitede KURULU WP eklenti sürümü (0028) ve en son ne zaman bildirildiği. Sitenin imzalı
+     * isteğindeki `x-wpteslimat-version` başlığından öğrenilir → BAĞLANTI SAĞLIĞI kanıtıdır:
+     * null ise site panele hiç istek atmamıştır ("aktif" rozeti yalnız 'askıya alınmadı' demek).
+     * İmzalanmamış istemci beyanı — yalnız gösterim, yetki kararı verilmez.
+     * Opsiyonel: eski API sürümü alanı döndürmeyebilir → savunmacı `?? null` okunmalı.
+     */
+    pluginVersion?: string | null;
+    pluginVersionAt?: string | null;
     createdAt: string;
   };
   mappingCount: number;

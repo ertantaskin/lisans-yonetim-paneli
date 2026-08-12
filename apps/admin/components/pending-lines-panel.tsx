@@ -127,6 +127,19 @@ export function PendingLinesPanel({ summary }: { summary: PendingLinesSummary | 
         )}
       </div>
 
+      {/* Dürüstlük bandı: sunucu grup listesini üst sınırda kırptıysa tablo "hepsi bu kadar"
+          DEMEMELİ — görünmeyen bekleyen satırlar için operatör aksiyon almaz. (Aynı desen
+          /quarantine ve /support ekranlarında var.) */}
+      {summary.truncated === true && (
+        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span className="min-w-0">
+            Liste sunucu üst sınırına takıldı — <strong>bu tablo tamamı değildir</strong>. Daha
+            fazla bekleyen satır olabilir; “Tümünü Uygula”dan sonra sayfayı yenileyip tekrar bakın.
+          </span>
+        </div>
+      )}
+
       {t.resolvableLines > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-success/40 bg-success/5 px-3 py-2">
           <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden />

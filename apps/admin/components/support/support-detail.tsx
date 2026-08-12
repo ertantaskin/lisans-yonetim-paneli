@@ -5,13 +5,17 @@ import {
   Ban,
   CheckCircle2,
   Clock,
+  Copy,
+  Globe,
   KeyRound,
+  Loader2,
   Mail,
   MessageCircleQuestion,
   MessageSquare,
   Repeat2,
   ShieldCheck,
   ShoppingBag,
+  Sparkles,
   TriangleAlert,
   UserRound,
 } from 'lucide-react';
@@ -22,7 +26,7 @@ import {
   requestInfoReplacementAction,
   type ActionState,
 } from '../../app/support/actions';
-import { supportStatusLabel } from '../../lib/labels';
+import { aiCategoryLabel, aiPriorityLabel, supportStatusLabel } from '../../lib/labels';
 import { formatDate, relativeTime } from '../../lib/utils';
 import { useAnnouncer } from '../a11y/announcer';
 import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
@@ -237,6 +241,13 @@ function SupportDetailBody({ row }: { row: ReplacementRow }) {
               <span className="text-muted-foreground">—</span>
             )}
           </Row>
+          {/* MAĞAZA BAĞLAMI: sipariş no'ları sitelere göre çakışabilir — hangi mağaza olduğu
+              karar (onayla/reddet) ekranında görünmeli. Alan gelmezse '—' (uydurma değer yok). */}
+          <Row icon={Globe} label="Site">
+            <span className="block truncate" title={row.siteDomain ?? undefined}>
+              {row.siteDomain ?? <span className="text-muted-foreground">—</span>}
+            </span>
+          </Row>
           <Row icon={ShieldCheck} label="Garanti">
             <WarrantyBadge within={row.withinWarranty} />
           </Row>
@@ -246,8 +257,32 @@ function SupportDetailBody({ row }: { row: ReplacementRow }) {
               <span className="text-muted-foreground">({agoText(row.createdAt)})</span>
             </span>
           </Row>
+          {/* ÜRÜN: "Onayla" AYNI üründen taze lisans atar → hangi üründe stok gerektiği
+              karar ANINDA görünsün (eskiden 409 "stok yok" ile sonradan öğreniliyordu). */}
           <Row icon={KeyRound} label="İlgili lisans">
-            {row.assignmentId ? (
+            {row.productName ? (
+              <span className="block min-w-0">
+                {row.productId ? (
+                  <Link
+                    href={`/products/${row.productId}`}
+                    className="text-primary underline-offset-2 hover:underline"
+                    title="Ürün detayına git (stok durumu)"
+                  >
+                    {row.productName}
+                  </Link>
+                ) : (
+                  row.productName
+                )}
+                {row.productSku && (
+                  <span className="ml-1.5 text-xs text-muted-foreground">{row.productSku}</span>
+                )}
+                <span className="block text-xs text-muted-foreground">
+                  {row.assignmentId
+                    ? 'Siparişteki tek bir lisansa bağlı'
+                    : 'Belirli bir lisansa bağlı değil'}
+                </span>
+              </span>
+            ) : row.assignmentId ? (
               <span className="text-muted-foreground">Siparişteki tek bir lisansa bağlı</span>
             ) : (
               <span className="text-muted-foreground">Belirli bir lisansa bağlı değil</span>
@@ -301,6 +336,9 @@ function SupportDetailBody({ row }: { row: ReplacementRow }) {
             </div>
           </Alert>
         )}
+
+        {/* AI triyaj önerisi — talep numarası artık ELLE kopyalanmıyor (§15: AI önerir, insan onaylar) */}
+        <AiSuggestBlock requestId={row.id} />
 
         {/* Yazışma — cevap + iç not (kullanıcı şikâyetinin ana çözümü) */}
         <SupportThread key={threadKey} requestId={row.id} orderId={row.orderId} compact />
@@ -417,6 +455,161 @@ function SupportDetailBody({ row }: { row: ReplacementRow }) {
         )}
       </div>
     </>
+  );
+}
+
+/* ── AI triyaj önerisi (§15) ────────────────────────────────────────────────
+ *
+ * Neden burada: /ai ekranındaki triyaj bölümü operatörden "talep numarası" (UUID) istiyordu
+ * ama bu numara panelin HİÇBİR ekranında görünmüyordu → özellik pratikte kullanılamıyordu.
+ * Triyaj zaten destek ekranından tetiklenmesi gereken bir iş; buton talebin id'sini DOĞRUDAN
+ * gönderir. Öneri YALNIZ TASLAKTIR: otomatik gönderim/durum değişikliği YOK — operatör metni
+ * kopyalayıp yazışmadan kendi gönderir.
+ */
+interface AiSuggestion {
+  category: string;
+  priority: string;
+  draftReply: string;
+}
+
+const PRIORITY_VARIANT: Record<string, NonNullable<BadgeProps['variant']>> = {
+  yuksek: 'danger',
+  orta: 'warning',
+  dusuk: 'neutral',
+};
+
+function AiSuggestBlock({ requestId }: { requestId: string }) {
+  // null = durum henüz bilinmiyor (fetch sürüyor) → butonu "AI kapalı" diye YANLIŞ etiketleme.
+  const [aiEnabled, setAiEnabled] = React.useState<boolean | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [suggestion, setSuggestion] = React.useState<AiSuggestion | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState<'draft' | 'id' | null>(null);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/ai/status', { cache: 'no-store' });
+        const data = (await res.json()) as { enabled?: boolean };
+        if (alive) setAiEnabled(data?.enabled === true);
+      } catch {
+        // Durum okunamadıysa AI'ı KAPALI say: butonu etkin gösterip 503 yedirmek yanıltıcı olur.
+        if (alive) setAiEnabled(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const run = () => {
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    setSuggestion(null);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/ai/support/${encodeURIComponent(requestId)}/suggest`, {
+          method: 'POST',
+        });
+        const body = (await res.json().catch(() => null)) as
+          | (AiSuggestion & { error?: string })
+          | { error?: string; message?: string }
+          | null;
+        if (!res.ok || !body || !('draftReply' in body)) {
+          const msg =
+            (body && 'error' in body && typeof body.error === 'string' && body.error) ||
+            (body && 'message' in body && typeof body.message === 'string' && body.message) ||
+            `Öneri üretilemedi (${res.status}).`;
+          setError(msg);
+          return;
+        }
+        setSuggestion(body);
+      } catch {
+        setError('Ağ hatası — öneri üretilemedi.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  };
+
+  const copy = (what: 'draft' | 'id') => {
+    const text = what === 'draft' ? suggestion?.draftReply : requestId;
+    if (!text) return;
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(what);
+        window.setTimeout(() => setCopied(null), 2000);
+      })
+      // Pano erişimi yoksa sessizce yut — metin zaten ekranda seçilebilir durumda.
+      .catch(() => undefined);
+  };
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+          <Sparkles className="size-3.5" aria-hidden /> AI triyaj önerisi
+        </h3>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={run}
+          disabled={loading || aiEnabled !== true}
+          title={
+            aiEnabled === false
+              ? 'AI kapalı — sunucuda AI_ENABLED + ANTHROPIC_API_KEY gerekir'
+              : 'Kategori + öncelik belirler ve TASLAK cevap yazar; gönderim yapmaz'
+          }
+        >
+          {loading ? <Loader2 className="animate-spin" /> : <Sparkles />}
+          {loading ? 'Öneriliyor…' : 'AI önerisi al'}
+        </Button>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {aiEnabled === false
+          ? 'AI kapalı — öneri üretilemez. Talebi elle yanıtlayabilirsiniz.'
+          : 'Yalnız TASLAK üretir; hiçbir şey gönderilmez ve talebin durumu değişmez.'}
+      </p>
+
+      {error && (
+        <Alert variant="destructive" className="mt-2">
+          <TriangleAlert />
+          <div className="min-w-0 flex-1">
+            <AlertDescription>{error}</AlertDescription>
+          </div>
+        </Alert>
+      )}
+
+      {suggestion && (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline">{aiCategoryLabel(suggestion.category)}</Badge>
+            <Badge variant={PRIORITY_VARIANT[suggestion.priority] ?? 'neutral'}>
+              Öncelik: {aiPriorityLabel(suggestion.priority)}
+            </Badge>
+          </div>
+          <Textarea rows={5} readOnly value={suggestion.draftReply} aria-label="AI taslak cevabı" />
+          <Button variant="ghost" size="sm" onClick={() => copy('draft')}>
+            {copied === 'draft' ? <CheckCircle2 /> : <Copy />}
+            {copied === 'draft' ? 'Kopyalandı' : 'Taslağı kopyala'}
+          </Button>
+        </div>
+      )}
+
+      {/* Talep numarası: /ai ekranındaki "gelişmiş" serbest alan için kopyalanabilir olsun
+          (numara başka hiçbir ekranda görünmüyordu — özellik erişilemezdi). */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <span>Talep numarası:</span>
+        <code className="max-w-full truncate font-mono">{requestId}</code>
+        <Button variant="ghost" size="sm" onClick={() => copy('id')} aria-label="Talep numarasını kopyala">
+          {copied === 'id' ? <CheckCircle2 /> : <Copy />}
+          {copied === 'id' ? 'Kopyalandı' : 'Kopyala'}
+        </Button>
+      </div>
+    </div>
   );
 }
 

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import {
   createSiteAndIssueCode,
+  issueCodeForSite,
   testConnectionAction,
   type TestConnectionResult,
 } from './actions';
@@ -84,6 +85,13 @@ export function Wizard() {
   // Adım 1 — site oluşturma
   const [creating, startCreate] = React.useTransition();
   const [createErr, setCreateErr] = React.useState<string | null>(null);
+  /**
+   * KURTARMA YOLU: site kaydı AÇILDI ama bağlan kodu üretilemedi (`siteCreated=true`).
+   * Domain artık rezerve olduğu için form yeniden gönderilemez (409) — operatörün tek çıkışı
+   * aynı site için kodu TEKRAR üretmektir. Eskiden hata metni var olmayan bir butona
+   * yönlendiriyordu; siteId'yi burada tutup gerçek butonu basıyoruz (yetim site kalmasın).
+   */
+  const [recoverSiteId, setRecoverSiteId] = React.useState<string | null>(null);
 
   // Adım 2 — kopyala geri bildirimi
   const [copied, setCopied] = React.useState(false);
@@ -120,6 +128,7 @@ export function Wizard() {
       salesDailyQuota,
     };
     setCreateErr(null);
+    setRecoverSiteId(null);
     startCreate(async () => {
       const res = await createSiteAndIssueCode(input);
       if (res.ok && res.siteId && res.code && res.expiresAt) {
@@ -127,6 +136,28 @@ export function Wizard() {
         setStep(2);
       } else {
         setCreateErr(res.error ?? 'Site oluşturulamadı');
+        // Yalnız "site oluştu ama kod üretilemedi" dalında kurtarma butonu açılır; sıradan
+        // doğrulama/409 hatasında (site HİÇ oluşmadı) buton çıkmamalı — yanıltıcı olurdu.
+        setRecoverSiteId(res.siteCreated === true && res.siteId ? res.siteId : null);
+      }
+    });
+  }
+
+  /** Kurtarma: var olan site için bağlan kodunu yeniden üret (yeni site OLUŞTURMAZ). */
+  function retryCode() {
+    if (!recoverSiteId) return;
+    setCreateErr(null);
+    startCreate(async () => {
+      const res = await issueCodeForSite(recoverSiteId);
+      if (res.ok && res.siteId && res.code && res.expiresAt) {
+        setRecoverSiteId(null);
+        setCreated({ siteId: res.siteId, code: res.code, expiresAt: res.expiresAt });
+        setStep(2);
+      } else {
+        // Dürüstlük: başarısızsa buton KALIR (tekrar denenebilir) ve gerçek sebep gösterilir.
+        setCreateErr(
+          `${res.error ?? 'Bağlan kodu üretilemedi'} — site kaydı duruyor; tekrar deneyebilir ya da site detayından "Yeni Bağlan Kodu Üret" ile devam edebilirsiniz.`,
+        );
       }
     });
   }
@@ -265,16 +296,42 @@ export function Wizard() {
                 <Alert variant="destructive">
                   <TriangleAlert />
                   <div className="min-w-0 flex-1">
-                    <AlertTitle>Oluşturulamadı</AlertTitle>
-                    <AlertDescription>{createErr}</AlertDescription>
+                    <AlertTitle>
+                      {recoverSiteId ? 'Site oluştu, kod üretilemedi' : 'Oluşturulamadı'}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {createErr}
+                      {recoverSiteId && (
+                        <span className="mt-2 flex flex-wrap items-center gap-2">
+                          {/* type="button": form içindeyiz — submit olsaydı domain 409'a düşerdi. */}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={retryCode}
+                            disabled={creating}
+                          >
+                            <KeyRound />
+                            {creating ? 'Üretiliyor…' : 'Kodu Tekrar Üret'}
+                          </Button>
+                          <Button asChild variant="link" size="sm" className="h-auto p-0">
+                            <Link href={`/sites/${recoverSiteId}`}>Site detayına git →</Link>
+                          </Button>
+                        </span>
+                      )}
+                    </AlertDescription>
                   </div>
                 </Alert>
               )}
 
-              <Button type="submit" disabled={creating}>
-                {creating ? 'Oluşturuluyor…' : 'Site Oluştur ve Kod Üret'}
-                {!creating && <ArrowRight />}
-              </Button>
+              {/* Site oluştuysa formu yeniden göndermek 409 üretir (domain rezerve) → gizle;
+                  tek doğru yol yukarıdaki kurtarma butonudur. */}
+              {!recoverSiteId && (
+                <Button type="submit" disabled={creating}>
+                  {creating ? 'Oluşturuluyor…' : 'Site Oluştur ve Kod Üret'}
+                  {!creating && <ArrowRight />}
+                </Button>
+              )}
             </form>
           </CardContent>
         </Card>

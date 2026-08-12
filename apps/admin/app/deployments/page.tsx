@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { Ship, History, CloudUpload, Info, Activity, Lock } from 'lucide-react';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -14,6 +15,7 @@ import {
 import { isOwner } from '../../lib/session';
 import { getDeployments, getHealth, type DeploymentRow } from './queries';
 import { DeployForm } from './deploy-form';
+import { DeploymentsAutoRefresh } from './auto-refresh';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,6 +62,8 @@ export default async function DeploymentsPage() {
   }
 
   const healthOk = health?.status === 'ok';
+  // Kuyrukta bekleyen/çalışan iş varsa sayfa kendini tazeler (aksi halde poll YOK).
+  const hasActiveDeployment = rows.some((r) => r.status === 'pending' || r.status === 'running');
 
   return (
     <div className="space-y-6">
@@ -133,8 +137,9 @@ export default async function DeploymentsPage() {
       </div>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="gap-1">
           <CardTitle icon={History}>Dağıtım geçmişi</CardTitle>
+          <DeploymentsAutoRefresh active={hasActiveDeployment} />
         </CardHeader>
         <CardContent className={rows.length === 0 ? '' : 'p-0'}>
           {error ? (
@@ -161,8 +166,14 @@ export default async function DeploymentsPage() {
                 {rows.map((r) => {
                   // Savunmalı: bilinmeyen enum/slug kullanıcıya ham sızmasın → nötr Türkçe fallback.
                   const s = DEPLOY_STATUS[r.status] ?? { variant: 'neutral' as const, label: 'bilinmiyor' };
+                  // Runner'ın gönderdiği çıktı (deploy.sh logunun kuyruğu) — API zaten yolluyordu
+                  // ama ekranda hiç gösterilmiyordu: başarısız dağıtımda operatör build hatasını
+                  // görmek için VPS'e SSH atmak zorunda kalıyordu. Savunmalı okunur (alan yoksa
+                  // satır hiç basılmaz), başarısız dağıtımda VARSAYILAN AÇIK gelir.
+                  const log = typeof r.log === 'string' && r.log.trim() ? r.log : null;
                   return (
-                    <TableRow key={r.id}>
+                    <React.Fragment key={r.id}>
+                    <TableRow>
                       <TableCell className="whitespace-nowrap font-medium text-foreground">
                         {TARGET_LABEL[r.target] ?? 'bilinmiyor'}
                       </TableCell>
@@ -185,6 +196,25 @@ export default async function DeploymentsPage() {
                         {fmt(r.finishedAt)}
                       </TableCell>
                     </TableRow>
+                    {log && (
+                      <TableRow className="hover:bg-transparent">
+                        <TableCell colSpan={6} className="pt-0">
+                          <details open={r.status === 'failed'}>
+                            <summary className="cursor-pointer text-xs text-muted-foreground">
+                              Dağıtım logu {r.status === 'failed' ? '(hata ayrıntısı)' : ''}
+                            </summary>
+                            <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/50 p-3 text-xs leading-relaxed text-foreground/80">
+                              {log}
+                            </pre>
+                            <p className="mt-1 text-[11px] text-muted-foreground">
+                              Log runner tarafından kırpılmış olabilir (yalnız son bölüm saklanır);
+                              tam çıktı VPS&apos;teki dağıtım kaydındadır.
+                            </p>
+                          </details>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </TableBody>

@@ -39,8 +39,28 @@ export interface CustomerDetail {
     replacementCount: number;
     replacementRate: number;
   };
-  orders: Array<{ id: string; remoteOrderId: string; status: string; createdAt: string }>;
-  replacements: Array<{ id: string; status: string; reason: string; createdAt: string }>;
+  /**
+   * Sipariş geçmişi. `siteDomain` liste ekranındaki "Siteler" kolonunun detaydaki karşılığıdır —
+   * aynı müşteri iki mağazadan alışveriş yaptıysa satırlar ancak böyle ayırt edilir.
+   * Eski API sürümünde alan gelmeyebilir (ayrı imajlar) → savunmacı okunur, ekran '—' basar.
+   */
+  orders: Array<{
+    id: string;
+    remoteOrderId: string;
+    status: string;
+    createdAt: string;
+    siteDomain?: string | null;
+  }>;
+  /** Değişim talepleri — `orderId` varsa satır siparişe tıklanabilir olur. */
+  replacements: Array<{
+    id: string;
+    status: string;
+    reason: string;
+    createdAt: string;
+    orderId?: string | null;
+    remoteOrderId?: string | null;
+    siteDomain?: string | null;
+  }>;
 }
 
 /**

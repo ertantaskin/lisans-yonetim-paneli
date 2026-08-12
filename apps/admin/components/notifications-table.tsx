@@ -1,5 +1,6 @@
 'use client';
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -10,10 +11,12 @@ import {
   CheckCheck,
   CheckCircle2,
   Info,
+  MailWarning,
   PackageX,
   RefreshCw,
   Send,
   ShieldAlert,
+  TimerOff,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -49,6 +52,35 @@ const READ_STATE = {
 type ReadState = keyof typeof READ_STATE;
 
 const readState = (n: NotificationRow): ReadState => (n.readAt ? 'read' : 'unread');
+
+/**
+ * Bu ekrana ÖZEL yerel tür sözlüğü. `notificationTypeLabel` (labels.ts) bu iki türü henüz
+ * tanımıyor ve bilinmeyen anahtarda HAM değeri döndürüyor → operatöre en KRİTİK iki alarm
+ * `mail_config` / `sweep_failed` diye ham İngilizce çıkıyordu. Öncelik: labels.ts biliyorsa o
+ * kazanır (tek kaynak korunur; sözlüğe eklenirse burası kendiliğinden devre dışı kalır).
+ */
+const LOCAL_TYPE: Record<string, string> = {
+  mail_config: 'Mail yapılandırması',
+  sweep_failed: 'Bakım işi başarısız',
+};
+
+function typeLabel(type: string): string {
+  const known = notificationTypeLabel(type);
+  return known !== type ? known : (LOCAL_TYPE[type] ?? type);
+}
+
+/** UUID (v4 dahil, gevşek) — meta'dan gelen id ancak doğrulandıktan sonra bağlantıya çevrilir. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Bildirimin hedef ÜRÜNÜ (varsa). `low_stock` bildirimi ürün id'sini meta'sında taşır ama
+ * satırda bağlantı yoktu → operatör alarmı görüp SKU'yu elle kopyalayarak ürünü arıyordu.
+ * Doğrulanmamış/uydurma değerle link üretilmez (UUID değilse null).
+ */
+function productIdOf(n: NotificationRow): string | null {
+  const raw = n.meta?.productId;
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw : null;
+}
 
 function SeverityBadge({ severity }: { severity: string }) {
   const meta = SEVERITY[severity] ?? { variant: 'neutral' as const, icon: Info };
@@ -106,7 +138,7 @@ function buildColumns(
       accessorKey: 'type',
       meta: { title: 'Tür' },
       header: 'Tür',
-      cell: ({ row }) => <Badge variant="outline">{notificationTypeLabel(row.original.type)}</Badge>,
+      cell: ({ row }) => <Badge variant="outline">{typeLabel(row.original.type)}</Badge>,
       filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
     },
     {
@@ -115,6 +147,7 @@ function buildColumns(
       header: ({ column }) => <DataTableColumnHeader column={column} title="Bildirim" />,
       cell: ({ row }) => {
         const unread = !row.original.readAt;
+        const productId = productIdOf(row.original);
         return (
           <div className="max-w-md">
             {/*
@@ -123,7 +156,19 @@ function buildColumns(
               Renk zaten tek başına bilgi taşımıyor — durum metinle de yazılı (WCAG 1.4.1).
             */}
             <div className={unread ? 'font-semibold text-foreground' : 'font-medium text-foreground'}>
-              {row.original.title}
+              {/* Alarmın gerektirdiği EYLEM ile ekran arasındaki yol: ürün bilinen bildirimlerde
+                  (ör. düşük stok) başlık doğrudan ürün detayına gider. */}
+              {productId ? (
+                <Link
+                  href={`/products/${productId}`}
+                  className="text-primary underline-offset-2 hover:underline"
+                  title="Ürün detayına git (stok girişi)"
+                >
+                  {row.original.title}
+                </Link>
+              ) : (
+                row.original.title
+              )}
             </div>
             <div className="line-clamp-2 text-muted-foreground" title={row.original.message}>
               {row.original.message}
@@ -209,11 +254,15 @@ const facets: FacetConfig[] = [
   {
     columnId: 'type',
     title: 'Tür',
+    // KRİTİK iki tür (mail_config = mailler müşteriye ULAŞMIYOR, sweep_failed = bakım işi çöktü)
+    // süzgeçte YOKTU → operatör en önemli alarmları türe göre süzemiyordu.
     options: [
-      { label: notificationTypeLabel('low_stock'), value: 'low_stock', icon: PackageX },
-      { label: notificationTypeLabel('digest_alert'), value: 'digest_alert', icon: Bell },
+      { label: typeLabel('low_stock'), value: 'low_stock', icon: PackageX },
+      { label: typeLabel('mail_config'), value: 'mail_config', icon: MailWarning },
+      { label: typeLabel('sweep_failed'), value: 'sweep_failed', icon: TimerOff },
+      { label: typeLabel('digest_alert'), value: 'digest_alert', icon: Bell },
       {
-        label: notificationTypeLabel('reconcile_violation'),
+        label: typeLabel('reconcile_violation'),
         value: 'reconcile_violation',
         icon: ShieldAlert,
       },

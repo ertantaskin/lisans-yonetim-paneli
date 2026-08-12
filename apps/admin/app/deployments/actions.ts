@@ -32,6 +32,9 @@ export async function requestDeploy(_prev: DeployState, formData: FormData): Pro
   revalidatePath('/deployments');
   return {
     ok: true,
-    message: `Dağıtım isteği kaydedildi (${target}). Host runner kısa süre içinde çalıştıracak — durumu aşağıdan izleyin.`,
+    // Dürüst vaat: sayfa aktif dağıtım varken kendini 10 sn'de bir tazeler (auto-refresh.tsx).
+    // Eskiden "aşağıdan izleyin" deniyor ama tablo donuk kalıyordu → operatör takıldı sanıp
+    // ikinci kez tetikliyor ve 409 alıyordu.
+    message: `Dağıtım isteği kaydedildi (${target}). Host runner kısa süre içinde çalıştıracak — aşağıdaki geçmiş tablosu durum değişince kendiliğinden güncellenir (tekrar tetiklemeyin).`,
   };
 }

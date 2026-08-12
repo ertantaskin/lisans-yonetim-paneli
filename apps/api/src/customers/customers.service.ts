@@ -29,8 +29,31 @@ export interface CustomerDetail {
     replacementCount: number;
     replacementRate: number;
   };
-  orders: Array<{ id: string; remoteOrderId: string; status: string; createdAt: string }>;
-  replacements: Array<{ id: string; status: string; reason: string; createdAt: string }>;
+  /**
+   * Sipariş geçmişi. `siteDomain`: liste ekranındaki "Siteler" kolonunun detaydaki karşılığı —
+   * aynı müşteri iki mağazadan alışveriş yaptığında hangi satırın hangi mağazaya ait olduğu
+   * (ve iki mağazadaki AYNI numaralı siparişler) ancak böyle ayırt edilir. Site silinmişse null.
+   */
+  orders: Array<{
+    id: string;
+    remoteOrderId: string;
+    status: string;
+    createdAt: string;
+    siteDomain: string | null;
+  }>;
+  /**
+   * Değişim/destek talepleri. `orderId` + `remoteOrderId`: talebin hangi siparişe ait olduğunu
+   * gösterir ve satırı siparişe TIKLANABİLİR yapar (operatör /support'ta metinle aramasın).
+   */
+  replacements: Array<{
+    id: string;
+    status: string;
+    reason: string;
+    createdAt: string;
+    orderId: string | null;
+    remoteOrderId: string | null;
+    siteDomain: string | null;
+  }>;
 }
 
 /**
@@ -184,30 +207,39 @@ export class CustomersService {
     const assignmentCount = Number(s.assignment_count);
     const replacementCount = Number(s.replacement_count);
 
-    // Sipariş geçmişi.
+    // Sipariş geçmişi + mağaza bağlamı (sites LEFT JOIN — site silinmişse satır DÜŞMEZ, domain null).
     const orderRows = await rawRows<{
       id: string;
       remote_order_id: string;
       status: string;
       created_at: Date | string;
+      site_domain: string | null;
     }>(this.db, sql`
-      SELECT id, remote_order_id, status, created_at
-      FROM orders
-      WHERE lower(customer_email) = ${key}
-      ORDER BY created_at DESC
+      SELECT o.id, o.remote_order_id, o.status, o.created_at, s.domain AS site_domain
+      FROM orders o
+      LEFT JOIN sites s ON s.id = o.site_id
+      WHERE lower(o.customer_email) = ${key}
+      ORDER BY o.created_at DESC
     `);
 
-    // Değişim geçmişi — RAW SQL (drizzle import YOK).
+    // Değişim geçmişi — RAW SQL (drizzle import YOK). Sipariş JOIN'i talebi TIKLANABİLİR yapar
+    // (PK eşitliği; müşteri başına satır sayısı küçük → ek tarama maliyeti yok).
     const replacementRows = await rawRows<{
       id: string;
       status: string;
       reason: string;
       created_at: Date | string;
+      order_id: string | null;
+      remote_order_id: string | null;
+      site_domain: string | null;
     }>(this.db, sql`
-      SELECT id, status, reason, created_at
-      FROM replacement_requests
-      WHERE lower(customer_email) = ${key}
-      ORDER BY created_at DESC
+      SELECT rr.id, rr.status, rr.reason, rr.created_at,
+             rr.order_id, o.remote_order_id, s.domain AS site_domain
+      FROM replacement_requests rr
+      LEFT JOIN orders o ON o.id = rr.order_id
+      LEFT JOIN sites s ON s.id = rr.site_id
+      WHERE lower(rr.customer_email) = ${key}
+      ORDER BY rr.created_at DESC
     `);
 
     return {
@@ -225,12 +257,16 @@ export class CustomersService {
         remoteOrderId: o.remote_order_id,
         status: o.status,
         createdAt: new Date(o.created_at).toISOString(),
+        siteDomain: o.site_domain ?? null,
       })),
       replacements: replacementRows.map((r) => ({
         id: r.id,
         status: r.status,
         reason: r.reason,
         createdAt: new Date(r.created_at).toISOString(),
+        orderId: r.order_id ?? null,
+        remoteOrderId: r.remote_order_id ?? null,
+        siteDomain: r.site_domain ?? null,
       })),
     };
   }

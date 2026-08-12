@@ -37,13 +37,25 @@ export interface ProductDetail {
     expired: number;
     voided: number;
   };
-  batches: Array<{ id: string; label: string; status: string; qtyReceived: number }>;
+  batches: Array<{
+    id: string;
+    label: string;
+    status: string;
+    qtyReceived: number;
+    /** API bu alanları sonradan ekledi → eski api imajında gelmeyebilir (savunmacı okunur). */
+    receivedAt?: string | null;
+    supplierId?: string | null;
+    supplierName?: string | null;
+  }>;
   purchaseOrders: Array<{
     id: string;
     status: string;
     qtyOrdered: number;
     qtyReceived: number;
     eta: string | null;
+    /** Tedarikçi (JOIN) — sürüm sapmasında gelmeyebilir → opsiyonel. */
+    supplierId?: string | null;
+    supplierName?: string | null;
   }>;
   velocity: {
     sold7d: number;
@@ -56,6 +68,10 @@ export interface ProductDetail {
     action: string;
     qty: number;
     reason: string;
+    /** Düzeltmeyi yapan operatör — eski api imajında gelmeyebilir → opsiyonel, yoksa '—'. */
+    actor?: string | null;
+    /** Dokunulan lisans kalemi; null/undefined ⇒ stok DEĞİŞMEMİŞ olabilir (ekran ayırt eder). */
+    licenseItemId?: string | null;
     createdAt: string;
   }>;
   /** Bu ürünün site eşlemeleri (MappingRow ile aynı şekil) — ürün-merkezli yönetim. */

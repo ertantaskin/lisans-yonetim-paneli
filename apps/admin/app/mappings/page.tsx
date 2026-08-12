@@ -4,13 +4,12 @@ import {
   type UnmappedRow,
   type ProductRow,
   type CatalogSummaryRow,
-  type CatalogRow,
   type PendingLinesSummary,
 } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { UnmappedTable } from '../../components/unmapped-table';
-import { CatalogTable } from '../../components/catalog-table';
+import { CatalogTable, type CatalogRowView } from '../../components/catalog-table';
 import { PendingLinesPanel } from '../../components/pending-lines-panel';
 
 export const dynamic = 'force-dynamic';
@@ -38,7 +37,8 @@ export default async function MappingsPage({
   let summary: CatalogSummaryRow[] = [];
   let rows: UnmappedRow[] = [];
   let products: ProductRow[] = [];
-  let catalog: CatalogRow[] = [];
+  // CatalogRowView = CatalogRow + varyasyon sunum bayrakları (API zaten döndürüyor).
+  let catalog: CatalogRowView[] = [];
   let pending: PendingLinesSummary | null = null;
   let error: string | null = null;
   let catalogError: string | null = null;
@@ -62,7 +62,9 @@ export default async function MappingsPage({
   // sayfayı (site seçici + reaktif "Eşlenmemiş Gelen Ürünler" güvenlik ağı dâhil) boşaltmasın.
   if (siteValid) {
     try {
-      catalog = await apiGet<CatalogRow[]>(`/v1/admin/catalog?siteId=${encodeURIComponent(site!)}`);
+      catalog = await apiGet<CatalogRowView[]>(
+        `/v1/admin/catalog?siteId=${encodeURIComponent(site!)}`,
+      );
     } catch (e) {
       catalogError = e instanceof Error ? e.message : 'Katalog yüklenemedi';
     }

@@ -7,8 +7,10 @@ import {
   FlaskConical,
   Gauge,
   Globe,
+  Plug,
   Receipt,
   ShoppingCart,
+  TriangleAlert,
   Users,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
@@ -26,10 +28,12 @@ import {
 } from '../../../components/ui/table';
 import { ApiError } from '../../../lib/api';
 import { siteTypeLabel } from '../../../lib/labels';
+import { formatDate } from '../../../lib/utils';
 import { getSite, type SiteDetail } from './queries';
 import { getCustomers, type CustomerRow } from '../../customers/queries';
 import { SiteConfigForm } from './site-config-form';
 import { SiteStatusToggle } from './site-status-toggle';
+import { IssueConnectCode } from './issue-connect-code';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,6 +70,13 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
   }
 
   const { site, mappingCount, orderCount, todayOrderCount, recentOrders } = data;
+  // Savunmacı: api ve admin AYRI imajlar — sürüm sapmasında bu alanlar hiç GELMEYEBİLİR.
+  // "alan yok" ile "hiç bağlanmadı" AYRI şeydir: alan gelmediyse yanlış alarm basmak yerine
+  // dürüstçe "bilinmiyor" (—) gösterilir.
+  const pluginInfoAvailable =
+    site.pluginVersion !== undefined || site.pluginVersionAt !== undefined;
+  const pluginVersion = site.pluginVersion ?? null;
+  const pluginVersionAt = site.pluginVersionAt ?? null;
 
   // Bu sitenin müşterileri (site → müşteri hiyerarşisi). Best-effort: hata site sayfasını bozmaz.
   let siteCustomers: CustomerRow[] = [];
@@ -114,19 +125,71 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       {/* Özet istatistikler — tek satır şerit (Gönderen aşağıdaki Yapılandırma'da gösterilir) */}
-      <StatStrip
-        items={[
-          { icon: ShoppingCart, label: 'Sipariş', value: orderCount },
-          {
-            icon: Gauge,
-            label: 'Bugün / Kota',
-            value: quotaValue(todayOrderCount, site.salesDailyQuota),
-            tone: quotaTone === 'warning' ? 'warning' : undefined,
-            hint: site.salesDailyQuota == null ? 'limitsiz' : 'günlük satış kotası',
-          },
-          { icon: Boxes, label: 'Ürün Eşleme', value: mappingCount },
-        ]}
-      />
+      <div className="space-y-2">
+        <StatStrip
+          items={[
+            { icon: ShoppingCart, label: 'Sipariş', value: orderCount },
+            {
+              icon: Gauge,
+              label: 'Bugün / Kota',
+              value: quotaValue(todayOrderCount, site.salesDailyQuota),
+              tone: quotaTone === 'warning' ? 'warning' : undefined,
+              hint: site.salesDailyQuota == null ? 'limitsiz' : 'günlük satış kotası',
+            },
+            { icon: Boxes, label: 'Ürün Eşleme', value: mappingCount },
+          ]}
+        />
+        {/* Sayaç → eylem köprüsü: "bu mağazanın hangi ürünleri eşli / hangileri bekliyor"
+            sorusu /mappings?site= ile TEK tıkta yanıtlanır (sidebar'dan gidip site seçiciden
+            aynı siteyi yeniden bulmak gerekmez). Müşteriler kartındaki desenin aynısı. */}
+        <div className="flex flex-wrap items-center gap-x-4">
+          <Button asChild variant="link" size="sm" className="h-auto p-0">
+            <Link href={`/mappings?site=${site.id}`}>
+              Ürün eşlemelerini yönet <ArrowRight />
+            </Link>
+          </Button>
+        </div>
+      </div>
+
+      {/* Bağlantı sağlığı (§14) — "aktif" rozeti yalnız 'askıya alınmadı' demek; mağazanın
+          panele GERÇEKTEN bağlı olup olmadığını kurulu eklenti sürümü bildirimi kanıtlar. */}
+      <Card>
+        <CardHeader>
+          <CardTitle icon={Plug}>Bağlantı</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            <div className="flex justify-between gap-4 sm:block">
+              <dt className="text-muted-foreground">Kurulu eklenti sürümü</dt>
+              <dd className="font-medium text-foreground">
+                {pluginVersion ? (
+                  <Badge variant="success">v{pluginVersion}</Badge>
+                ) : pluginInfoAvailable ? (
+                  <Badge variant="warning">
+                    <TriangleAlert />
+                    hiç bağlanmadı
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4 sm:block">
+              <dt className="text-muted-foreground">Son bildirim</dt>
+              <dd className="font-medium tabular-nums text-foreground">
+                {pluginVersionAt ? formatDate(pluginVersionAt) : '—'}
+              </dd>
+            </div>
+          </dl>
+          {!pluginVersion && pluginInfoAvailable && (
+            <p className="text-xs text-muted-foreground">
+              Bu site panele hiç imzalı istek göndermedi — eklenti kurulmamış ya da bağlan kodu
+              hiç kullanılmamış olabilir. Aşağıdan yeni bir bağlan kodu üretip mağazaya girin.
+            </p>
+          )}
+          <IssueConnectCode siteId={site.id} domain={site.domain} />
+        </CardContent>
+      </Card>
 
       {/* Yapılandırma */}
       <Card>
@@ -176,6 +239,10 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
 
           <div className="mt-6 border-t border-border pt-5">
             <h3 className="mb-3 text-sm font-medium text-foreground">Düzenle</h3>
+            {/* adminOrderUrlTemplateManual (0026) MUTLAKA geçilmeli: prop yokken form DAİMA
+                "mağazanın bildirdiği değer kullanılıyor" diyordu → elle girilmiş şablonu
+                mağazadan gelmiş sanan operatör "senkron düzeltir" diye bekliyordu, oysa
+                katalog senkronu elle girilen değeri ASLA ezmez. */}
             <SiteConfigForm
               siteId={site.id}
               salesDailyQuota={site.salesDailyQuota}
@@ -183,6 +250,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               senderEmail={site.senderEmail}
               webhookUrl={site.webhookUrl}
               adminOrderUrlTemplate={site.adminOrderUrlTemplate ?? null}
+              adminOrderUrlTemplateManual={site.adminOrderUrlTemplateManual ?? false}
               dynamicQuotaEnabled={site.dynamicQuotaEnabled}
               reviewMultiplier={site.reviewMultiplier}
             />

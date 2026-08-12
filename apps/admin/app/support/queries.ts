@@ -19,11 +19,20 @@ export type ThreadAuthorType = 'admin' | 'customer' | 'system';
 export interface ReplacementRow {
   id: string;
   siteId: string;
+  /**
+   * Talebin geldiği mağazanın alan adı (API sites JOIN'i). Çok siteli kurulumda mağaza sipariş
+   * no'ları ÇAKIŞIR — karar bu bağlam olmadan verilemez. Eski API sürümünde gelmezse null.
+   */
+  siteDomain: string | null;
   orderId: string;
   /** Mağaza (satış kanalı) sipariş no'su — sipariş silinmiş/eşleşmemişse null. */
   remoteOrderId: string | null;
   lineId: string | null;
   assignmentId: string | null;
+  /** İlgili panel ürünü (satırdan/atamadan çözülür) — "Onayla" bu üründen stok ister. */
+  productId: string | null;
+  productName: string | null;
+  productSku: string | null;
   customerEmail: string;
   reason: string;
   status: SupportStatus;
@@ -65,10 +74,15 @@ function normalize(r: RawReplacementRow): ReplacementRow {
   return {
     id: r.id,
     siteId: r.siteId ?? '',
+    siteDomain: r.siteDomain ?? null,
     orderId: r.orderId ?? '',
     remoteOrderId: r.remoteOrderId ?? null,
     lineId: r.lineId ?? null,
     assignmentId: r.assignmentId ?? null,
+    // Ürün alanları eski API'de YOK → uydurma değer basma; ekran '—' gösterir.
+    productId: r.productId ?? null,
+    productName: r.productName ?? null,
+    productSku: r.productSku ?? null,
     customerEmail: r.customerEmail ?? '',
     reason: r.reason ?? '',
     status: toStatus(r.status),

@@ -1,9 +1,12 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Store, PackageSearch, Search, Trash2 } from 'lucide-react';
+import { Store, PackageSearch, Search, Trash2, TriangleAlert } from 'lucide-react';
 import type { CatalogRow, CatalogSummaryRow, ProductRow } from '../lib/api';
-import { removeMappingAction } from '../app/stock/actions';
+import { removeMappingWithResult } from '../app/mappings/actions';
+import { storeProductKindLabel } from '../lib/labels';
+import { includesTr } from '../lib/utils';
+import { useAnnouncer } from './a11y/announcer';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -14,39 +17,73 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { MapProductSheet } from './map-product-sheet';
 
 /**
+ * Katalog satırı + varyasyon SUNUM bayrakları.
+ *
+ * API (`products.service.listCatalog`) bu üç alanı zaten döndürüyor ama paylaşılan `CatalogRow`
+ * tipi henüz taşımıyor → burada opsiyonel olarak genişletilir. Savunmacı okunur: alan gelmezse
+ * ekran bugünkü davranışa düşer (api ve admin ayrı imajlar, sürüm sapması olabilir).
+ */
+export type CatalogRowView = CatalogRow & {
+  /** Varyasyonlu ürünün EBEVEYN satırı mı — bu satır tasarım gereği hiç eşleşmez. */
+  isVariableParent?: boolean;
+  /** Bu mağaza ürününün toplam varyasyon sayısı. */
+  variationCount?: number;
+  /** Kaç varyasyonu panelde eşli. */
+  mappedVariationCount?: number;
+};
+
+/**
  * Eşlemeyi KALDIR butonu (§3). Onay ister (yanlışlıkla kaldırmayı önle); kaldırınca bu mağaza
  * ürününün siparişleri artık panel ürünü çözemez → beklemede kalır (operatör yeniden eşleyebilir).
+ * Hata SESSİZCE YUTULMAZ: başarısızlıkta satırın altında gerekçe gösterilir ve okuyucuya duyurulur
+ * (eskiden hata yutuluyordu → operatör "kaldırdım" sanıyor, eşleme yerinde kalıyordu).
  */
 function RemoveMappingButton({ mappingId, productLabel }: { mappingId: string; productLabel: string }) {
   const router = useRouter();
+  const announce = useAnnouncer();
   const [pending, start] = React.useTransition();
+  const [error, setError] = React.useState<string | null>(null);
+
+  const remove = () => {
+    if (
+      !window.confirm(
+        `"${productLabel}" eşlemesini kaldırmak istediğinize emin misiniz?\n\nBu mağaza ürününün yeni siparişleri artık panel ürünü çözemez (beklemede kalır). İstediğiniz zaman yeniden eşleyebilirsiniz.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    start(async () => {
+      const res = await removeMappingWithResult(mappingId);
+      if (res.ok) {
+        announce(`${productLabel} eşlemesi kaldırıldı`);
+        router.refresh();
+      } else {
+        const message = res.error ?? 'Eşleme kaldırılamadı';
+        setError(message);
+        announce(message, { assertive: true });
+      }
+    });
+  };
+
   return (
-    <form
-      action={(fd) => {
-        if (
-          !window.confirm(
-            `"${productLabel}" eşlemesini kaldırmak istediğinize emin misiniz?\n\nBu mağaza ürününün yeni siparişleri artık panel ürünü çözemez (beklemede kalır). İstediğiniz zaman yeniden eşleyebilirsiniz.`,
-          )
-        ) {
-          return;
-        }
-        start(async () => {
-          await removeMappingAction(fd);
-          router.refresh();
-        });
-      }}
-    >
-      <input type="hidden" name="mappingId" value={mappingId} />
+    <div className="flex flex-col items-end gap-1">
       <Button
-        type="submit"
+        type="button"
         size="sm"
         variant="ghost"
         disabled={pending}
+        onClick={remove}
         aria-label={`${productLabel} eşlemesini kaldır`}
       >
         <Trash2 /> {pending ? 'Kaldırılıyor…' : 'Kaldır'}
       </Button>
-    </form>
+      {error && (
+        <span className="flex items-center gap-1 text-xs text-destructive">
+          <TriangleAlert className="size-3.5" aria-hidden /> {error}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -66,7 +103,7 @@ function trDateTime(iso: string | null): string {
 }
 
 /** Aynı remoteProductId farklı varyasyonlarda olabilir → ürün+varyasyon ile benzersiz anahtar. */
-function rowKey(row: CatalogRow): string {
+function rowKey(row: CatalogRowView): string {
   return `${row.remoteProductId}:${row.remoteVariationId ?? ''}`;
 }
 
@@ -84,7 +121,7 @@ export function CatalogTable({
 }: {
   sites: CatalogSummaryRow[];
   siteId?: string;
-  rows: CatalogRow[];
+  rows: CatalogRowView[];
   products: ProductRow[];
 }) {
   const router = useRouter();
@@ -92,11 +129,10 @@ export function CatalogTable({
   const selected = sites.find((s) => s.siteId === siteId);
 
   const filtered = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) =>
-      `${r.name} ${r.sku ?? ''} ${r.remoteProductId}`.toLowerCase().includes(q),
-    );
+    // Türkçe-duyarlı arama: ham toLowerCase() "İŞLETİM"/"ışık" gibi kayıtları sessizce
+    // bulamıyordu (panelin diğer tablolarındaki includesTr deseni).
+    if (!query.trim()) return rows;
+    return rows.filter((r) => includesTr(`${r.name} ${r.sku ?? ''} ${r.remoteProductId}`, query));
   }, [rows, query]);
 
   return (
@@ -179,14 +215,23 @@ export function CatalogTable({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((row) => (
+                  filtered.map((row) => {
+                    // [G9] Varyasyonlu ürünün EBEVEYN satırı hiçbir zaman eşleşmez (sipariş
+                    // satırı daima bir varyasyona düşer, eşleme varyasyon-özel kurulur). Bunu
+                    // kırmızı "eşlenmemiş" göstermek sonsuza dek sönmeyen bir alarm üretiyor ve
+                    // operatörü alarmı susturmak için TEHLİKELİ bir ürün-seviyesi catch-all
+                    // eşleme kurmaya itiyordu → nötr "varyasyonları eşleyin (N/M eşli)".
+                    const variableParent = row.isVariableParent === true && !row.mapped;
+                    const mappedVar = row.mappedVariationCount ?? 0;
+                    const totalVar = row.variationCount ?? 0;
+                    return (
                     <TableRow key={rowKey(row)}>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-foreground">{row.name}</span>
                           {row.kind && (
                             <Badge variant="outline" className="shrink-0">
-                              {row.kind}
+                              {storeProductKindLabel(row.kind)}
                             </Badge>
                           )}
                         </div>
@@ -202,6 +247,18 @@ export function CatalogTable({
                             {row.mappedProductName ?? 'eşli'}
                             {row.bundleQty && row.bundleQty > 1 ? ` · paket ${row.bundleQty}` : ''}
                           </Badge>
+                        ) : variableParent ? (
+                          <span className="flex flex-col items-start gap-0.5">
+                            <Badge variant="neutral">
+                              {/* Sayaç yalnız GERÇEK veri varken basılır — alan gelmediyse
+                                  "0/0 eşli" gibi uydurma bir kırılım gösterilmez. */}
+                              varyasyonları eşleyin
+                              {totalVar > 0 ? ` (${mappedVar}/${totalVar} eşli)` : ''}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              Bu satır yalnızca ürün başlığıdır — eşlenmemesi bir eksik değildir.
+                            </span>
+                          </span>
                         ) : (
                           <Badge variant="warning">eşlenmemiş</Badge>
                         )}
@@ -231,11 +288,20 @@ export function CatalogTable({
                             remoteVariationId={row.remoteVariationId}
                             productName={row.name}
                             products={products}
+                            // Ebeveyn satırında eşleme MEŞRU ama VARSAYILAN eylem değil →
+                            // ikincil ton + niyeti açık eden etiket.
+                            {...(variableParent
+                              ? {
+                                  triggerVariant: 'ghost' as const,
+                                  triggerLabel: 'Yine de ürün-seviyesi eşle',
+                                }
+                              : {})}
                           />
                         )}
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

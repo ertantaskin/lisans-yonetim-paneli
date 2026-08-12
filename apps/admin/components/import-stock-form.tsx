@@ -12,21 +12,39 @@ import { Input, Textarea } from './ui/input';
 import { Button } from './ui/button';
 import { Combobox } from './ui/combobox';
 import { Field } from './ui/field';
-import { productKindLabel } from '../lib/labels';
+import { productKindLabel, supplyStatusLabel } from '../lib/labels';
+import { formatDate } from '../lib/utils';
 
 const initial: ImportState = { ok: false };
 const previewInitial: PreviewState = { ok: false };
+
+/** Parti seçici satırı — ürün detayının `data.batches` şekliyle uyumlu (alanlar savunmacı). */
+export interface ImportBatchOption {
+  id: string;
+  label: string;
+  status: string;
+  qtyReceived?: number;
+  receivedAt?: string | null;
+  supplierName?: string | null;
+}
 
 export function ImportStockForm({
   products,
   defaultBatchId,
   fixedProductId,
+  batches,
 }: {
   products: ProductRow[];
   /** URL ?batchId= ile gelen parti (recall/toplu-değiştir akışı ön-doldurur). */
   defaultBatchId?: string;
   /** Ürün-merkezli kullanım (ürün detayı): ürün SABİT → dropdown gizlenir, hidden input gönderilir. */
   fixedProductId?: string;
+  /**
+   * Bu ürünün partileri (ürün detayı zaten çekiyor). Verilirse parti alanı SERBEST METİN
+   * yerine seçici olur — operatörün elinde parti UUID'si yoktur, alan bu yüzden pratikte hep
+   * boş kalıyor ve girilen anahtarlar hiçbir partiye bağlanmıyordu (izlenebilirlik kaybı).
+   */
+  batches?: ImportBatchOption[];
 }) {
   const [state, action, pending] = useActionState(importStockAction, initial);
   const [previewState, previewAction, previewPending] = useActionState(
@@ -34,6 +52,8 @@ export function ImportStockForm({
     previewInitial,
   );
   const [productId, setProductId] = useState(fixedProductId ?? '');
+  // Parti seçimi kontrollü: ön-dolu ?batchId= değeri seçili gelir, etiketi (UUID değil) görünür.
+  const [batchId, setBatchId] = useState(defaultBatchId ?? '');
   // keys textarea'yı kontrol altına al ki satır sayısını önizlemeye taşıyabilelim.
   const [keys, setKeys] = useState('');
   // Önizleme adedi (tahmini giriş) — kullanıcı elle değişmediyse satır sayısını izler.
@@ -42,6 +62,25 @@ export function ImportStockForm({
 
   const selected = products.find((p) => p.id === productId);
   const isAccount = selected?.kind === 'account';
+
+  // Parti seçeneği: etiket + (tedarikçi ·) tarih · durum — ham UUID hiçbir yerde görünmez.
+  const batchOptions = useMemo(
+    () =>
+      batches?.map((b) => ({
+        value: b.id,
+        label: b.label,
+        hint: [
+          b.supplierName ?? null,
+          b.receivedAt ? formatDate(b.receivedAt, false) : null,
+          supplyStatusLabel(b.status),
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        keywords: [b.supplierName ?? '', b.status].filter(Boolean),
+      })),
+    [batches],
+  );
+  const selectedBatch = batchId ? batches?.find((b) => b.id === batchId) : undefined;
   const schemaKeys = (selected?.payloadSchema ?? []).map((f) => f.key);
 
   // Boş olmayan satır sayısı = import edilecek yaklaşık kalem sayısı.
@@ -114,22 +153,68 @@ export function ImportStockForm({
           />
         </Field>
 
-        <Field
-          label="Parti (batch)"
-          htmlFor="is-batch"
-          hint="Opsiyonel — geri çekme / toplu değişim için. Normalde boş bırakın."
-        >
-          <Input
-            id="is-batch"
-            name="batchId"
-            defaultValue={defaultBatchId}
-            className="max-w-md font-mono text-xs"
-            placeholder="ör. parti kimliği (boş bırakılabilir)"
-          />
-        </Field>
-        {defaultBatchId && (
+        {batchOptions ? (
+          <Field
+            label="Parti (batch)"
+            htmlFor="is-batch"
+            hint="Opsiyonel — geri çekme / toplu değişim ve tedarikçi maliyeti izi için. Bilinmiyorsa boş bırakın."
+          >
+            <Combobox
+              id="is-batch"
+              name="batchId"
+              ariaLabel="Parti"
+              className="max-w-md"
+              value={batchId}
+              onValueChange={setBatchId}
+              items={batchOptions}
+              allowClear
+              clearLabel="— partisiz —"
+              placeholder="— partisiz —"
+              searchPlaceholder="Parti etiketi veya tedarikçi…"
+              emptyText="Parti bulunamadı"
+            />
+          </Field>
+        ) : (
+          // Parti listesi verilmemiş (ürün-bağımsız kullanım) → eski serbest metin davranışı.
+          <Field
+            label="Parti (batch)"
+            htmlFor="is-batch"
+            hint="Opsiyonel — geri çekme / toplu değişim için. Normalde boş bırakın."
+          >
+            <Input
+              id="is-batch"
+              name="batchId"
+              defaultValue={defaultBatchId}
+              className="max-w-md font-mono text-xs"
+              placeholder="ör. parti kimliği (boş bırakılabilir)"
+            />
+          </Field>
+        )}
+        {!batchOptions && defaultBatchId && (
           <p className="text-xs text-muted-foreground">
             Bu giriş <code className="text-foreground">{defaultBatchId}</code> partisine bağlanacak.
+          </p>
+        )}
+        {batchOptions && selectedBatch && (
+          <p className="text-xs text-muted-foreground">
+            Bu giriş <strong className="font-medium text-foreground">{selectedBatch.label}</strong>{' '}
+            partisine bağlanacak
+            {selectedBatch.status !== 'active' && (
+              <span className="text-warning">
+                {' '}
+                — dikkat: parti {supplyStatusLabel(selectedBatch.status).toLocaleLowerCase('tr-TR')}{' '}
+                durumda
+              </span>
+            )}
+            .
+          </p>
+        )}
+        {batchOptions && batchId && !selectedBatch && (
+          // Ön-dolu kimlik listede yok (silinmiş/başka ürünün partisi) → ham UUID gösterip
+          // "doğru partiye yazıyorum" yanılgısı üretme; operatör uyarılsın.
+          <p className="text-xs text-warning">
+            Seçili parti bu ürünün parti listesinde yok — bağlantı kurulamayabilir. Doğru partiyi
+            seçin ya da alanı temizleyin.
           </p>
         )}
 

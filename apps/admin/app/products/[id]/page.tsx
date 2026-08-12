@@ -31,6 +31,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { ApiError, apiGet, type SiteRow } from '../../../lib/api';
+import { formatDate } from '../../../lib/utils';
 import {
   productTypeSummary,
   fulfillmentPolicyLabel,
@@ -224,10 +225,12 @@ export default async function ProductDetailPage({
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* batches: parti alanı ham UUID istemek yerine bu ürünün partilerinden seçtirir. */}
               <ImportStockForm
                 fixedProductId={product.id}
                 products={[{ ...product, availableStock: stock.available }]}
                 defaultBatchId={batchId}
+                batches={batches}
               />
             </CardContent>
           </Card>
@@ -271,17 +274,37 @@ export default async function ProductDetailPage({
                       <TableHead>Etiket</TableHead>
                       <TableHead>Durum</TableHead>
                       <TableHead className="text-right">Alınan</TableHead>
+                      <TableHead className="text-right">Aksiyon</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {batches.map((b) => (
                       <TableRow key={b.id}>
-                        <TableCell className="font-medium text-foreground">{b.label}</TableCell>
+                        <TableCell className="font-medium text-foreground">
+                          {b.label}
+                          {/* Tedarikçi + teslim tarihi: "bu parti kimden, ne zaman geldi" ekranda. */}
+                          <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                            {[b.supplierName ?? null, b.receivedAt ? formatDate(b.receivedAt, false) : null]
+                              .filter(Boolean)
+                              .join(' · ') || '—'}
+                          </span>
+                        </TableCell>
                         <TableCell>
                           <StateBadge status={b.status} />
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {b.qtyReceived}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {/* Parti için ayrı detay rotası YOK → yapılabilir tek bağlamsal iş:
+                              bu partiye stok girmek (import formunu ön-doldurur). */}
+                          {b.status === 'active' ? (
+                            <Button asChild variant="ghost" size="sm">
+                              <Link href={`/products/${product.id}?batchId=${b.id}`}>Stok gir</Link>
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -308,7 +331,7 @@ export default async function ProductDetailPage({
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead>Durum</TableHead>
+                      <TableHead>Tedarikçi / Durum</TableHead>
                       <TableHead className="text-right">Sipariş</TableHead>
                       <TableHead className="text-right">Alınan</TableHead>
                       <TableHead>ETA</TableHead>
@@ -318,7 +341,17 @@ export default async function ProductDetailPage({
                     {purchaseOrders.map((po) => (
                       <TableRow key={po.id}>
                         <TableCell>
-                          <StateBadge status={po.status} />
+                          {/* "Stok bitiyor, açık emir kimde?" — emir satırı artık tedarikçiyi
+                              yazar ve emrin detayına tıklanır (eskiden ikisi de yoktu). */}
+                          <Link
+                            href={`/purchase-orders/${po.id}`}
+                            className="font-medium text-foreground underline-offset-4 hover:underline"
+                          >
+                            {po.supplierName ?? 'Satın alma emri'}
+                          </Link>
+                          <span className="mt-1 block">
+                            <StateBadge status={po.status} />
+                          </span>
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {po.qtyOrdered}
@@ -356,7 +389,17 @@ export default async function ProductDetailPage({
           <Card>
             <CardHeader>
               <CardTitle icon={ClipboardList}>Stok Düzeltmeleri</CardTitle>
-              <CardDescription>Geçmiş manuel düzeltme kayıtları.</CardDescription>
+              <CardDescription>
+                Geçmiş manuel düzeltme kayıtları — kimin yaptığı ve stokun gerçekten değişip
+                değişmediği ile birlikte. Geçersiz kılınan anahtarlar{' '}
+                <Link
+                  href="/quarantine?status=voided"
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Karantina
+                </Link>{' '}
+                ekranında listelenir.
+              </CardDescription>
             </CardHeader>
             <CardContent className={adjustments.length === 0 ? '' : 'overflow-x-auto p-0'}>
               {adjustments.length === 0 ? (
@@ -372,26 +415,49 @@ export default async function ProductDetailPage({
                       <TableHead>Aksiyon</TableHead>
                       <TableHead className="text-right">Adet</TableHead>
                       <TableHead>Sebep</TableHead>
+                      <TableHead>Yapan</TableHead>
                       <TableHead>Tarih</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {adjustments.map((a) => (
-                      <TableRow key={a.id} className="align-top">
-                        <TableCell>
-                          <Badge variant="outline">{adjustmentActionLabel(a.action)}</Badge>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {a.qty}
-                        </TableCell>
-                        <TableCell className="text-foreground">
-                          <span className="line-clamp-2">{a.reason}</span>
-                        </TableCell>
-                        <TableCell className="tabular-nums text-muted-foreground">
-                          {dtFmt(a.createdAt)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {adjustments.map((a) => {
+                      // Stok GERÇEKTEN değişti mi: yalnız kalem-kapsamlı void/damage bir
+                      // license_items satırını 'voided' yapar; kalemsiz kayıt sadece defterdir.
+                      const touchedStock =
+                        Boolean(a.licenseItemId) && (a.action === 'void' || a.action === 'damage');
+                      return (
+                        <TableRow key={a.id} className="align-top">
+                          <TableCell>
+                            <Badge variant="outline">{adjustmentActionLabel(a.action)}</Badge>
+                            <span
+                              className={`mt-1 block text-xs ${
+                                touchedStock ? 'text-muted-foreground' : 'text-warning'
+                              }`}
+                            >
+                              {touchedStock ? 'Stoktan düşüldü' : 'Yalnız kayıt — stok değişmedi'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-muted-foreground">
+                            {a.qty}
+                          </TableCell>
+                          {/* Kırpılan sebebin TAMAMI title'da (eski hâlinde okumanın yolu yoktu). */}
+                          <TableCell className="text-foreground">
+                            <span className="line-clamp-2" title={a.reason}>
+                              {a.reason}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {/* Alan eski api imajında gelmeyebilir → uydurma yerine '—'. */}
+                            <span className="line-clamp-2" title={a.actor ?? undefined}>
+                              {a.actor || '—'}
+                            </span>
+                          </TableCell>
+                          <TableCell className="tabular-nums text-muted-foreground">
+                            {dtFmt(a.createdAt)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -402,7 +468,8 @@ export default async function ProductDetailPage({
 
       {/* Lisans envanteri — TAM GENİŞLİK (kolon çok: lisans + durum + kapasite + teslimat).
           Konum bilinçli: önce stok girilir/eşlenir (üstteki kartlar), sonra sonucu burada görülür. */}
-      <Card>
+      {/* id: /batches satır menüsünden "ürünün lisans envanteri" derin bağlantısı buraya iner. */}
+      <Card id="lisans-envanteri" className="scroll-mt-20">
         <CardHeader>
           <CardTitle icon={KeyRound}>Lisans Envanteri</CardTitle>
           <CardDescription>

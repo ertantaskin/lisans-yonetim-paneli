@@ -6,6 +6,7 @@ import {
   Ban,
   CheckCircle2,
   Clock,
+  Globe,
   Mail,
   MessageSquare,
   Reply,
@@ -13,7 +14,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import type { ReplacementRow } from '../app/support/queries';
-import { cn, fmtDateTime } from '../lib/utils';
+import { cn, fmtDateTime, includesTr } from '../lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -160,17 +161,77 @@ function buildColumns(onOpen: (id: string) => void): ColumnDef<ReplacementRow>[]
         ) : (
           <span className="text-muted-foreground">—</span>
         ),
-      // Tek arama kutusu: müşteri e-postası / sipariş no / talep metni.
+      // Tek arama kutusu: müşteri e-postası / sipariş no / mağaza / ürün / talep metni.
+      // `includesTr`: ham toLowerCase() Türkçe "İ"/"I" içeren ürün-mağaza adında sessizce
+      // sonuç bulamıyordu (panel genelindeki desen).
       filterFn: (row, _id, value) => {
-        const q = String(value).toLowerCase().trim();
+        const q = String(value).trim();
         if (!q) return true;
         const r = row.original;
         return (
-          (r.remoteOrderId ?? '').toLowerCase().includes(q) ||
-          r.customerEmail.toLowerCase().includes(q) ||
-          r.reason.toLowerCase().includes(q)
+          includesTr(r.remoteOrderId ?? '', q) ||
+          includesTr(r.customerEmail, q) ||
+          includesTr(r.reason, q) ||
+          includesTr(r.siteDomain ?? '', q) ||
+          includesTr(r.productName ?? '', q) ||
+          includesTr(r.productSku ?? '', q)
         );
       },
+    },
+    {
+      // ÇOK SİTELİ BAĞLAM: mağaza sipariş no'ları sitelere göre ÇAKIŞIR (#1024 iki sitede olabilir)
+      // → talebin hangi mağazadan geldiği karar ekranında görünmeli. `accessorFn` ile alan
+      // gelmezse (sürüm sapması) satır yine listelenir, hücre '—' basar.
+      id: 'siteDomain',
+      accessorFn: (row) => row.siteDomain ?? '',
+      meta: { title: 'Site' },
+      header: 'Site',
+      cell: ({ row }) =>
+        row.original.siteDomain ? (
+          <span
+            className="inline-flex max-w-[12rem] items-center gap-1.5 truncate text-xs text-muted-foreground"
+            title={row.original.siteDomain}
+          >
+            <Globe className="size-3.5 shrink-0" aria-hidden />
+            {row.original.siteDomain}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+      enableSorting: false,
+      filterFn: (row, id, value: string[]) => value.includes(String(row.getValue(id))),
+    },
+    {
+      // "Onayla" AYNI üründen taze lisans atar → hangi üründe stok gerektiği karar anında görünsün.
+      id: 'productName',
+      accessorFn: (row) => row.productName ?? '',
+      meta: { title: 'Ürün' },
+      header: 'Ürün',
+      cell: ({ row }) => {
+        const { productId, productName, productSku } = row.original;
+        if (!productName) return <span className="text-muted-foreground">—</span>;
+        return (
+          <div className="flex max-w-[14rem] flex-col items-start">
+            {productId ? (
+              <Link
+                href={`/products/${productId}`}
+                className="w-full truncate text-primary underline-offset-2 hover:underline"
+                title={`${productName} — ürün detayına git`}
+              >
+                {productName}
+              </Link>
+            ) : (
+              <span className="w-full truncate text-foreground" title={productName}>
+                {productName}
+              </span>
+            )}
+            {productSku && (
+              <span className="truncate text-xs text-muted-foreground">{productSku}</span>
+            )}
+          </div>
+        );
+      },
+      enableSorting: false,
     },
     {
       accessorKey: 'reason',
@@ -252,7 +313,8 @@ function buildColumns(onOpen: (id: string) => void): ColumnDef<ReplacementRow>[]
   ];
 }
 
-const facets: FacetConfig[] = [
+/** Sabit facet'ler — site facet'i VERİDEN türetilir (aşağıda, bileşen içinde). */
+const baseFacets: FacetConfig[] = [
   {
     columnId: 'status',
     title: 'Durum',
@@ -304,6 +366,25 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
   );
 
   const columns = React.useMemo(() => buildColumns(setSelectedId), []);
+
+  // Site facet'i VERİDEN türetilir (sabit liste değil): yalnız gerçekten talep gelmiş mağazalar
+  // listelenir. TEK mağaza varsa facet GÖSTERİLMEZ — tek seçenekli süzgeç gürültüdür
+  // (orders-table.tsx ile aynı desen).
+  const facets = React.useMemo<FacetConfig[]>(() => {
+    const domains = Array.from(
+      new Set(rows.map((r) => r.siteDomain).filter((d): d is string => !!d)),
+    ).sort((a, b) => a.localeCompare(b, 'tr'));
+    return domains.length > 1
+      ? [
+          ...baseFacets,
+          {
+            columnId: 'siteDomain',
+            title: 'Site',
+            options: domains.map((d) => ({ label: d, value: d, icon: Globe })),
+          },
+        ]
+      : baseFacets;
+  }, [rows]);
 
   // Detay panelinin verisi HER ZAMAN taze listeden okunur: bir aksiyon sonrası
   // revalidate ile durum değişince panel de güncel durumu gösterir (bayat kopya yok).
@@ -362,7 +443,7 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
         columns={columns}
         data={scoped}
         searchColumnId="remoteOrderId"
-        searchPlaceholder="Müşteri, sipariş no veya talep metni…"
+        searchPlaceholder="Müşteri, sipariş no, mağaza, ürün veya talep metni…"
         facets={facets}
         emptyLabel={emptyLabel}
       />

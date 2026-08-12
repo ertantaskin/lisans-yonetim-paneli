@@ -7,13 +7,19 @@ import {
   CheckCircle2,
   Gauge,
   Info,
+  KeyRound,
+  LogIn,
   RadioTower,
   ScanSearch,
   ShieldAlert,
   ShieldX,
   TriangleAlert,
+  UserCheck,
+  UserMinus,
+  UserPlus,
   UserX,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import type { SecurityEventRow } from '../app/security/queries';
 import { fmtDateTime } from '../lib/utils';
@@ -28,13 +34,45 @@ import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
 // ── Tip → ikon (etiket labels.ts securityTypeLabel'dan gelir — TEK KAYNAK) ────
-const TYPE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+// LucideIcon: facet seçenekleri (FacetOption.icon) de aynı ikonları kullanır → tek tip.
+const TYPE_ICON: Record<string, LucideIcon> = {
   velocity: RadioTower,
   quota_exceeded: Gauge,
   quota_review: Gauge,
   anomaly: Activity,
   blocklist: Ban,
+  // Yönetici hesap/oturum yaşam döngüsü (admin-users.service).
+  admin_login: LogIn,
+  admin_login_failed: KeyRound,
+  admin_created: UserPlus,
+  admin_disabled: UserMinus,
+  admin_reactivated: UserCheck,
+  admin_password_reset: KeyRound,
+  admin_removed: UserX,
 };
+
+/**
+ * Yönetici auth olaylarının Türkçe karşılıkları — bu ekrana ÖZEL yerel sözlük.
+ * `securityTypeLabel` (labels.ts) bu anahtarları henüz tanımıyor ve bilinmeyen anahtarda HAM
+ * değeri döndürüyor → operatöre `admin_login_failed` gibi ham İngilizce enum çıkıyordu.
+ * Öncelik sırası: labels.ts BİLİYORSA o kazanır (tek kaynak korunur, sözlüğe eklenirse burası
+ * kendiliğinden devre dışı kalır); bilmiyorsa buradaki karşılık kullanılır.
+ */
+const ADMIN_AUTH_TYPE: Record<string, string> = {
+  admin_login: 'Yönetici girişi',
+  admin_login_failed: 'Başarısız yönetici girişi',
+  admin_created: 'Yönetici oluşturuldu',
+  admin_disabled: 'Yönetici devre dışı bırakıldı',
+  admin_reactivated: 'Yönetici yeniden etkinleştirildi',
+  admin_password_reset: 'Yönetici parolası sıfırlandı',
+  admin_removed: 'Yönetici silindi',
+};
+
+function typeLabel(type: string): string {
+  const known = securityTypeLabel(type);
+  // securityTypeLabel bilinmeyen anahtarda ham değeri geri verir → yerel sözlüğe düş.
+  return known !== type ? known : (ADMIN_AUTH_TYPE[type] ?? type);
+}
 
 // ── Severity → rozet varyant + ikon (etiket labels.ts severityLabel'dan) ──────
 const SEVERITY_META: Record<
@@ -51,7 +89,7 @@ function TypeCell({ type }: { type: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-foreground">
       <Icon className="size-3.5 text-muted-foreground" />
-      {securityTypeLabel(type)}
+      {typeLabel(type)}
     </span>
   );
 }
@@ -127,17 +165,35 @@ const columns: ColumnDef<SecurityEventRow>[] = [
   },
 ];
 
+/**
+ * Süzgeçte GÖRÜNEN türler. Yönetici auth olayları (özellikle `admin_login_failed` = brute-force
+ * sinyali) buraya EKLENDİ: eskiden liste yalnız 5 eski türü sayıyordu → en kritik güvenlik
+ * sinyali süzülemiyor, üstelik süzgeç "sistemde yalnız bu türler var" izlenimi veriyordu.
+ */
+const TYPE_FACET_VALUES = [
+  'admin_login_failed',
+  'admin_login',
+  'admin_created',
+  'admin_disabled',
+  'admin_reactivated',
+  'admin_password_reset',
+  'admin_removed',
+  'velocity',
+  'quota_exceeded',
+  'quota_review',
+  'anomaly',
+  'blocklist',
+] as const;
+
 const facets: FacetConfig[] = [
   {
     columnId: 'type',
     title: 'Tür',
-    options: [
-      { label: securityTypeLabel('velocity'), value: 'velocity', icon: RadioTower },
-      { label: securityTypeLabel('quota_exceeded'), value: 'quota_exceeded', icon: Gauge },
-      { label: securityTypeLabel('quota_review'), value: 'quota_review', icon: Gauge },
-      { label: securityTypeLabel('anomaly'), value: 'anomaly', icon: Activity },
-      { label: securityTypeLabel('blocklist'), value: 'blocklist', icon: Ban },
-    ],
+    options: TYPE_FACET_VALUES.map((v) => ({
+      label: typeLabel(v),
+      value: v,
+      icon: TYPE_ICON[v] ?? ShieldAlert,
+    })),
   },
   {
     columnId: 'severity',
@@ -269,7 +325,16 @@ function Notice({
   );
 }
 
-export function SecurityTable({ events }: { events: SecurityEventRow[] }) {
+export function SecurityTable({
+  events,
+  truncated = false,
+  limit,
+}: {
+  events: SecurityEventRow[];
+  /** API üst sınırına dayanıldı → daha eski olaylar bu listede YOK (sessiz kırpma olmasın). */
+  truncated?: boolean;
+  limit?: number;
+}) {
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
 
@@ -307,6 +372,22 @@ export function SecurityTable({ events }: { events: SecurityEventRow[] }) {
           message={notice}
           onClose={() => setNotice(null)}
         />
+      )}
+
+      {/* DÜRÜSTLÜK BANDI: liste kırpıldığında "olay yok" izlenimi vermek yanlış bilgidir —
+          arama/facet yalnız bu pencere üzerinde çalışır (destek/bildirim ekranlarıyla simetri). */}
+      {truncated && (
+        <Alert variant="info">
+          <Info />
+          <div className="min-w-0 flex-1">
+            <AlertTitle>Liste eksik olabilir</AlertTitle>
+            <AlertDescription>
+              Yalnız son {limit ?? events.length} olay gösteriliyor — daha eskiler bu listede YOK.
+              Arama ve süzgeçler de yalnız bu pencerede çalışır; yoğun dönemlerde (ör. başarısız
+              giriş dalgası) eski kritik olaylar pencereden düşmüş olabilir.
+            </AlertDescription>
+          </div>
+        </Alert>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">

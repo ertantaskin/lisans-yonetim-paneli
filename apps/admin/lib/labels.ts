@@ -86,10 +86,14 @@ const ADJUSTMENT_ACTION: Record<string, string> = {
 export const adjustmentActionLabel = (a: string) => lookup(ADJUSTMENT_ACTION, a);
 
 // ── Sipariş / atama durumu ───────────────────────────────────────────────────
+// TERMİNOLOJİ TEKLİĞİ (denetim bulgusu): `fulfilled` burada 'Tamamlandı', rozet sözlüğünde
+// (BADGE_STATUS → StatusBadge) 'Teslim edildi' idi → AYNI sipariş Ctrl+K'da "Tamamlandı",
+// listede "Teslim edildi" görünüyordu; operatör iki farklı şey sanıyordu. Rozet dili panelin
+// baskın dili olduğu için burası ONA hizalandı. Yeni bir durum eklerken İKİ sözlüğü de kontrol et.
 const ORDER_STATUS: Record<string, string> = {
   pending: 'Bekliyor',
   partial: 'Kısmi teslim',
-  fulfilled: 'Tamamlandı',
+  fulfilled: 'Teslim edildi',
   held_for_review: 'İncelemede',
   revoked: 'Geri alındı',
   canceled: 'İptal',
@@ -223,6 +227,21 @@ const SITE_TYPE: Record<string, string> = {
   reseller: 'Bayi',
 };
 export const siteTypeLabel = (t: string) => lookup(SITE_TYPE, t);
+
+// ── Mağaza ürün türü (katalog senkronundan gelen HAM platform tipi) ──────────
+// Anahtarlar mağazanın kendi vokabüleri (WooCommerce: simple/variable/variation) —
+// panel ürün tipi (`PRODUCT_KIND`) DEĞİLDİR, karıştırılmamalı. Operatör için ayrım
+// anlamlı: 'variable' satırı yalnızca ürün BAŞLIĞIdır (eşlenmemesi normal), asıl
+// eşlenecek satır 'variation'dır. Bilinmeyen anahtar → ham değer (yeni platform
+// tipleri sessizce kaybolmasın, ham görünüp fark edilsin).
+const STORE_PRODUCT_KIND: Record<string, string> = {
+  simple: 'Basit',
+  variable: 'Varyasyonlu ürün',
+  variation: 'Varyasyon',
+  grouped: 'Gruplu',
+  external: 'Harici / bağlı',
+};
+export const storeProductKindLabel = (k: string) => lookup(STORE_PRODUCT_KIND, k);
 
 // ── AI triyaj (kategori / öncelik) ───────────────────────────────────────────
 const AI_CATEGORY: Record<string, string> = {

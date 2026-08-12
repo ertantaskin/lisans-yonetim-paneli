@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import {
   Ban,
   CheckCircle2,
+  KeyRound,
   MoreHorizontal,
   PackagePlus,
   PackageX,
@@ -14,7 +15,8 @@ import {
   X,
 } from 'lucide-react';
 import type { BatchRow } from '../app/batches/queries';
-import { fmtDateTime } from '../lib/utils';
+import { fmtDateTime, includesTr } from '../lib/utils';
+import { supplyStatusLabel } from '../lib/labels';
 import { bulkReplaceBatchAction, recallBatchAction } from '../app/batches/actions';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -31,30 +33,37 @@ import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
-/** Parti durumu → rozet (batch_status: active/recalled/voided). */
+/**
+ * Parti durumu → rozet (batch_status: active/recalled/voided).
+ * METİN TEK KAYNAKTAN (`supplyStatusLabel`) gelir; burada yalnız renk + ikon eşlemesi kalır.
+ * Eskiden etiketler bileşene sabit yazılmıştı ve sözlükle çelişiyordu (voided → burada
+ * "iptal", ürün detayında "Geçersiz"; üstelik "İptal" sözlükte satın alma emrinin
+ * `cancelled` durumunun karşılığı → aynı ekran ailesinde iki kavram aynı kelimeydi).
+ */
 function BatchStatusBadge({ status }: { status: string }) {
   if (status === 'active') {
     return (
       <Badge variant="success">
-        <CheckCircle2 /> aktif
+        <CheckCircle2 /> {supplyStatusLabel('active')}
       </Badge>
     );
   }
   if (status === 'recalled') {
     return (
       <Badge variant="danger">
-        <ShieldX /> geri çekildi
+        <ShieldX /> {supplyStatusLabel('recalled')}
       </Badge>
     );
   }
   if (status === 'voided') {
     return (
       <Badge variant="outline">
-        <Ban /> iptal
+        <Ban /> {supplyStatusLabel('voided')}
       </Badge>
     );
   }
-  return <Badge variant="neutral">{status}</Badge>;
+  // Bilinmeyen durumda da sözlükten geç (yoksa ham değere düşer — regresyonsuz).
+  return <Badge variant="neutral">{supplyStatusLabel(status)}</Badge>;
 }
 
 const baseColumns: ColumnDef<BatchRow>[] = [
@@ -63,15 +72,13 @@ const baseColumns: ColumnDef<BatchRow>[] = [
     meta: { title: 'Parti' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Parti" />,
     cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
-    // Arama: parti etiketi VEYA ürün sku/adı
-    filterFn: (row, _id, value) => {
-      const q = String(value).toLowerCase();
-      return (
-        row.original.label.toLowerCase().includes(q) ||
-        row.original.productSku.toLowerCase().includes(q) ||
-        row.original.productName.toLowerCase().includes(q)
-      );
-    },
+    // Arama: parti etiketi VEYA ürün sku/adı. Türkçe-duyarlı (`includesTr`) — ham
+    // `toLowerCase()` ile "İşletim Sistemi" / "IŞIK-2024" gibi kayıtlar SESSİZCE bulunamıyordu
+    // (diğer tablolarda düzeltilmişti, bu tablo atlanmıştı).
+    filterFn: (row, _id, value) =>
+      includesTr(row.original.label, value) ||
+      includesTr(row.original.productSku, value) ||
+      includesTr(row.original.productName, value),
   },
   {
     accessorKey: 'supplierName',
@@ -86,9 +93,16 @@ const baseColumns: ColumnDef<BatchRow>[] = [
     accessorFn: (row) => `${row.productSku} ${row.productName}`,
     meta: { title: 'Ürün' },
     header: 'Ürün',
+    // Ürün adı ürün detayına bağlanır: geri çekme/telafi kararında "bu üründe kaç sağlam
+    // anahtar kaldı" sorusu tek tıkla yanıtlanır (eskiden düz metindi → kopyala-ara).
     cell: ({ row }) => (
       <div className="flex flex-col">
-        <span className="text-foreground">{row.original.productName}</span>
+        <Link
+          href={`/products/${row.original.productId}`}
+          className="text-foreground underline-offset-4 hover:underline"
+        >
+          {row.original.productName}
+        </Link>
         <span className="text-xs tabular-nums text-muted-foreground">{row.original.productSku}</span>
       </div>
     ),
@@ -160,9 +174,8 @@ function BatchRowActions({
   const recallable = isRecallable(batch.status);
   const bulkReplaceable = canBulkReplace(batch);
   const addStockable = canAddStock(batch);
-  if (!recallable && !bulkReplaceable && !addStockable) {
-    return <span className="text-xs text-muted-foreground">—</span>;
-  }
+  // "Lisansları gör" HER partide vardır (geri çekilmiş partide de ürüne dönmek gerekir) →
+  // menü artık asla boş kalmaz.
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -176,6 +189,15 @@ function BatchRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {/* Ürünün lisans envanterine derin bağlantı — geri çekme kararı öncesi "hangi
+            anahtarlar, kime gitti" bakılabilsin (envanter tablosu parti süzgecini API'de
+            destekliyor; ekran süzgeci ayrı bir iş olarak açık kaldı). */}
+        <DropdownMenuItem asChild>
+          <Link href={`/products/${batch.productId}#lisans-envanteri`}>
+            <KeyRound />
+            Ürünün lisans envanteri
+          </Link>
+        </DropdownMenuItem>
         {addStockable && (
           <DropdownMenuItem asChild>
             <Link href={`/products/${batch.productId}?batchId=${batch.id}`}>
@@ -184,7 +206,7 @@ function BatchRowActions({
             </Link>
           </DropdownMenuItem>
         )}
-        {addStockable && recallable && <DropdownMenuSeparator />}
+        {(addStockable || recallable || bulkReplaceable) && <DropdownMenuSeparator />}
         {recallable && (
           <DropdownMenuItem
             onSelect={() => onRecall(batch)}
@@ -286,7 +308,17 @@ function RecallDialog({
               Satılmamış {batch.unsoldCount} birim iptal edilecek (geri alınamaz).
               {batch.soldCount > 0 && (
                 <> Satılmış {batch.soldCount} birim değişim gerektirir.</>
-              )}
+              )}{' '}
+              {/* Geri alınamaz karar öncesi etkilenecek anahtarlara bakma yolu (yeni sekme —
+                  modaldaki sebep metni kaybolmasın). */}
+              <Link
+                href={`/products/${batch.productId}#lisans-envanteri`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-4"
+              >
+                Ürünün lisanslarını incele
+              </Link>
             </AlertDescription>
           </div>
         </Alert>
@@ -410,10 +442,11 @@ const facets: FacetConfig[] = [
   {
     columnId: 'status',
     title: 'Durum',
+    // Süzgeç etiketi ile kolon rozeti YAPISAL olarak aynı sözlükten gelir (elle yazılmaz).
     options: [
-      { label: 'Aktif', value: 'active', icon: CheckCircle2 },
-      { label: 'Geri çekildi', value: 'recalled', icon: ShieldX },
-      { label: 'İptal', value: 'voided', icon: Ban },
+      { label: supplyStatusLabel('active'), value: 'active', icon: CheckCircle2 },
+      { label: supplyStatusLabel('recalled'), value: 'recalled', icon: ShieldX },
+      { label: supplyStatusLabel('voided'), value: 'voided', icon: Ban },
     ],
   },
 ];

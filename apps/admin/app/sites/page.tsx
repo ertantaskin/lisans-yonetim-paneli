@@ -1,18 +1,21 @@
 import Link from 'next/link';
 import { Globe, Plus } from 'lucide-react';
-import { apiGet, type SiteRow } from '../../lib/api';
+import { apiGet } from '../../lib/api';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { PageHeader } from '../../components/ui/page-header';
-import { SitesTable } from '../../components/sites-table';
+import { SitesTable, type SiteListRow } from '../../components/sites-table';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SitesPage() {
-  let sites: SiteRow[] = [];
+  // SiteListRow = SiteRow + bağlantı sağlığı alanları (pluginVersion/pluginVersionAt, 0028).
+  // API bunları zaten döndürüyor (toPublicSite sır olmayan kolonları geçirir); tip tarafında
+  // opsiyonel okunur → alan gelmezse kolon "—" gösterir, uydurma değer basılmaz.
+  let sites: SiteListRow[] = [];
   let error: string | null = null;
   try {
-    sites = await apiGet<SiteRow[]>('/v1/admin/sites');
+    sites = await apiGet<SiteListRow[]>('/v1/admin/sites');
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }

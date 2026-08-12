@@ -100,10 +100,24 @@ export interface ReplacementMessageRow {
 export interface AdminReplacementRow {
   id: string;
   siteId: string;
+  /**
+   * Talebin geldiği mağazanın alan adı (site silinmişse null). Çok siteli kurulumda mağaza
+   * sipariş no'ları ÇAKIŞIR (#1024 iki farklı sitede olabilir) → operatör kararı (onayla/reddet)
+   * mağaza bağlamı olmadan veremez; kuyruk bunu göstermeli (denetim bulgusu).
+   */
+  siteDomain: string | null;
   orderId: string;
   remoteOrderId: string | null;
   lineId: string | null;
   assignmentId: string | null;
+  /**
+   * Talebin ilgili olduğu PANEL ürünü (satırdan, yoksa atamanın lisans kaleminden çözülür).
+   * "Onayla" aynı üründen taze lisans atamaya çalışır → operatör hangi üründe stok gerektiğini
+   * karar ANINDA görmeli (eskiden 409 "stok yok" ile sonradan öğreniyordu). Çözülemezse null.
+   */
+  productId: string | null;
+  productName: string | null;
+  productSku: string | null;
   customerEmail: string;
   reason: string;
   status: ReplacementRequest['status'];
@@ -129,10 +143,14 @@ export interface AdminReplacementRow {
 interface AdminReplacementSqlRow {
   id: string;
   site_id: string;
+  site_domain: string | null;
   order_id: string;
   remote_order_id: string | null;
   line_id: string | null;
   assignment_id: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  product_sku: string | null;
   customer_email: string;
   reason: string;
   status: ReplacementRequest['status'];
@@ -254,9 +272,12 @@ export class ReplacementsService {
   }
 
   /**
-   * Admin liste: talep + siparişin remote_order_id'si + YAZIŞMA/SUİSTİMAL özeti; status opsiyonel filtre.
+   * Admin liste: talep + siparişin remote_order_id'si + MAĞAZA/ÜRÜN bağlamı + YAZIŞMA/SUİSTİMAL
+   * özeti; status opsiyonel filtre.
    *
    * Tek sorgu (N+1 YOK):
+   *  - sites/order_lines/assignments/license_items/products: PK eşitliği üzerinden LEFT JOIN —
+   *    mağaza alan adı + ürün (ad/SKU) kararın verildiği ekrana taşınır (ek istek YOK).
    *  - LATERAL #1: talebin mesaj sayacı + son mesaj zamanı + "son müşteri" / "son GÖRÜNÜR admin yanıtı"
    *    zaman damgaları (FILTER'lı agregat) → `unansweredByAdmin` SQL'de hesaplanır.
    *  - LATERAL #2: son mesajın yazar tipi (created_at,id DESC LIMIT 1 — deterministik).
@@ -278,10 +299,14 @@ export class ReplacementsService {
         SELECT
           rr.id,
           rr.site_id,
+          s.domain AS site_domain,
           rr.order_id,
           o.remote_order_id,
           rr.line_id,
           rr.assignment_id,
+          p.id AS product_id,
+          p.name AS product_name,
+          p.sku AS product_sku,
           rr.customer_email,
           rr.reason,
           rr.status,
@@ -298,6 +323,14 @@ export class ReplacementsService {
           coalesce(c.cnt90, 0)::int AS customer_request_count_90d
         FROM replacement_requests rr
         LEFT JOIN orders o ON o.id = rr.order_id
+        -- Mağaza bağlamı (çok siteli kurulumda sipariş no'ları çakışır).
+        LEFT JOIN sites s ON s.id = rr.site_id
+        -- Ürün çözümü: ÖNCE sipariş satırı (kesin kaynak), yoksa atamanın lisans kalemi.
+        -- Hepsi PK/indeksli eşitlik JOIN'i (satır sayısı ≤200) → N+1 yok, ek tarama yok.
+        LEFT JOIN order_lines ol ON ol.id = rr.line_id
+        LEFT JOIN assignments a ON a.id = rr.assignment_id
+        LEFT JOIN license_items li ON li.id = a.license_item_id
+        LEFT JOIN products p ON p.id = coalesce(ol.product_id, li.product_id)
         LEFT JOIN LATERAL (
           SELECT
             count(*)::int AS message_count,
@@ -331,10 +364,14 @@ export class ReplacementsService {
     const items: AdminReplacementRow[] = rows.map((r) => ({
       id: r.id,
       siteId: r.site_id,
+      siteDomain: r.site_domain ?? null,
       orderId: r.order_id,
       remoteOrderId: r.remote_order_id,
       lineId: r.line_id,
       assignmentId: r.assignment_id,
+      productId: r.product_id ?? null,
+      productName: r.product_name ?? null,
+      productSku: r.product_sku ?? null,
       customerEmail: r.customer_email,
       reason: r.reason,
       status: r.status,

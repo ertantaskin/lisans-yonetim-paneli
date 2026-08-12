@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { useLive } from './live-provider';
 import type { LiveOrder, LiveStats, LiveSupport } from '../../lib/live-types';
-import { badgeStatusLabel, orderStatusLabel, supportStatusLabel } from '../../lib/labels';
+import { badgeStatusLabel, supportStatusLabel } from '../../lib/labels';
 import { cn, fmtDateTime } from '../../lib/utils';
 import { Badge, type BadgeProps } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -107,31 +107,36 @@ interface StatusMeta {
 /**
  * Sipariş durumu → rozet. Etiket TEK KAYNAK `lib/labels.ts` (ham enum operatöre çıkmaz);
  * `held` bayrağı ham durumu EZER — panelin yetkili "İncelemede" işareti odur (§8).
+ *
+ * ETİKET SÖZLÜĞÜ = `badgeStatusLabel` (StatusBadge ile BİREBİR aynı metin). Eskiden burada
+ * `orderStatusLabel` okunuyordu ve aynı durum iki farklı Türkçe adla görünüyordu: panoda
+ * "Tamamlandı", /orders ve /pending listelerinde "Teslim edildi" — operatör iki ayrı durum
+ * var sanıyordu. Rozet dili panelin geri kalanında `badgeStatusLabel` olduğu için akış da
+ * ona hizalandı (bilinmeyen anahtar → ham değer geri düşüşü korunur).
  */
 function orderBadge(o: LiveOrder): StatusMeta {
   if (o.held) {
-    return { variant: 'warning', label: orderStatusLabel('held_for_review'), icon: ClipboardCheck };
+    return { variant: 'warning', label: badgeStatusLabel('held_for_review'), icon: ClipboardCheck };
   }
   switch (o.status) {
     // Eşlenmemiş sipariş: mağaza ürünü panel ürününe bağlanmadığı için TESLİM EDİLEMEZ —
     // operatörün eşlemeyi yapması gerekir, o yüzden en yüksek görsel öncelik (danger).
-    // Etiket rozet sözlüğünden ("Eşlenmemiş"): `ORDER_STATUS`'te karşılığı YOK, oradan
-    // okunsa ham enum ('unmapped') operatöre çıkardı. `StatusBadge` ile birebir aynı metin.
     case 'unmapped':
       return { variant: 'danger', label: badgeStatusLabel('unmapped'), icon: ShieldAlert };
     case 'fulfilled':
-      return { variant: 'success', label: orderStatusLabel('fulfilled'), icon: CheckCircle2 };
+      return { variant: 'success', label: badgeStatusLabel('fulfilled'), icon: CheckCircle2 };
     case 'partial':
-      return { variant: 'warning', label: orderStatusLabel('partial'), icon: Clock };
+      return { variant: 'warning', label: badgeStatusLabel('partial'), icon: Clock };
     case 'pending':
-      return { variant: 'warning', label: orderStatusLabel('pending'), icon: Clock };
+      return { variant: 'warning', label: badgeStatusLabel('pending'), icon: Clock };
     case 'revoked':
-      return { variant: 'danger', label: orderStatusLabel('revoked'), icon: Ban };
+      return { variant: 'danger', label: badgeStatusLabel('revoked'), icon: Ban };
     case 'canceled':
     case 'cancelled':
-      return { variant: 'danger', label: orderStatusLabel('canceled'), icon: Ban };
+      // 'cancelled' (çift-l) sözlükte YOK → tek yazımla ('canceled') aranır, ham enum çıkmaz.
+      return { variant: 'danger', label: badgeStatusLabel('canceled'), icon: Ban };
     default:
-      return { variant: 'neutral', label: orderStatusLabel(o.status), icon: Clock };
+      return { variant: 'neutral', label: badgeStatusLabel(o.status), icon: Clock };
   }
 }
 
@@ -665,6 +670,15 @@ export function LiveSupportCard({
                     {r.remoteOrderId && (
                       <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                         #{r.remoteOrderId}
+                      </span>
+                    )}
+                    {/* MAĞAZA BAĞLAMI (sipariş akışıyla AYNI desen): çok siteli kurulumda aynı
+                        e-posta farklı mağazalardan sipariş verebilir ve sipariş numaraları her
+                        mağazada kendi sayacından gelir → hangi mağazanın talebi olduğu
+                        görünmeden değişim/stok kararı verilemez. Alan yoksa çip HİÇ çizilmez. */}
+                    {r.siteDomain && (
+                      <span className="truncate text-[11px] text-muted-foreground" title={r.siteDomain}>
+                        {r.siteDomain}
                       </span>
                     )}
                   </span>

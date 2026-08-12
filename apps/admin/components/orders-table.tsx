@@ -1,17 +1,45 @@
 'use client';
 import * as React from 'react';
 import Link from 'next/link';
-import { ArrowRight, Ban, CheckCircle2, Clock, ShieldAlert } from 'lucide-react';
+import {
+  ArrowRight,
+  Ban,
+  CheckCircle2,
+  Clock,
+  ClipboardCheck,
+  ShieldAlert,
+  TriangleAlert,
+} from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import type { OrderRow } from '../lib/api';
+import { badgeStatusLabel } from '../lib/labels';
 import { fmtDateTime, includesTr } from '../lib/utils';
 import { StatusBadge } from './ui/badge';
+import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Button } from './ui/button';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
-const columns: ColumnDef<OrderRow>[] = [
+/**
+ * Sipariş listesi satırı. `heldForReview` (§8) `/v1/admin/orders` yanıtında GELİR (list()
+ * tüm orders kolonlarını döndürür) ama paylaşılan `OrderRow` tipinde yoktur — burada
+ * OPSİYONEL genişletilir: api/admin ayrı imajlar olduğundan sürüm sapmasında alan
+ * gelmeyebilir → `=== true` ile savunmacı okunur (undefined ⇒ bugünkü davranış birebir).
+ */
+export type OrdersTableRow = OrderRow & { heldForReview?: boolean };
+
+/**
+ * Satırın GÖSTERİLECEK durumu: held bayrağı ham durumu EZER (§8). Held sipariş DB'de
+ * 'pending' durur; ham rozet "Bekliyor" derse operatör stok beklediğini sanır — oysa
+ * teslimat manuel onaya bağlıdır (aksiyon /review'da). Süzgeç ile kolon AYNI değeri
+ * okusun diye türetme accessor'da yapılır (facet 'İncelemede' seçeneği böyle çalışır).
+ */
+function displayStatus(row: OrdersTableRow): string {
+  return row.heldForReview === true ? 'held_for_review' : row.status;
+}
+
+const columns: ColumnDef<OrdersTableRow>[] = [
   {
     accessorKey: 'remoteOrderId',
     meta: { title: 'Sipariş No' },
@@ -46,10 +74,11 @@ const columns: ColumnDef<OrderRow>[] = [
     cell: ({ row }) => <span className="text-muted-foreground">{row.original.customerEmail}</span>,
   },
   {
-    accessorKey: 'status',
+    id: 'status',
+    accessorFn: displayStatus,
     meta: { title: 'Durum' },
     header: 'Durum',
-    cell: ({ row }) => <StatusBadge status={row.original.status} />,
+    cell: ({ row }) => <StatusBadge status={displayStatus(row.original)} />,
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
   {
@@ -77,19 +106,33 @@ const columns: ColumnDef<OrderRow>[] = [
   },
 ];
 
+/**
+ * Durum süzgeci. ETİKETLER ELLE YAZILMAZ: `badgeStatusLabel` ile üretilir → süzgeç metni ile
+ * kolondaki rozet metni yapısal olarak AYRIŞAMAZ (eskiden süzgeç "Kısmi", kolon "Kısmi teslim"
+ * diyordu; operatör aynı şeyi gösterip göstermediklerinden emin olamıyordu).
+ */
 const statusFacet: FacetConfig = {
   columnId: 'status',
   title: 'Durum',
   options: [
-    { label: 'Bekliyor', value: 'pending', icon: Clock },
-    { label: 'Kısmi', value: 'partial', icon: Clock },
-    { label: 'Teslim edildi', value: 'fulfilled', icon: CheckCircle2 },
-    { label: 'Geri alındı', value: 'revoked', icon: Ban },
-    { label: 'Eşlenmemiş', value: 'unmapped', icon: ShieldAlert },
+    { label: badgeStatusLabel('pending'), value: 'pending', icon: Clock },
+    { label: badgeStatusLabel('partial'), value: 'partial', icon: Clock },
+    { label: badgeStatusLabel('fulfilled'), value: 'fulfilled', icon: CheckCircle2 },
+    // §8 held: DB durumu 'pending' ama panelin YETKİLİ işareti "İncelemede" (displayStatus).
+    {
+      label: badgeStatusLabel('held_for_review'),
+      value: 'held_for_review',
+      icon: ClipboardCheck,
+    },
+    { label: badgeStatusLabel('revoked'), value: 'revoked', icon: Ban },
+    { label: badgeStatusLabel('unmapped'), value: 'unmapped', icon: ShieldAlert },
   ],
 };
 
-export function OrdersTable({ orders }: { orders: OrderRow[] }) {
+/** Sunucunun döndürdüğü en yeni sipariş sayısı (API `list()` → `limit(200)`). */
+const SERVER_LIMIT = 200;
+
+export function OrdersTable({ orders }: { orders: OrdersTableRow[] }) {
   // Mağaza facet'i VERİDEN türetilir (sabit liste değil): yalnız gerçekten sipariş gelmiş
   // mağazalar listelenir. TEK mağaza varsa facet GÖSTERİLMEZ — tek seçenekli filtre gürültüdür.
   const facets = React.useMemo<FacetConfig[]>(() => {
@@ -108,15 +151,45 @@ export function OrdersTable({ orders }: { orders: OrderRow[] }) {
       : [statusFacet];
   }, [orders]);
 
+  /**
+   * DÜRÜSTLÜK: sunucu yalnız EN YENİ 200 siparişi döndürür ve bu tablonun arama/süzgeç/
+   * sıralaması TAMAMEN istemci-taraflıdır → hepsi bu pencerede çalışır. Sessiz kalırsak:
+   * (a) sayfalamadaki "200 kayıt" toplam sipariş sanılır, (b) bir hafta önceki siparişi
+   * arayan operatör "Kayıt yok." görüp siparişin panele hiç düşmediğini sanar, (c) mağaza
+   * süzgeci yalnız bu penceredeki mağazaları listelediği için düşük hacimli mağaza HİÇ
+   * görünmez. Pencere doluysa açıkça söylenir (/pending ve /quarantine ile aynı disiplin).
+   */
+  const truncated = orders.length >= SERVER_LIMIT;
+
   return (
-    <DataTable
-      columns={columns}
-      data={orders}
-      searchColumnId="remoteOrderId"
-      searchPlaceholder="Sipariş no, e-posta veya mağaza…"
-      facets={facets}
-      initialSorting={[{ id: 'createdAt', desc: true }]}
-      emptyLabel="Kayıt yok."
-    />
+    <div className="space-y-3">
+      {truncated && (
+        <Alert variant="info">
+          <TriangleAlert />
+          <div className="min-w-0 flex-1">
+            <AlertTitle>En yeni {SERVER_LIMIT} sipariş gösteriliyor</AlertTitle>
+            <AlertDescription>
+              Arama, durum ve mağaza süzgeçleri yalnız bu pencere üzerinde çalışır — daha eski
+              bir sipariş listede çıkmıyorsa panelde yok demek DEĞİLDİR. Belirli bir siparişi
+              arıyorsanız mağaza panelinden sipariş numarasıyla gelin ya da Bekleyen Teslimatlar /
+              Müşteriler ekranından daraltarak ilerleyin.
+            </AlertDescription>
+          </div>
+        </Alert>
+      )}
+      <DataTable
+        columns={columns}
+        data={orders}
+        searchColumnId="remoteOrderId"
+        searchPlaceholder="Sipariş no, e-posta veya mağaza…"
+        facets={facets}
+        initialSorting={[{ id: 'createdAt', desc: true }]}
+        emptyLabel={
+          truncated
+            ? `Bu pencerede kayıt yok — yalnız en yeni ${SERVER_LIMIT} sipariş yüklendi, daha eskisi listede değil.`
+            : 'Kayıt yok.'
+        }
+      />
+    </div>
   );
 }

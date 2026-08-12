@@ -1,13 +1,14 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Link2, Replace } from 'lucide-react';
+import { CheckCircle2, Info, Link2, Replace } from 'lucide-react';
 import {
   createMappingAction,
   changeMappingAction,
   type FormState,
 } from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
+import { useAnnouncer } from './a11y/announcer';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Combobox } from './ui/combobox';
@@ -31,7 +32,8 @@ const initial: FormState = { ok: false };
  *    ürünü/site/varyasyon değişmez; yalnız hangi panel ürününün teslim edeceği değişir.
  * Her iki modda da mağaza ürünü + site SALT-OKUNUR gösterilir (operatör NEYİ eşlediğini doğrular),
  * mağaza ID'si gerçek veriden gizli input ile gider — operatör ID YAZMAZ (typo riski yok). Eşleme
- * HER ZAMAN elle; otomatik eşleştirme YOK. Başarıda sheet kapanır + router.refresh() ile liste tazelenir.
+ * HER ZAMAN elle; otomatik eşleştirme YOK. Başarıda liste tazelenir (router.refresh) ve sheet
+ * içinde SONUÇ ÖZETİ gösterilir (geriye dönük çözülen eski satırlar) — kapatma operatörün elinde.
  */
 export function MapProductSheet({
   mode = 'create',
@@ -44,6 +46,8 @@ export function MapProductSheet({
   mappingId,
   currentProductId,
   currentBundleQty,
+  triggerLabel,
+  triggerVariant,
 }: {
   mode?: 'create' | 'edit';
   siteId: string;
@@ -59,8 +63,16 @@ export function MapProductSheet({
   currentProductId?: string | null;
   /** edit modunda: mevcut paket adedi. */
   currentBundleQty?: number | null;
+  /**
+   * Tetikleyici butonun metni/tonu — varyasyonlu ürünün EBEVEYN satırında eşleme VARSAYILAN
+   * eylem değildir (varsayılan: varyasyonları eşlemek). O satırda çağıran ikincil bir ton
+   * geçirir; verilmezse bugünkü davranış (outline + "Eşle"/"Değiştir") aynen korunur.
+   */
+  triggerLabel?: string;
+  triggerVariant?: 'outline' | 'ghost';
 }) {
   const router = useRouter();
+  const announce = useAnnouncer();
   const [open, setOpen] = React.useState(false);
   const isEdit = mode === 'edit';
   const [state, action, pending] = React.useActionState(
@@ -68,12 +80,33 @@ export function MapProductSheet({
     initial,
   );
 
+  /**
+   * Başarıda sheet HEMEN KAPANMAZ (§3, dürüstlük kuralı).
+   *
+   * NEDEN: `createMappingAction` eşlemeyi kurduktan sonra eski bekleyen satırlara GERİYE DÖNÜK
+   * uygular ve sonucu `state.resolved` ile döndürür. Eskiden sheet `state.ok` görür görmez
+   * kapanıyor, bu özet hiç okunmuyordu → operatör "eşledim ama sipariş hâlâ bekliyor" durumunda
+   * ne olduğunu göremiyordu. Artık sonuç sheet içinde gösterilir; kapatma operatörün elindedir.
+   * Liste yine hemen tazelenir (router.refresh) — arkadaki tablo güncel kalır.
+   *
+   * `result` AYRI tutulur (state.ok'a doğrudan bakılmaz): sheet kapatılıp yeniden açıldığında
+   * bayat başarı paneli değil TEMİZ form görünsün. Effect `state` NESNESİNE bağlıdır — her
+   * gönderim yeni nesne döndürür → ardışık gönderimlerde de tetiklenir.
+   */
+  const [result, setResult] = React.useState<FormState | null>(null);
   React.useEffect(() => {
-    if (state.ok) {
-      setOpen(false);
-      router.refresh();
-    }
-  }, [state.ok, router]);
+    if (!state.ok) return;
+    setResult(state);
+    router.refresh();
+    const r = state.resolved;
+    announce(
+      r
+        ? `Eşleme kuruldu. ${r.linked} eski satır bağlandı, ${r.delivered} teslim edildi, ${r.stillPending} satır stok bekliyor.`
+        : isEdit
+          ? 'Eşleme güncellendi.'
+          : 'Eşleme kuruldu; geriye dönük çözülecek bekleyen satır yoktu.',
+    );
+  }, [state, isEdit, router, announce]);
 
   // site+ürün+varyasyon → benzersiz; colon vb. HTML id/htmlFor için sadeleştirilir
   // (etiket–kontrol bağı bozulmasın).
@@ -83,26 +116,26 @@ export function MapProductSheet({
   );
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        // Yeniden açılışta bayat başarı paneli kalmasın → temiz formla başla.
+        if (v) setResult(null);
+        setOpen(v);
+      }}
+    >
       <SheetTrigger asChild>
         <Button
           size="sm"
-          variant="outline"
+          variant={triggerVariant ?? 'outline'}
           aria-label={
             isEdit
               ? `${productName} eşlemesini başka panel ürünüyle değiştir`
               : `${productName} mağaza ürününü panel ürününe eşle`
           }
         >
-          {isEdit ? (
-            <>
-              <Replace /> Değiştir
-            </>
-          ) : (
-            <>
-              <Link2 /> Eşle
-            </>
-          )}
+          {isEdit ? <Replace /> : <Link2 />}
+          {triggerLabel ?? (isEdit ? 'Değiştir' : 'Eşle')}
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
@@ -115,7 +148,60 @@ export function MapProductSheet({
           </SheetDescription>
         </SheetHeader>
 
-        {/* key={open}: her açılışta formu (Combobox/adet) temiz başlat. */}
+        {/* Başarı özeti — form yerine geçer. Eşleme kurulduktan sonra "kaç eski satır bağlandı /
+            teslim edildi / hâlâ stok bekliyor" burada raporlanır; hiçbir şey çözülmediyse bu da
+            AÇIKÇA yazılır (sessiz kapanış "her şey tamam" izlenimi veriyordu). */}
+        {result ? (
+          <div className="space-y-4 p-4 pt-0">
+            <div className="flex gap-2 rounded-md border border-success/40 bg-success/5 px-3 py-2 text-sm">
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">
+                  {isEdit ? 'Eşleme güncellendi' : 'Eşleme kuruldu'}
+                </p>
+                <p className="mt-0.5 text-muted-foreground">
+                  {productName} &rarr; bu mağaza ürününün yeni siparişleri artık seçtiğiniz panel
+                  ürününden teslim edilir.
+                </p>
+              </div>
+            </div>
+
+            {!isEdit && (
+              <div className="flex gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <div className="min-w-0">
+                  <p className="font-medium text-foreground">Eski bekleyen satırlar</p>
+                  {result.resolved ? (
+                    <p className="mt-0.5 text-muted-foreground">
+                      <strong className="tabular-nums text-foreground">
+                        {result.resolved.linked}
+                      </strong>{' '}
+                      satır ürüne bağlandı ·{' '}
+                      <strong className="tabular-nums text-foreground">
+                        {result.resolved.delivered}
+                      </strong>{' '}
+                      teslim edildi ·{' '}
+                      <strong className="tabular-nums text-foreground">
+                        {result.resolved.stillPending}
+                      </strong>{' '}
+                      satır stok bekliyor.
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-muted-foreground">
+                      Bu mağaza ürünü için geriye dönük çözülecek bekleyen satır yoktu. (Varsa
+                      “Eşleme Bekleyen Sipariş Satırları” bölümünden tekrar uygulayabilirsiniz.)
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <Button type="button" onClick={() => setOpen(false)}>
+              Kapat
+            </Button>
+          </div>
+        ) : (
+        /* key={open}: her açılışta formu (Combobox/adet) temiz başlat. */
         <form key={String(open)} action={action} className="space-y-4 p-4 pt-0">
           {/* SALT-OKUNUR özet — operatör NEYİ eşlediğini doğrular (ekranın asıl değeri). */}
           <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
@@ -197,6 +283,7 @@ export function MapProductSheet({
             {pending ? 'Kaydediliyor…' : isEdit ? 'Değişikliği kaydet' : 'Eşle'}
           </Button>
         </form>
+        )}
       </SheetContent>
     </Sheet>
   );

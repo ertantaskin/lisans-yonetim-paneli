@@ -2,15 +2,15 @@ import { ShieldAlert } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
 import { SecurityTable } from '../../components/security-table';
-import { getSecurityEvents, type SecurityEventRow } from './queries';
+import { getSecurityEvents, SECURITY_FETCH_LIMIT, type SecurityEventsData } from './queries';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SecurityPage() {
-  let events: SecurityEventRow[] = [];
+  let data: SecurityEventsData = { rows: [], truncated: false };
   let error: string | null = null;
   try {
-    events = await getSecurityEvents();
+    data = await getSecurityEvents();
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -27,7 +27,11 @@ export default async function SecurityPage() {
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         </Card>
       ) : (
-        <SecurityTable events={events} />
+        <SecurityTable
+          events={data.rows}
+          truncated={data.truncated}
+          limit={SECURITY_FETCH_LIMIT}
+        />
       )}
     </div>
   );

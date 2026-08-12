@@ -40,13 +40,29 @@ export interface ProductDetail {
      */
     expiredAvailable: number;
   };
-  batches: Array<{ id: string; label: string; status: string; qtyReceived: number }>;
+  batches: Array<{
+    id: string;
+    label: string;
+    status: string;
+    qtyReceived: number;
+    /** Teslim alma tarihi — parti seçicide (stok import) etiketle birlikte gösterilir. */
+    receivedAt: string;
+    /** Partiyi getiren tedarikçi (elle girilen partide null). */
+    supplierId: string | null;
+    supplierName: string | null;
+  }>;
   purchaseOrders: Array<{
     id: string;
     status: string;
     qtyOrdered: number;
     qtyReceived: number;
     eta: string | null;
+    /**
+     * Emri verdiğimiz tedarikçi — "stok bitiyor, kimi arayacağım?" sorusunun cevabı
+     * ekranda olsun diye JOIN ile getirilir (operatör başka ekrana gitmesin).
+     */
+    supplierId: string;
+    supplierName: string;
   }>;
   velocity: {
     sold7d: number;
@@ -61,6 +77,13 @@ export interface ProductDetail {
     action: string;
     qty: number;
     reason: string;
+    /** Düzeltmeyi yapan operatör (çok-operatörlü panelde "bunu kim yaptı?" ekrandan yanıtlanır). */
+    actor: string;
+    /**
+     * Düzeltmenin dokunduğu lisans kalemi (varsa). null ⇒ düzeltme YALNIZ deftere yazıldı,
+     * satılabilir stok DEĞİŞMEDİ — ekran bunu dürüstçe ayırt edebilsin diye döndürülür.
+     */
+    licenseItemId: string | null;
     createdAt: string;
   }>;
   /** Bu ürünün site eşlemeleri (§3) — ürün-merkezli yönetim: eşleme artık ürün detayında. */
@@ -222,7 +245,9 @@ export class ProductsService {
     });
   }
 
-  async list(): Promise<Array<Product & { availableStock: number }>> {
+  async list(): Promise<
+    Array<Product & { availableStock: number; mappedSites: string[]; mappingCount: number }>
+  > {
     // Ürün başına anlık 'available' stok sayısı — tek GROUP BY agregasyonu.
     // status='available' filtresi JOIN ON'a alındı: yalnız uygun satırlar okunur,
     // partial index (license_items_available_idx: product_id,created_at WHERE
@@ -249,7 +274,35 @@ export class ProductsService {
       )
       .groupBy(products.id);
 
-    return rows.map((r) => ({ ...r.product, availableStock: Number(r.availableStock) }));
+    // Ürün başına AKTİF eşleme özeti (§3) — "bu ürün hangi mağazalarda satılıyor?".
+    // AYRI sorgu (JOIN DEĞİL) bilinçli: yukarıdaki sorgu license_items üzerinden SUM
+    // agregasyonu yapıyor; eşleme tablosunu aynı JOIN'e katmak satırları çoğaltıp
+    // availableStock'u ŞİŞİRİRDİ (ürün başına eşleme sayısı kadar). İki sorgu → N+1 değil.
+    const mapRows = await rawRows<{ product_id: string; domains: string[] | null; cnt: number }>(
+      this.db,
+      sql`
+        SELECT m.product_id,
+               array_agg(DISTINCT s.domain) AS domains,
+               count(*)::int AS cnt
+        FROM site_product_mappings m
+        JOIN sites s ON s.id = m.site_id
+        WHERE m.active = true
+        GROUP BY m.product_id;
+      `,
+    );
+    const byProduct = new Map(mapRows.map((r) => [r.product_id, r]));
+
+    return rows.map((r) => {
+      const m = byProduct.get(r.product.id);
+      return {
+        ...r.product,
+        availableStock: Number(r.availableStock),
+        // Eşlemesi olmayan ürün → boş dizi (null değil): ekran "eşleme yok" uyarısını
+        // BİLGİYE dayanarak basar, alanın gelmemesiyle karıştırmaz.
+        mappedSites: m?.domains ?? [],
+        mappingCount: Number(m?.cnt ?? 0),
+      };
+    });
   }
 
   async getById(id: string): Promise<Product> {
@@ -388,28 +441,43 @@ export class ProductsService {
     };
   }
 
-  /** Bu ürüne bağlı teslim partileri (§12), en yeni önce. */
+  /**
+   * Bu ürüne bağlı teslim partileri (§12), en yeni önce.
+   * Tedarikçi adı + teslim tarihi JOIN ile gelir: stok import ekranındaki parti seçici ham
+   * UUID yerine "etiket · tarih · durum" gösterebilsin (operatörün elinde UUID yok).
+   */
   private async detailBatches(id: string): Promise<ProductDetail['batches']> {
     const list = await rawRows<{
       id: string;
       label: string;
       status: string;
       qty_received: number;
+      received_at: string;
+      supplier_id: string | null;
+      supplier_name: string | null;
     }>(this.db, sql`
-      SELECT id, label, status, qty_received
-      FROM batches
-      WHERE product_id = ${id}
-      ORDER BY received_at DESC, created_at DESC;
+      SELECT b.id, b.label, b.status, b.qty_received, b.received_at,
+             b.supplier_id, s.name AS supplier_name
+      FROM batches b
+      LEFT JOIN suppliers s ON s.id = b.supplier_id
+      WHERE b.product_id = ${id}
+      ORDER BY b.received_at DESC, b.created_at DESC;
     `);
     return list.map((r) => ({
       id: r.id,
       label: r.label,
       status: r.status,
       qtyReceived: Number(r.qty_received),
+      receivedAt: r.received_at,
+      supplierId: r.supplier_id,
+      supplierName: r.supplier_name,
     }));
   }
 
-  /** Bu ürüne verilmiş satın alma emirleri (§12), en yeni önce. */
+  /**
+   * Bu ürüne verilmiş satın alma emirleri (§12), en yeni önce.
+   * supplier_id NOT NULL + RESTRICT FK → INNER JOIN güvenli (emirsiz tedarikçi satırı olamaz).
+   */
   private async detailPurchaseOrders(id: string): Promise<ProductDetail['purchaseOrders']> {
     const list = await rawRows<{
       id: string;
@@ -417,11 +485,15 @@ export class ProductsService {
       qty_ordered: number;
       qty_received: number;
       eta: string | null;
+      supplier_id: string;
+      supplier_name: string;
     }>(this.db, sql`
-      SELECT id, status, qty_ordered, qty_received, eta
-      FROM purchase_orders
-      WHERE product_id = ${id}
-      ORDER BY created_at DESC;
+      SELECT po.id, po.status, po.qty_ordered, po.qty_received, po.eta,
+             po.supplier_id, s.name AS supplier_name
+      FROM purchase_orders po
+      JOIN suppliers s ON s.id = po.supplier_id
+      WHERE po.product_id = ${id}
+      ORDER BY po.created_at DESC;
     `);
     return list.map((r) => ({
       id: r.id,
@@ -429,6 +501,8 @@ export class ProductsService {
       qtyOrdered: Number(r.qty_ordered),
       qtyReceived: Number(r.qty_received),
       eta: r.eta,
+      supplierId: r.supplier_id,
+      supplierName: r.supplier_name,
     }));
   }
 
@@ -450,16 +524,23 @@ export class ProductsService {
     return { sold7d: Number(list[0]?.sold7d ?? 0), sold30d: Number(list[0]?.sold30d ?? 0) };
   }
 
-  /** Sebepli stok düzeltme izi (§12), en yeni önce (son 50). */
+  /**
+   * Sebepli stok düzeltme izi (§12), en yeni önce (son 50).
+   * actor + license_item_id de döner: "bu 5 anahtarı KİM geçersiz kıldı" ve "düzeltme
+   * gerçekten stoka dokundu mu" soruları ekrandan yanıtlanabilsin (ikisi de zaten yazılıyordu,
+   * yalnız okunmuyordu).
+   */
   private async detailAdjustments(id: string): Promise<ProductDetail['adjustments']> {
     const list = await rawRows<{
       id: string;
       action: string;
       qty: number;
       reason: string;
+      actor: string;
+      license_item_id: string | null;
       created_at: string;
     }>(this.db, sql`
-      SELECT id, action, qty, reason, created_at
+      SELECT id, action, qty, reason, actor, license_item_id, created_at
       FROM stock_adjustments
       WHERE product_id = ${id}
       ORDER BY created_at DESC
@@ -470,6 +551,8 @@ export class ProductsService {
       action: r.action,
       qty: Number(r.qty),
       reason: r.reason,
+      actor: r.actor,
+      licenseItemId: r.license_item_id,
       createdAt: r.created_at,
     }));
   }

@@ -457,6 +457,9 @@ export class AdminOrdersService {
    * alanı kısmen teslim edilmiş karma siparişlerde 'partial' olabilir ama satırlarından biri
    * hâlâ eşlemesizdir; operatör bunu status'ten göremiyordu. Tek EXISTS alt sorgusu ile çözülür
    * (N+1 YOK); `order_lines_order_idx` + kısmi `order_lines_pending_product_idx` karşılar.
+   *
+   * Her satırda ayrıca `productSummary` döner: siparişin HANGİ ürün için beklediği + ürün
+   * başına eksik adet (aşağıdaki gerekçe). Ekran stok önceliğini listeden okuyabilsin diye.
    */
   async pending() {
     // S1/S3 ortak ifadesi: eşlemesiz (product_id NULL) + iptal EDİLMEMİŞ + hâlâ iş bekleyen satır.
@@ -473,6 +476,39 @@ export class AdminOrdersService {
         and ol.canceled = false
         and ol.status in ('pending', 'partial')
     )`;
+    // ÜRÜN ÖZETİ (operatör şikâyeti): ekranın asıl aksiyonu "Stok Gir" ama satırda HANGİ ürün
+    // için beklendiği yazmıyordu → operatör 40 siparişi tek tek açmadan stok önceliğini
+    // göremiyordu. Sipariş başına ürün kırılımı TEK korelasyonlu alt sorguyla döner (N+1 YOK;
+    // `order_lines_order_idx` karşılar) — ürün başına eksik adet + ürün kimliği (UI ürün
+    // detayına derin bağlantı verir).
+    //
+    // Yalnız İŞ BEKLEYEN satırlar sayılır: iptal/iade (canceled) satır yeniden teslim edilmez
+    // (H1), terminal satır zaten bitmiştir. `qty` PANEL birimidir (eşleme anında bundleQty ile
+    // ölçeklenmiş) → `qty - fulfilled_qty` doğrudan "kaç lisans eksik" demektir.
+    // product_id NULL satırlar burada YOKTUR (eşlemesiz) — onları `hasUnmappedLine` anlatır.
+    //
+    // Korelasyonda `orders.id` DÜZ METİN yazılır (yukarıdaki EXISTS ile aynı tuzak: gömülü
+    // kolon tablo-öneksiz basılıp iç kapsamdan çözülebilir).
+    // `to_json(array(...))`: TEK seviyeli korelasyonlu alt sorgu → boş sonuçta `[]` döner.
+    // (FROM-içi alt sorgu sarmalı bilinçli KULLANILMADI: dış sorguya korelasyon kapsam
+    // kuralları orada tartışmalı; ARRAY alt sorgusu düz korelasyondur ve her sürümde geçerlidir.)
+    const productSummary = sql<
+      Array<{ productId: string; name: string; missing: number }>
+    >`to_json(array(
+      select json_build_object(
+        'productId', ol.product_id,
+        'name', min(p.name),
+        'missing', sum(greatest(ol.qty - ol.fulfilled_qty, 0))::int
+      )
+      from order_lines ol
+      join products p on p.id = ol.product_id
+      where ol.order_id = orders.id
+        and ol.canceled = false
+        and ol.status in ('pending', 'partial')
+      group by ol.product_id
+      order by sum(greatest(ol.qty - ol.fulfilled_qty, 0)) desc, min(p.name)
+    ))`;
+
     const columns = getTableColumns(orders);
 
     // MAĞAZA BAĞLAMI (operatör şikâyeti): kuyruk ÇOK SİTELİDİR — satırın hangi mağazadan
@@ -482,6 +518,7 @@ export class AdminOrdersService {
     const selection = {
       ...columns,
       hasUnmappedLine,
+      productSummary,
       siteDomain: sites.domain,
       siteType: sites.type,
     };
