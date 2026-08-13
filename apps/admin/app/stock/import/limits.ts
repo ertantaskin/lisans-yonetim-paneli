@@ -35,9 +35,15 @@ export const MAX_IMPORT_ITEMS = 10_000;
  */
 export const MAX_TABLE_ROWS = 500;
 
-/** Bayt sayısını okunur KB/MB metnine çevirir (Türkçe ondalık ayracı). */
+/**
+ * Bayt sayısını okunur B/KB/MB metnine çevirir (Türkçe ondalık ayracı).
+ *
+ * 1 KB altı ham BAYT olarak yazılır: `Math.ceil` boş formda bile ("[]" = 2 bayt)
+ * "1 KB" gösteriyordu ve sayaç daha ilk açılışta yanlış okunuyordu.
+ */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;
+  if (bytes < 1024) return `${Math.max(Math.round(bytes), 0)} B`;
   return `${Math.ceil(bytes / 1024)} KB`;
 }
 
