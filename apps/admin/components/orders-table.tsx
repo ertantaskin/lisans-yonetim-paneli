@@ -163,8 +163,11 @@ export function OrdersTable({ orders }: { orders: OrdersTableRow[] }) {
 
   return (
     <div className="space-y-3">
+      {/* Ton: `warning` — ikon TriangleAlert ile uyumlu. Bu kutu "liste EKSİK olabilir"
+          diyor; operatörün yanlış sonuç çıkarmasını önlemesi gereken bir uyarıdır,
+          nötr bir bilgi notu değil. */}
       {truncated && (
-        <Alert variant="info">
+        <Alert variant="warning">
           <TriangleAlert />
           <div className="min-w-0 flex-1">
             <AlertTitle>En yeni {SERVER_LIMIT} sipariş gösteriliyor</AlertTitle>

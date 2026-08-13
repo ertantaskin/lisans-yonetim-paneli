@@ -247,7 +247,7 @@ export function CatalogTable({
                       <TableCell>
                         {row.mapped ? (
                           <Badge variant="success">
-                            {row.mappedProductName ?? 'eşli'}
+                            {row.mappedProductName ?? 'Eşli'}
                             {row.bundleQty && row.bundleQty > 1 ? ` · paket ${row.bundleQty}` : ''}
                           </Badge>
                         ) : variableParent ? (
@@ -255,7 +255,7 @@ export function CatalogTable({
                             <Badge variant="neutral">
                               {/* Sayaç yalnız GERÇEK veri varken basılır — alan gelmediyse
                                   "0/0 eşli" gibi uydurma bir kırılım gösterilmez. */}
-                              varyasyonları eşleyin
+                              Varyasyonları eşleyin
                               {totalVar > 0 ? ` (${mappedVar}/${totalVar} eşli)` : ''}
                             </Badge>
                             <span className="text-xs text-muted-foreground">
@@ -263,7 +263,7 @@ export function CatalogTable({
                             </span>
                           </span>
                         ) : (
-                          <Badge variant="warning">eşlenmemiş</Badge>
+                          <Badge variant="outline">Eşlenmemiş</Badge>
                         )}
                       </TableCell>
                       <TableCell className="text-right">

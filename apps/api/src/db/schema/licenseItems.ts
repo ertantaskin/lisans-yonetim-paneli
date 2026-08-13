@@ -103,6 +103,13 @@ export const licenseItems = pgTable(
     // (Tek başına `(created_at DESC, seq ASC)` index'i İKİSİNİ DE veremez: geriye taraması
     // `(ASC, DESC)` üretir, bu ne "en yeni" ne "en eski" sıralamasıdır.)
     index('license_items_created_asc_idx').on(t.createdAt.asc(), t.seq.asc()),
+    // ÜRÜNE göre envanter (ürün detayı + `/stock/import` önizleme + `?product=` süzgeci).
+    // Buraya kadar `product_id` üzerinde KOŞULSUZ index YOKTU: mevcut ikisi de
+    // `WHERE status='available'` KISMİ index'i (available_idx / fefo_idx), yani "bu ürünün
+    // TÜM kalemleri" (teslim edilmiş + karantina dahil) sorgusu tam tablo taraması yapıyordu.
+    // Sıralama kolonlarını da taşır: `WHERE product_id = ? ORDER BY created_at DESC, seq DESC`
+    // eşitlikle sabitlenmiş ilk kolondan sonra GERİYE taramayla karşılanır.
+    index('license_items_product_created_idx').on(t.productId, t.createdAt, t.seq),
     index('license_items_status_created_idx').on(t.status, t.createdAt.desc()),
     index('license_items_assigned_idx').on(sql`${t.assignedAt} DESC NULLS LAST`),
     index('license_items_batch_idx').on(t.batchId),

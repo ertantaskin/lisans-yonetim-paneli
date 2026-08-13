@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Ship, History, CloudUpload, Info, Activity, Lock } from 'lucide-react';
+import { Ship, History, CloudUpload, Info, Activity, Lock, TriangleAlert } from 'lucide-react';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge, type BadgeProps } from '../../components/ui/badge';
@@ -20,10 +20,11 @@ import { DeploymentsAutoRefresh } from './auto-refresh';
 export const dynamic = 'force-dynamic';
 
 const DEPLOY_STATUS: Record<string, { variant: NonNullable<BadgeProps['variant']>; label: string }> = {
-  pending: { variant: 'warning', label: 'bekliyor' },
-  running: { variant: 'accent', label: 'çalışıyor' },
-  success: { variant: 'success', label: 'başarılı' },
-  failed: { variant: 'danger', label: 'başarısız' },
+  pending: { variant: 'warning', label: 'Bekliyor' },
+  // 'çalışıyor' AKIŞTA olan iş → mavi (kuyruktaki amber 'Bekliyor'dan bir bakışta ayrılır).
+  running: { variant: 'info', label: 'Çalışıyor' },
+  success: { variant: 'success', label: 'Başarılı' },
+  failed: { variant: 'danger', label: 'Başarısız' },
 };
 
 const TARGET_LABEL: Record<string, string> = {
@@ -65,6 +66,18 @@ export default async function DeploymentsPage() {
   // Kuyrukta bekleyen/çalışan iş varsa sayfa kendini tazeler (aksi halde poll YOK).
   const hasActiveDeployment = rows.some((r) => r.status === 'pending' || r.status === 'running');
 
+  // TAKILI İSTEK TEŞHİSİ: runner (host cron) dakikada bir yoklar. Birkaç dakikadır
+  // 'pending' duran bir istek "yavaş" değil, ALINMAMIŞ demektir — ve panelden yeni dağıtım
+  // 409 yer. Eskiden ekran bunu söylemiyordu: operatör "kuyrukta" sanıp bekliyordu.
+  // (Sunucu tarafı ayrıca 30dk'dan eski 'pending'i otomatik 'failed' yapar; bu bant o
+  // eşikten ÖNCE nedeni gösterir.)
+  const STALL_MS = 3 * 60 * 1000;
+  const stalled = rows
+    .filter((r) => r.status === 'pending' && r.createdAt)
+    .map((r) => Date.now() - new Date(r.createdAt).getTime())
+    .filter((age) => Number.isFinite(age) && age > STALL_MS)
+    .sort((a, b) => b - a)[0];
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -84,6 +97,29 @@ export default async function DeploymentsPage() {
         </AlertDescription>
       </Alert>
 
+      {stalled !== undefined && (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <div className="min-w-0 flex-1">
+            <AlertTitle>
+              Bekleyen istek {Math.round(stalled / 60000)} dakikadır alınmadı
+            </AlertTitle>
+            <AlertDescription>
+              Runner normalde dakikada bir yoklar ve dağıtım 1-2 dakika sürer. Bu kadar
+              beklemesi, VPS host&apos;undaki dağıtım servisinin (cron) çalışmadığı anlamına
+              gelir — kurulum adımları{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                docs/RUNBOOK-RELEASE.md §A2
+              </code>
+              . Bekleyen istek 30 dakika sonra otomatik olarak &quot;başarısız&quot;a düşer ve
+              kuyruk açılır; acele ediyorsanız VPS&apos;te{' '}
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">./scripts/deploy.sh</code>{' '}
+              ile elle dağıtabilirsiniz.
+            </AlertDescription>
+          </div>
+        </Alert>
+      )}
+
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>
@@ -95,7 +131,7 @@ export default async function DeploymentsPage() {
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground">Durum</span>
                   <Badge variant={healthOk ? 'success' : 'danger'}>
-                    {healthOk ? 'sağlıklı' : 'sorunlu'}
+                    {healthOk ? 'Sağlıklı' : 'Sorunlu'}
                   </Badge>
                 </div>
                 <div className="flex items-center justify-between">
@@ -165,7 +201,7 @@ export default async function DeploymentsPage() {
               <TableBody>
                 {rows.map((r) => {
                   // Savunmalı: bilinmeyen enum/slug kullanıcıya ham sızmasın → nötr Türkçe fallback.
-                  const s = DEPLOY_STATUS[r.status] ?? { variant: 'neutral' as const, label: 'bilinmiyor' };
+                  const s = DEPLOY_STATUS[r.status] ?? { variant: 'neutral' as const, label: 'Bilinmiyor' };
                   // Runner'ın gönderdiği çıktı (deploy.sh logunun kuyruğu) — API zaten yolluyordu
                   // ama ekranda hiç gösterilmiyordu: başarısız dağıtımda operatör build hatasını
                   // görmek için VPS'e SSH atmak zorunda kalıyordu. Savunmalı okunur (alan yoksa
@@ -175,7 +211,7 @@ export default async function DeploymentsPage() {
                     <React.Fragment key={r.id}>
                     <TableRow>
                       <TableCell className="whitespace-nowrap font-medium text-foreground">
-                        {TARGET_LABEL[r.target] ?? 'bilinmiyor'}
+                        {TARGET_LABEL[r.target] ?? 'Bilinmiyor'}
                       </TableCell>
                       <TableCell>
                         <Badge variant={s.variant}>{s.label}</Badge>

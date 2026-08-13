@@ -12,7 +12,12 @@ const alertVariants = cva(
     variants: {
       variant: {
         default: 'border-border bg-card text-foreground [&>svg]:text-muted-foreground',
-        info: 'border-border bg-muted/50 text-foreground [&>svg]:text-muted-foreground',
+        /* Sessiz açıklama kutusu (renk taşımaz) — "şunu bilmen iyi olur" tonunda. */
+        muted: 'border-border bg-muted/50 text-foreground [&>svg]:text-muted-foreground',
+        /* Bilgi (mavi) — rozet `variant="info"` ile AYNI hue. Eskiden bu isim GRİ bir kutu
+           üretiyordu; rozet mavi olunca aynı adın iki farklı rengi olurdu (tasarım
+           sistemi tutarsızlığı). Sessiz kutu artık `muted`. */
+        info: 'border-info/40 bg-[color-mix(in_oklch,var(--info)_12%,transparent)] text-foreground [&>svg]:text-info',
         success:
           'border-success/40 bg-[color-mix(in_oklch,var(--success)_12%,transparent)] text-foreground [&>svg]:text-success',
         warning:

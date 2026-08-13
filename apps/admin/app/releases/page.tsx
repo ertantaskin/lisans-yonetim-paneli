@@ -258,7 +258,7 @@ export default async function ReleasesPage() {
                     <TableCell className="whitespace-nowrap font-medium tabular-nums text-foreground">
                       <span className="inline-flex items-center gap-2">
                         v{r.version}
-                        {i === 0 && <Badge variant="success">en yeni</Badge>}
+                        {i === 0 && <Badge variant="success">En yeni</Badge>}
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">

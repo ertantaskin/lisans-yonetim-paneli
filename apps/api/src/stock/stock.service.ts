@@ -1151,7 +1151,10 @@ export class StockService {
     // Fragman TEK yerde kurulur; hem sayfa alt-sorgusu (page_slice) hem de yedek COUNT
     // BİREBİR aynısını kullanır → toplam ile liste asla ayrışamaz.
     const conds: SQL[] = [sql`true`];
-    // Bu iki süzgeç doğrudan index'e oturur (li.product_id / li.batch_id → license_items_batch_idx).
+    // Bu iki süzgeç doğrudan index'e oturur: li.batch_id → `license_items_batch_idx`,
+    // li.product_id → `license_items_product_created_idx` (product_id, created_at, seq —
+    // sıralamayı da karşılar). ÖNCEDEN product_id için yalnız `WHERE status='available'`
+    // KISMİ index'leri vardı, yani "bu ürünün tüm kalemleri" tam tablo taramasıydı.
     if (productId) conds.push(sql`li.product_id = ${productId}`);
     if (batchId) conds.push(sql`li.batch_id = ${batchId}`);
     // PERF: eski `li.status::text = $1` yazımı KOLONU fonksiyona sokuyordu → sargable değildi,

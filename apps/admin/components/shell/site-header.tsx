@@ -30,6 +30,10 @@ const LABELS: Record<string, string> = {
   // NAV'dan türeyen anahtarlar tek segmenttir ('/stock/import' → 'stock/import' asla eşleşmez),
   // bu yüzden çok segmentli rotaların son parçası burada elle karşılanır.
   import: 'Stok Girişi',
+  // NAV'da yok (ürün listesi /stock altında) ama breadcrumb yol parçalarından üretildiği
+  // için '/products/[id]' sayfasında ara segment olarak çıkar → etiketsiz kalırsa ham
+  // İngilizce "products" görünürdü. Link'i app/products/page.tsx /stock'a yönlendirir.
+  products: 'Ürünler',
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

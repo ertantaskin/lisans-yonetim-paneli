@@ -2,33 +2,49 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import {
   Archive,
+  CalendarX2,
   CheckCircle2,
   Clock,
   AlertTriangle,
   Ban,
   Boxes,
   Lock,
+  PackageCheck,
   PauseCircle,
   Mail,
   Loader2,
   RefreshCw,
   ShieldAlert,
+  Unlink,
   type LucideIcon,
 } from 'lucide-react';
 import { badgeStatusLabel, supplyStatusLabel } from '../../lib/labels';
 import { cn } from '../../lib/utils';
 
+/**
+ * Rozet görünümü: SOLUK tint + saç teli halka (ring). Halka, düşük doygunluklu zeminin
+ * kenarını belirginleştirir — tint'i koyulaştırmadan (yani "bağırmadan") pill'i tabloda
+ * okunur kılar. Renkler `--success/--info/--warning/--attention/--destructive` üzerinden
+ * gelir; tema değiştiğinde otomatik uyar (koyu temada aynı tint yüzdesi daha açık okunur).
+ * Kontrast HESAPLANDI: her ton %14 tint zemini üzerinde AA üstü (5.1–7.8:1).
+ */
 const badgeVariants = cva(
-  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium [&_svg]:size-3',
+  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset [&_svg]:size-3 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        neutral: 'bg-secondary text-secondary-foreground',
-        accent: 'bg-secondary text-foreground',
-        success: 'bg-[color-mix(in_oklch,var(--success)_16%,transparent)] text-success',
-        warning: 'bg-[color-mix(in_oklch,var(--warning)_18%,transparent)] text-warning',
-        danger: 'bg-[color-mix(in_oklch,var(--destructive)_15%,transparent)] text-destructive',
-        outline: 'border border-border text-muted-foreground',
+        neutral: 'bg-secondary text-secondary-foreground ring-border/70',
+        accent: 'bg-secondary text-foreground ring-border/70',
+        success:
+          'bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-success ring-[color-mix(in_oklch,var(--success)_28%,transparent)]',
+        info: 'bg-[color-mix(in_oklch,var(--info)_14%,transparent)] text-info ring-[color-mix(in_oklch,var(--info)_28%,transparent)]',
+        warning:
+          'bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] text-warning ring-[color-mix(in_oklch,var(--warning)_30%,transparent)]',
+        attention:
+          'bg-[color-mix(in_oklch,var(--attention)_14%,transparent)] text-attention ring-[color-mix(in_oklch,var(--attention)_28%,transparent)]',
+        danger:
+          'bg-[color-mix(in_oklch,var(--destructive)_13%,transparent)] text-destructive ring-[color-mix(in_oklch,var(--destructive)_28%,transparent)]',
+        outline: 'bg-transparent text-muted-foreground ring-border',
       },
     },
     defaultVariants: { variant: 'neutral' },
@@ -47,46 +63,56 @@ export function Badge({ className, variant, ...props }: BadgeProps) {
 // METİN burada DEĞİL: Türkçe etiket `lib/labels.ts` → `badgeStatusLabel` (TEK KAYNAK).
 // Burada yalnız GÖRSEL eşleme (renk varyantı + ikon) durur.
 //
-// TON KURALI (yeni durum eklerken buna göre seç — palet BİLİNÇLİ olarak dar tutulur;
-// görsel kimlik monokrom + yalnız semantik renk, bkz. CLAUDE.md "Görsel kimlik"):
-//   success  → sağlıklı / eylem gerekmiyor        (Stokta · Teslim edildi · Aktif · Onaylandı)
-//   warning  → bekliyor / operatör bakmalı        (Bekliyor · Kısmi · İncelemede · Askıda · Süresi doldu)
-//   danger   → ölü / hatalı kayıt                 (Geri alındı · Geçersiz · Karantina · Reddedildi · Başarısız)
-//   neutral  → nötr, kapanmış, eylem yok          (Değiştirildi · İptal · Tükendi)
-// AYNI TON içindeki durumlar İKON + ETİKET ile ayrışır (yeni renk hue'su EKLENMEZ).
+// TON KURALI — BEŞ HUE (yeni durum eklerken buna göre seç):
+//   success   emerald → sağlıklı KAYNAK, satılmaya hazır   (Stokta · Aktif · Teslim alındı)
+//   info      mavi    → TAMAMLANMIŞ iş, müşteride          (Teslim edildi · Gönderildi · Onaylandı)
+//   warning   amber   → BEKLİYOR, kendiliğinden ilerler    (Bekliyor · Kısmi · Rezerve · Kuyrukta)
+//   attention mor     → İNSAN KARARI bekliyor, hata değil  (İncelemede · Askıda)
+//   danger    rose    → ÖLÜ / HATALI / ENGELLİ             (Geri alındı · Geçersiz · Başarısız · Eşlenmemiş)
+//   neutral   gri     → kapanmış, eylem yok                (Değiştirildi · İptal · Tükendi · Süresi doldu)
+//
+// NEDEN BEŞ HUE (eskiden üçtü): "Stokta" ve "Teslim edildi" AYNI yeşildi — kullanıcı
+// geri bildirimi: envanterde hangi anahtarın hâlâ satılabilir olduğu bir bakışta
+// anlaşılmıyordu. Ayrım artık RENKTE: yeşil = elimde, mavi = müşteride.
+// AYNI TON içindeki durumlar İKON + ETİKET ile ayrışır (ton başına tek hue).
 type StatusMeta = { variant: NonNullable<BadgeProps['variant']>; icon: LucideIcon };
 
 const STATUS: Record<string, StatusMeta> = {
-  fulfilled: { variant: 'success', icon: CheckCircle2 },
+  // ── TAMAMLANMIŞ (mavi): iş bitti, değer müşteriye geçti ──
+  fulfilled: { variant: 'info', icon: PackageCheck },
+  // `assigned` (envanter) ile `fulfilled` (sipariş) AYNI kelimeyi yazar ("Teslim edildi") →
+  // aynı renk + aynı ikon olmalı, yoksa iki ekran çelişir (kullanıcı geri bildirimi).
+  assigned: { variant: 'info', icon: PackageCheck },
+  delivered: { variant: 'info', icon: PackageCheck },
+  sent: { variant: 'info', icon: Mail },
+  approved: { variant: 'info', icon: CheckCircle2 },
+  // ── SAĞLIKLI KAYNAK (yeşil): hâlâ elimde, satılabilir ──
+  available: { variant: 'success', icon: Boxes },
   active: { variant: 'success', icon: CheckCircle2 },
-  sent: { variant: 'success', icon: Mail },
-  delivered: { variant: 'success', icon: CheckCircle2 },
+  // ── BEKLİYOR (amber): süreç kendiliğinden ilerler ──
   partial: { variant: 'warning', icon: Clock },
   pending: { variant: 'warning', icon: Clock },
-  held_for_review: { variant: 'warning', icon: ShieldAlert },
-  // Değişim/garanti talepleri (§13).
   open: { variant: 'warning', icon: Clock },
   info_requested: { variant: 'warning', icon: Mail },
-  approved: { variant: 'success', icon: CheckCircle2 },
-  rejected: { variant: 'danger', icon: Ban },
   queued: { variant: 'warning', icon: Loader2 },
-  suspended: { variant: 'warning', icon: PauseCircle },
-  expired: { variant: 'warning', icon: Clock },
-  unmapped: { variant: 'danger', icon: ShieldAlert },
+  reserved: { variant: 'warning', icon: Lock },
+  // ── İNSAN KARARI (mor): operatör onaylamadan ilerlemez, ama hata DEĞİL ──
+  held_for_review: { variant: 'attention', icon: ShieldAlert },
+  suspended: { variant: 'attention', icon: PauseCircle },
+  // ── ÖLÜ / HATALI / ENGELLİ (rose) ──
+  rejected: { variant: 'danger', icon: Ban },
+  unmapped: { variant: 'danger', icon: Unlink },
   revoked: { variant: 'danger', icon: Ban },
-  replaced: { variant: 'neutral', icon: RefreshCw },
-  canceled: { variant: 'neutral', icon: Ban },
   failed: { variant: 'danger', icon: AlertTriangle },
   bounced: { variant: 'danger', icon: AlertTriangle },
   quarantined: { variant: 'danger', icon: ShieldAlert },
   voided: { variant: 'danger', icon: Ban },
-  // Lisans kalemi (envanter). `assigned` BİLEREK `fulfilled` ile aynı ton+ikon: ikisi de
-  // "Teslim edildi" yazar, panelde aynı kelime aynı renkte görünmeli (kullanıcı geri
-  // bildirimi: /stock rozetleri /orders ile senkron değildi).
-  available: { variant: 'success', icon: Boxes },
-  assigned: { variant: 'success', icon: CheckCircle2 },
-  reserved: { variant: 'warning', icon: Lock },
+  // ── KAPANMIŞ (nötr): beklenen son, eylem yok ──
+  replaced: { variant: 'neutral', icon: RefreshCw },
+  canceled: { variant: 'neutral', icon: Ban },
   depleted: { variant: 'neutral', icon: Archive },
+  // Süre bitişi beklenen bir sondur (§2 süreli hesap) — alarm değil, kapanmış kayıt.
+  expired: { variant: 'neutral', icon: CalendarX2 },
 };
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {

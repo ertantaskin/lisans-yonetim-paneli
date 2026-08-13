@@ -31,9 +31,9 @@ const BAND: Record<
   'low' | 'medium' | 'high',
   { variant: 'neutral' | 'warning' | 'danger'; label: string }
 > = {
-  low: { variant: 'neutral', label: 'düşük risk' },
-  medium: { variant: 'warning', label: 'orta risk' },
-  high: { variant: 'danger', label: 'yüksek risk' },
+  low: { variant: 'neutral', label: 'Düşük risk' },
+  medium: { variant: 'warning', label: 'Orta risk' },
+  high: { variant: 'danger', label: 'Yüksek risk' },
 };
 
 export function RiskBadge({ email }: { email: string }) {

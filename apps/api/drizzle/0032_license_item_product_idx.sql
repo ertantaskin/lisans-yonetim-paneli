@@ -1,0 +1,17 @@
+-- ÜRÜNE göre lisans envanteri için koşulsuz index (additive, veri değiştirmez).
+--
+-- NEDEN: `license_items` üzerinde product_id'yi kapsayan İKİ index vardı ama ikisi de
+-- `WHERE status = 'available'` KISMİ index'i (available_idx / fefo_idx). Envanter listesi
+-- ve ürün detayı "bu ürünün TÜM kalemleri"ni (teslim edilmiş + karantina + tükenmiş dahil)
+-- sorguladığı için kısmi index'ler kullanılamıyor, planlayıcı tam tablo taraması yapıyordu.
+-- Kolon sırası sıralamayı da karşılar: `WHERE product_id = ? ORDER BY created_at DESC, seq DESC`
+-- ilk kolon eşitlikle sabitlendiği için geriye taramayla index'ten gelir.
+--
+-- KİLİT NOTU (tablo büyüdüğünde): `CREATE INDEX` yazma kilidi alır ve migration'lar boot'ta
+-- transaction içinde koşar → `CONCURRENTLY` BURADA KULLANILAMAZ. Milyonlarca satırda bunu
+-- deploy penceresi dışında elle çalıştırın:
+--   CREATE INDEX CONCURRENTLY license_items_product_created_idx
+--     ON license_items USING btree (product_id, created_at, seq);
+-- sonra bu migration'ı `__drizzle_migrations`'a uygulanmış olarak işaretleyin.
+-- Uygulandığı an tablo küçüktü (prod 3, dev ~25 satır — ölçüldü).
+CREATE INDEX "license_items_product_created_idx" ON "license_items" USING btree ("product_id","created_at","seq");

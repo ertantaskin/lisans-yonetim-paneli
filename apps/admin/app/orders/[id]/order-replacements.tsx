@@ -122,7 +122,7 @@ function ReplacementRow({
               <StatusBadge status={r.status} />
               {r.withinWarranty ? (
                 <Badge variant="success">
-                  <ShieldCheck aria-hidden /> garanti içi
+                  <ShieldCheck aria-hidden /> Garanti içi
                 </Badge>
               ) : (
                 <Badge variant="warning">

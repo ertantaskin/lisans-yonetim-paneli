@@ -51,6 +51,30 @@ export class DeploymentsService {
     // (migration YOK; global tek-kaynak kilidi yeterli, dağıtım nadir bir owner işlemi).
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('deployments_request'))`);
+
+      // ÖKSÜZ 'pending' temizliği — `claimNext`'teki zombi-'running' temizliğinin İKİZİ.
+      // O temizlik runner'ın İÇİNDE koştuğu için, tıkanıklığın asıl sebebi runner'ın kendisi
+      // olduğunda (cron kaldırılmış / host yeniden kurulmuş / betik bozulmuş) HİÇ çalışmaz:
+      // istek sonsuza dek 'pending' kalır, guard 409 verir ve panelden BİR DAHA dağıtım
+      // yapılamaz — panelin varlık sebebi olan "SSH'siz dağıtım" tam da o anda kaybolur.
+      // Bu yüzden temizlik istek yoluna da konur (runner'dan bağımsız). Runner dakikada bir
+      // yoklar, deploy.sh 1-2 dk sürer → 30dk'lık 'pending' kesin tıkanmıştır.
+      await tx
+        .update(deployments)
+        .set({
+          status: 'failed',
+          error:
+            'Runner isteği 30dk içinde almadı — host üzerindeki dağıtım servisi (cron) ' +
+            'çalışmıyor olabilir. Bkz. docs/RUNBOOK-RELEASE.md §A2.',
+          finishedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(deployments.status, 'pending'),
+            lt(deployments.createdAt, sql`now() - interval '30 minutes'`),
+          ),
+        );
+
       const active = await tx
         .select({ id: deployments.id })
         .from(deployments)

@@ -95,9 +95,9 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
                 </TableCell>
                 <TableCell>
                   {a.disabled ? (
-                    <Badge variant="danger">pasif</Badge>
+                    <Badge variant="neutral">Pasif</Badge>
                   ) : (
-                    <Badge variant="success">aktif</Badge>
+                    <Badge variant="success">Aktif</Badge>
                   )}
                 </TableCell>
                 <TableCell className="text-xs tabular-nums text-muted-foreground">

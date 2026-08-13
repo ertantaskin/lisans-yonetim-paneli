@@ -225,6 +225,13 @@
       "when": 1786623808476,
       "tag": "0031_license_item_seq_asc_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786627372534,
+      "tag": "0032_license_item_product_idx",
+      "breakpoints": true
     }
   ]
 }

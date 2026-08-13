@@ -107,9 +107,9 @@ export default async function SupplierScorecardPage({
                 {supplier.name}
               </h1>
               {supplier.active ? (
-                <Badge variant="success">aktif</Badge>
+                <Badge variant="success">Aktif</Badge>
               ) : (
-                <Badge variant="outline">pasif</Badge>
+                <Badge variant="neutral">Pasif</Badge>
               )}
             </div>
             {supplier.contact && (

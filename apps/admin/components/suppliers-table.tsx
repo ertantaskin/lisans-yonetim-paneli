@@ -126,9 +126,9 @@ export function SuppliersTable({ suppliers }: { suppliers: SupplierRow[] }) {
         header: 'Durum',
         cell: ({ row }) =>
           row.original.active ? (
-            <Badge variant="success">aktif</Badge>
+            <Badge variant="success">Aktif</Badge>
           ) : (
-            <Badge variant="outline">pasif</Badge>
+            <Badge variant="neutral">Pasif</Badge>
           ),
         filterFn: (r, id, value: string[]) => value.includes(r.getValue(id)),
       },
