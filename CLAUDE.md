@@ -1316,6 +1316,45 @@ ilgili tüm yerlerde; /products boş 404; başka eksik ne var" dedi.
   `/products/<id>` etkilenmedi · prod deploy (rollback'li) → `/health` 200 v1.0.0, migration tracking 33,
   `license_items_product_created_idx` canlı. migration 0000-0032.
 
+**UX PARTİSİ: ADIM KİLİDİ · KATLANIR FORMLAR · ÜRÜN SEKMELERİ · TOPLU GEÇERSİZ KILMA · PARTİ DETAYI
+(commit 36879e5→cc3f7d8, CANLI prod+dev, migration YOK):** Kullanıcı 5 madde bildirdi.
+- **[1] Stok Girişi adım adım:** ürün seçilmeden 2. adım başlığı tıklanamaz, 3. adım `fieldset[disabled]`
+  (her kontrolü NATIVE devre dışı bırakır + odak sırasından çıkarır; tek tek `disabled` dağıtmaktan
+  güvenli) + "önce ürün seçin" notu. Ürün seçilince ikisi de açılır (tarayıcıda iki yönde ölçüldü).
+- **[2] Oluşturma formları katlanır:** yeni `ui/collapsible-panel.tsx` — /suppliers "Yeni Tedarikçi" ve
+  /admins "Yeni Admin" varsayılan KAPALI, butonla açılır; kapalıyken DOM'a hiç girmez (a11y + reset).
+- **[3] Ürün detayı sekmelere ayrıldı:** 7 kart tek sayfada üst üsteydi ve iki kolonun yükseklikleri
+  tutmuyordu → yeni `ui/tabs.tsx` (radix zaten bağımlılıkta) ile **Envanter / Eşlemeler / Tedarik /
+  Hareketler**; iki özet şeridi yan yana. İçerikler SUNUCUDA render edilip prop olarak geçer (tablolar
+  istemciye taşınmadı).
+- **[4] Stok düzeltme mimarisi (asıl şikâyet):** bozuk anahtarı tek tek combobox'tan seçmek operasyonel
+  olarak kullanılamazdı. Artık **envanter tablosunda çoklu seçim** (yalnız `available` satırlar) + toplu
+  aksiyon çubuğu + zorunlu sebep modali; seçim ürüne göre gruplanıp grup başına istek atılır. API
+  `createAdjustment` `licenseItemIds[]` (tek UPDATE; **kalem başına ayrı `stock_adjustments` satırı** —
+  Karantina sebebi kalem bazında okunuyor); **"hepsi ya da hiçbiri" DEĞİL**: arada kapılan kalem atlanır
+  ve `{requested, affected, skipped, qtyTotal}` ile dürüstçe raporlanır, hiçbiri işlenemezse 400. Ürün
+  sayfasındaki tekil seçici KALDIRILDI (o form artık yalnız defter kaydı). Yeni `ui/checkbox.tsx`
+  (native input + indeterminate; yeni radix paketi eklemeye değmedi).
+- **[5] PARTİ DETAYI `/batches/[id]`:** parti listesi yalnız sayaç gösteriyordu, partinin İÇİNDEKİ
+  anahtarlara bakmanın yolu yoktu. `GET /v1/admin/batches/:id` (listBatches(onlyId) yeniden kullanılır)
+  + partiye kilitli envanter (`LicenseItemsTable batchId` — API/action destekliyordu, tabloya
+  bağlanmamıştı), teslim edilenler ve geçersiz kılınanlar dahil; parti dilinde başlıklar; toplu işlem
+  aynı tablodan. Parti etiketi listede detaya link.
+- **İKİ KENDİ-REGRESYONUM — ikisi de `tsc` + `next build`'de GÖRÜNMEDİ:** (a) sunucu bileşeninden
+  istemci bileşenine **lucide BİLEŞENİ** prop'u (`icon={Plus}`) → React "Functions cannot be passed
+  directly to Client Components" ile ÇALIŞMA ANINDA patladı, `/suppliers` + `/admins` hata sınırına
+  düştü → prop `ReactNode` (element) yapıldı. (b) `= ANY(${dizi}::uuid[])` drizzle şablonunda BOZUK SQL
+  üretti (Postgres 42846) → parametreli `IN (...)`; **bu tuzak KVKK anonymize yolunda daha önce
+  yaşanmıştı** (bu dosyada yazıyordu), tekrarı 5 entegrasyon testiyle kilitlendi. Ayrıca JSDoc içinde
+  `app/*/page.tsx` yazmak yorumu erken kapatıp dosyayı söz dizimi hatasına düşürdü.
+- **Yeni `scripts/smoke-routes.sh`:** 26 admin rotasını gezer ve YALNIZ HTTP koduna BAKMAZ — Next hata
+  sınırı 200 döndüğü için gövdede `error.tsx` imzasını ("Hata kodu:" + "Tekrar dene") arar. Önceki elle
+  taramam dar bir metin kalıbı kullandığı için kırık `/suppliers`'ı TEMİZ raporlamıştı.
+- **Doğrulama:** typecheck 4/4 + check-use-server (21/69) · admin build · **VPS izole test DB:
+  entegrasyon 188/188** · dev 26 rota + 4 detay sayfası hata sınırı 0 · **dev canlı E2E:** toplu düşme
+  3 istendi → 2 etkilendi / 1 atlandı / 2 defter satırı, ikisi de Karantina'da sebebiyle; parti detayı
+  15 kalem (11 stokta · 3 teslim edilmiş · 1 geçersiz) · prod deploy → `/health` 200 v1.0.0.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
