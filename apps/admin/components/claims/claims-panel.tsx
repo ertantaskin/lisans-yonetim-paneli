@@ -301,6 +301,16 @@ function BatchDisclosure({ group }: { group: BatchGroup }) {
                 “{r.reason}”
               </span>
             )}
+            {/* Karantinaya alınış (kusurun oluştuğu) tarihi — kullanıcı "karantinaya alınış
+                tarihi yok" dedi. Stok giriş tarihinden AYRI kavram (o, parti başlığında). */}
+            {r.quarantinedAt && (
+              <span
+                className="ml-auto whitespace-nowrap tabular-nums text-muted-foreground/80"
+                title="Karantinaya alınış tarihi"
+              >
+                karantina: {fmtDateTime(r.quarantinedAt)}
+              </span>
+            )}
           </li>
         ))}
         {hidden > 0 && (
@@ -418,7 +428,7 @@ function CreateClaimSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-2xl">
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader>
           <SheetTitle>Değişim fişi oluştur</SheetTitle>
           <SheetDescription>
@@ -428,7 +438,10 @@ function CreateClaimSheet({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="space-y-4">
+        {/* Diğer Sheet'lerle AYNI gövde deseni: SheetContent overflow-y-auto + gövde p-4 pt-0.
+            Eskiden gövde hiç dolgusuz ve kaydırmasızdı → uzun formda kenardan taşıyordu (kullanıcı
+            "fiş oluşturma ekranı bozuk" dedi). */}
+        <div className="space-y-4 p-4 pt-0">
           <Field label="Tedarikçi" hint="Fiş tek bir tedarikçiye kesilir.">
             <Combobox
               items={suppliers.map((s) => ({ value: s.id, label: s.name }))}
