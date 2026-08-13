@@ -167,7 +167,9 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
       status: 'pending',
     });
     // Tüm satırı ata → sipariş fulfilled; müşteri sekiz anahtarı da görür.
-    await fulfillment.completeLine(order.lineId, ACTOR);
+    // NOT: completeLine(lineId, maxUnits?) — 2. arg ADET, actor DEĞİL (ilk yazımda
+    //  ACTOR geçilmişti → bigint NaN). Adet verilmezse satırın tamamı atanır.
+    await fulfillment.completeLine(order.lineId);
 
     const view = await orders.getDeliveries({ id: site.id } as unknown as Site, order.orderId);
     const seen = view.deliveries.map((d) => d.payload ?? '');
