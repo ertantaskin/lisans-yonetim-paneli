@@ -402,7 +402,10 @@ export class SupplierClaimsService {
     for (const r of rows) {
       const parsed = AccountPayloadSchema.safeParse(r.payload_schema);
       if (!parsed.success) continue;
-      out.set(r.id, new Map(parsed.data.map((f) => [f.label, f.secret])));
+      // Tuple tipi AÇIKÇA yazılır: `map` bağlamsal tip olmadan `(string|boolean)[][]` çıkarır
+      // ve `new Map(...)` bunu kabul etmez.
+      const entries: Array<[string, boolean]> = parsed.data.map((f) => [f.label, f.secret]);
+      out.set(r.id, new Map(entries));
     }
     return out;
   }

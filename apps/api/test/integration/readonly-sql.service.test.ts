@@ -175,7 +175,8 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     await expectRejected('SELECT id FROM supplier_claim_items');
     await expectRejected('SELECT count(*) FROM supplier_claims');
     await expectRejected('SELECT key_snapshot FROM supplier_claim_items');
-    // (c) DÖNEN kolon süzgeci aynı diziden (SECRET_COLUMN_SET) beslenir → takma ad da yakalanır.
+    // (c) Takma ad olarak da geçemez. (Metin kapısı zaten yakalar; DÖNEN kolon süzgeci de AYNI
+    //     diziden — SECRET_COLUMN_SET — beslendiği için ikinci katman kendiliğinden kapalıdır.)
     await expectRejected('SELECT 1 AS key_snapshot');
   });
 
