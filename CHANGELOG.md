@@ -14,6 +14,45 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Stok girişi UX cilası + panel geneli Türkçe arama düzeltmesi (migration YOK)
+
+Kullanıcı, yeni ekranı kullandıktan sonra ekran görüntüleriyle: *"düzen sıralama olarak biraz daha
+kolaylaştırılabilir. Parti etiketi tarihe göre otomatik oluşabilir. Search inputlardaki arama tasarım
+sorunlarını düzelt. Başka yerlerde sorunlar/bağlantılar varsa onları da hallet."*
+
+**Türkçe arama sessizce bozuktu (gerçek kusur, panel geneli).** Combobox süzgeci düz `toLowerCase()`
+kullanıyordu; projede tam bu iş için yazılmış `includesTr` yardımcısı yok sayılmıştı. JS'in
+`toLowerCase()`'i "I"yı noktalı `i` yapar → "ANAHTARI" yazan operatör "Anahtarı" kaydını **bulamıyordu**
+ve hata da almıyordu (sessiz boş liste). `/mappings`, `/customers`, satın alma emri formu, stok girişi
+ve stok düzeltme dahil bütün aranabilir seçiciler etkileniyordu.
+
+**İki farklı arama görünümü vardı:** tablo araç çubuklarındaki `SearchInput` kenarlıklı, temizle (×)
+düğmeli; açılır listelerin içindeki arama kenarlıksız ve temizlemesizdi. Hizalandı — aynı ikon boyutu,
+aynı temizle düğmesi, listeden ayıran zemin, dar tetikleyicide ezilmeyi önleyen min/max genişlik,
+filtre sonrası "N sonuç" şeridi (+ ekran okuyucu duyurusu) ve boş durumda `"X" için sonuç yok`.
+
+**Stok girişi, tedarik bölümü:** üç dev radyo kartı (~200 px) kompakt bir segmente indi (34 px; ok
+tuşları/Home/End ile gezinilir), yalnız seçili modun açıklaması görünür. **Parti etiketi artık
+otomatik** — alım tarihinden `YYYY-MM-<HARF>`, harf o ürünün aynı ayındaki kullanılmayan ilk harf;
+operatör alana dokunana kadar tarihle güncellenir, dokununca donar ("Otomatik" geri-dönüş düğmesiyle).
+Alan artık boş/kırmızı-zorunlu başlamıyor. "Tedarikçi listede yok" onay kutusu alanın içine taşındı ve
+geçişte girilen değer artık kaybolmuyor. Alan sırası kim/ne zaman → ne kadar → kimlik/not; maliyet
+alanında para birimi öneki ve canlı toplam hemen altında.
+
+**Panel temizliği:** `/guide` yeni akışa göre yeniden yazıldı (hızlı giriş ↔ tedarikli giriş);
+`/batches`, `/purchase-orders`, `/suppliers` açıklamaları güncellendi; otomatik oluşan parti ve
+emirlerde ham `[oto-giris]` öneki yerine "Otomatik" rozeti; tedarikçi formu ortak `Field` primitifine
+geçti. Ölü iç link taraması temiz.
+
+**Çekişmeli doğrulama 5 kusur buldu, hepsi kapatıldı.** En önemlisi kendi eklediğim Escape davranışıydı:
+"dolu aramada Escape önce temizlesin, popover açık kalsın" guard'ı, odak temizle (×) düğmesindeyken
+aramayı hiç boşaltamadığı için **her Escape'i yutuyor** ve popover'ı yalnız dışarı tıklamayla
+kapatılabilir hâle getiriyordu. Guard tamamen kaldırıldı — popover içinde Escape her zaman kapatır
+(sayfa içi `SearchInput`'ta temizlemeye devam eder; orada kapatılacak bir katman yok). Diğerleri:
+"N sonuç" sayacı temizle satırını saymıyordu · ürün değişince elle yazılmış etiket diğer ürüne
+taşınıyordu · tarih boşaltılınca var olmayan bir düğmeye yönlendiriliyordu · `aria-autocomplete`
+yanlış öğedeydi.
+
 ### Stok girişi yeniden tasarımı: tek ekranda tedarikçi + alım tarihi + maliyet (migration YOK)
 
 Kullanıcı: *"Key/Stok hesap İçe Aktar işlemleri biraz karışık geldi… eklerken seçmek mantıklı
