@@ -18,7 +18,14 @@ export const DropdownMenuContent = React.forwardRef<
       sideOffset={sideOffset}
       className={cn(
         'z-50 min-w-[11rem] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground p-1 shadow-lg',
-        'animate-in fade-in-0 zoom-in-95',
+        // ÇIKIŞ animasyonu ŞART (yalnız `animate-in` yazmak yetmez): Radix'in `Presence`'ı,
+        // kapanışta `animation-name` DEĞİŞİRSE `animationend` bekler. Sınıflar durum-kapılı
+        // değilse ad 'enter' olarak kalır, biten bir animasyonun `animationend`'i bir daha
+        // ateşlemez ve içerik HİÇ unmount olmaz. Ölçüldü: kapanan menü DOM'da kalıyor,
+        // opacity 0 ama `pointer-events:auto` → altındaki satırı/bağlantıyı yutan GÖRÜNMEZ
+        // bir tıklama ölü bölgesi (167×70 px). Aynı hata popover/select/tooltip'te de vardı.
+        'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
+        'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
         className,
       )}
       {...props}
