@@ -392,6 +392,19 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
         </Alert>
       )}
 
+      {/* DÜRÜSTLÜK: kapanmış fişte yanıtsız kalem kalmışsa bunu söyle — "Kapandı" rozeti tek
+          başına "her şey çözüldü" gibi okunuyordu. Kayıt düzeltilebilir (kapalı fişte de
+          yanıt girilebilir), bu yüzden uyarı değil bilgi. */}
+      {claim.status === 'closed' && claim.pendingCount > 0 && (
+        <Alert variant="muted">
+          <AlertDescription>
+            Bu fiş kapatıldı ama <strong>{claim.pendingCount} kalem</strong> yanıtsız görünüyor.
+            Tedarikçiden gelen sonucu şimdi de işaretleyebilirsiniz; kabul edilmeyenler
+            bildirilecekler havuzuna geri döner.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {dialog}
     </div>
   );
