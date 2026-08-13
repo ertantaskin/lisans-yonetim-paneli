@@ -36,7 +36,9 @@ export function DataTableToolbar<TData>({
             placeholder={searchPlaceholder}
             value={(searchCol.getFilterValue() as string) ?? ''}
             onValueChange={(v) => searchCol.setFilterValue(v)}
-            className="w-44 lg:w-72"
+            // Dar ekranda tam genişlik: 176px sabit kutuda placeholder'ın yarısı kesiliyordu
+            // ("Olay, konu veya e-posta…"). Kap flex-wrap olduğu için taşma üretmez.
+            className="w-full sm:w-44 lg:w-72"
           />
         )}
         {facets.map((f) => {

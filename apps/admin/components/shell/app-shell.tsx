@@ -37,7 +37,10 @@ export function AppShell({
           atlayıp ana içeriğe geçer. Normalde gizli, odaklanınca görünür. */}
       <a
         href="#main-content"
-        className="sr-only rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-lg outline-none ring-ring focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:ring-2"
+        // Odak halkası YOK: gösterge tek kaynak globals.css `:focus-visible { outline }`.
+        // (Eskiden `focus:ring-2` ile ikizleniyordu — ölçülen halka kontrastı eşik altı.)
+        // Yarıçap/gölge yeni dile alındı: rounded-lg + shadow-xs.
+        className="sr-only rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground shadow-xs focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50"
       >
         İçeriğe atla
       </a>

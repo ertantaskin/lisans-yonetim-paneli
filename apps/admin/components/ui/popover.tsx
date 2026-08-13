@@ -17,7 +17,11 @@ export const PopoverContent = React.forwardRef<
       align={align}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 w-72 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-md outline-none',
+        // `w-72` (288px) 375px ekranda kenar boşluklarıyla taşabiliyordu ve uzun içerik
+        // (ör. dışa aktarma seçenekleri) ekran dışına çıkıp erişilemez kalıyordu.
+        // Radix `--radix-popover-content-available-height` ile kalan yüksekliği verir.
+        'z-50 w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-md outline-none',
+        'max-h-[var(--radix-popover-content-available-height)] overflow-y-auto',
         // Durum-kapılı giriş/çıkış — shadcn'in standart eşleşmesi (gerekçe: dropdown-menu.tsx).
         'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
         'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',

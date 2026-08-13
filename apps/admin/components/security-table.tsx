@@ -29,6 +29,7 @@ import { Badge, type BadgeProps } from './ui/badge';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { Card } from './ui/card';
 import { Input, Label } from './ui/input';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
@@ -135,7 +136,7 @@ const columns: ColumnDef<SecurityEventRow>[] = [
     meta: { title: 'Detay' },
     header: 'Detay',
     cell: ({ row }) => (
-      <span className="line-clamp-2 max-w-md text-muted-foreground" title={row.original.detail}>
+      <span className="line-clamp-2 max-w-md whitespace-normal text-muted-foreground" title={row.original.detail}>
         {row.original.detail}
       </span>
     ),
@@ -266,7 +267,9 @@ function AnonymizeForm({
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-5">
+    // Card primitifi (elle kopyalanan sınıf dizisi shadow-xs'i düşürüyordu; tema değişince
+    // ad-hoc kopya geride kalır). Dolgu p-5 korunur — CardContent'in üst dolgusu yok, başlık yapışır.
+    <Card className="p-5">
       {dialog}
       <div className="mb-1 flex items-center gap-2">
         <UserX className="size-4 text-muted-foreground" />
@@ -289,12 +292,14 @@ function AnonymizeForm({
           />
           {localError && <p className="text-xs text-destructive">{localError}</p>}
         </div>
-        <Button type="submit" variant="danger" size="sm" disabled={pending}>
+        {/* size="sm" (h-8/12px) KALDIRILDI: yanındaki Input h-9/14px — aynı form satırında
+            iki farklı ölçek taban çizgisini bozuyordu (panel deseni: gönder düğmesi varsayılan boyut). */}
+        <Button type="submit" variant="danger" disabled={pending}>
           <ShieldX />
           {pending ? 'İşleniyor…' : 'Anonimleştir'}
         </Button>
       </form>
-    </div>
+    </Card>
   );
 }
 

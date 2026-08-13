@@ -195,13 +195,18 @@ export function TemplateEditor({
             </pre>
           </div>
           {unknownVars.length > 0 && (
-            <div className="mt-3 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 p-2.5 text-xs text-warning">
-              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-              <span>
+            /* Elle kurulmuş uyarı kutusu KALDIRILDI: `rounded-md` + `bg-warning/10` (farklı
+               tint uzayı) + gövdede `text-warning` kullanıyordu; kanonik primitif oklch
+               color-mix tint + `text-foreground` gövde + aksanı yalnız ikonda tutar.
+               Yoğunluk (kompakt kutu) yalnız çağrı yerinde sınıfla ayarlanır — renk/yarıçap
+               primitiften gelir, böylece tema değişince bu kutu geride kalmaz. */
+            <Alert variant="warning" className="mt-3 gap-2 p-3">
+              <TriangleAlert />
+              <AlertDescription className="text-xs">
                 Desteklenmeyen değişken: {unknownVars.map((v) => `{{${v}}}`).join(', ')} — gönderimde{' '}
                 <strong>boş</strong> çıkar. Desteklenenler: {TOKENS.map((t) => `{{${t}}}`).join(', ')}.
-              </span>
-            </div>
+              </AlertDescription>
+            </Alert>
           )}
         </Card>
 

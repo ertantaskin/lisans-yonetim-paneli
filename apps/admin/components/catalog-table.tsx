@@ -201,7 +201,9 @@ export function CatalogTable({
             />
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
+          {/* Kart sözleşmesi tek kaynaktan (Card primitifi). Yatay kaydırma ui/table.tsx'teki
+              İÇ sarmalayıcıdan gelir; buradaki overflow yalnız yuvarlak köşeleri kırpar. */}
+          <Card className="overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -308,7 +310,7 @@ export function CatalogTable({
                 )}
               </TableBody>
             </Table>
-          </div>
+          </Card>
         </div>
       )}
     </div>

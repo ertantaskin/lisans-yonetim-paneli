@@ -138,12 +138,11 @@ const columns: ColumnDef<ProductTableRow>[] = [
           </span>
           {/* Tasarım gereği boş üründe "düşük" uyarısı da yanlış alarmdır. */}
           {low && !(byDesign && s === 0) && (
-            <span
-              className="inline-flex items-center gap-0.5 rounded bg-warning/10 px-1 py-0.5 text-[10px] font-medium text-warning"
-              title={`Düşük stok (eşik ${threshold})`}
-            >
-              <ShieldAlert className="size-3" /> düşük
-            </span>
+            // Badge primitifi (eskiden elle yazılmış rozet): zorunlu `ring-inset` saç teli ve
+            // `rounded-full` yoktu, 10px ile panelin rozet ölçüsünün (12px) altındaydı.
+            <Badge variant="warning" title={`Düşük stok (eşik ${threshold})`}>
+              <ShieldAlert /> Düşük
+            </Badge>
           )}
         </span>
       );

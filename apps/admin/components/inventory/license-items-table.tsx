@@ -506,14 +506,18 @@ export function LicenseItemsTable({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-9">
-                <Checkbox
-                  checked={allVisibleSelected}
-                  indeterminate={!allVisibleSelected && someVisibleSelected}
-                  disabled={selectableIds.length === 0 || bulkBusy}
-                  onChange={(e) => toggleAllVisible(e.currentTarget.checked)}
-                  aria-label="Bu sayfadaki stoktaki lisansların tümünü seç"
-                />
+              {/* Kutunun GÖRSEL boyutu 16px kalır (form kullanımlarıyla tutarlı), dokunma
+                  hedefi label sarmalayıcısıyla 44px'e çıkar — toplu seçim ekranın ana işi. */}
+              <TableHead className="w-11 p-0">
+                <label className="flex size-11 cursor-pointer items-center justify-center">
+                  <Checkbox
+                    checked={allVisibleSelected}
+                    indeterminate={!allVisibleSelected && someVisibleSelected}
+                    disabled={selectableIds.length === 0 || bulkBusy}
+                    onChange={(e) => toggleAllVisible(e.currentTarget.checked)}
+                    aria-label="Bu sayfadaki stoktaki lisansların tümünü seç"
+                  />
+                </label>
               </TableHead>
               {showProductColumn && <TableHead>Ürün</TableHead>}
               <TableHead>Lisans / Hesap</TableHead>
@@ -574,16 +578,20 @@ export function LicenseItemsTable({
                   className={cn('align-top', loading && 'opacity-60')}
                   data-state={selected.has(row.id) ? 'selected' : undefined}
                 >
-                  <TableCell className="w-9 pt-3.5">
+                  {/* p-0 + 44px label: kutu 16px görünür ama dokunma hedefi 44px olur; label'ın
+                      merkezi ~22px'e denk geldiği için komşu hücrenin ilk satırıyla hizası korunur. */}
+                  <TableCell className="w-11 p-0">
                     {/* Yalnız STOKTAKİ kalem seçilebilir; diğerlerinde kutu hiç basılmaz ki
                         "neden tıklayamıyorum" sorusu doğmasın (disabled kutu da kafa karıştırır). */}
                     {row.status === 'available' ? (
-                      <Checkbox
-                        checked={selected.has(row.id)}
-                        disabled={bulkBusy}
-                        onChange={(e) => toggleRow(row.id, e.currentTarget.checked)}
-                        aria-label="Bu lisansı seç"
-                      />
+                      <label className="flex size-11 cursor-pointer items-center justify-center">
+                        <Checkbox
+                          checked={selected.has(row.id)}
+                          disabled={bulkBusy}
+                          onChange={(e) => toggleRow(row.id, e.currentTarget.checked)}
+                          aria-label="Bu lisansı seç"
+                        />
+                      </label>
                     ) : (
                       <span className="sr-only">Seçilemez — stokta değil</span>
                     )}
@@ -822,7 +830,8 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-xs"
+              // Yükseklik ezmesi kaldırıldı (sm = 32px): yanındaki kopyala düğmesi 32px'e
+              // çıktığı için ikilinin aynı ölçekte kalması şart.
               onClick={() => setShown((s) => !s)}
               aria-label={shown ? 'Gizli alanları gizle' : 'Gizli alanları göster'}
             >
@@ -877,7 +886,9 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       <Button
         variant="ghost"
         size="icon-sm"
-        className="size-6 shrink-0"
+        // `size-6` ezmesi kaldırıldı: icon-sm zaten 32px ve dokunma hedefi tabanı bu.
+        // 24px'e indirmek yoğun tablo satırında yanlış öğeye basma riski üretiyordu.
+        className="shrink-0"
         onClick={copy}
         aria-label={label}
         title={label}

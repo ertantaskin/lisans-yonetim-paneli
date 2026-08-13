@@ -20,7 +20,7 @@ export default async function AdminsPage() {
             <EmptyState
               icon={ShieldAlert}
               title="Yetkiniz yok"
-              description="Admin yönetimi yalnız 'owner' rolündeki yöneticiler içindir."
+              description="Admin yönetimi yalnız Sahip rolündeki yöneticiler içindir."
             />
           </CardContent>
         </Card>

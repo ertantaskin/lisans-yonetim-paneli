@@ -253,9 +253,13 @@ export function SidebarRail({ className, ...props }: React.ComponentProps<'butto
   );
 }
 
-export function SidebarInset({ className, ...props }: React.ComponentProps<'main'>) {
+// <div> (eskiden <main>): app-shell bunun İÇİNDE asıl `<main id="main-content">` landmark'ını
+// render ediyor → iç içe iki `main` oluşuyordu ve ekran okuyucuda iki "ana bölge" görünüyordu.
+// Landmark'ı içerideki gerçek içerik elemanına bırakmak semantik olarak da doğru: üst bar
+// (SiteHeader) bu kabın içinde ve ana içeriğin parçası değil.
+export function SidebarInset({ className, ...props }: React.ComponentProps<'div'>) {
   return (
-    <main
+    <div
       // `min-w-0` ŞART — panelin "sayfa gövdesi asla yatay kaymaz" sözleşmesinin kilit halkası.
       // SidebarProvider (yukarıda) `flex w-full` bir SATIR; bu eleman onun flex çocuğu, yani
       // varsayılan `min-width:auto` ile otomatik minimumu İÇERİĞİNİN min-content genişliği olur
@@ -293,7 +297,10 @@ export function SidebarContent({ className, ...props }: React.ComponentProps<'di
     <div
       data-sidebar="content"
       className={cn(
-        'flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden',
+        // Dikey kaydırma İKİ modda da açık. Eskiden ikon modunda kapatılıyordu; 25 menü öğesi
+        // ikon modunda ~1170px yer kapladığı için kısa ekranlarda alttaki öğeler kırpılıyor VE
+        // kaydırılamıyordu (Şablonlar/Sürümler/Dağıtımlar/Ayarlar/Rehber erişilemezdi).
+        'flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden',
         className,
       )}
       {...props}

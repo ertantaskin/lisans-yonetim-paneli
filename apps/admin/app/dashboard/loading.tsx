@@ -19,8 +19,8 @@ export default function Loading() {
       {/* Canlı KPI şeridi */}
       <Skeleton className="h-[52px] w-full rounded-xl" />
 
-      {/* İki canlı akış kartı */}
-      <div className="grid items-start gap-4 lg:grid-cols-2">
+      {/* İki canlı akış kartı — boşluk sayfayla BİREBİR (gap-6), aksi halde veri gelince zıplar. */}
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <Skeleton className="h-[26rem] w-full rounded-xl" />
         <Skeleton className="h-[26rem] w-full rounded-xl" />
       </div>

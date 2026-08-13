@@ -653,7 +653,9 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
     );
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
+    // Kart sözleşmesi tek kaynaktan (rounded-xl + bg-card + shadow-xs); elle yazılmış
+    // rounded-lg/gölgesiz kabuk fiş listesini diğer panellerden ayrı gösteriyordu.
+    <Card className="overflow-hidden">
       <ul className="divide-y divide-border">
         {rows.map((c) => (
           <li key={c.id}>
@@ -695,6 +697,6 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
           </li>
         ))}
       </ul>
-    </div>
+    </Card>
   );
 }

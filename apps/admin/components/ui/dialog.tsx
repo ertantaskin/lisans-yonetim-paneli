@@ -43,7 +43,10 @@ export const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         // Uzun içerik (ör. girilecek anahtar listesi) taşmasın: içerik kendi içinde kayar.
-        'fixed left-1/2 top-1/2 z-50 flex max-h-[min(90vh,44rem)] w-[calc(100vw-2rem)] max-w-lg',
+        // `svh` (vh DEĞİL): mobil tarayıcıda `vh` adres çubuğu GİZLİYKENKİ yüksekliği baz alır;
+        // çubuk açıkken modal görünür alanı taşıyordu ve alttaki onay düğmeleri ekran dışında
+        // kalıyordu (dokunulamaz). `svh` = en küçük görünür alan → düğmeler her zaman içeride.
+        'fixed left-1/2 top-1/2 z-50 flex max-h-[min(90svh,44rem)] w-[calc(100vw-2rem)] max-w-lg',
         '-translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl border border-border bg-card p-5 shadow-xl',
         'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0',
         'data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
@@ -52,8 +55,10 @@ export const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
+      {/* Kapat düğmesinin dokunma hedefi eskiden dolgusuz 16×16px idi (parmakla ıskalanıyordu).
+          Artık 32px kare + daire (proje kuralı: yalnız-ikon düğme = daire), kenardan içeride. */}
       {!hideClose && (
-        <DialogPrimitive.Close className="absolute right-3.5 top-3.5 rounded-sm text-muted-foreground opacity-70 transition-opacity hover:opacity-100">
+        <DialogPrimitive.Close className="absolute right-3 top-3 flex size-8 items-center justify-center rounded-full text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:opacity-100">
           <X className="size-4" />
           <span className="sr-only">Kapat</span>
         </DialogPrimitive.Close>

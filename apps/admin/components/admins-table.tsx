@@ -2,9 +2,11 @@
 import * as React from 'react';
 import { Ban, CheckCircle2, KeyRound, Trash2 } from 'lucide-react';
 import type { AdminUser } from '@/lib/api';
+import { adminRoleLabel } from '@/lib/labels';
 import { formatDate } from '@/lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { Card } from './ui/card';
 import { useConfirm } from './ui/confirm';
 import {
   Table,
@@ -63,7 +65,9 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
     );
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
+    // Kart sözleşmesi (rounded-xl + bg-card + shadow-xs) tek kaynaktan: elle yazılmış
+    // rounded-lg/gölgesiz yüzey panelde ikinci bir tablo görünümü üretiyordu.
+    <Card className="overflow-hidden">
       {dialog}
       <Table>
         <TableHeader>
@@ -91,7 +95,7 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
                 <TableCell className="text-muted-foreground">{a.email}</TableCell>
                 <TableCell className="text-muted-foreground">{a.username ?? '—'}</TableCell>
                 <TableCell>
-                  <Badge variant={a.role === 'owner' ? 'accent' : 'outline'}>{a.role}</Badge>
+                  <Badge variant={a.role === 'owner' ? 'accent' : 'outline'}>{adminRoleLabel(a.role)}</Badge>
                 </TableCell>
                 <TableCell>
                   {a.disabled ? (
@@ -154,6 +158,6 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
           )}
         </TableBody>
       </Table>
-    </div>
+    </Card>
   );
 }

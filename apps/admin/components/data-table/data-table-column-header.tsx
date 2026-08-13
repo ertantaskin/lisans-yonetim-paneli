@@ -21,8 +21,11 @@ export function DataTableColumnHeader<TData, TValue>({
   title: string;
   className?: string;
 }) {
+  // Sınıfsız: başlık tipografisi TEK KAYNAK `ui/table.tsx` → TableHead'dir (14px/600/koyu).
+  // Burada `text-xs` vermek, aynı başlık satırındaki sıralanabilir/sıralanamaz kolonların
+  // farklı boyutta görünmesine yol açıyordu.
   if (!column.getCanSort()) {
-    return <div className={cn('text-xs', className)}>{title}</div>;
+    return <div className={cn(className)}>{title}</div>;
   }
   const sorted = column.getIsSorted();
   return (
@@ -32,7 +35,9 @@ export function DataTableColumnHeader<TData, TValue>({
           <Button
             variant="ghost"
             size="sm"
-            className="-ml-2.5 h-7 gap-1.5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground data-[state=open]:bg-accent"
+            // Tipografi TableHead ile birebir (14px/600/koyu). Eskiden 12px/500/BÜYÜK HARF/muted
+            // idi → aynı tabloda sıralanabilir ve düz başlıklar iki ayrı dilde görünüyordu.
+            className="-ml-2.5 h-7 gap-1.5 px-2 text-sm font-semibold text-foreground data-[state=open]:bg-accent"
           >
             <span>{title}</span>
             {sorted === 'desc' ? (

@@ -171,7 +171,7 @@ function buildColumns(
                 row.original.title
               )}
             </div>
-            <div className="line-clamp-2 text-muted-foreground" title={row.original.message}>
+            <div className="line-clamp-2 max-w-md whitespace-normal text-muted-foreground" title={row.original.message}>
               {row.original.message}
             </div>
           </div>

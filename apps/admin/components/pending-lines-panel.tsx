@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CheckCircle2, Link2, PlayCircle, TriangleAlert } from 'lucide-react';
+import { Alert, AlertDescription } from './ui/alert';
 import { resolvePendingLinesAction, type ResolvePendingSummary } from '../app/stock/actions';
 import type { PendingLinesSummary } from '../lib/api';
 import { cn } from '../lib/utils';
@@ -131,26 +132,31 @@ export function PendingLinesPanel({ summary }: { summary: PendingLinesSummary | 
           DEMEMELİ — görünmeyen bekleyen satırlar için operatör aksiyon almaz. (Aynı desen
           /quarantine ve /support ekranlarında var.) */}
       {summary.truncated === true && (
-        <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-          <span className="min-w-0">
+        // Alert primitifi (eskiden elle kurulmuş kutu): tint matematiği, yarıçap ve gövde
+        // rengi tek kaynaktan gelsin — elle yazılan kopyada gövde `text-warning` ile AA'nın
+        // altına düşebiliyordu ve `rounded-md` yeni yüzey dilinden sapıyordu.
+        <Alert variant="warning" className="gap-2 p-3">
+          <TriangleAlert aria-hidden />
+          <AlertDescription>
             Liste sunucu üst sınırına takıldı — <strong>bu tablo tamamı değildir</strong>. Daha
             fazla bekleyen satır olabilir; “Tümünü Uygula”dan sonra sayfayı yenileyip tekrar bakın.
-          </span>
-        </div>
+          </AlertDescription>
+        </Alert>
       )}
 
       {t.resolvableLines > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-success/40 bg-success/5 px-3 py-2">
-          <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden />
-          <span className="flex-1 text-sm">
+        // Alert primitifi — yukarıdaki uyarı bandıyla aynı yüzey dili (tint/yarıçap/gövde rengi).
+        // `items-center` + `flex-wrap` korunuyor çünkü bu bandın sağında bir eylem düğmesi var.
+        <Alert variant="success" className="flex-wrap items-center gap-2 p-3">
+          <CheckCircle2 aria-hidden />
+          <AlertDescription className="flex-1">
             Eşlemesi tamamlanmış {t.resolvableGroups} mağaza ürünü için bekleyen satırlar tek tıkla
             teslimata alınabilir.
-          </span>
+          </AlertDescription>
           <Button size="sm" disabled={busy !== null} onClick={() => run('__all__', {})}>
             <PlayCircle /> {busy === '__all__' ? 'Uygulanıyor…' : 'Tümünü Uygula'}
           </Button>
-        </div>
+        </Alert>
       )}
 
       {/* Sonuç + hata TEK canlı bölgede: inline metin tek başına ekran okuyucuya duyurulmaz. */}
@@ -193,7 +199,7 @@ export function PendingLinesPanel({ summary }: { summary: PendingLinesSummary | 
         )}
       </div>
 
-      <div className="overflow-x-auto rounded-md border border-border">
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
         <Table>
           <TableHeader>
             <TableRow>
@@ -219,7 +225,7 @@ export function PendingLinesPanel({ summary }: { summary: PendingLinesSummary | 
                       {g.remoteVariationId ? ` · varyasyon ${g.remoteVariationId}` : ''}
                     </div>
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{g.siteDomain}</TableCell>
+                  <TableCell className="text-muted-foreground">{g.siteDomain}</TableCell>
                   <TableCell className="text-right tabular-nums">{g.lineCount}</TableCell>
                   <TableCell className="text-right tabular-nums">{g.totalQty}</TableCell>
                   <TableCell>

@@ -47,7 +47,10 @@ export function UnmappedTable({ rows, products }: { rows: UnmappedRow[]; product
         {rows.length} eşlenmemiş mağaza ürünü — her biri gerçek bir siparişte geldi ama panelde bir
         ürüne bağlı değil.
       </p>
-      <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
+      {/* Kart sözleşmesi tek kaynaktan (Card). Dıştaki `overflow-x-auto` ÖLÜ kodtu: yatay
+          kaydırma ui/table.tsx'in İÇ sarmalayıcısından geliyor; burada gereken tek şey
+          yuvarlak köşelerin kırpılması. */}
+      <Card className="overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -61,7 +64,9 @@ export function UnmappedTable({ rows, products }: { rows: UnmappedRow[]; product
           <TableBody>
             {rows.map((row) => (
               <TableRow key={rowKey(row)}>
-                <TableCell className="text-xs text-muted-foreground">{row.siteDomain}</TableCell>
+                {/* Kolonun TEK içeriği olan birincil veri 14px kalır (tablodan miras text-sm);
+                    muted ton bağlam kolonu olduğunu anlatmaya yeter — 12px sözleşmenin altıydı. */}
+                <TableCell className="text-muted-foreground">{row.siteDomain}</TableCell>
                 <TableCell>
                   <div className="font-medium text-foreground">{displayName(row)}</div>
                   <div className="font-mono text-xs text-muted-foreground">
@@ -69,10 +74,10 @@ export function UnmappedTable({ rows, products }: { rows: UnmappedRow[]; product
                     {row.remoteVariationId ? ` · varyasyon ${row.remoteVariationId}` : ''}
                   </div>
                 </TableCell>
-                <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                <TableCell className="text-right tabular-nums text-muted-foreground">
                   {row.orderCount} sipariş · {row.lineCount} kalem
                 </TableCell>
-                <TableCell className="text-xs text-muted-foreground">{trDate(row.lastSeen)}</TableCell>
+                <TableCell className="text-muted-foreground">{trDate(row.lastSeen)}</TableCell>
                 <TableCell className="text-right">
                   <MapProductSheet
                     siteId={row.siteId}
@@ -87,7 +92,7 @@ export function UnmappedTable({ rows, products }: { rows: UnmappedRow[]; product
             ))}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

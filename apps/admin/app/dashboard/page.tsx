@@ -202,8 +202,9 @@ export default async function DashboardOverviewPage() {
       {/* Canlı iş kuyrukları: her hücre ilgili çalışma ekranına bağlantı */}
       <LiveKpiStrip initialStats={snapshot?.stats} />
 
-      {/* Ana akış: solda siparişler, sağda destek talepleri */}
-      <div className="grid items-start gap-4 lg:grid-cols-2">
+      {/* Ana akış: solda siparişler, sağda destek talepleri.
+          Kartlar arası boşluk sözleşme gereği 24px (gap-6) — 16px'te iki kart sıkışık duruyordu. */}
+      <div className="grid items-start gap-6 lg:grid-cols-2">
         <LiveOrdersCard initialOrders={snapshot?.orders ?? null} />
         <LiveSupportCard initialSupports={snapshot?.supports ?? null} />
       </div>

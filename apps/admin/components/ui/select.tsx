@@ -3,6 +3,7 @@ import * as React from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { controlBase } from './input';
 
 export const Select = SelectPrimitive.Root;
 export const SelectGroup = SelectPrimitive.Group;
@@ -14,8 +15,13 @@ export const SelectTrigger = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
+    // Form kontrolü görünümü TEK KAYNAK `controlBase` (input.tsx). Eskiden burada elle
+    // yazılmış ikinci bir kopya vardı ve h-8/px-2.5 ile native <select>'ten (h-9/px-3)
+    // farklıydı → aynı araç çubuğunda iki kontrol farklı yükseklikte duruyordu.
+    // `w-full` çağrı yerindeki genişlik sınıfıyla (ör. `w-16`) tailwind-merge'de ezilir.
     className={cn(
-      'flex h-8 items-center justify-between gap-1 rounded-lg border border-border bg-background px-2.5 text-sm shadow-xs outline-none',
+      controlBase,
+      'flex h-9 items-center justify-between gap-1 px-3',
       'disabled:cursor-not-allowed disabled:opacity-50 [&>span]:truncate',
       className,
     )}

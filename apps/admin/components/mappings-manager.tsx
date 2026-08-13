@@ -195,7 +195,7 @@ export function MappingsManager({
             Henüz eşleme yok. Yukarıdan site + mağaza ürününü seçip bu ürüne eşleyin.
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-md border border-border">
+          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -209,7 +209,7 @@ export function MappingsManager({
               <TableBody>
                 {mappings.map((m) => (
                   <TableRow key={m.id}>
-                    <TableCell className="text-xs text-muted-foreground">{m.siteDomain}</TableCell>
+                    <TableCell className="text-muted-foreground">{m.siteDomain}</TableCell>
                     <TableCell>
                       <div className="font-medium text-foreground">
                         {m.remoteName ?? `#${m.remoteProductId}`}

@@ -898,8 +898,10 @@ export function QuarantineTable({
       <Card className="p-4" aria-busy={pending}>
         <div className="flex flex-col gap-3">
           {/* ── Arama (tek kutu, iki kapsam) ── */}
+          {/* Araç çubuğu TEK ölçek rejiminde (h-8): SearchInput varsayılanı + size="sm" düğmeler.
+              Eskiden aynı formda h-9 arama / h-9-ama-12px düğme / h-8 tarih girdisi yan yanaydı. */}
           <form
-            className="flex flex-wrap items-end gap-2"
+            className="flex flex-col gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               go({ search: q.trim() });
@@ -908,28 +910,31 @@ export function QuarantineTable({
             <Field
               label="Ara"
               htmlFor="kusurlu-ara"
-              className="min-w-0 flex-1 sm:max-w-md"
+              className="min-w-0 sm:max-w-xl"
               hint="Yazdıkça yüklenen listede süzer. Enter’a basarsanız veritabanındaki tüm kayıtlarda arar (lisans değeri şifreli olduğu için sunucuda aranmaz)."
             >
-              <SearchInput
-                id="kusurlu-ara"
-                value={q}
-                onValueChange={setQ}
-                placeholder="Ürün, SKU, müşteri, sipariş no, parti, tedarikçi, fiş no…"
-                ariaLabel="Kusurlu stok kayıtlarında ara"
-                className="w-full"
-                inputClassName="h-9"
-              />
+              {/* Kutu + "Tüm kayıtlarda ara" AYNI satırda: ipucu ikisinin de altında kalır.
+                  (items-end ile düğme iki satırlık ipucunun altına hizalanıyordu.) */}
+              <div className="flex flex-wrap items-center gap-2">
+                <SearchInput
+                  id="kusurlu-ara"
+                  value={q}
+                  onValueChange={setQ}
+                  placeholder="Ürün, SKU, müşteri, sipariş no, parti, tedarikçi, fiş no…"
+                  ariaLabel="Kusurlu stok kayıtlarında ara"
+                  className="min-w-0 flex-1"
+                />
+                <Button type="submit" size="sm" variant="outline" disabled={pending}>
+                  Tüm kayıtlarda ara
+                </Button>
+                {pending && (
+                  <span className="inline-flex h-8 items-center gap-1 text-xs text-muted-foreground">
+                    <RefreshCw className="size-3 animate-spin" aria-hidden />
+                    Yükleniyor…
+                  </span>
+                )}
+              </div>
             </Field>
-            <Button type="submit" size="sm" variant="outline" disabled={pending} className="h-9">
-              Tüm kayıtlarda ara
-            </Button>
-            {pending && (
-              <span className="inline-flex h-9 items-center gap-1 text-xs text-muted-foreground">
-                <RefreshCw className="size-3 animate-spin" aria-hidden />
-                Yükleniyor…
-              </span>
-            )}
           </form>
 
           {/* ── Sunucu süzgeçleri: durum + kusur tarihi ── */}
@@ -1043,37 +1048,30 @@ export function QuarantineTable({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Aktif süzgeçler:</span>
               {filters.search && (
-                <ServerChip
+                <FilterChip
                   label={`Tüm kayıtlarda: “${filters.search}”`}
                   disabled={pending}
                   onRemove={() => go({ search: '' })}
                 />
               )}
               {filters.status && (
-                <ServerChip
+                <FilterChip
                   label={`Kalem durumu: ${statusText(filters.status)}`}
                   disabled={pending}
                   onRemove={() => go({ status: '' })}
                 />
               )}
               {rangeLabel && (
-                <ServerChip
+                <FilterChip
                   label={`Kusur tarihi: ${rangeLabel}`}
                   disabled={pending}
                   onRemove={() => go({ range: '', from: '', to: '' })}
                 />
               )}
+              {/* Yerel facet çipleri AYNI çipe bağlandı (yan yana iki farklı görünüm vardı).
+                  `disabled` GEÇİLMEZ: bunlar saf istemci süzgeci, sunucu gezinmesinde donmamalı. */}
               {activeChips.map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={chip.remove}
-                  aria-label={`${chip.label} süzgecini kaldır`}
-                  className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                >
-                  {chip.label}
-                  <X className="size-3" aria-hidden />
-                </button>
+                <FilterChip key={chip.id} label={chip.label} onRemove={chip.remove} />
               ))}
             </div>
           )}
@@ -1210,8 +1208,17 @@ export function QuarantineTable({
   );
 }
 
-/** Sunucu süzgeci rozeti — kaldırıldığında sayfa yeniden yüklenir (yerel rozetten farkı budur). */
-function ServerChip({
+/**
+ * "Süzgeci kaldır" çipi — sunucu ve yerel süzgeçler İÇİN TEK görünüm.
+ *
+ * Eskiden iki ayrı uygulama vardı ve aynı satırda yan yana duruyorlardı: sunucu çipi saç teli
+ * halkalıydı (ring-inset), yerel facet çipi halkasızdı. Halka değeri `ui/badge.tsx` `neutral`
+ * varyantıyla hizalandı (`ring-border/70`) → rozet diliyle birebir aynı.
+ *
+ * `disabled` YALNIZ sunucu çiplerine geçirilir (useTransition bayrağı); yerel facet çipleri saf
+ * istemci durumudur ve sunucu yeniden yüklemesi sırasında dondurulmamalıdır.
+ */
+function FilterChip({
   label,
   onRemove,
   disabled,
@@ -1226,7 +1233,7 @@ function ServerChip({
       onClick={onRemove}
       disabled={disabled}
       aria-label={`${label} süzgecini kaldır`}
-      className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground ring-1 ring-inset ring-border transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+      className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground ring-1 ring-inset ring-border/70 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
     >
       {label}
       <X className="size-3" aria-hidden />

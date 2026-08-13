@@ -75,13 +75,17 @@ export function DataTable<TData, TValue>({
         searchPlaceholder={searchPlaceholder}
         facets={facets}
       />
-      <div className="overflow-hidden rounded-lg border border-border">
+      {/* Kart sözleşmesi (referans): rounded-xl + bg-card + shadow-xs. Eskiden yalnız
+          `rounded-lg border` idi → tablo yüzeyi paneldeki diğer kartlarla aynı dilde değildi. */}
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((hg) => (
               <TableRow key={hg.id} className="bg-muted/40 hover:bg-muted/40">
+                {/* Başlık yüksekliği TEK KAYNAK TableHead (h-11). Burada `h-10` ile eziliyordu →
+                    DataTable'lar, doğrudan <Table> kullanan ekranlardan 4px farklı görünüyordu. */}
                 {hg.headers.map((header) => (
-                  <TableHead key={header.id} className="h-10">
+                  <TableHead key={header.id}>
                     {header.isPlaceholder
                       ? null
                       : flexRender(header.column.columnDef.header, header.getContext())}

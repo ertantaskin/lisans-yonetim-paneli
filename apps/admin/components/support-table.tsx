@@ -412,11 +412,22 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
         {/*
           flex-wrap: dar/dik ekranda 3 kapsam düğmesi tek satıra sığmadığında kutu SARSIN
           (düğmeler ezilip etiketleri kırılmasın). Genişte etkisizdir — hepsi tek satıra sığar.
-          inline-flex → flex: bu div zaten üstteki `flex flex-wrap` kabın bir öğesi, yani
-          blok'a çevriliyor; used-value aynı. Yük taşıyan değişiklik flex-wrap.
+          `inline-flex` ↔ `flex` farkı burada ETKİSİZ: bu div zaten üstteki `flex flex-wrap`
+          kabın bir öğesi, yani blok'a çevriliyor; used-value aynı. Yük taşıyan değişiklik
+          flex-wrap. (Sınıf `ui/tabs.tsx` ile hizalı olsun diye `inline-flex` yazılıdır.)
+        */}
+        {/*
+          GÖRÜNÜM TEK KAYNAK `ui/tabs.tsx`: aynı anlamı (bir kümeden tek seçim) taşıyan
+          çubuk panelde dört farklı biçimde çiziliyordu — burada kap `bg-card` + aktif
+          öğe DOLU `bg-primary`, sekme çubuğunda ise kap `bg-muted/40` + aktif öğe
+          KABARTMA (`bg-background` + `shadow-sm`). Yüzey sınıfları sekme çubuğuyla
+          birebir hizalandı (yeni hue EKLENMEDİ).
+          SEMANTİK KORUNDU: bu bir süzgeç düğme grubudur (`role="group"` + `aria-pressed`),
+          Radix Tabs'a çevrilmedi — panel'i olmayan bir `tablist` kırık `aria-controls`
+          üretir ve klavye davranışını (roving tabindex) değiştirirdi.
         */}
         <div
-          className="flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-card p-0.5"
+          className="inline-flex min-h-9 flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1"
           role="group"
           aria-label="Kuyruk kapsamı"
         >
@@ -431,11 +442,13 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
                 // whitespace-nowrap: sarma olduğunda TÜM düğme alt satıra insin, etiket
                 // kelime kelime kırılmasın ("Yanıt bekleyenler" tek satır kalır).
                 // Yer varken etkisiz; en geniş düğme ~146px, kap asla taşmaz.
-                'rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors',
-                'focus-visible:outline-none',
-                scope === s.key
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                // Sınıflar `ui/tabs.tsx` TabsTrigger ile birebir (tek görünüm dili).
+                'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1',
+                'text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
+                // Ölü `focus-visible:outline-none` KALDIRILDI: globals.css'teki katmansız
+                // `:focus-visible { outline }` kuralını zaten kapatamıyordu, yalnız okuyanı
+                // "odak bastırılmış" sanmaya itiyordu. Odak göstergesi TEK KAYNAK.
+                scope === s.key && 'bg-background text-foreground shadow-sm',
               )}
             >
               {s.label}{' '}

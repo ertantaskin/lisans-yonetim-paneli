@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 import { createPurchaseOrderAction, type POFormState } from '@/app/purchase-orders/actions';
 import type { SupplierOption } from '@/app/purchase-orders/queries';
 import type { ProductRow } from '@/lib/api';
+import { supplyStatusLabel } from '@/lib/labels';
 import { Input, Textarea, selectClass } from './ui/input';
 import { Button } from './ui/button';
 import { Combobox } from './ui/combobox';
@@ -114,9 +115,12 @@ export function CreatePOForm({
             <Input id="po-eta" name="eta" type="date" className="w-full" />
           </Field>
           <Field label="Durum" htmlFor="po-status">
+            {/* Etiketler TEK KAYNAK `lib/labels.ts` (po-detail-forms.tsx ile aynı desen):
+                elle yazılan "taslak"/"sipariş verildi" sözlük değişince sessizce ayrışıyordu.
+                `value` ve `name` DEĞİŞMEZ — server action bunlara bağlı. */}
             <select id="po-status" name="status" defaultValue="draft" className={`${selectClass} w-full`}>
-              <option value="draft">taslak</option>
-              <option value="ordered">sipariş verildi</option>
+              <option value="draft">{supplyStatusLabel('draft')}</option>
+              <option value="ordered">{supplyStatusLabel('ordered')}</option>
             </select>
           </Field>
         </FieldRow>

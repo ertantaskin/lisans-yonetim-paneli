@@ -17,11 +17,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from '../ui/sidebar';
 
 /** Uygulama kenar menüsü — marka + gruplu bilgi mimarisi + kullanıcı (§17). */
 export function AppSidebar({ user }: { user?: { name: string; email: string; role?: string } }) {
   const pathname = usePathname();
+  const { setOpenMobile } = useSidebar();
   // Aktif öğe = pathname'e uyan EN UZUN href. Düz prefix eşleşmesi kullanılamaz:
   // /stock/import açıkken hem "Stok & Ürünler" (/stock) hem "Stok Girişi" aktif görünürdü.
   let activeHref = '';
@@ -86,7 +88,15 @@ export function AppSidebar({ user }: { user?: { name: string; email: string; rol
                             <span>{item.label}</span>
                           </span>
                         ) : (
-                          <Link href={item.href}>
+                          <Link
+                            href={item.href}
+                            // Mobilde menü bir sheet; tıklayınca KAPANMALI, yoksa gidilen
+                            // sayfa örtülü kalıyor ve kullanıcı ayrıca kapatmak zorunda.
+                            onClick={() => setOpenMobile(false)}
+                            // Aktiflik yalnız renkle iletilmesin (WCAG 1.4.1) — yardımcı
+                            // teknolojiye `aria-current` ile de bildirilir.
+                            aria-current={isActive(item.href) ? 'page' : undefined}
+                          >
                             <Icon />
                             <span>{item.label}</span>
                           </Link>

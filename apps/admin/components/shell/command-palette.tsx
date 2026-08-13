@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { Command } from 'cmdk';
 import { Search, CornerDownLeft, ShoppingCart, KeyRound } from 'lucide-react';
 import { NAV } from './nav';
+import { Dialog, DialogContent, DialogTitle } from '../ui/dialog';
 import { orderStatusLabel } from '../../lib/labels';
 import { includesTr } from '../../lib/utils';
 
@@ -38,13 +39,13 @@ export function CommandPalette() {
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Kısayol DEĞİŞMEDİ: yalnız `open` durumunu çevirir.
+      // Escape dalı KALDIRILDI: palet artık gerçek bir Dialog (Radix) — Escape'i,
+      // dışarı tıklamayı, gövde kaydırma kilidini ve odağı Radix yönetiyor. Global
+      // dinleyicide tutmak, panelin BAŞKA katmanlarındaki Escape'i de yutuyordu.
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setOpen((o) => !o);
-      } else if (e.key === 'Escape') {
-        // 'ESC' ipucu gösteriliyor; özel overlay (Dialog değil) olduğundan Escape'i
-        // global dinleyicide ele al — aksi halde ipucu yalan oluyordu.
-        setOpen(false);
       }
     };
     const onOpen = () => setOpen(true);
@@ -103,104 +104,114 @@ export function CommandPalette() {
 
   const { orders, keys } = results;
 
-  if (!open) return null;
+  /*
+   * Palet artık GERÇEK bir modal: elle kurulmuş overlay `role="dialog"`/`aria-modal`
+   * taşımıyordu, Tab arka plandaki sidebar linklerine kaçıyordu, kapanışta odak
+   * tetikleyiciye geri verilmiyordu ve gövde kaydırması kilitlenmiyordu. `DialogContent`
+   * bunların hepsini (odak tuzağı + Escape + dışarı tıklama + scroll kilidi + odak iadesi)
+   * hazır getirir; ad-hoc `z-[100]` de düşer (dialog katmanı z-50).
+   * Arama/gezinme davranışı ve Ctrl+K kısayolu DEĞİŞMEDİ.
+   */
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-start justify-center bg-black/50 p-4 pt-[15vh] backdrop-blur-sm animate-in fade-in-0"
-      onClick={() => setOpen(false)}
-    >
-      <Command
-        className="w-full max-w-lg overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-2xl animate-in zoom-in-95"
-        onClick={(e) => e.stopPropagation()}
-        shouldFilter={false}
-        loop
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
+        hideClose
+        /* Radix erişilebilir ad ister; palet görsel başlık taşımaz → sr-only başlık.
+           `aria-describedby={undefined}`: açıklama yok, Radix'in kırık referans uyarısı çıkmasın. */
+        aria-describedby={undefined}
+        /* Yerleşim ezmeleri (twMerge aynı grupta çözer): dikey ortalama yerine üstten
+           %15 (eski görünüm birebir), dolgu/boşluk yok — gövdeyi Command çiziyor. */
+        className="top-[15vh] translate-y-0 gap-0 overflow-hidden p-0"
       >
-        <div className="flex items-center gap-2 border-b border-border px-3">
-          <Search className="size-4 text-muted-foreground" />
-          <Command.Input
-            autoFocus
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Sayfa, sipariş no, e-posta veya key son-5 hane…"
-            className="h-11 flex-1 bg-transparent text-sm text-popover-foreground outline-none placeholder:text-muted-foreground/70"
-          />
-          <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">ESC</kbd>
-        </div>
-        <Command.List className="max-h-80 overflow-y-auto p-2">
-          <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
-            Sonuç yok.
-          </Command.Empty>
+        <DialogTitle className="sr-only">Komut paleti</DialogTitle>
+        <Command className="w-full overflow-hidden bg-transparent" shouldFilter={false} loop>
+          <div className="flex items-center gap-2 border-b border-border px-3">
+            <Search className="size-4 text-muted-foreground" />
+            <Command.Input
+              autoFocus
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Sayfa, sipariş no, e-posta veya key son-5 hane…"
+              className="h-11 flex-1 bg-transparent text-sm text-popover-foreground outline-none placeholder:text-muted-foreground/70"
+            />
+            <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">ESC</kbd>
+          </div>
+          <Command.List className="max-h-80 overflow-y-auto p-2">
+            <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
+              Sonuç yok.
+            </Command.Empty>
 
-          {filteredPages.length > 0 && (
-            <Command.Group
-              heading="Sayfalar"
-              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
-            >
-              {filteredPages.map((item) => {
-                const Icon = item.icon;
-                return (
+            {filteredPages.length > 0 && (
+              <Command.Group
+                heading="Sayfalar"
+                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
+              >
+                {filteredPages.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Command.Item
+                      key={item.href}
+                      value={`page:${item.href}`}
+                      onSelect={() => go(item.href)}
+                      className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-sm text-popover-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+                    >
+                      <Icon className="size-4" />
+                      {item.label}
+                      <CornerDownLeft className="ml-auto size-3 opacity-0 data-[selected=true]:opacity-60" />
+                    </Command.Item>
+                  );
+                })}
+              </Command.Group>
+            )}
+
+            {orders.length > 0 && (
+              <Command.Group
+                heading="Siparişler"
+                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
+              >
+                {orders.map((o) => (
                   <Command.Item
-                    key={item.href}
-                    value={`page:${item.href}`}
-                    onSelect={() => go(item.href)}
+                    key={o.id}
+                    value={`order:${o.id}`}
+                    onSelect={() => go(`/orders/${o.id}`)}
                     className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-sm text-popover-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
                   >
-                    <Icon className="size-4" />
-                    {item.label}
-                    <CornerDownLeft className="ml-auto size-3 opacity-0 data-[selected=true]:opacity-60" />
+                    <ShoppingCart className="size-4 shrink-0" />
+                    <span className="font-medium">#{o.remoteOrderId}</span>
+                    <span className="truncate text-muted-foreground">{o.customerEmail}</span>
+                    <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      {orderStatusLabel(o.status)}
+                    </span>
                   </Command.Item>
-                );
-              })}
-            </Command.Group>
-          )}
+                ))}
+              </Command.Group>
+            )}
 
-          {orders.length > 0 && (
-            <Command.Group
-              heading="Siparişler"
-              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
-            >
-              {orders.map((o) => (
-                <Command.Item
-                  key={o.id}
-                  value={`order:${o.id}`}
-                  onSelect={() => go(`/orders/${o.id}`)}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-sm text-popover-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-                >
-                  <ShoppingCart className="size-4 shrink-0" />
-                  <span className="font-medium">#{o.remoteOrderId}</span>
-                  <span className="truncate text-muted-foreground">{o.customerEmail}</span>
-                  <span className="ml-auto shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {orderStatusLabel(o.status)}
-                  </span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          )}
-
-          {keys.length > 0 && (
-            <Command.Group
-              heading="Key'ler"
-              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
-            >
-              {keys.map((k) => (
-                <Command.Item
-                  key={k.licenseItemId}
-                  value={`key:${k.licenseItemId}`}
-                  onSelect={() => go(k.orderId ? `/orders/${k.orderId}` : '/stock')}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-sm text-popover-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-                >
-                  <KeyRound className="size-4 shrink-0" />
-                  <span className="font-mono text-xs">{k.masked}</span>
-                  <span className="truncate text-muted-foreground">{k.productSku}</span>
-                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                    {k.orderId ? 'siparişte' : 'stokta'}
-                  </span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-          )}
-        </Command.List>
-      </Command>
-    </div>
+            {keys.length > 0 && (
+              <Command.Group
+                heading="Key'ler"
+                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-muted-foreground"
+              >
+                {keys.map((k) => (
+                  <Command.Item
+                    key={k.licenseItemId}
+                    value={`key:${k.licenseItemId}`}
+                    onSelect={() => go(k.orderId ? `/orders/${k.orderId}` : '/stock')}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-sm text-popover-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+                  >
+                    <KeyRound className="size-4 shrink-0" />
+                    <span className="font-mono text-xs">{k.masked}</span>
+                    <span className="truncate text-muted-foreground">{k.productSku}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {k.orderId ? 'siparişte' : 'stokta'}
+                    </span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            )}
+          </Command.List>
+        </Command>
+      </DialogContent>
+    </Dialog>
   );
 }

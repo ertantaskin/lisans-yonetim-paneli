@@ -9,6 +9,7 @@ import {
 } from '../app/stock/actions';
 import type { ProductRow } from '../lib/api';
 import { useAnnouncer } from './a11y/announcer';
+import { Alert } from './ui/alert';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Combobox } from './ui/combobox';
@@ -153,8 +154,9 @@ export function MapProductSheet({
             AÇIKÇA yazılır (sessiz kapanış "her şey tamam" izlenimi veriyordu). */}
         {result ? (
           <div className="space-y-4 p-4 pt-0">
-            <div className="flex gap-2 rounded-md border border-success/40 bg-success/5 px-3 py-2 text-sm">
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+            {/* Alert primitifi: tint/yarıçap/gövde rengi tek kaynaktan (elle kopya sapmıştı). */}
+            <Alert variant="success" className="gap-2 p-3">
+              <CheckCircle2 aria-hidden />
               <div className="min-w-0">
                 <p className="font-medium text-foreground">
                   {isEdit ? 'Eşleme güncellendi' : 'Eşleme kuruldu'}
@@ -164,11 +166,11 @@ export function MapProductSheet({
                   ürününden teslim edilir.
                 </p>
               </div>
-            </div>
+            </Alert>
 
             {!isEdit && (
-              <div className="flex gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <Alert variant="muted" className="gap-2 p-3">
+                <Info aria-hidden />
                 <div className="min-w-0">
                   <p className="font-medium text-foreground">Eski bekleyen satırlar</p>
                   {result.resolved ? (
@@ -193,7 +195,7 @@ export function MapProductSheet({
                     </p>
                   )}
                 </div>
-              </div>
+              </Alert>
             )}
 
             <Button type="button" onClick={() => setOpen(false)}>

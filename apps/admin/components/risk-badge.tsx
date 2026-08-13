@@ -103,7 +103,9 @@ export function RiskBadge({ email }: { email: string }) {
       </button>
 
       {open && hasFactors && (
-        <div className="w-full min-w-64 rounded-lg border border-border bg-card p-3 shadow-sm">
+        // Panel AKIŞ içinde açılır (yüzen katman değil: rozetin altına yer kaplayarak gelir)
+        // → kart gölge ölçeği. Eski `shadow-sm` yeni dilde kanonik değil; kart artık shadow-xs.
+        <div className="w-full min-w-64 rounded-lg border border-border bg-card p-3 shadow-xs">
           <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             Risk faktörleri
           </div>

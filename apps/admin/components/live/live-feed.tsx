@@ -134,7 +134,9 @@ function orderBadge(o: LiveOrder): StatusMeta {
     case 'canceled':
     case 'cancelled':
       // 'cancelled' (çift-l) sözlükte YOK → tek yazımla ('canceled') aranır, ham enum çıkmaz.
-      return { variant: 'danger', label: badgeStatusLabel('canceled'), icon: Ban };
+      // TON: `neutral` — iptal "ölü/hatalı" değil KAPANMIŞ bir durumdur (badge.tsx ton kuralı).
+      // `danger` iken sipariş detayındaki aynı durum gri, burada kırmızı görünüyordu.
+      return { variant: 'neutral', label: badgeStatusLabel('canceled'), icon: Ban };
     default:
       return { variant: 'neutral', label: badgeStatusLabel(o.status), icon: Clock };
   }
@@ -200,7 +202,7 @@ function FeedRow({
         href={href}
         className={cn(
           'flex items-center gap-2.5 border-l-2 border-l-transparent px-3 py-2 outline-none transition-colors duration-500 motion-reduce:transition-none',
-          'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60',
+          'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
           fresh && 'border-l-primary bg-accent/60',
           alert &&
             'border-l-destructive bg-[color-mix(in_oklch,var(--destructive)_8%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)]',
@@ -486,7 +488,7 @@ export function LiveKpiStrip({ initialStats }: { initialStats?: Partial<LiveStat
             href={item.href}
             className={cn(
               'flex items-center gap-2 bg-card px-3 py-2.5 outline-none transition-colors',
-              'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60',
+              'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
               spanLast && 'col-span-2 lg:col-span-1',
               !hot && 'text-muted-foreground',
             )}

@@ -16,7 +16,9 @@ export function DataTableViewOptions<TData>({ table }: { table: Table<TData> }) 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="ml-auto hidden h-8 lg:flex">
+        {/* `hidden lg:flex` DEĞİL: geniş tablolarda kolon gizlemek dar ekranın TEK kaçış
+            yoluydu ve tam da orada kapalıydı. 375px'te de sığıyor (arama 176px + ~100px). */}
+        <Button variant="outline" size="sm" className="ml-auto flex h-8">
           <SlidersHorizontal /> Görünüm
         </Button>
       </DropdownMenuTrigger>

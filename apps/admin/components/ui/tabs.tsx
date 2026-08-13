@@ -56,8 +56,9 @@ export const TabsTrigger = React.forwardRef<
         // → kap kırpmıyor, global outline eksiksiz görünüyor. Halkanın kaldırılması odak
         // göstergesi sözleşmesine (globals.css TEK KAYNAK) dokunduğu için AYRI bir değişiklik
         // olarak ele alınmalı; burada davranış bilinçli olarak korundu.
-        // Tam opaklık (6.54:1 açık / 4.18:1 koyu) — soluk /60 varyantı 3:1 eşiğinin altındaydı.
-        'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+        // HALKA KALDIRILDI: yukarıdaki gerekçe ("kap kırpıyor") TabsList sarmaya geçince
+        // geçersizleşti — kırpan kap yok, global `:focus-visible` outline'ı eksiksiz görünüyor.
+        // Odak göstergesi TEK KAYNAK kuralı (globals.css) artık burada da geçerli.
         'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm',
         '[&_svg]:size-4 [&_svg]:shrink-0',
         className,

@@ -185,7 +185,7 @@ export function DeadLetterTable({ rows }: { rows: DeadLetterRow[] }) {
         header: 'Hata',
         cell: ({ row }) => (
           <span
-            className="line-clamp-2 max-w-sm text-muted-foreground"
+            className="line-clamp-2 max-w-sm whitespace-normal text-muted-foreground"
             title={row.original.error ?? undefined}
           >
             {row.original.error ?? '—'}

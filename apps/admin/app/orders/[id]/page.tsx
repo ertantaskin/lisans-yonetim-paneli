@@ -367,8 +367,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           <StatusBadge status={order.status} className="mt-1" />
         </div>
 
-        {/* Tek satırlık ince özet şeridi */}
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-lg border border-border bg-card px-4 py-2 text-sm">
+        {/* Tek satırlık ince özet şeridi.
+            NEDEN elle sınıf: üç öğe de StatStripItem şekline oturmuyor (1. öğede ton YALNIZ
+            ikonu boyar, 3. öğe etiketsiz bir <Link>) — primitife taşımak render'ı değiştirirdi.
+            Bu yüzden yalnız YÜZEY sınıfları `ui/stat-tile.tsx` StatStrip ile birebir hizalandı
+            (rounded-xl + py-2.5 + shadow-xs); eskiden rounded-lg/py-2 ve gölgesizdi, yani
+            aynı sayfadaki Card'ların yanında farklı bir kart yüzeyi çiziyordu. */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-border bg-card px-4 py-2.5 text-sm shadow-xs">
           <span className="inline-flex items-center gap-1.5">
             <PackageCheck className={`size-4 ${fullyDelivered ? 'text-success' : 'text-warning'}`} />
             <span className="text-muted-foreground">Teslim</span>
@@ -422,9 +427,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       )}
 
       {/* ── İki kolon: sol (geniş) ürünler+lisanslar; sağ (dar) destek + referans ── */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-3">
         {/* SOL (geniş) — ana çalışma alanı */}
-        <div className="space-y-4 lg:col-span-2">
+        {/* `min-w-0` ŞART: grid çocuğunun varsayılan `min-width:auto` değeri, otomatik
+            minimumunu İÇERİĞİNİN min-content genişliği yapar. Ölçüldü (375px): ızgara 343px
+            iken bu sütun 380px'e taşıyor, sayfa `overflow-x-clip` emniyeti yüzünden KAYMIYOR
+            → taşan 21px sessizce KIRPILIYOR ve lisans satırındaki "İptal" düğmesine mobilde
+            erişilemiyordu. (SidebarInset'te aynı hata bir seviye yukarıda düzeltilmişti.) */}
+        <div className="min-w-0 space-y-4 lg:col-span-2">
           <section className="space-y-3">
             <div className="flex items-center gap-2 px-0.5">
               <KeyRound className="size-4 text-muted-foreground" />
@@ -515,8 +525,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                         </strong>{' '}
                         teslim
                       </span>
+                      {/* İptal edilen satır: TON KURALI gereği neutral (kapanmış kayıt, eylem
+                          yok) — kırmızı "ölü/hatalı" demektir ve aynı durum panelin geri
+                          kalanında zaten gri "İptal" görünüyordu. Etiket de elle yazılmıyor:
+                          StatusBadge → labels.ts (TEK KAYNAK) + Ban ikonu. */}
                       {l.canceled ? (
-                        <Badge variant="danger">İade/İptal</Badge>
+                        <StatusBadge status="canceled" />
                       ) : (
                         <StatusBadge status={l.status} />
                       )}
@@ -564,9 +578,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             })}
           </section>
 
-          {/* Geçmiş / iptal edilen lisanslar — katlanır, sönük. */}
+          {/* Geçmiş / iptal edilen lisanslar — katlanır, sönük.
+              shadow-xs: kart yüzeyi sözleşmesi (Card ile aynı dizi) — eksikti, bu blok
+              yanındaki Card'ların arasında gölgesiz duruyordu. */}
           {terminalAsg.length > 0 && (
-            <details className="group rounded-xl border border-border bg-card">
+            <details className="group rounded-xl border border-border bg-card shadow-xs">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
                 <Archive className="size-4" />
                 Geçmiş / iptal edilen lisanslar ({terminalAsg.length})
@@ -606,9 +622,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             </details>
           )}
 
-          {/* Değişim geçmişi (eski anahtarlar) — katlanır referans; KİM yaptı görünür. */}
+          {/* Değişim geçmişi (eski anahtarlar) — katlanır referans; KİM yaptı görünür.
+              shadow-xs: yukarıdaki katlanır blokla ve Card sözleşmesiyle aynı yüzey. */}
           {history.length > 0 && (
-            <details className="group rounded-xl border border-border bg-card">
+            <details className="group rounded-xl border border-border bg-card shadow-xs">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
                 <RefreshCw className="size-4" />
                 Değişim geçmişi — değiştirilen kalemler ({history.length})
@@ -689,10 +706,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 gap-y-1 space-y-0 pb-3">
                 <CardTitle icon={LifeBuoy} className="text-sm">
                   Destek Talepleri
+                  {/* Badge primitifi: elle yazılan pill'de zorunlu saç teli halka (ring-inset)
+                      ve doğru tint yüzdesi yoktu. `ml-2` DÜŞTÜ — CardTitle ikonluyken zaten
+                      `flex items-center gap-2` uyguluyor, margin üstüne ikinci bir 8px binerdi. */}
                   {openReplacements > 0 && (
-                    <span className="ml-2 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-medium text-warning">
-                      {openReplacements} yanıt bekliyor
-                    </span>
+                    <Badge variant="warning">{openReplacements} yanıt bekliyor</Badge>
                   )}
                 </CardTitle>
                 <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">

@@ -130,6 +130,19 @@ const SUPPLY_STATUS: Record<string, string> = {
 };
 export const supplyStatusLabel = (s: string) => lookup(SUPPLY_STATUS, s);
 
+// ── Admin rolü (§8) ──────────────────────────────────────────────────────────
+/**
+ * Rol ham enum olarak (`owner`/`admin`) kullanıcıya sızıyordu (admin oluşturma formu +
+ * admin listesi rozeti). Etiket KISA tutulur: aynı fonksiyon hem `<option>`u hem rozeti
+ * besler, "Sahip (tam yetki)" gibi uzun bir metin rozeti gereksiz şişirirdi — yetki
+ * açıklaması çağrı yerinde yardım metni olarak verilir. `value`/`name` DEĞİŞMEZ.
+ */
+const ADMIN_ROLE: Record<string, string> = {
+  owner: 'Sahip',
+  admin: 'Yönetici',
+};
+export const adminRoleLabel = (r: string) => lookup(ADMIN_ROLE, r);
+
 // ── Stok düzeltme işlemi ─────────────────────────────────────────────────────
 const ADJUSTMENT_ACTION: Record<string, string> = {
   correct: 'Düzeltme',

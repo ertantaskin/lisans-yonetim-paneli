@@ -154,7 +154,7 @@ export default async function ProductDetailPage({
       </div>
 
       {/* Özet şeritleri yan yana — eskiden alt alta iki blok, ekranın yarısını yiyordu. */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
       <div className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Boxes className="size-4 text-muted-foreground" aria-hidden /> Stok durumu
@@ -256,7 +256,7 @@ export default async function ProductDetailPage({
           </div>
         }
         supply={
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle icon={Package}>Partiler</CardTitle>
@@ -406,7 +406,7 @@ export default async function ProductDetailPage({
           </div>
         }
         ledger={
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle icon={Wrench}>Stok Düzeltme Ekle</CardTitle>

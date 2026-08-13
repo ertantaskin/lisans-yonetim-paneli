@@ -25,6 +25,14 @@ import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Label, Textarea } from './ui/input';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './ui/dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -260,7 +268,13 @@ type RecallNotice = {
   soldNeedingReplacement: number;
 };
 
-/** Sebep-girişli recall modalı. Native Dialog primitifi yok → basit overlay (support-table deseni). */
+/**
+ * Sebep-girişli recall modalı — kanonik `ui/dialog.tsx` primitifi üzerinde.
+ *
+ * Eskiden elle kurulmuş bir overlay'di: örtü `bg-background/70` (kanonik `bg-black/50`'nin AÇIK
+ * temada tersi — beyaz perde), gölge `shadow-lg` (kanonik `shadow-xl`) ve Escape dışında odak
+ * tuzağı / scroll kilidi / portal yoktu. Radix Dialog bunların hepsini getirir.
+ */
 function RecallDialog({
   batch,
   onClose,
@@ -276,10 +290,6 @@ function RecallDialog({
   const [localError, setLocalError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-
-  React.useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
 
   const submit = () => {
     if (!reason.trim()) {
@@ -305,85 +315,81 @@ function RecallDialog({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Partiyi geri çek"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
+    // Ebeveyn yalnız hedef seçiliyken mount ediyor → `open` sabit; kapanış tek yoldan (onClose).
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
       }}
     >
-      <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Partiyi geri çek</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {batch.label} · {batch.productName}
-            </p>
+      <DialogContent
+        className="max-w-md"
+        // Odak sebep alanında başlasın (eski davranış: mount effect'i ile focus).
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          textareaRef.current?.focus();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>Partiyi geri çek</DialogTitle>
+          <DialogDescription>
+            {batch.label} · {batch.productName}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="-mr-1 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+          <Alert variant="warning">
+            <TriangleAlert />
+            <div className="min-w-0 flex-1">
+              <AlertDescription>
+                Stoktaki {itemCount(batch.unsoldCount, batch.productKind)} geçersiz kılınacak (geri
+                alınamaz).
+                {batch.customerCount > 0 && (
+                  <>
+                    {' '}
+                    Müşterilerdeki {itemCount(batch.customerCount, batch.productKind)}{' '}
+                    <strong>korunur</strong> — çalışmaya devam eder; hangisini değiştireceğinize tek
+                    tek karar verirsiniz.
+                  </>
+                )}{' '}
+                {/* Geri alınamaz karar öncesi etkilenecek kalemlere bakma yolu (yeni sekme —
+                    modaldaki sebep metni kaybolmasın). */}
+                <Link
+                  href={`/batches/${batch.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-4"
+                >
+                  Bu partinin lisanslarını incele
+                </Link>
+              </AlertDescription>
+            </div>
+          </Alert>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="recall-reason">Geri çekme sebebi (audit'e kaydedilir)</Label>
+            <Textarea
+              id="recall-reason"
+              ref={textareaRef}
+              rows={4}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Ör: tedarikçi hatalı key partisi bildirdi…"
+            />
+            {localError && <p className="text-xs text-destructive">{localError}</p>}
           </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="Kapat"
-            className="-mr-1 -mt-1 shrink-0"
-          >
-            <X />
-          </Button>
         </div>
 
-        <Alert variant="warning" className="mb-3">
-          <TriangleAlert />
-          <div className="min-w-0 flex-1">
-            <AlertDescription>
-              Stoktaki {itemCount(batch.unsoldCount, batch.productKind)} geçersiz kılınacak (geri
-              alınamaz).
-              {batch.customerCount > 0 && (
-                <>
-                  {' '}
-                  Müşterilerdeki {itemCount(batch.customerCount, batch.productKind)}{' '}
-                  <strong>korunur</strong> — çalışmaya devam eder; hangisini değiştireceğinize tek
-                  tek karar verirsiniz.
-                </>
-              )}{' '}
-              {/* Geri alınamaz karar öncesi etkilenecek kalemlere bakma yolu (yeni sekme —
-                  modaldaki sebep metni kaybolmasın). */}
-              <Link
-                href={`/batches/${batch.id}`}
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-4"
-              >
-                Bu partinin lisanslarını incele
-              </Link>
-            </AlertDescription>
-          </div>
-        </Alert>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="recall-reason">Geri çekme sebebi (audit'e kaydedilir)</Label>
-          <Textarea
-            id="recall-reason"
-            ref={textareaRef}
-            rows={4}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Ör: tedarikçi hatalı key partisi bildirdi…"
-          />
-          {localError && <p className="text-xs text-destructive">{localError}</p>}
-        </div>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
             Vazgeç
           </Button>
-          <Button variant="danger" size="sm" onClick={submit} disabled={pending}>
+          <Button variant="danger" onClick={submit} disabled={pending}>
             <PackageX /> {pending ? 'İşleniyor…' : 'Geri Çek'}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -433,68 +439,58 @@ function BulkReplaceDialog({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Satılan kalemleri toplu değiştir"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
+    // Kanonik Dialog (elle kurulan overlay yerine): aynı örtü/gölge dili + odak tuzağı,
+    // Escape, scroll kilidi ve portal — iki modal artık aynı görünüyor.
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
       }}
     >
-      <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Satılanları toplu değiştir</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {batch.label} · {batch.productName}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="Kapat"
-            className="-mr-1 -mt-1 shrink-0"
-          >
-            <X />
-          </Button>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Satılanları toplu değiştir</DialogTitle>
+          <DialogDescription>
+            {batch.label} · {batch.productName}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="-mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
+          <Alert variant="warning">
+            <TriangleAlert />
+            <div className="min-w-0 flex-1">
+              <AlertDescription>
+                Müşterilerdeki {itemCount(batch.replaceableCount, batch.productKind)} geri alınıp
+                yerine BAŞKA bir partiden tazesi atanacak. Stok yetmeyen kalemler atlanır (mevcut
+                kalem korunur — müşteri boşta kalmaz).
+                {batch.customerCount > batch.replaceableCount && (
+                  <>
+                    {' '}
+                    Askıya alınmış{' '}
+                    {itemCount(batch.customerCount - batch.replaceableCount, batch.productKind)} bu
+                    işleme DAHİL DEĞİL — askıyı bilerek siz koydunuz, elle işleyin.
+                  </>
+                )}{' '}
+                Tek tek karar vermek isterseniz{' '}
+                <Link href={`/batches/${batch.id}`} className="underline underline-offset-4">
+                  parti detayındaki listeyi
+                </Link>{' '}
+                kullanın.
+              </AlertDescription>
+            </div>
+          </Alert>
         </div>
 
-        <Alert variant="warning" className="mb-4">
-          <TriangleAlert />
-          <div className="min-w-0 flex-1">
-            <AlertDescription>
-              Müşterilerdeki {itemCount(batch.replaceableCount, batch.productKind)} geri alınıp
-              yerine BAŞKA bir partiden tazesi atanacak. Stok yetmeyen kalemler atlanır (mevcut
-              kalem korunur — müşteri boşta kalmaz).
-              {batch.customerCount > batch.replaceableCount && (
-                <>
-                  {' '}
-                  Askıya alınmış{' '}
-                  {itemCount(batch.customerCount - batch.replaceableCount, batch.productKind)} bu
-                  işleme DAHİL DEĞİL — askıyı bilerek siz koydunuz, elle işleyin.
-                </>
-              )}{' '}
-              Tek tek karar vermek isterseniz{' '}
-              <Link href={`/batches/${batch.id}`} className="underline underline-offset-4">
-                parti detayındaki listeyi
-              </Link>{' '}
-              kullanın.
-            </AlertDescription>
-          </div>
-        </Alert>
-
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
             Vazgeç
           </Button>
-          <Button variant="default" size="sm" onClick={submit} disabled={pending}>
+          <Button variant="default" onClick={submit} disabled={pending}>
             <Replace /> {pending ? 'İşleniyor…' : 'Toplu Değiştir'}
           </Button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

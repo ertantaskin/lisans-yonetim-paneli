@@ -271,7 +271,7 @@ function ResultTable({ result }: { result: SqlResult }) {
             {result.rows.map((row, i) => (
               <TableRow key={i}>
                 {result.columns.map((c) => (
-                  <TableCell key={c} className="font-mono text-xs">
+                  <TableCell key={c} className="max-w-sm truncate font-mono text-xs">
                     {cellText(row[c])}
                   </TableCell>
                 ))}
