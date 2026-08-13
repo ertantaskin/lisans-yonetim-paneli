@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   KeyRound,
   MoreHorizontal,
+  Package,
   PackagePlus,
   PackageX,
   Replace,
@@ -39,7 +40,16 @@ const baseColumns: ColumnDef<BatchRow>[] = [
     accessorKey: 'label',
     meta: { title: 'Parti' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Parti" />,
-    cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
+    // Etiket artık PARTİ DETAYINA link: satır menüsünü açmadan partinin lisanslarına gitmenin
+    // en kısa yolu (tablolarda birincil kolon tıklanabilir olmalı — panel geneli desen).
+    cell: ({ row }) => (
+      <Link
+        href={`/batches/${row.original.id}`}
+        className="font-medium text-foreground underline-offset-4 hover:underline"
+      >
+        {row.original.label}
+      </Link>
+    ),
     // Arama: parti etiketi VEYA ürün sku/adı. Türkçe-duyarlı (`includesTr`) — ham
     // `toLowerCase()` ile "İşletim Sistemi" / "IŞIK-2024" gibi kayıtlar SESSİZCE bulunamıyordu
     // (diğer tablolarda düzeltilmişti, bu tablo atlanmıştı).
@@ -178,10 +188,19 @@ function BatchRowActions({
         {/* Ürünün lisans envanterine derin bağlantı — geri çekme kararı öncesi "hangi
             anahtarlar, kime gitti" bakılabilsin (envanter tablosu parti süzgecini API'de
             destekliyor; ekran süzgeci ayrı bir iş olarak açık kaldı). */}
+        {/* Parti detayı: partinin KENDİ lisansları (teslim edilen/geçersiz dahil) + toplu
+            işlemler. Eskiden yalnız ÜRÜNÜN envanterine gidiliyordu ve orada "hangi anahtar bu
+            partiden" sorusunun cevabı yoktu (kullanıcı geri bildirimi). */}
+        <DropdownMenuItem asChild>
+          <Link href={`/batches/${batch.id}`}>
+            <KeyRound />
+            Parti detayı ve lisansları
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link href={`/products/${batch.productId}#lisans-envanteri`}>
-            <KeyRound />
-            Ürünün lisans envanteri
+            <Package />
+            Ürünün tüm envanteri
           </Link>
         </DropdownMenuItem>
         {addStockable && (

@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
@@ -45,6 +54,12 @@ export class SupplyOpsController {
   @Get('batches')
   listBatches() {
     return this.supplyOps.listBatches();
+  }
+
+  /** Tek parti (detay ekranı). Liste satırıyla AYNI şekil — sayaçlar dahil. */
+  @Get('batches/:id')
+  getBatch(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.supplyOps.getBatch(id);
   }
 
   @Post('batches/:id/recall')

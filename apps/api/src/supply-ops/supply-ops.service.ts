@@ -101,7 +101,19 @@ export class SupplyOpsService {
    * bölmeyi bırakır (süresi geçmiş kalemler hiçbir kovaya girmez). Atanabilir stok sayısı
    * ürün ekranlarından (products.list / stock.availableCount) okunur.
    */
-  async listBatches(): Promise<BatchRow[]> {
+  /**
+   * TEK parti (detay ekranı). Liste sorgusunun aynısını `id` ile daraltır — sayaç ve alan
+   * tanımları tek yerde kalsın diye ayrı bir sorgu YAZILMADI (iki tanım zamanla ayrışır).
+   * Bulunamazsa 404.
+   */
+  async getBatch(id: string): Promise<BatchRow> {
+    const rows = await this.listBatches(id);
+    const row = rows[0];
+    if (!row) throw new NotFoundException('Parti bulunamadı');
+    return row;
+  }
+
+  async listBatches(onlyId?: string): Promise<BatchRow[]> {
     const list = await rawRows<{
       id: string;
       label: string;
@@ -142,6 +154,7 @@ export class SupplyOpsService {
         SELECT batch_id, count(*) AS c FROM license_items
         WHERE status <> 'available' GROUP BY batch_id
       ) sold ON sold.batch_id = b.id
+      WHERE ${onlyId ? sql`b.id = ${onlyId}` : sql`true`}
       ORDER BY b.received_at DESC;
     `);
     return list.map((r) => ({

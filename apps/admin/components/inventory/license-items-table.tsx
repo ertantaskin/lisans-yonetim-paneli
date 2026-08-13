@@ -110,12 +110,15 @@ function stockExpiry(row: LicenseInventoryRow): { expired: boolean; expiresAt: s
  */
 export function LicenseItemsTable({
   productId,
+  batchId,
   payloadSchema,
   showProductColumn = false,
   className,
 }: {
   /** Verilirse yalnız bu ürünün kalemleri listelenir (ürün detayı). */
   productId?: string;
+  /** Verilirse yalnız bu PARTİYE ait kalemler listelenir (parti detayı). */
+  batchId?: string;
   /**
    * Hesap ürününün alan şeması — YALNIZ tek ürüne daraltılmış listede anlamlı
    * (ürün detayı). Global listede satırlar farklı ürünlerden gelir → gönderilmez.
@@ -167,7 +170,7 @@ export function LicenseItemsTable({
     const id = ++reqId.current;
     let cancelled = false;
     setLoading(true);
-    fetchLicenseItemsAction({ productId, status, search: term, page, pageSize, sort })
+    fetchLicenseItemsAction({ productId, batchId, status, search: term, page, pageSize, sort })
       .then((res) => {
         if (cancelled || id !== reqId.current) return;
         if (res.ok && res.page) {
@@ -186,7 +189,7 @@ export function LicenseItemsTable({
     return () => {
       cancelled = true;
     };
-  }, [productId, status, term, page, pageSize, sort, reloadKey]);
+  }, [productId, batchId, status, term, page, pageSize, sort, reloadKey]);
 
   const reload = React.useCallback(() => setReloadKey((k) => k + 1), []);
 
