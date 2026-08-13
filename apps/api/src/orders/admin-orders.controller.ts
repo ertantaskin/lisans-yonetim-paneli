@@ -44,6 +44,11 @@ const QuarantineQuerySchema = z.object({
   supplierId: blankOr((s) => UUID_RE.test(s), 'supplierId geçerli bir kimlik olmalı'),
   from: blankOr((s) => !Number.isNaN(Date.parse(s)), 'from geçerli bir tarih olmalı'),
   to: blankOr((s) => !Number.isNaN(Date.parse(s)), 'to geçerli bir tarih olmalı'),
+  // Tedarikçiye bildirim durumu (§12). Boş/verilmemiş = 'any' (eski davranış).
+  claimed: blankOr(
+    (s) => s === 'none' || s === 'open' || s === 'any',
+    'claimed none|open|any olmalı',
+  ),
   // Sayı biçimi burada, aralık kırpması serviste (1..5000) — çift doğrulama yerine tek kaynak.
   limit: blankOr((s) => /^\d{1,5}$/.test(s), 'limit bir sayı olmalı'),
 });
@@ -156,6 +161,7 @@ export class AdminOrdersController {
   ) {
     const status = trimmed(q.status);
     const limit = trimmed(q.limit);
+    const claimed = trimmed(q.claimed);
     return this.adminOrders.listQuarantine({
       actor,
       search: trimmed(q.search),
@@ -164,6 +170,7 @@ export class AdminOrdersController {
       supplierId: trimmed(q.supplierId),
       from: trimmed(q.from),
       to: trimmed(q.to),
+      claimed: claimed === 'none' || claimed === 'open' ? claimed : undefined,
       limit: limit ? Number(limit) : undefined,
       // (Denetim A1/M1) owner (veya auth KAPALI) → TAM anahtar; owner-OLMAYAN admin → maskeli.
       reveal: canRevealPlaintext(role),

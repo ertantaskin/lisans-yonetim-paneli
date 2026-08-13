@@ -20,6 +20,7 @@ import { CustomersModule } from './customers/customers.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReportsModule } from './reports/reports.module';
 import { ProcurementModule } from './procurement/procurement.module';
+import { SupplierClaimsModule } from './supplier-claims/supplier-claims.module';
 import { SupplyOpsModule } from './supply-ops/supply-ops.module';
 import { SecurityModule } from './security/security.module';
 import { SearchModule } from './search/search.module';
@@ -105,6 +106,7 @@ import { RateLimitModule } from './common/rate-limit.module';
     ReportsModule,
     ProcurementModule,
     SupplyOpsModule,
+    SupplierClaimsModule,
     SecurityModule,
     SearchModule,
     TemplatesModule,

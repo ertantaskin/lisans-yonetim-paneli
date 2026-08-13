@@ -27,7 +27,15 @@ export const stockAdjustments = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [index('stock_adjustments_product_idx').on(t.productId)],
+  (t) => [
+    index('stock_adjustments_product_idx').on(t.productId),
+    /**
+     * Karantina ekranının İKİ sıcak sorgusu bu kolonu kullanıyordu ve index YOKTU:
+     * tarih ön-filtresinde `license_item_id IN (…)` ve sebep okumasında yine `IN (…)`.
+     * Ayrıca yeni "değişim fişi" akışı aday toplarken aynı yolu izliyor.
+     */
+    index('stock_adjustments_license_item_idx').on(t.licenseItemId),
+  ],
 );
 
 export type StockAdjustment = typeof stockAdjustments.$inferSelect;

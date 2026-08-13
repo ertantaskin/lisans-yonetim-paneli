@@ -14,6 +14,7 @@ export * from './suppliers';
 export * from './purchaseOrders';
 export * from './batches';
 export * from './stockAdjustments';
+export * from './supplierClaims';
 export * from './securityEvents';
 export * from './savedViews';
 export * from './pluginReleases';

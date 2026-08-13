@@ -148,6 +148,14 @@ export interface QuarantineQuery {
    */
   from?: string;
   to?: string;
+  /**
+   * TEDARİKÇİYE BİLDİRİM DURUMU (§12 değişim fişi).
+   *   `none` → henüz hiçbir fişe girmemiş (ya da girip REDDEDİLİP havuza dönmüş) kalemler.
+   *            "Bekleyenler" sekmesinin ve Z raporu adaylarının tanımı budur.
+   *   `open`  → hâlihazırda bir fişte olan kalemler (bildirilmiş).
+   *   `any`   → süzme yok. **VARSAYILAN** — parametresiz çağrı eski davranışı birebir korur.
+   */
+  claimed?: 'none' | 'open' | 'any';
   /** Varsayılan 500, üst sınır 5000. */
   limit?: number;
   /**
@@ -1950,6 +1958,21 @@ export class AdminOrdersService {
       if (searchCond) conditions.push(searchCond);
     }
 
+    // ── TEDARİKÇİ BİLDİRİM DURUMU (§12 değişim fişi) ───────────────────────────────────────
+    // "Bu kusurlu anahtar tedarikçiye bildirildi mi?" — AYRI bir sorgu yazılmaz, kalem başına
+    // tek EXISTS ile bu (denetimden geçmiş) sorguya bağlanır.
+    //
+    // `outcome <> 'rejected'` yüklemi, `supplier_claim_items_open_uniq` KISMİ UNIQUE INDEX'İYLE
+    // BİREBİR AYNIDIR ve bu bilinçli: tedarikçi reddettiyse anahtar HAVUZA GERİ DÖNER, yani hem
+    // yeniden fişlenebilir (index izin verir) hem "bekleyenler" listesinde tekrar görünür
+    // (buradaki süzgeç izin verir). İki yüklem ayrışırsa ekran ile veritabanı çelişir.
+    const openClaimExists = sql`EXISTS (
+      SELECT 1 FROM supplier_claim_items sci
+      WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected'
+    )`;
+    if (params.claimed === 'none') conditions.push(sql`NOT ${openClaimExists}`);
+    else if (params.claimed === 'open') conditions.push(openClaimExists);
+
     // ── SQL ÖN-FİLTRESİ: tarih aralığı (denetim bulgusu G6) ────────────────────────────────
     // Karantina tarihi TEK kolon DEĞİL: coalesce(değişim geçmişi, düz-revoke audit'i, stok
     // düzeltme, atama, stok girişi). Son ikisi bu sorguda, ilk üçü AYRI tablolarda → KESİN
@@ -2067,6 +2090,28 @@ export class AdminOrdersService {
         historyReason: assignmentHistory.reason,
         historyAt: assignmentHistory.createdAt,
         formerAssignmentId: assignments.id,
+        // Tedarikçi bildirimi (§12): kalem hangi değişim fişinde? LEFT JOIN DEĞİL skaler
+        // alt-sorgu — leftJoin satır çoğaltır (aynı kalem reddedilmiş ESKİ fişlerde de
+        // görünür) ve buradaki dedupe zaten fan-out ile boğuşuyor. `outcome <> 'rejected'`
+        // ile en fazla BİR satır döner (kısmi unique index bunu garanti eder).
+        claimId: sql<string | null>`(
+          SELECT sci.claim_id FROM supplier_claim_items sci
+          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
+        )`,
+        claimCode: sql<string | null>`(
+          SELECT sc.code FROM supplier_claim_items sci
+          JOIN supplier_claims sc ON sc.id = sci.claim_id
+          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
+        )`,
+        claimStatus: sql<string | null>`(
+          SELECT sc.status::text FROM supplier_claim_items sci
+          JOIN supplier_claims sc ON sc.id = sci.claim_id
+          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
+        )`,
+        claimOutcome: sql<string | null>`(
+          SELECT sci.outcome::text FROM supplier_claim_items sci
+          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
+        )`,
       })
       .from(licenseItems)
       .innerJoin(products, eq(licenseItems.productId, products.id))
@@ -2132,11 +2177,15 @@ export class AdminOrdersService {
     const liIds = Array.from(new Set(rows.map((r) => r.licenseItemId)));
     const adjReasonByLi = new Map<string, string>();
     const adjAtByLi = new Map<string, Date>();
+    // `action` da okunur: kusurun KAYNAĞINI (recall / damage / elle void) belirler ve
+    // tedarikçiye giden fiş raporunda gerekçe ayrımı olarak yazılır.
+    const adjActionByLi = new Map<string, string>();
     if (liIds.length) {
       const adjRows = await this.db
         .select({
           licenseItemId: stockAdjustments.licenseItemId,
           reason: stockAdjustments.reason,
+          action: stockAdjustments.action,
           createdAt: stockAdjustments.createdAt,
         })
         .from(stockAdjustments)
@@ -2153,6 +2202,8 @@ export class AdminOrdersService {
           adjAtByLi.set(a.licenseItemId, a.createdAt);
         if (!adjReasonByLi.has(a.licenseItemId) && a.reason)
           adjReasonByLi.set(a.licenseItemId, a.reason);
+        if (!adjActionByLi.has(a.licenseItemId) && a.action)
+          adjActionByLi.set(a.licenseItemId, a.action);
       }
     }
 
@@ -2174,6 +2225,7 @@ export class AdminOrdersService {
           : null;
         const adjReason = adjReasonByLi.get(r.licenseItemId) ?? null;
         const adjAt = adjAtByLi.get(r.licenseItemId) ?? null;
+        const adjAction = adjActionByLi.get(r.licenseItemId) ?? null;
         return {
           licenseItemId: r.licenseItemId,
           productId: r.productId,
@@ -2214,6 +2266,27 @@ export class AdminOrdersService {
           reason: r.historyReason ?? auditReason ?? adjReason ?? null,
           replacedByAssignmentId: r.replacedByAssignmentId ?? null,
           quarantinedAt: r.historyAt ?? auditAt ?? adjAt ?? r.assignedAt ?? r.createdAt ?? null,
+          // Tedarikçi bildirimi (§12): boşsa kalem HAVUZDA bekliyor demektir.
+          claimId: r.claimId ?? null,
+          claimCode: r.claimCode ?? null,
+          claimStatus: r.claimStatus ?? null,
+          claimOutcome: r.claimOutcome ?? null,
+          /**
+           * Kusurun KAYNAĞI — tedarikçiye giden raporda gerekçe ayrımı için. Kalemin ölüm
+           * yolundan türetilir: değişim soyağacı varsa müşteri iadesi; yoksa stok düzeltme
+           * kaydının `action`'ı (recall/damage/void) belirler. Fiş kesilirken snapshot'lanır.
+           */
+          defectKind: r.historyReason
+            ? 'customer_return'
+            : adjAction === 'recall'
+              ? 'recall'
+              : adjAction === 'damage'
+                ? 'damage'
+                : adjAction === 'void'
+                  ? 'manual_void'
+                  : auditReason
+                    ? 'customer_return'
+                    : null,
         };
       });
 

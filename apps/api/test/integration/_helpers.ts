@@ -288,6 +288,21 @@ export async function cleanupByTag(db: Db, tag: string): Promise<void> {
     WHERE product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
        OR site_id IN (SELECT id FROM sites WHERE domain LIKE ${like})
   `);
+  // 0b) supplier_claims / supplier_claim_items — tedarikçiye kusur bildirimi (§12).
+  //     license_items'a FK YOK (plain uuid, stock_adjustments deseni) ama supplier_id →
+  //     suppliers RESTRICT DEĞİL SET NULL; yine de fiş satırları tag'li tedarikçi/ürün
+  //     silindikten sonra ORTADA kalmasın diye burada temizlenir. Kalemler claim'e CASCADE
+  //     bağlı → yalnız başlığı silmek yeter, ama açık `supplier_claim_items_open_uniq` kısmi
+  //     unique index'i yüzünden ARTIK KAYIT KALMAMALI: kalan bir satır, aynı license_item id'si
+  //     yeniden üretilemese de sonraki testlerin "havuzda bekleyen" sayımını kirletir.
+  await db.execute(sql`
+    DELETE FROM supplier_claims
+    WHERE supplier_id IN (SELECT id FROM suppliers WHERE name LIKE ${like})
+       OR id IN (
+         SELECT sci.claim_id FROM supplier_claim_items sci
+         WHERE sci.product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
+       )
+  `);
   // 1) Tag'li ürünlerin license_item'larına bağlı atamalar (restrict FK) — önce bunlar.
   await db.execute(sql`
     DELETE FROM assignments

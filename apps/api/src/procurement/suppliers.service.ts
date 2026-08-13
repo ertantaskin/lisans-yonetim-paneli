@@ -35,6 +35,34 @@ export interface SupplierScorecard {
    * sibling CostsService.bySupplier deseni). Maliyeti olan para birimi yoksa boş dizi.
    */
   totalCostCents: SupplierCostByCurrency[];
+  /**
+   * KUSUR KARNESİ (§12) — bu tedarikçiden gelip ÖLEN anahtarlar.
+   *
+   * `recallRate` PARTİ düzeyindedir ("kaç parti geri çekildi") ve anahtar düzeyinde bir kusur
+   * oranı panelde HİÇ hesaplanmıyordu. Bu blok o boşluğu kapatır: zayi raporundaki
+   * (`CostsService.wastage`) `stock_adjustments → license_items → batches → purchase_orders`
+   * zincirinin aynısı, `supplier_id` kırılımıyla.
+   */
+  defects: SupplierDefects;
+}
+
+/** Tedarikçi kusur/iade karnesi. */
+export interface SupplierDefects {
+  /** Bu tedarikçiden gelen TOPLAM lisans kalemi (parti üzerinden). */
+  totalItems: number;
+  /** Ölü (quarantined|voided) kalem sayısı. */
+  deadItems: number;
+  /** deadItems / totalItems (0..1); kalem yoksa 0. */
+  defectRate: number;
+  /** Henüz hiçbir fişe girmemiş kusurlu kalem — "bildirilmeyi bekliyor". */
+  unclaimedItems: number;
+  /** Açık (draft|sent) fiş sayısı. */
+  openClaims: number;
+  /** Kapanmış fişlerde ort. çözülme süresi (gün, sent_at → closed_at); veri yoksa null. */
+  avgResolutionDays: number | null;
+  /** Fiş kalemlerinin sonuç kırılımı. */
+  replacedItems: number;
+  rejectedItems: number;
 }
 
 /** Tedarikçi teslim-maliyeti (para birimi başına AYRI; panel invaryantı: karışım birleştirilmez). */
@@ -162,6 +190,64 @@ export class SuppliersService {
     const avgLeadDays =
       avgLeadRaw == null ? null : Math.round(Number(avgLeadRaw) * 10) / 10;
 
+    // ── Kusur karnesi ──
+    // Tedarikçi zinciri `CostsService.wastage` ile AYNI: parti doğrudan tedarikçi taşımıyorsa
+    // satın alma emrinden gelir. İki farklı zincir kullanmak, aynı tedarikçi için iki farklı
+    // kusur oranı demektir.
+    const defectAgg = await rawRows<{
+      total_items: number;
+      dead_items: number;
+      unclaimed_items: number;
+    }>(this.db, sql`
+      SELECT
+        count(*)::int AS total_items,
+        count(*) FILTER (WHERE li.status IN ('quarantined', 'voided'))::int AS dead_items,
+        count(*) FILTER (
+          WHERE li.status IN ('quarantined', 'voided')
+            AND NOT EXISTS (
+              SELECT 1 FROM supplier_claim_items sci
+              WHERE sci.license_item_id = li.id AND sci.outcome <> 'rejected'
+            )
+        )::int AS unclaimed_items
+      FROM license_items li
+      JOIN batches b ON b.id = li.batch_id
+      LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
+      WHERE coalesce(b.supplier_id, po.supplier_id) = ${id};
+    `);
+    const dAgg = defectAgg[0] ?? { total_items: 0, dead_items: 0, unclaimed_items: 0 };
+    const totalItems = Number(dAgg.total_items ?? 0);
+    const deadItems = Number(dAgg.dead_items ?? 0);
+
+    const claimAgg = await rawRows<{
+      open_claims: number;
+      avg_days: number | null;
+      replaced_items: number;
+      rejected_items: number;
+    }>(this.db, sql`
+      SELECT
+        count(*) FILTER (WHERE sc.status IN ('draft', 'sent'))::int AS open_claims,
+        avg(extract(epoch FROM (sc.closed_at - sc.sent_at)) / 86400.0)
+          FILTER (WHERE sc.closed_at IS NOT NULL AND sc.sent_at IS NOT NULL) AS avg_days,
+        coalesce(sum(i.replaced_c), 0)::int AS replaced_items,
+        coalesce(sum(i.rejected_c), 0)::int AS rejected_items
+      FROM supplier_claims sc
+      LEFT JOIN (
+        SELECT claim_id,
+          count(*) FILTER (WHERE outcome = 'replaced') AS replaced_c,
+          count(*) FILTER (WHERE outcome = 'rejected') AS rejected_c
+        FROM supplier_claim_items GROUP BY claim_id
+      ) i ON i.claim_id = sc.id
+      WHERE sc.supplier_id = ${id};
+    `);
+    const cAgg = claimAgg[0] ?? {
+      open_claims: 0,
+      avg_days: null,
+      replaced_items: 0,
+      rejected_items: 0,
+    };
+    const avgResolutionDays =
+      cAgg.avg_days == null ? null : Math.round(Number(cAgg.avg_days) * 10) / 10;
+
     return {
       supplier,
       poCount: Number(agg['po_count'] ?? 0),
@@ -175,6 +261,16 @@ export class SuppliersService {
         currency: r.currency,
         cents: Number(r.cents),
       })),
+      defects: {
+        totalItems,
+        deadItems,
+        defectRate: totalItems > 0 ? deadItems / totalItems : 0,
+        unclaimedItems: Number(dAgg.unclaimed_items ?? 0),
+        openClaims: Number(cAgg.open_claims ?? 0),
+        avgResolutionDays,
+        replacedItems: Number(cAgg.replaced_items ?? 0),
+        rejectedItems: Number(cAgg.rejected_items ?? 0),
+      },
     };
   }
 
