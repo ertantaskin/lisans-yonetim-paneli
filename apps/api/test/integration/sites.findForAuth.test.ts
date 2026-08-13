@@ -92,6 +92,6 @@ describe('SitesService.findForAuth — api_key rotasyon grace (0017)', () => {
 
   it('hiç kayıtlı olmayan api_key → null', async () => {
     await createSite(db, crypto, { tag }); // FK/izolasyon için bir site var ama bu anahtar ona ait değil
-    await expect(sites.findForAuth(`jl_${randomUUID().replace(/-/g, '')}`)).resolves.toBeNull();
+    await expect(sites.findForAuth(`wpt_${randomUUID().replace(/-/g, '')}`)).resolves.toBeNull();
   });
 });

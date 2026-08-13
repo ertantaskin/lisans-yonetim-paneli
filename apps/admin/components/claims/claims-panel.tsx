@@ -442,8 +442,10 @@ function CreateClaimSheet({
             Eskiden gövde hiç dolgusuz ve kaydırmasızdı → uzun formda kenardan taşıyordu (kullanıcı
             "fiş oluşturma ekranı bozuk" dedi). */}
         <div className="space-y-4 p-4 pt-0">
-          <Field label="Tedarikçi" hint="Fiş tek bir tedarikçiye kesilir.">
+          <Field label="Tedarikçi" htmlFor="claim-supplier" hint="Fiş tek bir tedarikçiye kesilir.">
             <Combobox
+              id="claim-supplier"
+              ariaLabel="Tedarikçi"
               items={suppliers.map((s) => ({ value: s.id, label: s.name }))}
               value={supplierId}
               onValueChange={setSupplierId}
@@ -472,11 +474,21 @@ function CreateClaimSheet({
 
           {range === 'custom' && (
             <div className="flex flex-wrap items-end gap-2">
-              <Field label="Başlangıç">
-                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <Field label="Başlangıç" htmlFor="claim-from">
+                <Input
+                  id="claim-from"
+                  type="date"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
               </Field>
-              <Field label="Bitiş">
-                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <Field label="Bitiş" htmlFor="claim-to">
+                <Input
+                  id="claim-to"
+                  type="date"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
               </Field>
             </div>
           )}
@@ -560,8 +572,9 @@ function CreateClaimSheet({
             </div>
           )}
 
-          <Field label="Not (tedarikçiye iletilecek)" hint="İsteğe bağlı.">
+          <Field label="Not (tedarikçiye iletilecek)" htmlFor="claim-note" hint="İsteğe bağlı.">
             <Textarea
+              id="claim-note"
               rows={2}
               value={note}
               onChange={(e) => setNote(e.target.value)}

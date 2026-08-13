@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { maskAccountFields, maskSecret } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { auditLog } from '../db/schema/audit';
@@ -67,6 +68,39 @@ export interface CreateClaimInput {
 /** Fiş kesilirken tek seferde alınabilecek en fazla kalem. */
 const MAX_CLAIM_ITEMS = 2000;
 const MAX_NOTE_CHARS = 2000;
+
+/**
+ * OKUMA-anı snapshot maskesi (denetim A1/M1 — düz-metin sır YALNIZ owner'a).
+ *
+ * NEDEN GEREKLİ: `keySnapshot` fiş KESİLİRKEN çağıranın yetkisiyle donar; owner kestiyse içinde
+ * TAM düz anahtar vardır ve o satır kalıcıdır. Detay ucu bunu ham döndürdüğü sürece owner-OLMAYAN
+ * bir admin ölü anahtarların düz metnini görüyordu (karantina/envanter/sipariş detayı maskesiyle
+ * çelişki). Maske artık okuma anında YENİDEN uygulanır.
+ *
+ * `listQuarantine`in reveal=false yolu ile aynı davranış:
+ *   · key/code/custom (+ ürün tipi bilinmeyen eski satır → fail-safe) → `maskSecret` (••••••+son-4).
+ *   · account → alan-alan maske. Snapshot düz bir `Etiket: değer · Etiket: değer` metnidir; hangi
+ *     alanın `secret` olduğu geri türetilemez → TÜM değerler maskelenir (quarantine'in secret-olmayan
+ *     alanı açık bırakmasından daha DAR; güvenli yön). Ayırıcı bulunamayan parça tümden maskelenir.
+ * Maske gövdesi shared `maskAccountFields`ten gelir — sabit KOPYALANMAZ (tek kaynak).
+ */
+function maskClaimSnapshot(snapshot: string | null, productKind: string | null): string | null {
+  if (!snapshot) return snapshot;
+  if (productKind !== 'account') return maskSecret(snapshot);
+
+  const fields = snapshot.split(' · ').map((seg) => {
+    const at = seg.indexOf(': ');
+    return {
+      key: 'v',
+      label: at > 0 ? seg.slice(0, at) : '',
+      value: at > 0 ? seg.slice(at + 2) : seg,
+      secret: true,
+    };
+  });
+  return maskAccountFields(fields)
+    .map((f) => (f.label ? `${f.label}: ${f.value}` : f.value))
+    .join(' · ');
+}
 
 /**
  * Tedarikçi değişim fişleri (§12) — "kusurlu anahtarları tedarikçiye bildir, cevabını takip et".
@@ -309,8 +343,17 @@ export class SupplierClaimsService {
     }));
   }
 
-  /** Fiş + kalemleri. Kalem anahtarları SNAPSHOT'tan okunur (canlı veriden DEĞİL). */
-  async detail(id: string): Promise<{ claim: ClaimRow; items: ClaimItemRow[] }> {
+  /**
+   * Fiş + kalemleri. Kalem anahtarları SNAPSHOT'tan okunur (canlı veriden DEĞİL).
+   *
+   * `reveal` (denetim A1/M1) düz-metin yetkisidir — varsayılan `true` GERİYE DÖNÜK uyum içindir
+   * (rol geçmeyen iç çağrılar/testler tam metin alır; HTTP ucu daima açıkça geçirir).
+   */
+  async detail(
+    id: string,
+    opts: { reveal?: boolean; actor?: string } = {},
+  ): Promise<{ claim: ClaimRow; items: ClaimItemRow[] }> {
+    const reveal = opts.reveal ?? true;
     const [claim] = await this.list({ onlyId: id });
     if (!claim) throw new NotFoundException('Fiş bulunamadı');
 
@@ -319,6 +362,29 @@ export class SupplierClaimsService {
       .from(supplierClaimItems)
       .where(eq(supplierClaimItems.claimId, id))
       .orderBy(desc(supplierClaimItems.quarantinedAt), supplierClaimItems.id);
+
+    // "reveal audit'e düşer" (§17) — fiş detayı ölü anahtarların DÜZ METNİNİ toplu döndürür
+    // (operatör tedarikçiye bildirir). listQuarantine deseni: tek kayıt = tek görüntüleme
+    // (per-view granülerlik) · YALNIZ gerçek düz-metin döndüğünde (maskeli görünüm sır ifşa
+    // etmez, yanıltıcı audit üretmemeli) · best-effort (yazım hatası bu OKUMA yolunu 500'lemez).
+    if (reveal && items.length > 0) {
+      try {
+        await this.db.insert(auditLog).values({
+          action: 'reveal',
+          actor: opts.actor || 'admin',
+          targetType: 'supplier_claim',
+          targetId: id,
+          meta: {
+            auto: true,
+            view: 'supplier_claim_detail',
+            code: claim.code,
+            count: items.length,
+          },
+        });
+      } catch {
+        /* audit yazımı başarısız → detay yine döner */
+      }
+    }
 
     return {
       claim,
@@ -331,7 +397,7 @@ export class SupplierClaimsService {
         productName: i.productName,
         sku: i.sku,
         productKind: i.productKind,
-        keySnapshot: i.keySnapshot,
+        keySnapshot: reveal ? i.keySnapshot : maskClaimSnapshot(i.keySnapshot, i.productKind),
         reason: i.reason,
         defectKind: i.defectKind,
         quarantinedAt: i.quarantinedAt,

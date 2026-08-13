@@ -32,7 +32,7 @@ class Wpteslimat_Report_Issue {
     public static function render_button($order, $assignment_id = '') {
         if (!is_a($order, 'WC_Order')) return;
         $order_id = $order->get_id();
-        $fid = 'jl-report-' . intval($order_id) . '-' . sanitize_html_class((string) $assignment_id);
+        $fid = 'wpt-report-' . intval($order_id) . '-' . sanitize_html_class((string) $assignment_id);
         ?>
         <details class="wpteslimat-report" style="margin-top:8px">
             <summary style="cursor:pointer;color:#555;font-size:.9em"><?php echo esc_html__('Sorun Bildir', 'wpteslimat'); ?></summary>

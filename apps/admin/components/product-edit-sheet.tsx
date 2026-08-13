@@ -58,7 +58,13 @@ export function ProductEditSheet({
         <form key={String(open)} action={action} className="space-y-3 p-4 pt-0">
           <input type="hidden" name="id" value={product.id} />
           <ProductFormFields defaults={product} />
-          {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+          {/* role="alert": sunucu eylemi hatası ekran okuyucuya DUYURULUR (kardeş
+              product-create-sheet ile aynı desen) — yoksa hata sessizce basılıyordu. */}
+          {state.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {state.error}
+            </p>
+          )}
           <Button type="submit" disabled={pending}>
             <Save /> {pending ? 'Kaydediliyor…' : 'Kaydet'}
           </Button>

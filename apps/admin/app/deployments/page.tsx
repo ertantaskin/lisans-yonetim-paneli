@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Ship, History, CloudUpload, Info, Activity, Lock, TriangleAlert } from 'lucide-react';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Badge, type BadgeProps } from '../../components/ui/badge';
+import { Badge } from '../../components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import {
   Table,
@@ -13,19 +13,12 @@ import {
   TableRow,
 } from '../../components/ui/table';
 import { isOwner } from '../../lib/session';
+import { deployStatusMeta } from '../../lib/labels';
 import { getDeployments, getHealth, type DeploymentRow } from './queries';
 import { DeployForm } from './deploy-form';
 import { DeploymentsAutoRefresh } from './auto-refresh';
 
 export const dynamic = 'force-dynamic';
-
-const DEPLOY_STATUS: Record<string, { variant: NonNullable<BadgeProps['variant']>; label: string }> = {
-  pending: { variant: 'warning', label: 'Bekliyor' },
-  // 'çalışıyor' AKIŞTA olan iş → mavi (kuyruktaki amber 'Bekliyor'dan bir bakışta ayrılır).
-  running: { variant: 'info', label: 'Çalışıyor' },
-  success: { variant: 'success', label: 'Başarılı' },
-  failed: { variant: 'danger', label: 'Başarısız' },
-};
 
 const TARGET_LABEL: Record<string, string> = {
   api: 'API',
@@ -200,8 +193,9 @@ export default async function DeploymentsPage() {
               </TableHeader>
               <TableBody>
                 {rows.map((r) => {
-                  // Savunmalı: bilinmeyen enum/slug kullanıcıya ham sızmasın → nötr Türkçe fallback.
-                  const s = DEPLOY_STATUS[r.status] ?? { variant: 'neutral' as const, label: 'Bilinmiyor' };
+                  // Savunmalı: bilinmeyen enum/slug kullanıcıya ham sızmasın → nötr Türkçe fallback
+                  // (sözlük + rozet varyantı `lib/labels.ts` — /releases ile TEK KAYNAK).
+                  const s = deployStatusMeta(r.status);
                   // Runner'ın gönderdiği çıktı (deploy.sh logunun kuyruğu) — API zaten yolluyordu
                   // ama ekranda hiç gösterilmiyordu: başarısız dağıtımda operatör build hatasını
                   // görmek için VPS'e SSH atmak zorunda kalıyordu. Savunmalı okunur (alan yoksa

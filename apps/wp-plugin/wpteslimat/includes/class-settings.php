@@ -405,17 +405,17 @@ class Wpteslimat_Settings {
                     <?php wp_nonce_field('wpteslimat_connect'); ?>
                     <table class="form-table">
                         <tr>
-                            <th><label for="jl-connect-panel">Panel URL</label></th>
+                            <th><label for="wpt-connect-panel">Panel URL</label></th>
                             <td>
-                                <input type="url" id="jl-connect-panel" name="panel_url" required
+                                <input type="url" id="wpt-connect-panel" name="panel_url" required
                                        value="<?php echo esc_attr(get_option('wpteslimat_panel_url', '')); ?>"
                                        placeholder="https://api.167-233-108-12.sslip.io" class="regular-text">
                             </td>
                         </tr>
                         <tr>
-                            <th><label for="jl-connect-code">Bağlan Kodu</label></th>
+                            <th><label for="wpt-connect-code">Bağlan Kodu</label></th>
                             <td>
-                                <input type="text" id="jl-connect-code" name="connect_code" required
+                                <input type="text" id="wpt-connect-code" name="connect_code" required
                                        autocomplete="off" class="regular-text">
                                 <br><small>Panelden alınan tek kullanımlık koddur; bir kez kullanılır.</small>
                             </td>
@@ -429,7 +429,7 @@ class Wpteslimat_Settings {
             <h2>Gelişmiş — kimlik bilgilerini el ile gir</h2>
             <p><em>Güvenlik önerisi (§8):</em> sırları <code>wp-config.php</code>'ye sabit olarak ekleyin:</p>
             <pre style="background:#f6f7f7;padding:12px;border-radius:6px">define('WPTESLIMAT_PANEL_URL', 'https://api.panel.example');
-define('WPTESLIMAT_API_KEY', 'jl_...');
+define('WPTESLIMAT_API_KEY', 'wpt_...');
 define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
             <form method="post" action="options.php">
                 <?php settings_fields('wpteslimat'); ?>

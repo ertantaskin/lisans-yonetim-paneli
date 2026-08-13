@@ -42,6 +42,8 @@ import {
   siteProductMappings,
   sites,
   stockAdjustments,
+  supplierClaimItems,
+  supplierClaims,
   suppliers,
   type Site,
 } from '../db/schema';
@@ -1064,20 +1066,58 @@ export class AdminOrdersService {
         .for('update');
       if (line) {
         const nf = Math.max(0, line.fulfilledQty - asg.units);
-        const lineStatus = nf >= line.qty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
-        // markLineCanceled (varsayılan true): GERÇEK iade/iptal (refund / admin-revoke) → satır
-        // 'canceled' terminal işaretiyle partial-auto yeniden-atama havuzundan KALICI çıkarılır
-        // (iade edilen müşteriye taze key ile bedava lisans gitmez, §2). AMA değişim / recall-
-        // bulkReplace / sipariş-adedi-düşür gibi "revoke sonrası MEŞRU yeniden-atama" akışları
-        // false geçer → satır completeLine ile yeniden atanabilir kalır (aksi halde "stok yok" hatası).
+        // markLineCanceled (varsayılan true): GERÇEK iade/iptal (refund / admin-revoke) → satırın
+        // geri alınan birimleri partial-auto yeniden-atama havuzundan KALICI çıkarılır (iade edilen
+        // müşteriye taze key ile bedava lisans gitmez, §2). AMA değişim / recall-bulkReplace /
+        // sipariş-adedi-düşür gibi "revoke sonrası MEŞRU yeniden-atama" akışları false geçer →
+        // satır completeLine ile yeniden atanabilir kalır (aksi halde "stok yok" hatası).
+        //
+        // DENETİM (correctness, orta): `canceled` KOŞULSUZ set edilirse çok-adetli satırda tek
+        // atamayı iptal etmek satırın TAMAMINI terminal yapıyordu; getDeliveries iptal satırı
+        // elediği için müşteri elinde HÂLÂ GEÇERLİ (active) kardeş anahtarlar dururken 0 lisans
+        // görüyordu (sessiz lisans kaybı). Ayrım:
+        //   - kardeş kalmadı  → satır tamamen bitti  → canceled=true (eski davranış, terminal)
+        //   - kardeş var      → yalnız BU birimler düşer → qty -= units (fulfilled == qty kalır →
+        //                       autoComplete/"Kalanları Ata" taze key ile DOLDURMAZ, H1 korunur)
+        // qty'ye yalnız markLineCanceled=true dalında dokunulur; değişim/recall yolları etkilenmez.
+        const liveSiblings = markLineCanceled
+          ? (
+              await tx
+                .select({ id: assignments.id })
+                .from(assignments)
+                .where(
+                  and(
+                    eq(assignments.lineId, line.id),
+                    inArray(assignments.status, ['active', 'suspended']),
+                  ),
+                )
+                .limit(1)
+            ).length > 0
+          : false;
+        const newQty = markLineCanceled && liveSiblings ? Math.max(0, line.qty - asg.units) : line.qty;
+        const lineStatus = nf >= newQty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
         await tx
           .update(orderLines)
           .set({
             fulfilledQty: nf,
             status: lineStatus,
-            ...(markLineCanceled ? { canceled: true } : {}),
+            ...(newQty !== line.qty ? { qty: newQty } : {}),
+            ...(markLineCanceled && !liveSiblings ? { canceled: true } : {}),
           })
           .where(eq(orderLines.id, line.id));
+        if (newQty !== line.qty) {
+          // Adet düşüşü GÖRÜNÜR olmalı: mağazada karşılığı olmayan (panelden yapılan) bir iptal,
+          // mağaza siparişi yeniden gönderirse reconcileOrder qty'yi mağazanın adedine geri
+          // yükseltir ve eksik birim taze anahtarla dolar. Operatör bunu bilmeli (sessiz kapı yok).
+          await tx.insert(fulfillmentEvents).values({
+            orderId: asg.orderId,
+            type: 'order_edited',
+            message:
+              `Satır adedi ${line.qty} → ${newQty} düşürüldü (${asg.units} birim iptal edildi). ` +
+              `Mağazada da iptal/iade edilmezse sipariş yeniden gönderildiğinde adet geri yükselir ` +
+              `ve eksik birim taze anahtarla teslim edilir.`,
+          });
+        }
       }
       await recomputeOrderStatus(tx, asg.orderId);
 
@@ -2062,6 +2102,24 @@ export class AdminOrdersService {
       }
     }
 
+    // Fiş bilgisi (kod/durum/yanıt) için TEK join (denetim/perf): eskiden dördü ayrı korele
+    // skaler alt-sorguydu (ikisi supplier_claims'e JOIN'liydi) ve fetchLimit'teki HER fan-out
+    // satırı için tekrar koşuyordu. `outcome <> 'rejected'` yüklemi `supplier_claim_items_open_uniq`
+    // KISMİ UNIQUE INDEX'iyle birebir aynı olduğundan license_item başına EN FAZLA BİR satır
+    // döner → bu join satır ÇOĞALTMAZ (yukarıdaki openClaimExists ile aynı tanım).
+    const claimLink = this.db
+      .select({
+        licenseItemId: supplierClaimItems.licenseItemId,
+        claimId: supplierClaimItems.claimId,
+        claimOutcome: sql<string>`${supplierClaimItems.outcome}::text`.as('claim_outcome'),
+        claimCode: supplierClaims.code,
+        claimStatus: sql<string>`${supplierClaims.status}::text`.as('claim_status'),
+      })
+      .from(supplierClaimItems)
+      .innerJoin(supplierClaims, eq(supplierClaims.id, supplierClaimItems.claimId))
+      .where(sql`${supplierClaimItems.outcome} <> 'rejected'`)
+      .as('claim_link');
+
     const rows = await this.db
       .select({
         licenseItemId: licenseItems.id,
@@ -2090,28 +2148,11 @@ export class AdminOrdersService {
         historyReason: assignmentHistory.reason,
         historyAt: assignmentHistory.createdAt,
         formerAssignmentId: assignments.id,
-        // Tedarikçi bildirimi (§12): kalem hangi değişim fişinde? LEFT JOIN DEĞİL skaler
-        // alt-sorgu — leftJoin satır çoğaltır (aynı kalem reddedilmiş ESKİ fişlerde de
-        // görünür) ve buradaki dedupe zaten fan-out ile boğuşuyor. `outcome <> 'rejected'`
-        // ile en fazla BİR satır döner (kısmi unique index bunu garanti eder).
-        claimId: sql<string | null>`(
-          SELECT sci.claim_id FROM supplier_claim_items sci
-          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
-        )`,
-        claimCode: sql<string | null>`(
-          SELECT sc.code FROM supplier_claim_items sci
-          JOIN supplier_claims sc ON sc.id = sci.claim_id
-          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
-        )`,
-        claimStatus: sql<string | null>`(
-          SELECT sc.status::text FROM supplier_claim_items sci
-          JOIN supplier_claims sc ON sc.id = sci.claim_id
-          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
-        )`,
-        claimOutcome: sql<string | null>`(
-          SELECT sci.outcome::text FROM supplier_claim_items sci
-          WHERE sci.license_item_id = ${licenseItems.id} AND sci.outcome <> 'rejected' LIMIT 1
-        )`,
+        // Tedarikçi bildirimi (§12): kalem hangi değişim fişinde? (claim_link join'i — yukarıda)
+        claimId: claimLink.claimId,
+        claimCode: claimLink.claimCode,
+        claimStatus: claimLink.claimStatus,
+        claimOutcome: claimLink.claimOutcome,
       })
       .from(licenseItems)
       .innerJoin(products, eq(licenseItems.productId, products.id))
@@ -2127,6 +2168,8 @@ export class AdminOrdersService {
       .leftJoin(suppliers, sql`${suppliers.id} = ${supplierIdExpr}`)
       // sebep (değişim): eski key = ah.old_license_item_id.
       .leftJoin(assignmentHistory, eq(assignmentHistory.oldLicenseItemId, licenseItems.id))
+      // Tedarikçi bildirimi: kısmi unique index sayesinde 1:0..1 → satır çoğaltmaz.
+      .leftJoin(claimLink, eq(claimLink.licenseItemId, licenseItems.id))
       .where(and(...conditions))
       // voided (recall) item'ların assignedAt'i NULL → stok giriş tarihine (created_at) düş;
       // aksi halde tüm recall kategorisi listenin sonunda kalıp pencereden düşerdi.

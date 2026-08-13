@@ -85,8 +85,14 @@ export class SupplierClaimsController {
   }
 
   @Get(':id')
-  detail(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.claims.detail(id);
+  detail(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @AdminActor() actor: string,
+    @AdminRole() role: string,
+  ) {
+    // Snapshot KALICI olduğu için fiş owner tarafından kesilmiş olabilir (düz anahtar yazılmıştır);
+    // OKUMA anında yetki yeniden uygulanır → owner-olmayan admin maskeli görür (denetim A1/M1).
+    return this.claims.detail(id, { reveal: canRevealPlaintext(role), actor });
   }
 
   @Post()

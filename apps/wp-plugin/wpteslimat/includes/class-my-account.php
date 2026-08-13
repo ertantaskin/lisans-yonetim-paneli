@@ -186,7 +186,7 @@ class Wpteslimat_My_Account {
                         $label  = isset($f['label']) ? $f['label'] : '';
                         $value  = isset($f['value']) ? $f['value'] : '';
                         $secret = !empty($f['secret']);
-                        $fid = 'jl-f-' . intval($i) . '-' . intval($fi);
+                        $fid = 'wpt-f-' . intval($i) . '-' . intval($fi);
                         echo '<div style="margin:2px 0">';
                         echo '<strong>' . esc_html($label) . ':</strong> ';
                         if ($secret) {
@@ -204,7 +204,7 @@ class Wpteslimat_My_Account {
                     echo '<em>' . esc_html__('Teslimat hazırlanıyor.', 'wpteslimat') . '</em>';
                 } else {
                     $payload = isset($d['payload']) ? $d['payload'] : '';
-                    $id = 'jl-key-' . intval($i);
+                    $id = 'wpt-key-' . intval($i);
                     echo '<code id="' . esc_attr($id) . '" style="user-select:all">' . esc_html($payload) . '</code> ';
                     echo '<button type="button" class="button wpteslimat-copy" data-target="' . esc_attr($id) . '" style="margin-left:8px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
                 }

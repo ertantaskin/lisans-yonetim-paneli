@@ -148,13 +148,21 @@ export class SupplyOpsService {
    * Bulunamazsa 404.
    */
   async getBatch(id: string): Promise<BatchRow> {
-    const rows = await this.listBatches(id);
+    const { rows } = await this.listBatches(id);
     const row = rows[0];
     if (!row) throw new NotFoundException('Parti bulunamadı');
     return row;
   }
 
-  async listBatches(onlyId?: string): Promise<BatchRow[]> {
+  /**
+   * Liste üst sınırı. Sayaç alt-sorgusu ÖNCEDEN `WHERE li.batch_id IS NOT NULL` ile TÜM
+   * license_items'ı okuyup her kalem için LATERAL tarama yapıyordu ve dış sorguda LIMIT YOKTU
+   * → envanter büyüdükçe /batches doğrusal yavaşlıyordu. Artık önce parti penceresi seçilir,
+   * kalem taraması O pencereye kapsanır. Kırpma SESSİZ DEĞİL: `truncated` ile raporlanır.
+   */
+  private static readonly BATCH_LIST_LIMIT = 500;
+
+  async listBatches(onlyId?: string): Promise<{ rows: BatchRow[]; truncated: boolean }> {
     const list = await rawRows<{
       id: string;
       label: string;
@@ -174,6 +182,17 @@ export class SupplyOpsService {
       replaceable_count: number;
       dead_count: number;
     }>(this.db, sql`
+      WITH picked AS (
+        -- Parti PENCERESİ önce seçilir; hem dış liste hem sayaç taraması bu kümeye kapsanır.
+        -- Tie-break (b.id) ŞART: LIMIT'li bir ORDER BY'da eşit received_at satırlarında pencere
+        -- sınırı keyfi kalırdı (proje dersi: LIMIT'li her ORDER BY'ın tie-break'i olmalı).
+        -- NULLS sırası DEĞİŞMEDİ (DESC → NULLS FIRST, eski davranış).
+        SELECT b.id
+        FROM batches b
+        WHERE ${onlyId ? sql`b.id = ${onlyId}` : sql`true`}
+        ORDER BY b.received_at DESC, b.id DESC
+        LIMIT ${SupplyOpsService.BATCH_LIST_LIMIT}
+      )
       SELECT
         b.id,
         b.label,
@@ -193,6 +212,7 @@ export class SupplyOpsService {
         coalesce(c.replaceable_c, 0)::int AS replaceable_count,
         coalesce(c.dead_c, 0)::int       AS dead_count
       FROM batches b
+      JOIN picked pk ON pk.id = b.id
       LEFT JOIN suppliers s ON s.id = b.supplier_id
       JOIN products p ON p.id = b.product_id
       LEFT JOIN (
@@ -223,16 +243,20 @@ export class SupplyOpsService {
           FROM assignments a
           WHERE a.license_item_id = li.id
         ) ag ON true
-        WHERE li.batch_id IS NOT NULL
-          -- Tek parti isteniyorsa süzgeç ALT SORGUYA da iner: aksi halde /batches/[id]
-          -- her açılışta TÜM license_items'ı gruplayıp sonra tek satırı seçerdi.
-          AND ${onlyId ? sql`li.batch_id = ${onlyId}` : sql`true`}
+        -- Süzgeç ALT SORGUYA da iner (tek parti VE liste yolunda): aksi halde /batches[/[id]]
+        -- her açılışta TÜM license_items'ı gruplayıp sonra ihtiyacı olan satırları seçerdi.
+        -- IN (picked) NULL batch_id'yi zaten dışlar (eski IS NOT NULL koşulunu kapsar).
+        WHERE li.batch_id IN (SELECT id FROM picked)
         GROUP BY li.batch_id
       ) c ON c.batch_id = b.id
-      WHERE ${onlyId ? sql`b.id = ${onlyId}` : sql`true`}
-      ORDER BY b.received_at DESC;
+      ORDER BY b.received_at DESC, b.id DESC;
     `);
-    return list.map((r) => ({
+
+    // KIRPILMA (DÜRÜSTLÜK): sinyal HAM SQL satır sayısından türer (JS süzme yok, birebir aynı sayı).
+    // `onlyId` yolu tek satır döndürür → limitten etkilenmez, daima false.
+    const truncated = !onlyId && list.length >= SupplyOpsService.BATCH_LIST_LIMIT;
+
+    const rows = list.map((r) => ({
       id: r.id,
       label: r.label,
       status: r.status,
@@ -251,6 +275,7 @@ export class SupplyOpsService {
       replaceableCount: Number(r.replaceable_count),
       deadCount: Number(r.dead_count),
     }));
+    return { rows, truncated };
   }
 
   /**

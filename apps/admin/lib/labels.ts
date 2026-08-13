@@ -463,3 +463,37 @@ const NOTIFICATION_TYPE: Record<string, string> = {
   quota_review: 'Kota incelemesi',
 };
 export const notificationTypeLabel = (t: string) => lookup(NOTIFICATION_TYPE, t);
+
+// ── Dağıtım / yayın işi durumu (deployments kuyruğu) ─────────────────────────
+/**
+ * `/deployments` (panel dağıtımı) ile `/releases` (eklenti yayını) AYNI `deployments`
+ * tablosunu gösterir — runner hedefe göre `deploy.sh` ya da `publish-plugin.sh`'a dallanır.
+ * İki ekran AYRI sözlük tutuyordu ve ÇELİŞİYORDU: aynı `running` bir ekranda mavi
+ * "Çalışıyor", diğerinde gri "çalışıyor"; `success` bir yerde "Başarılı", diğerinde
+ * "yayınlandı"; etiketler küçük harfti (cümle düzeni kuralı dışı). TEK KAYNAK burası.
+ *
+ * BU SÖZLÜK ROZET VARYANTINI DA TAŞIR (labels.ts'te istisna): durum bir `StatusBadge`
+ * bileşeniyle değil, iki sayfada düz `<Badge variant>` ile basılıyor — metni burada,
+ * rengi başka dosyada tutmak tam da çelişkiyi doğuran ayrımdı.
+ *
+ * Ton kuralı `components/ui/badge.tsx` ile AYNI (yeni hue EKLENMEZ):
+ *   Bekliyor → warning (kuyrukta, kendiliğinden ilerler) · Çalışıyor → info (akıştaki iş)
+ *   Başarılı → success · Başarısız → danger · bilinmeyen → neutral
+ */
+export type DeployStatusMeta = {
+  variant: 'warning' | 'info' | 'success' | 'danger' | 'neutral';
+  label: string;
+};
+
+const DEPLOY_STATUS: Record<string, DeployStatusMeta> = {
+  pending: { variant: 'warning', label: 'Bekliyor' },
+  running: { variant: 'info', label: 'Çalışıyor' },
+  success: { variant: 'success', label: 'Başarılı' },
+  failed: { variant: 'danger', label: 'Başarısız' },
+};
+
+/** Bilinmeyen durum kullanıcıya ham sızmasın → nötr Türkçe geri düşüş. */
+export const deployStatusMeta = (s: string): DeployStatusMeta =>
+  DEPLOY_STATUS[s] ?? { variant: 'neutral', label: 'Bilinmiyor' };
+
+export const deployStatusLabel = (s: string): string => deployStatusMeta(s).label;

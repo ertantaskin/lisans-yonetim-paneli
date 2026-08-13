@@ -54,7 +54,7 @@ class Wpteslimat_Webhook {
         // transient tam expiry anına denk gelen bir replay penceresi kalır → paylaşılan sözleşme
         // (packages/shared HMAC_NONCE_TTL_SEC = 2×300+60 = 660) marj ekler; WP tarafını da hizala.
         // Aynı nonce ikinci kez gelirse (replay) aksiyon TEKRARLANMAZ → no-op 200.
-        $nonce_key = 'jl_wh_' . md5((string) $nonce);
+        $nonce_key = 'wpt_wh_' . md5((string) $nonce);
         if (get_transient($nonce_key)) {
             return new WP_REST_Response(['ok' => true, 'duplicate' => true], 200);
         }

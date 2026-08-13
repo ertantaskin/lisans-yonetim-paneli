@@ -147,6 +147,17 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     await expectRejected('SELECT * FROM pg_user_mappings');
   });
 
+  it('konfig GÖRÜNÜMLERİ (pg_settings/pg_stat_activity/pg_config/pg_hba_file_rules) reddedilir', async () => {
+    // Fonksiyon kapısı current_setting()/pg_read_all_settings()'i kesiyordu ama AYNI değerleri
+    // skaler text kolonlarıyla veren görünümler açıktı (sunucu yolları, TLS anahtar dosyası,
+    // başka oturumların query metni, kimlik doğrulama kuralları).
+    await expectRejected("SELECT setting FROM pg_settings WHERE name = 'data_directory'");
+    await expectRejected('SELECT query FROM pg_stat_activity');
+    await expectRejected('SELECT * FROM pg_config');
+    await expectRejected('SELECT auth_method FROM pg_hba_file_rules');
+    await expectRejected('SELECT sourceline FROM pg_file_settings');
+  });
+
   it('parola-hash kolon adları (rolpassword/passwd/umoptions) metin kapısında reddedilir (denetim M2)', async () => {
     // Tablo adı geçmese bile (görünüm/alias) kolon-adı katmanı yakalar (savunma-derinliği).
     await expectRejected('SELECT rolpassword FROM some_view');

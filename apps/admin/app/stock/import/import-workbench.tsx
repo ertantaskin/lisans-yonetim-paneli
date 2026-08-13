@@ -413,6 +413,7 @@ export function ImportWorkbench({
   initialBatchId,
   initialBatches,
   initialInactiveBatchCount,
+  initialBatchListTruncated,
 }: {
   products: ProductRow[];
   suppliers: SupplierPick[];
@@ -423,6 +424,7 @@ export function ImportWorkbench({
   /** Sunucuda ön-yüklenmiş parti listesi (yalnız ?product= verildiyse dolu). */
   initialBatches: ProductBatchOption[];
   initialInactiveBatchCount: number;
+  initialBatchListTruncated: boolean;
 }) {
   const router = useRouter();
   const announce = useAnnouncer();
@@ -461,6 +463,9 @@ export function ImportWorkbench({
   const [batchId, setBatchId] = React.useState(initialBatchId);
   const [batches, setBatches] = React.useState<ProductBatchOption[]>(initialBatches);
   const [inactiveBatchCount, setInactiveBatchCount] = React.useState(initialInactiveBatchCount);
+  // Sunucu parti listesi üst sınırda kırpıldıysa bu ürünün ESKİ partileri hiç gelmemiş olabilir
+  // (süzme istemcide) → seçici sessizce eksik görünmesin diye ayrı uyarı satırı basılır.
+  const [batchListTruncated, setBatchListTruncated] = React.useState(initialBatchListTruncated);
   const [batchesLoading, setBatchesLoading] = React.useState(false);
   const [batchesError, setBatchesError] = React.useState<string | null>(null);
 
@@ -524,6 +529,7 @@ export function ImportWorkbench({
         if (r.ok) {
           setBatches(r.batches ?? []);
           setInactiveBatchCount(r.inactiveCount ?? 0);
+          setBatchListTruncated(r.listTruncated === true);
         } else {
           setBatches([]);
           setBatchesError(r.error ?? 'Partiler alınamadı');
@@ -1073,6 +1079,12 @@ export function ImportWorkbench({
                   <p className="text-xs text-muted-foreground">
                     {inactiveBatchCount} parti aktif olmadığı için listelenmedi (geri çekilmiş /
                     iptal edilmiş).
+                  </p>
+                )}
+                {batchListTruncated && (
+                  <p className="text-xs text-warning">
+                    Parti listesi sunucuda üst sınıra dayandı — bu ürünün çok eski partileri burada
+                    görünmeyebilir. Aradığınız parti yoksa Partiler ekranından açıp oradan stok girin.
                   </p>
                 )}
                 {batchesError && <p className="text-xs text-destructive">{batchesError}</p>}

@@ -848,8 +848,13 @@ export class OrdersService {
         status: orders.status,
         // F4: heldForReview groupBy(orders.id) PK'ye fonksiyonel bağımlı → aggregatesiz seçilebilir.
         held: orders.heldForReview,
-        fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)::int`,
-        total: sql<number>`coalesce(sum(${orderLines.qty}), 0)::int`,
+        // İptal (canceled) satırlar ilerlemeye GİRMEZ — getDeliveries'in aynı amaçlı toplamı da
+        // onları eliyordu; filtre burada yokken WP'nin yokladığı "teslim/toplam" ile müşterinin
+        // My Account'ta gördüğü ilerleme çelişiyordu (payda iptal edilen adedi içeriyordu).
+        // WHERE değil FILTER: satırlarının HEPSİ iptal edilmiş sipariş yanıttan düşmemeli
+        // (WP o siparişi de yokluyor; 0/0 dönmesi doğru cevaptır).
+        fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}) filter (where ${orderLines.canceled} = false), 0)::int`,
+        total: sql<number>`coalesce(sum(${orderLines.qty}) filter (where ${orderLines.canceled} = false), 0)::int`,
       })
       .from(orders)
       .leftJoin(orderLines, eq(orderLines.orderId, orders.id))

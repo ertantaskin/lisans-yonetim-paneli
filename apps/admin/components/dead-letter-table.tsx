@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Ban, CheckCircle2, Info, Mail, RefreshCw, TriangleAlert, Webhook, X } from 'lucide-react';
 import type { DeadLetterRow } from '../app/ops/queries';
-import { fmtDateTime } from '../lib/utils';
+import { fmtDateTime, includesTr } from '../lib/utils';
 import { replayAction } from '../app/ops/actions';
 import { Badge, StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
@@ -167,14 +167,10 @@ export function DeadLetterTable({ rows }: { rows: DeadLetterRow[] }) {
             )}
           </div>
         ),
-        // Arama: olay/konu VEYA alıcı e-postası
-        filterFn: (row, _id, value) => {
-          const q = String(value).toLowerCase();
-          return (
-            row.original.label.toLowerCase().includes(q) ||
-            (row.original.toEmail?.toLowerCase().includes(q) ?? false)
-          );
-        },
+        // Arama: olay/konu VEYA alıcı e-postası. Türkçe-duyarlı karşılaştırma
+        // (`includesTr`): ham `toLowerCase()` "İ"/"I" içeren konu/e-postada sessizce eşleşmiyordu.
+        filterFn: (row, _id, value) =>
+          includesTr(row.original.label, value) || includesTr(row.original.toEmail ?? '', value),
       },
       {
         accessorKey: 'status',

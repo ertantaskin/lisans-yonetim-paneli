@@ -51,9 +51,18 @@ type CreateAdjustmentBody = z.infer<typeof CreateAdjustmentBody>;
 export class SupplyOpsController {
   constructor(private readonly supplyOps: SupplyOpsService) {}
 
+  /**
+   * Parti listesi. `{ items, truncated }` — truncated=true ise liste üst sınırda kırpıldı.
+   *
+   * Zarf anahtarı `items`: panelin TÜM liste uçlarının sözleşmesi bu (customers/sites/…) ve
+   * admin tarafındaki savunmalı okuyucular (`Array.isArray(d) ? d : d?.items ?? []`) tam olarak
+   * bunu bekliyor. Başka bir ad (ör. `rows`) sessizce BOŞ liste gösterirdi — bu projede daha
+   * önce yaşanmış sessiz-kırpma sınıfı.
+   */
   @Get('batches')
-  listBatches() {
-    return this.supplyOps.listBatches();
+  async listBatches() {
+    const { rows, truncated } = await this.supplyOps.listBatches();
+    return { items: rows, truncated };
   }
 
   /** Tek parti (detay ekranı). Liste satırıyla AYNI şekil — sayaçlar dahil. */

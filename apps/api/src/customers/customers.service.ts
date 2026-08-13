@@ -65,6 +65,12 @@ function rate(replacementCount: number, assignmentCount: number): number {
 }
 
 /**
+ * Müşteri listesi tavanı. İstemci-taraflı arama korunsun diye cömert tutulur; aşılırsa
+ * SESSİZ kırpma YOK — `truncated` ile raporlanır (bkz. `list` içindeki LIMIT notu).
+ */
+const CUSTOMER_LIST_LIMIT = 2000;
+
+/**
  * Müşteri servisi (§13). Sipariş/atama sayıları orders/assignments üzerinden anlık
  * hesaplanır; replacement sayıları RAW SQL ile replacement_requests'ten okunur
  * (drizzle şema bağımlılığı YOK — tablo migration sonrası var). e-posta lowercase kanonik.
@@ -80,7 +86,9 @@ export class CustomersService {
    * müşterinin sipariş verdiği site alan adları (`sites`) eklenir → global görünümde
    * hangi site(ler) olduğu bir bakışta görünür.
    */
-  async list(opts?: { search?: string; siteId?: string }): Promise<{ items: CustomerListRow[] }> {
+  async list(
+    opts?: { search?: string; siteId?: string },
+  ): Promise<{ items: CustomerListRow[]; truncated: boolean }> {
     const term = opts?.search?.trim();
     const siteId = opts?.siteId?.trim();
 
@@ -106,10 +114,13 @@ export class CustomersService {
     // PERF: filtrelenmiş (search+siteId) e-posta kümesini önce CTE'ye (scoped_orders → emails) çıkar.
     // Atama/değişim agregatları ARTIK TÜM tabloyu email bazında toplamıyor; yalnız bu kümeyi tarar
     // (IN (SELECT email FROM emails)) — tek müşteri arandığında bile tam-tablo group-by yapılmıyordu.
-    // NOT (denetim): dış sorguya LIMIT KOYULMAZ. /customers arama İSTEMCİ-TARAFLI (customers-table.tsx
-    // filterFn); bir LIMIT, dönen ilk N dışındaki eski müşterileri aramada "yok" gösterirdi (sessiz
-    // veri kaybı). CTE optimizasyonu maliyeti zaten sınırlar; sıralamaya stabil ikincil anahtar (email)
-    // eklenir (eşit zaman damgasında deterministik). Sunucu-taraflı sayfalama gerekirse ayrı iş.
+    //
+    // LIMIT (denetim): daha önce LIMIT KOYULMAMIŞTI çünkü /customers araması İSTEMCİ-TARAFLIdır
+    // (customers-table.tsx filterFn) ve konan bir LIMIT eski müşterileri aramada SESSİZCE "yok"
+    // göstermişti. Sınırsız bırakmak da sürdürülebilir değil (müşteri sayısı arttıkça yanıt
+    // doğrusal büyür). Çözüm SESSİZ DEĞİL: cömert bir tavan + `truncated` bayrağı — operatör
+    // listenin kırpıldığını GÖRÜR ve aramayı daraltır (sunucu-taraflı sayfalama gerekirse ayrı iş).
+    // Sıralamada stabil ikincil anahtar (email) zaten var → tavan sınırı deterministik.
     const rows = await rawRows<{
       email: string;
       order_count: number;
@@ -158,7 +169,11 @@ export class CustomersService {
       LEFT JOIN customers c ON c.email = so.email
       GROUP BY so.email, a.assignment_count, r.replacement_count, c.tags
       ORDER BY MAX(so.created_at) DESC, so.email ASC
+      LIMIT ${CUSTOMER_LIST_LIMIT}
     `);
+
+    // Kırpılma sinyali HAM SQL satır sayısından türer (JS süzme yok → sayı birebir aynı).
+    const truncated = rows.length >= CUSTOMER_LIST_LIMIT;
 
     const items = rows.map((row) => {
       const assignmentCount = Number(row.assignment_count);
@@ -175,7 +190,7 @@ export class CustomersService {
         lastOrderAt: row.last_order_at ? new Date(row.last_order_at).toISOString() : null,
       };
     });
-    return { items };
+    return { items, truncated };
   }
 
   /** Tek müşteri detayı — kalıcı meta + istatistik + sipariş/değişim geçmişi. */

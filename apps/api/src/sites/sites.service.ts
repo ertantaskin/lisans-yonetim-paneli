@@ -148,7 +148,9 @@ export class SitesService {
       .limit(1);
     if (dup) throw new ConflictException(`Bu domain zaten kayıtlı: ${domain}`);
 
-    const apiKey = `jl_${randomBytes(24).toString('hex')}`;
+    // Önek `wpt_` (eski marka öneki kaldırıldı). Anahtar HASH ile karşılaştırıldığı için
+    // MEVCUT anahtarlar etkilenmez; yalnız yeni üretilenler bu önekle başlar.
+    const apiKey = `wpt_${randomBytes(24).toString('hex')}`;
     const hmacSecret = randomBytes(32).toString('hex');
     // id'yi uygulamada üretiyoruz ki secret'ı bu siteye AAD ile bağlayabilelim (§8).
     const id = randomUUID();
@@ -366,7 +368,8 @@ export class SitesService {
     executor: Database = this.db,
   ): Promise<{ apiKey: string; hmacSecret: string }> {
     const site = await this.getById(siteId);
-    const newApiKey = `jl_${randomBytes(24).toString('hex')}`;
+    // create() ile aynı önek (`wpt_`) — iki üretim noktası hep birlikte değişmeli.
+    const newApiKey = `wpt_${randomBytes(24).toString('hex')}`;
     const newHmacSecret = randomBytes(32).toString('hex');
     const aad = CryptoService.siteSecretAad(site.id);
 

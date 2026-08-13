@@ -414,6 +414,8 @@ export async function fetchProductBatchesAction(productId: string): Promise<{
   ok: boolean;
   batches?: ProductBatchOption[];
   inactiveCount?: number;
+  /** Sunucu parti listesini üst sınırda kırptı → bu ürünün ESKİ partileri eksik olabilir. */
+  listTruncated?: boolean;
   error?: string;
 }> {
   const id = String(productId || '').trim();
@@ -431,7 +433,10 @@ export async function fetchProductBatchesAction(productId: string): Promise<{
   }
   try {
     // API dizi VEYA {items} döndürebilir (batches/queries.ts ile aynı savunma).
-    const data = await apiGet<RawBatch[] | { items: RawBatch[] }>('/v1/admin/batches');
+    const data = await apiGet<RawBatch[] | { items: RawBatch[]; truncated?: boolean }>(
+      '/v1/admin/batches',
+    );
+    const listTruncated = !Array.isArray(data) && data?.truncated === true;
     const all = (Array.isArray(data) ? data : (data?.items ?? [])).filter(
       (b) => b?.productId === id,
     );
@@ -439,6 +444,9 @@ export async function fetchProductBatchesAction(productId: string): Promise<{
     return {
       ok: true,
       inactiveCount: all.length - active.length,
+      // Süzme İSTEMCİDE yapılıyor: sunucu listesi kırpıldıysa bu ürünün eski partileri hiç
+      // gelmemiş olabilir → seçici "yok" gibi görünür. Sessiz bırakılmaz (bkz. dürüst-kırpma).
+      listTruncated,
       batches: active.map((b) => ({
         id: b.id,
         label: b.label,

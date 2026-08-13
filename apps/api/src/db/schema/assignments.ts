@@ -43,23 +43,37 @@ export const assignments = pgTable(
     index('assignments_line_idx').on(t.lineId),
     // license_item ↔ atama ters araması (revoke/değişim, mutabakat) FK'yi indexler.
     index('assignments_license_item_idx').on(t.licenseItemId),
+    // Satış hızı raporları (reports.velocity + products.detailVelocity) dış WHERE'i
+    // `created_at >= now() - interval '30 days'` — index YOKKEN tüm assignments seq-scan
+    // ediliyordu (denetim/perf). Zaman-pencereli tarama artık index'ten karşılanır.
+    index('assignments_created_idx').on(t.createdAt),
   ],
 );
 
 /** assignment_history — sebepli değişim izi ("eski anahtarlar", §3). */
-export const assignmentHistory = pgTable('assignment_history', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  assignmentId: uuid('assignment_id')
-    .notNull()
-    .references(() => assignments.id, { onDelete: 'cascade' }),
-  oldLicenseItemId: uuid('old_license_item_id'),
-  newLicenseItemId: uuid('new_license_item_id'),
-  reason: text('reason').notNull(),
-  actor: text('actor').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true })
-    .notNull()
-    .default(sql`now()`),
-});
+export const assignmentHistory = pgTable(
+  'assignment_history',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    assignmentId: uuid('assignment_id')
+      .notNull()
+      .references(() => assignments.id, { onDelete: 'cascade' }),
+    oldLicenseItemId: uuid('old_license_item_id'),
+    newLicenseItemId: uuid('new_license_item_id'),
+    reason: text('reason').notNull(),
+    actor: text('actor').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+  },
+  (t) => [
+    // Bu tabloda HİÇ index yoktu (denetim/perf): sipariş detayı (assignment_id join),
+    // değişim geçmişi ve listQuarantine (old_license_item_id leftJoin) her çağrıda
+    // tam-tablo taraması yapıyordu. İki sıcak yol da FK/arama kolonundan indexlenir.
+    index('assignment_history_assignment_idx').on(t.assignmentId),
+    index('assignment_history_old_item_idx').on(t.oldLicenseItemId),
+  ],
+);
 
 export type Assignment = typeof assignments.$inferSelect;
 export type NewAssignment = typeof assignments.$inferInsert;

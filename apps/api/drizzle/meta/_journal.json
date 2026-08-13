@@ -246,6 +246,13 @@
       "when": 1786643071095,
       "tag": "0034_claim_item_product_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786648035738,
+      "tag": "0035_hot_path_indexes",
+      "breakpoints": true
     }
   ]
 }

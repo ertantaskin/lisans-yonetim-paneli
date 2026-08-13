@@ -60,7 +60,7 @@ describe('OnboardingService.claim (tek-seferlik bağlan kodu — atomik)', () =>
     // 1) İlk claim — creds bir kez teslim edilir (domain + taze api_key/hmac_secret).
     const creds = await onboarding.claim(code, '203.0.113.7');
     expect(creds.siteDomain).toBe(siteDomain);
-    expect(creds.apiKey).toMatch(/^jl_/);
+    expect(creds.apiKey).toMatch(/^wpt_/);
     expect(creds.hmacSecret).toHaveLength(64); // randomBytes(32) hex
 
     // 2) İkinci claim (AYNI kod) — tüketilmiş → 404. Çifte teslim imkânsız.
@@ -109,7 +109,7 @@ describe('OnboardingService.claim (tek-seferlik bağlan kodu — atomik)', () =>
       '203.0.113.10',
       'https://saldirgan.evil/wp-json/wpteslimat/v1/webhook',
     );
-    expect(creds.apiKey).toMatch(/^jl_/);
+    expect(creds.apiKey).toMatch(/^wpt_/);
 
     const [row] = await db
       .select({ webhookUrl: schema.sites.webhookUrl })

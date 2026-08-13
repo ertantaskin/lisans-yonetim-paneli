@@ -1,7 +1,7 @@
 import { Rocket, History, UploadCloud, Info, ListChecks, Globe, Lock } from 'lucide-react';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Badge, type BadgeProps } from '../../components/ui/badge';
+import { Badge } from '../../components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import {
   Table,
@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '../../components/ui/table';
 import { isOwner } from '../../lib/session';
+import { deployStatusMeta } from '../../lib/labels';
 import {
   getReleases,
   getPluginJobs,
@@ -24,13 +25,6 @@ import { PublishForm } from './publish-form';
 import { PublishFromSourceForm } from './publish-from-source-form';
 
 export const dynamic = 'force-dynamic';
-
-const JOB_STATUS: Record<string, { variant: NonNullable<BadgeProps['variant']>; label: string }> = {
-  pending: { variant: 'warning', label: 'sırada' },
-  running: { variant: 'accent', label: 'çalışıyor' },
-  success: { variant: 'success', label: 'yayınlandı' },
-  failed: { variant: 'danger', label: 'başarısız' },
-};
 
 function fmt(ts: string | null): string {
   if (!ts) return '—';
@@ -139,10 +133,10 @@ export default async function ReleasesPage() {
                 </TableHeader>
                 <TableBody>
                   {jobs.map((j) => {
-                    const s = JOB_STATUS[j.status] ?? {
-                      variant: 'neutral' as const,
-                      label: 'bilinmiyor',
-                    };
+                    // Yayın işi ile panel dağıtımı AYNI kuyruktur → durum sözlüğü de tek
+                    // (`lib/labels.ts`); burada ayrı harita tutulunca /deployments ile
+                    // renk ve etiket çelişiyordu ('çalışıyor' gri vs 'Çalışıyor' mavi).
+                    const s = deployStatusMeta(j.status);
                     return (
                       <TableRow key={j.id}>
                         <TableCell>

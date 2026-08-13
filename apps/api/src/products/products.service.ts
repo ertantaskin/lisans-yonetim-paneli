@@ -519,7 +519,11 @@ export class ProductsService {
         coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold30d
       FROM assignments a
       JOIN order_lines ol ON ol.id = a.line_id
-      WHERE ol.product_id = ${id};
+      WHERE ol.product_id = ${id}
+        -- PERF (reports.velocity ile aynı budama): dış tarama 30 güne daraltılır. Toplamlar
+        -- ZATEN yalnız 7g/30g FILTER'larından çıkıyor → 30 günden eski atamaların katkısı 0'dı;
+        -- WHERE olmadan ürünün TÜM geçmişi taranıyordu. SONUÇ BİREBİR AYNI (yalnız okunan satır azalır).
+        AND a.created_at >= now() - interval '30 days';
     `);
     return { sold7d: Number(list[0]?.sold7d ?? 0), sold30d: Number(list[0]?.sold30d ?? 0) };
   }

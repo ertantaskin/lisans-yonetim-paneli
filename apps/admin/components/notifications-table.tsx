@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import type { NotificationRow } from '../app/notifications/queries';
-import { fmtDateTime } from '../lib/utils';
+import { fmtDateTime, includesTr } from '../lib/utils';
 import { notificationTypeLabel, severityLabel } from '../lib/labels';
 import { checkLowStockAction } from '../app/notifications/actions';
 import { useLive } from './live/live-provider';
@@ -177,14 +177,10 @@ function buildColumns(
           </div>
         );
       },
-      // Arama: başlık VEYA mesaj
-      filterFn: (row, _id, value) => {
-        const q = String(value).toLowerCase();
-        return (
-          row.original.title.toLowerCase().includes(q) ||
-          row.original.message.toLowerCase().includes(q)
-        );
-      },
+      // Arama: başlık VEYA mesaj. Türkçe-duyarlı karşılaştırma (`includesTr`): ham
+      // `toLowerCase()` "İ"/"I" içeren başlık/mesajlarda sessizce eşleşmiyordu.
+      filterFn: (row, _id, value) =>
+        includesTr(row.original.title, value) || includesTr(row.original.message, value),
     },
     {
       accessorKey: 'sentTelegram',

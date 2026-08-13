@@ -1,5 +1,6 @@
-import { Users } from 'lucide-react';
+import { TriangleAlert, Users } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Card } from '../../components/ui/card';
 import { CustomersTable } from '../../components/customers-table';
 import { CustomerSiteFilter } from '../../components/customer-site-filter';
@@ -21,9 +22,16 @@ export default async function CustomersPage({
 
   let customers: CustomerRow[] = [];
   let sites: SiteOption[] = [];
+  let truncated = false;
   let error: string | null = null;
   try {
-    [customers, sites] = await Promise.all([getCustomers({ siteId: site }), getSitesForFilter()]);
+    const [res, siteList] = await Promise.all([
+      getCustomers({ siteId: site }),
+      getSitesForFilter(),
+    ]);
+    customers = res.items;
+    truncated = res.truncated;
+    sites = siteList;
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -43,7 +51,19 @@ export default async function CustomersPage({
           <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
         </Card>
       ) : (
-        <CustomersTable customers={customers} siteScoped={!!activeSite} />
+        <>
+          {truncated && (
+            <Alert variant="warning" className="mb-4">
+              <TriangleAlert />
+              <AlertDescription>
+                En yeni <strong>2.000 müşteri</strong> gösteriliyor — arama bu listede yapılır,
+                daha eskileri kapsamaz. Aradığınız müşteriyi bulamıyorsanız <strong>Siparişler</strong>
+                {' '}ekranından e-posta ile arayın ya da site süzgeciyle daraltın.
+              </AlertDescription>
+            </Alert>
+          )}
+          <CustomersTable customers={customers} siteScoped={!!activeSite} />
+        </>
       )}
     </div>
   );

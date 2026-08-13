@@ -47,11 +47,13 @@ export default async function StockImportPage({
   // Parti ön-yüklemesi AYRI try/catch: tedarik ucu geçici hata verse bile stok girişi çalışsın.
   let batches: ProductBatchOption[] = [];
   let inactiveBatchCount = 0;
+  let batchListTruncated = false;
   if (productId) {
     const r = await fetchProductBatchesAction(productId);
     if (r.ok) {
       batches = r.batches ?? [];
       inactiveBatchCount = r.inactiveCount ?? 0;
+      batchListTruncated = r.listTruncated === true;
     }
   }
 
@@ -91,6 +93,7 @@ export default async function StockImportPage({
           initialBatchId={batchId}
           initialBatches={batches}
           initialInactiveBatchCount={inactiveBatchCount}
+          initialBatchListTruncated={batchListTruncated}
         />
       )}
     </div>

@@ -142,6 +142,27 @@ describe('tedarikçi değişim fişleri', () => {
     }
   });
 
+  it('owner-OLMAYAN admin fiş detayında DÜZ anahtar görmez (denetim A1/M1)', async () => {
+    const { supplierId } = await seedDefects({ count: 2, label: 'mask' });
+    // Fiş OWNER yetkisiyle kesilir → snapshot düz anahtar taşır ve KALICIDIR. Bu yüzden
+    // yetki OKUMA anında yeniden uygulanmalı (yoksa owner-olmayan admin ölü anahtarı düz görür).
+    const c = await claims.create({ supplierId }, ACTOR, true);
+
+    const owner = await claims.detail(c.id, { reveal: true, actor: ACTOR });
+    expect(owner.items).toHaveLength(2);
+    for (const i of owner.items) expect(i.keySnapshot).toContain('DEF-mask');
+
+    const other = await claims.detail(c.id, { reveal: false, actor: 'panel:admin' });
+    expect(other.items).toHaveLength(2);
+    for (const i of other.items) {
+      expect(i.keySnapshot).not.toContain('DEF-mask');
+      expect(i.keySnapshot).toMatch(/^••••••/);
+    }
+    // Sır OLMAYAN snapshot alanları maskelenmez (rapor bağlamı korunur).
+    expect(other.items[0]!.reason).toContain('tedarikçi kusuru');
+    expect(other.items[0]!.batchLabel).toContain('mask');
+  });
+
   it('AYNI kalem ikinci bir fişe GİREMEZ (kısmi unique index)', async () => {
     const { supplierId } = await seedDefects({ count: 2, label: 'p2' });
     await claims.create({ supplierId }, ACTOR, true);

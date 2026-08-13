@@ -67,13 +67,21 @@ export interface CustomerDetail {
  * Müşteri listesi. `siteId` verilirse SADECE o sitenin müşterileri + o siteye kapsanmış
  * sayılar döner (site → müşteri hiyerarşisi). Sıralama/filtre istemcide DataTable'da.
  */
-export async function getCustomers(opts?: { search?: string; siteId?: string }): Promise<CustomerRow[]> {
+export async function getCustomers(opts?: {
+  search?: string;
+  siteId?: string;
+}): Promise<{ items: CustomerRow[]; truncated: boolean }> {
   const params = new URLSearchParams();
   if (opts?.search) params.set('search', opts.search);
   if (opts?.siteId) params.set('siteId', opts.siteId);
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const data = await apiGet<CustomerRow[] | { items: CustomerRow[] }>(`/v1/admin/customers${qs}`);
-  return Array.isArray(data) ? data : (data?.items ?? []);
+  const data = await apiGet<CustomerRow[] | { items: CustomerRow[]; truncated?: boolean }>(
+    `/v1/admin/customers${qs}`,
+  );
+  // `truncated`: sunucu üst sınıra dayandı → EKRANDA SÖYLENİR. Arama/sıralama istemcide
+  // yapıldığı için sessiz kırpma "o müşteri yok" demeye götürürdü (yaşanmış sınıf).
+  if (Array.isArray(data)) return { items: data, truncated: false };
+  return { items: data?.items ?? [], truncated: data?.truncated === true };
 }
 
 /** Site süzgeci için site listesi (id + domain). Dizi veya {items} şekline dayanıklı. */

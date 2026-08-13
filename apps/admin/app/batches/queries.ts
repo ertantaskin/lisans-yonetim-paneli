@@ -43,8 +43,17 @@ export interface BatchRow {
   createdAt: string;
 }
 
-/** Tüm partileri getirir (receivedAt DESC). API dizi VEYA {items} döndürebilir → ikisini de karşıla. */
-export async function getBatches(): Promise<BatchRow[]> {
-  const data = await apiGet<BatchRow[] | { items: BatchRow[] }>('/v1/admin/batches');
-  return Array.isArray(data) ? data : (data?.items ?? []);
+/**
+ * Partileri getirir (receivedAt DESC), sunucu üst sınırıyla (500).
+ *
+ * `truncated`: liste tavana dayandı → EKRANDA SÖYLENİR. Sessizce kırpılan liste, operatöre
+ * "o parti yok" dedirtir (bu projede yaşanmış sınıf: müşteri listesi LIMIT'i bu yüzden
+ * kaldırılmıştı). API dizi VEYA {items} döndürebilir → ikisini de karşıla (deploy sapması).
+ */
+export async function getBatches(): Promise<{ items: BatchRow[]; truncated: boolean }> {
+  const data = await apiGet<BatchRow[] | { items: BatchRow[]; truncated?: boolean }>(
+    '/v1/admin/batches',
+  );
+  if (Array.isArray(data)) return { items: data, truncated: false };
+  return { items: data?.items ?? [], truncated: data?.truncated === true };
 }

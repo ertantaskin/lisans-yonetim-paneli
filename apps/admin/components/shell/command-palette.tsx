@@ -5,6 +5,7 @@ import { Command } from 'cmdk';
 import { Search, CornerDownLeft, ShoppingCart, KeyRound } from 'lucide-react';
 import { NAV } from './nav';
 import { orderStatusLabel } from '../../lib/labels';
+import { includesTr } from '../../lib/utils';
 
 /** GET /api/search yanıtı (server-taraflı proxy; ADMIN_TOKEN sızmaz). */
 interface SearchOrderHit {
@@ -92,9 +93,11 @@ export function CommandPalette() {
 
   // Statik sayfalar (mevcut davranış korunur). shouldFilter=false olduğundan burada
   // elle filtreleriz; sunucu sonuçları ise zaten sunucuda filtrelenmiştir.
+  // Türkçe-duyarlı karşılaştırma (`includesTr`): ham `toLowerCase()` ile "İ"/"I" içeren
+  // sayfa adları ("İnceleme", "Siparişler") sessizce bulunamıyordu. Boş sorguda
+  // `includesTr` true döner → tüm sayfalar listelenir (eski davranış birebir).
   const pages = NAV.flatMap((s) => s.items.filter((i) => !i.soon));
-  const ql = query.trim().toLowerCase();
-  const filteredPages = ql ? pages.filter((i) => i.label.toLowerCase().includes(ql)) : pages;
+  const filteredPages = pages.filter((i) => includesTr(i.label, query));
 
   const { orders, keys } = results;
 

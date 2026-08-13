@@ -81,7 +81,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
   // Bu sitenin müşterileri (site → müşteri hiyerarşisi). Best-effort: hata site sayfasını bozmaz.
   let siteCustomers: CustomerRow[] = [];
   try {
-    siteCustomers = (await getCustomers({ siteId: site.id })).slice(0, 8);
+    siteCustomers = (await getCustomers({ siteId: site.id })).items.slice(0, 8);
   } catch {
     siteCustomers = [];
   }

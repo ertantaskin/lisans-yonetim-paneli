@@ -37,6 +37,17 @@ class Wpteslimat_Updater {
     const EMPTY_KEY = 'wpteslimat_update_none';
     const EMPTY_TTL = HOUR_IN_SECONDS;
 
+    /**
+     * "Yeni sürüm var AMA paket URL'i güvenlik kapısına takıldı" bayrağı.
+     *
+     * Bu durum eskiden SESSİZDİ: WP "güncelleme yok" görüyor, operatör panelde yeni sürüm
+     * yayınlanmış olmasına rağmen hiçbir yerde neden görmüyordu. Bu projede aynı ders daha önce
+     * `is_secure_panel_url` kesintisinde alındı: fail-safe bir kapı SESSİZ olursa arıza teşhis
+     * edilemez. Güvenlik kontrolü GEVŞETİLMEZ — yalnız GÖRÜNÜR kılınır (bkz. insecure_panel_notice).
+     */
+    const PKG_REJECT_KEY = 'wpteslimat_update_pkg_rejected';
+    const PKG_REJECT_TTL = 12 * HOUR_IN_SECONDS;
+
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
         return self::$instance;
@@ -49,6 +60,8 @@ class Wpteslimat_Updater {
         }
         add_filter('pre_set_site_transient_update_plugins', [$this, 'check_update']);
         add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
+        // Paket URL'i reddedilip güncelleme düşürüldüyse yöneticiye GÖRÜNÜR uyarı bas.
+        add_action('admin_notices', [$this, 'package_rejected_notice']);
     }
 
     /** Bu eklentinin plugin_basename değeri (ör. "wpteslimat/wpteslimat.php"). */
@@ -182,6 +195,58 @@ class Wpteslimat_Updater {
     }
 
     /**
+     * Paket URL'i reddedildi → bayrağı yaz (SESSİZ düşürme yok). Güvenlik kararı DEĞİŞMEZ,
+     * yalnız görünür olur. Kısa TTL: panel/panel_url düzeltilince uyarı kendiliğinden söner
+     * (bir sonraki denetim ya kaydı yeniler ya da siler).
+     */
+    private static function flag_package_rejected($version, $download) {
+        set_transient(self::PKG_REJECT_KEY, [
+            'version'    => (string) $version,
+            'url'        => substr((string) $download, 0, 200),
+            'host'       => strtolower((string) wp_parse_url($download, PHP_URL_HOST)),
+            'panel_host' => strtolower((string) wp_parse_url(Wpteslimat_Settings::panel_url(), PHP_URL_HOST)),
+        ], self::PKG_REJECT_TTL);
+    }
+
+    /**
+     * Yeni sürüm yayınlanmış ama paket URL'i güvenlik kontrolüne takıldığı için güncelleme
+     * SUNULMUYOR → `manage_options` yetkili kullanıcıya nedenini söyle (reddedilen host +
+     * beklenen host). Aksi halde operatör "panelde yayınladım, sitede görünmüyor" ile kalıyor.
+     */
+    public function package_rejected_notice() {
+        if (!current_user_can('manage_options')) return;
+        $flag = get_transient(self::PKG_REJECT_KEY);
+        if (!is_array($flag)) return;
+
+        $version    = isset($flag['version']) ? (string) $flag['version'] : '';
+        $url        = isset($flag['url']) ? (string) $flag['url'] : '';
+        $host       = isset($flag['host']) ? (string) $flag['host'] : '';
+        $panel_host = isset($flag['panel_host']) ? (string) $flag['panel_host'] : '';
+
+        if ($url === '') {
+            $msg = sprintf(
+                'Teslimat eklentisi: Panelde yeni sürüm (%1$s) görünüyor ama panel bir indirme adresi ' .
+                'BİLDİRMEDİ — güncelleme sunulmuyor. Panelde sürümün .zip paketiyle birlikte ' .
+                'yayınlandığını doğrulayın.',
+                $version
+            );
+        } else {
+            $msg = sprintf(
+                'Teslimat eklentisi: Panelde yeni sürüm (%1$s) var ama güncelleme SUNULMUYOR — ' .
+                'panelin bildirdiği indirme adresi güvenlik kontrolüne takıldı. Reddedilen adres: %2$s ' .
+                '(host: %3$s). Beklenen: https şeması ve "%4$s" host\'u. Panelin PUBLIC_API_URL ayarı ' .
+                'ile buradaki panel adresi AYNI host olmalı; düzelttikten sonra "Kontrol Paneli → ' .
+                'Güncellemeler" sayfasından tekrar denetleyin.',
+                $version,
+                $url,
+                $host !== '' ? $host : '—',
+                $panel_host !== '' ? $panel_host : '—'
+            );
+        }
+        echo '<div class="notice notice-error"><p>' . esc_html($msg) . '</p></div>';
+    }
+
+    /**
      * `pre_set_site_transient_update_plugins` kancası: panelde daha yeni sürüm
      * varsa transient'in `response` alanına bu eklenti için güncelleme kaydı ekler.
      */
@@ -210,6 +275,8 @@ class Wpteslimat_Updater {
             if (!isset($transient->no_update) || !is_array($transient->no_update)) {
                 $transient->no_update = [];
             }
+            // Daha yeni sürüm YOK → düşürülmüş bir güncelleme de yok; bayrak varsa temizle.
+            delete_transient(self::PKG_REJECT_KEY);
             $transient->no_update[$basename] = (object) [
                 'slug'        => 'wpteslimat',
                 'plugin'      => $basename,
@@ -222,9 +289,14 @@ class Wpteslimat_Updater {
 
         // Yeni sürüm var AMA paket URL'i güvenli değil (plaintext / yabancı host) → güncelleme
         // SUNMA (RCE savunması). WP "güncelleme yok" görür; operatör panel_url'i https yapınca çözülür.
+        // ARTIK SESSİZ DEĞİL: yönetici uyarısı için bayrak yazılır (güvenlik kararı aynen korunur).
         if ($safe_download === '') {
+            self::flag_package_rejected($new_version, $download);
             return $transient;
         }
+
+        // Paket URL'i geçerli → varsa eski uyarı bayrağını temizle.
+        delete_transient(self::PKG_REJECT_KEY);
 
         if (!isset($transient->response) || !is_array($transient->response)) {
             $transient->response = [];

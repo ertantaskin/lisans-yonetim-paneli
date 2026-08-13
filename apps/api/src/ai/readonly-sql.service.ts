@@ -122,6 +122,17 @@ const TABLE_DENYLIST = [
   'pg_shadow',
   'pg_user_mapping',
   'pg_user_mappings',
+  // Denetim (sweep): KONFİG GÖRÜNÜMLERİ. Fonksiyon kapısı `current_setting()` /
+  // `pg_read_all_settings()` çağrılarını reddediyor ama AYNI değerleri skaler text kolonlarla
+  // veren görünümler açıktı: pg_settings (tüm GUC'lar — data_directory, ssl_key_file, log yolları),
+  // pg_stat_activity (çalışan diğer oturumların `query` metni → başka bir isteğin parametreleri),
+  // pg_config (derleme/kurulum yolları), pg_hba_file_rules + pg_file_settings (kimlik doğrulama
+  // kuralları ve konfig dosyası satırları). İş raporları hiçbirine muhtaç değil → tablo kapısında red.
+  'pg_settings',
+  'pg_stat_activity',
+  'pg_config',
+  'pg_hba_file_rules',
+  'pg_file_settings',
 ] as const;
 const TABLE_DENYLIST_RE = new RegExp(`\\b(?:${TABLE_DENYLIST.join('|')})\\b`, 'i');
 

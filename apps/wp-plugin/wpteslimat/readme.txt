@@ -13,7 +13,7 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 2. Sırları `wp-config.php`'ye sabit olarak ekleyin (§8 — WP DB'de düz metin option DEĞİL):
 
    define('WPTESLIMAT_PANEL_URL', 'https://api.panel.example');
-   define('WPTESLIMAT_API_KEY', 'jl_...');       // panelde site oluşturunca döner
+   define('WPTESLIMAT_API_KEY', 'wpt_...');       // panelde site oluşturunca döner
    define('WPTESLIMAT_HMAC_SECRET', '...');       // panelde site oluşturunca döner
 
 3. Panelde bu site için webhook_url'i şuna ayarlayın:
@@ -30,6 +30,22 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.0.3 =
+* Panel adresi doğrulaması (is_secure_panel_url) aynı sunucu / Docker iç ağı gibi MEŞRU
+  dağıtımları engelliyordu — eklenti panele hiçbir istek yapmadan sessizce duruyordu.
+  Artık https her zaman kabul edilir; http yalnız KANITLANABİLİR özel adreslerde
+  (localhost, özel IP aralıkları, tek etiketli Docker servis adı, *.local/.internal/.test)
+  geçerlidir ve engel artık GÖRÜNÜR bir yönetici uyarısı bırakır (sessiz kesinti yok).
+
+= 1.0.2 =
+* Webhook nonce yaşam süresi panelin HMAC nonce TTL'iyle hizalandı (600 → 660 sn) — saat
+  kaymasında replay penceresinin kenarında kalan boşluk kapandı.
+
+= 1.0.1 =
+* Güvenlik denetimi düzeltmeleri: güncelleyici artık HTTPS zorunlu tutuyor ve kurulacak
+  paket URL'inin host/şema doğrulamasını yapıyor (MITM ile enjekte edilen sahte .zip
+  kurulumu engellendi).
 
 = 1.0.0 =
 * Panele artık kurulu eklenti sürümü bildiriliyor — panelde hangi sitenin güncel olduğu görünüyor

@@ -5,6 +5,7 @@ import { ArrowRight } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { isAutoReceipt } from '@lisans/shared';
 import { supplyStatusLabel } from '@/lib/labels';
+import { includesTr } from '@/lib/utils';
 import type { PurchaseOrderRow } from '@/app/purchase-orders/queries';
 import { Badge, SupplyStatusBadge } from './ui/badge';
 import { Button } from './ui/button';
@@ -35,14 +36,12 @@ const columns: ColumnDef<PurchaseOrderRow>[] = [
     meta: { title: 'Tedarikçi' },
     header: ({ column }) => <DataTableColumnHeader column={column} title="Tedarikçi" />,
     cell: ({ row }) => <span className="font-medium">{row.original.supplierName}</span>,
-    filterFn: (row, _id, value) => {
-      const q = String(value).toLowerCase();
-      return (
-        row.original.supplierName.toLowerCase().includes(q) ||
-        row.original.productSku.toLowerCase().includes(q) ||
-        row.original.productName.toLowerCase().includes(q)
-      );
-    },
+    // Arama: tedarikçi VEYA SKU VEYA ürün adı. Türkçe-duyarlı karşılaştırma
+    // (`includesTr`): ham `toLowerCase()` "İ"/"I" içeren adlarda sessizce eşleşmiyordu.
+    filterFn: (row, _id, value) =>
+      includesTr(row.original.supplierName, value) ||
+      includesTr(row.original.productSku, value) ||
+      includesTr(row.original.productName, value),
   },
   {
     id: 'product',

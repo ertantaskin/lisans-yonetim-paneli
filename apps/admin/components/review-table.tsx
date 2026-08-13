@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ReviewRow } from '../app/review/queries';
-import { fmtDateTime } from '../lib/utils';
+import { fmtDateTime, includesTr } from '../lib/utils';
 import { rejectAction, releaseAction, type ActionState } from '../app/review/actions';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
@@ -46,14 +46,11 @@ const baseColumns: ColumnDef<ReviewRow>[] = [
         {row.original.remoteOrderId}
       </Link>
     ),
-    // Arama: sipariş no VEYA müşteri e-postası
-    filterFn: (row, _id, value) => {
-      const q = String(value).toLowerCase();
-      return (
-        row.original.remoteOrderId.toLowerCase().includes(q) ||
-        row.original.customerEmail.toLowerCase().includes(q)
-      );
-    },
+    // Arama: sipariş no VEYA müşteri e-postası. Türkçe-duyarlı karşılaştırma
+    // (`includesTr`): ham `toLowerCase()` "İ"/"I" içeren e-postalarda sessizce eşleşmiyordu.
+    filterFn: (row, _id, value) =>
+      includesTr(row.original.remoteOrderId, value) ||
+      includesTr(row.original.customerEmail, value),
   },
   {
     accessorKey: 'siteDomain',
