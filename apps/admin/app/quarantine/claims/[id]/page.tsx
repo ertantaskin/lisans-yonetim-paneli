@@ -5,6 +5,7 @@ import { ClaimStatusBadge } from '../../../../components/ui/badge';
 import { StatStrip } from '../../../../components/ui/stat-tile';
 import { ClaimDetail } from '../../../../components/claims/claim-detail';
 import { fetchClaim } from '../../claims-queries';
+import { claimStatusHint } from '../../../../lib/labels';
 import { fmtDateTime } from '../../../../lib/utils';
 
 export const dynamic = 'force-dynamic';
@@ -41,7 +42,7 @@ export default async function ClaimDetailPage({ params }: { params: Promise<{ id
           href="/quarantine"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          <ArrowLeft className="size-4" aria-hidden /> Kusurlu Anahtarlar
+          <ArrowLeft className="size-4" aria-hidden /> Kusurlu Stok
         </Link>
 
         <div className="flex items-start gap-3">
@@ -88,21 +89,20 @@ export default async function ClaimDetailPage({ params }: { params: Promise<{ id
         </h2>
         <StatStrip
           items={[
-            { label: 'Anahtar', value: claim.itemCount, hint: 'fişe alınan' },
+            { label: 'Kalem', value: claim.itemCount, hint: 'fişe alınan' },
             {
-              label: 'Cevap bekliyor',
+              label: 'Tedarikçi yanıtı bekleyen',
               value: claim.pendingCount,
               tone: claim.pendingCount > 0 ? 'warning' : 'default',
-              hint: 'tedarikçiden',
             },
             {
-              label: 'Yenilendi',
+              label: 'Çözüldü',
               value: claim.replacedCount + claim.creditedCount,
               tone: resolved > 0 ? 'success' : 'default',
-              hint: 'yeni anahtar / bedel iadesi',
+              hint: 'yenisi geldi / bedeli iade',
             },
             {
-              label: 'Reddedildi',
+              label: 'Kabul edilmedi',
               value: claim.rejectedCount,
               tone: claim.rejectedCount > 0 ? 'danger' : 'default',
               hint: 'havuza geri döndü',
@@ -114,6 +114,8 @@ export default async function ClaimDetailPage({ params }: { params: Promise<{ id
             },
           ]}
         />
+        {/* Durumun ANLAMI başlıkta rozetle birlikte durur; burada bir cümleyle açılır. */}
+        <p className="text-xs text-muted-foreground">{claimStatusHint(claim.status)}</p>
         {claim.note && (
           <p className="text-xs text-muted-foreground">
             <strong className="font-medium text-foreground">Not:</strong> {claim.note}

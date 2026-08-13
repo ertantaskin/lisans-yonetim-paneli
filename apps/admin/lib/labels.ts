@@ -18,6 +18,60 @@ const PRODUCT_KIND: Record<string, string> = {
 };
 export const productKindLabel = (k: string) => lookup(PRODUCT_KIND, k);
 
+// ── Stok kaleminin KULLANICIYA GÖSTERİLEN ADI ────────────────────────────────
+/**
+ * Panel yalnız lisans ANAHTARI satmaz: hesap, kod/hediye çeki, süreli hesap ve özel ürünler
+ * de var (§2) — üstelik aynı ekranda karışık durabilirler. Ekranlarda her yere "anahtar"
+ * yazmak yanlış: bir hesap kaydına "anahtar" demek operatörü yanıltır ve ileride yeni ürün
+ * tipleri eklendikçe daha da yanlışlaşır.
+ *
+ * KURAL: liste TEK tipteyse o tipin adı ("3 hesap"), KARIŞIKSA ya da tip bilinmiyorsa nötr
+ * "kalem" ("3 kalem"). Nötr ad hiçbir zaman yanlış olmaz; özel ad ise okunabilirliği artırır.
+ *
+ * `kalem` = `license_items` satırı: tek bir anahtar, tek bir hesap ya da tek bir kod.
+ */
+const ITEM_NOUN: Record<string, { one: string; many: string }> = {
+  key: { one: 'anahtar', many: 'anahtarlar' },
+  account: { one: 'hesap', many: 'hesaplar' },
+  code: { one: 'kod', many: 'kodlar' },
+  custom: { one: 'kalem', many: 'kalemler' },
+};
+const NEUTRAL_ITEM_NOUN = { one: 'kalem', many: 'kalemler' };
+
+/** Tek bir ürün tipi ya da bir kalem kümesinin tipleri. */
+export type ItemKinds = string | null | undefined | Iterable<string | null | undefined>;
+
+/** Küme tek tipteyse o tip, değilse (ya da tip bilinmiyorsa) `null` → nötr dile düşülür. */
+function uniformKind(kinds: ItemKinds): string | null {
+  if (kinds == null) return null;
+  if (typeof kinds === 'string') return kinds || null;
+  let seen: string | null = null;
+  for (const k of kinds) {
+    // Tipi bilinmeyen TEK kalem bile varsa nötr dile düşeriz (yanlış ad yazmaktansa).
+    if (!k) return null;
+    if (seen === null) seen = k;
+    else if (seen !== k) return null;
+  }
+  return seen;
+}
+
+function itemNounPair(kinds: ItemKinds) {
+  const kind = uniformKind(kinds);
+  return (kind && ITEM_NOUN[kind]) || NEUTRAL_ITEM_NOUN;
+}
+
+/** Tekil ad: 'anahtar' | 'hesap' | 'kod' | 'kalem'. */
+export const itemNoun = (kinds: ItemKinds): string => itemNounPair(kinds).one;
+/** Çoğul ad: 'anahtarlar' | 'hesaplar' | 'kodlar' | 'kalemler'. */
+export const itemNounPlural = (kinds: ItemKinds): string => itemNounPair(kinds).many;
+
+/**
+ * Sayı + ad: `12 anahtar` / `12 kalem`. (Türkçede sayıdan sonra ad tekil kalır.)
+ * Sayı binlik ayraçlı yazılır — 1.250 kalemlik listede okunurluk için.
+ */
+export const itemCount = (n: number, kinds?: ItemKinds): string =>
+  `${n.toLocaleString('tr-TR')} ${itemNoun(kinds)}`;
+
 const USAGE_MODE: Record<string, string> = {
   single: 'Tek kullanımlık',
   multi: 'Çok kullanımlık (MAK)',
@@ -192,14 +246,38 @@ const CLAIM_STATUS: Record<string, string> = {
 };
 export const claimStatusLabel = (s: string) => lookup(CLAIM_STATUS, s);
 
-/** Fişteki TEK anahtarın tedarikçi yanıtı. */
+/**
+ * Fişteki TEK kalemin tedarikçi yanıtı.
+ *
+ * `pending` etiketi bilinçli UZUN: eskiden yalnız "Cevap bekleniyor" yazıyordu ve kullanıcı
+ * "kimin cevabı?" diye sordu (rozet tek başına da listelerde görünüyor). Etiket artık aktörü
+ * kendi içinde taşır — çevresindeki başlığa bağımlı değil.
+ */
 const CLAIM_OUTCOME: Record<string, string> = {
-  pending: 'Cevap bekleniyor',
+  pending: 'Tedarikçi yanıtı bekleniyor',
   replaced: 'Yenisi geldi',
   credited: 'Bedeli iade edildi',
-  rejected: 'Reddedildi',
+  rejected: 'Tedarikçi kabul etmedi',
 };
 export const claimOutcomeLabel = (s: string) => lookup(CLAIM_OUTCOME, s);
+
+/** Her yanıtın operatör için ANLAMI (rozet altı ipucu / açıklama listesi). */
+const CLAIM_OUTCOME_HINT: Record<string, string> = {
+  pending: 'Fişe girdi, tedarikçiden henüz yanıt gelmedi.',
+  replaced: 'Tedarikçi yerine yenisini gönderdi — süreç bu kalem için kapandı.',
+  credited: 'Tedarikçi bedelini iade etti/mahsup etti — süreç bu kalem için kapandı.',
+  rejected: 'Tedarikçi kabul etmedi; kalem bildirilecekler havuzuna GERİ DÖNDÜ.',
+};
+export const claimOutcomeHint = (s: string) => lookup(CLAIM_OUTCOME_HINT, s);
+
+/** Fiş durumunun operatör için ANLAMI (bir sonraki adımı söyler). */
+const CLAIM_STATUS_HINT: Record<string, string> = {
+  draft: 'Hazırlandı, henüz tedarikçiye iletilmedi. Raporu indirip gönderin.',
+  sent: 'Tedarikçiye iletildi. Yanıt geldikçe kalemleri işaretleyin.',
+  closed: 'Süreç kapandı.',
+  canceled: 'Fiş iptal edildi; kalemleri havuza döndü.',
+};
+export const claimStatusHint = (s: string) => lookup(CLAIM_STATUS_HINT, s);
 
 /** Kusurun KAYNAĞI — tedarikçiye giden raporda gerekçe ayrımı. */
 const DEFECT_KIND: Record<string, string> = {
@@ -209,6 +287,15 @@ const DEFECT_KIND: Record<string, string> = {
   manual_void: 'Elle geçersiz kılındı',
 };
 export const defectKindLabel = (s: string) => lookup(DEFECT_KIND, s);
+
+/** Kusur kaynağının bir cümlelik açıklaması (ekran içi rehber). */
+const DEFECT_KIND_HINT: Record<string, string> = {
+  customer_return: 'Müşteri “çalışmıyor” dedi; kalem geri alınıp yenisiyle değiştirildi.',
+  recall: 'Partinin tamamı geri çekildi; stoktaki kalemler geçersiz kılındı.',
+  damage: 'Stok düzeltmesinde “hasarlı” olarak düşüldü.',
+  manual_void: 'Operatör elle geçersiz kıldı (ör. tedarikçi yanlış kalem gönderdi).',
+};
+export const defectKindHint = (s: string) => lookup(DEFECT_KIND_HINT, s);
 
 const MESSAGE_AUTHOR: Record<string, string> = {
   admin: 'Yönetici',

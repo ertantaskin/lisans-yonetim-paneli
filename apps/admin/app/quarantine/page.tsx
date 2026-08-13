@@ -15,15 +15,20 @@ import { fetchClaims, fetchSuppliersLite } from './claims-queries';
 export const dynamic = 'force-dynamic';
 
 /**
- * Kusurlu Anahtarlar (§2/§3/§12) — kusur havuzu + tedarikçiye değişim fişleri.
+ * KUSURLU STOK (§2/§3/§12) — kusur havuzu + tedarikçiye değişim fişleri.
  *
- * NEDEN İKİ SEKME: ekran eskiden yalnız düz bir "ölü anahtar defteri"ydi; operatörün asıl işi
- * (partiden çıkan hatalıları tedarikçiye bildirip takip etmek) panelde hiç yaşamıyordu, tek
- * yol izi olmayan bir CSV indirmesiydi. "Bekleyenler" = henüz bildirilmemiş kusur havuzu
- * (tedarikçi→parti gruplu, tek tıkla fiş); "Fişler" = kesilen fişlerin geçmişi ve sonuçları.
+ * ADLANDIRMA: ekran eskiden "Kusurlu Anahtarlar" idi. Panel yalnız lisans anahtarı satmıyor
+ * (hesap, kod/hediye çeki, süreli hesap…) — kullanıcı geri bildirimi üzerine ad ve tüm sayaç
+ * metinleri ürün tipine duyarlı hale getirildi (`lib/labels.itemCount`): liste tek tipse
+ * "3 hesap", karışıksa nötr "3 kalem".
  *
- * Durum · tarih aralığı · arama SUNUCU süzgecidir ve URL'de taşınır (`?status=&range=&from=&to=&q=`).
- * Ürün/tedarikçi/site facet'leri ile hızlı arama YALNIZ yüklenen pencere içinde, istemcide kalır.
+ * ÜÇ SEKME: her sekmenin TEK işi var (bkz. `quarantine-tabs.tsx`). Eskiden "Bekleyenler"
+ * sekmesinin içinde hem havuz hem de tüm ölü kalemleri gösteren defter vardı; sekme "1" derken
+ * tablo 16 satır gösteriyordu ve operatör aradaki farkı anlayamıyordu.
+ *
+ * Durum · tarih aralığı · arama SUNUCU süzgecidir ve URL'de taşınır (`?status=&range=&from=&to=&q=`);
+ * araç çubuğu "Tüm Kayıtlar" sekmesindedir. Süzgeç etkinken havuz da daralır → "Bildirilecekler"
+ * sekmesi bunu açıkça söyler (sessiz eksik liste YOK).
  */
 export default async function QuarantinePage({
   searchParams,
@@ -38,18 +43,19 @@ export default async function QuarantinePage({
     fetchSuppliersLite(),
   ]);
 
-  // "Bekleyenler" = henüz bildirilmemiş. Süzgeç SUNUCUDA da var (`claimed=none`) ama liste
-  // görünümü tüm ölü anahtarları göstermeye devam ediyor (defter işlevi korunur); panel
-  // yalnız bildirilmemiş olanları gruplar. Yüklem BİREBİR aynı: fişte açık kaydı yoksa bekliyor.
+  // "Bildirilecekler" = henüz bildirilmemiş. Yüklem SUNUCUDAKİ `claimed=none` süzgeciyle
+  // BİREBİR aynı: fişte açık kaydı yoksa bekliyordur (reddedilen kalem havuza döndüğü için
+  // yine `claimId` boş gelir — bilinçli, tek tanım).
   const pendingRows = rows.filter((r) => !r.claimId);
-
-  const description = hasQuarantineServerFilters(filters)
-    ? 'Arızalı olduğu bildirilen, değiştirilen veya geçersiz kılınan lisans ve hesap kalemleri. Aşağıdaki liste SÜZÜLMÜŞ sunucu sonucudur; dışa aktarma bu sonucu kapsar.'
-    : 'Arızalı olduğu bildirilen, değiştirilen veya geçersiz kılınan lisans ve hesap kalemleri. Bu kalemler müşteriye TEKRAR TESLİM EDİLMEZ. Tedarikçiye toplu bildirmek için “Fiş oluştur” ile bir değişim fişi kesin — fiş kesilen anahtar bekleyenler listesinden düşer, reddedilen geri döner.';
+  const serverFiltered = hasQuarantineServerFilters(filters);
 
   return (
     <div>
-      <PageHeader icon={ShieldOff} title="Kusurlu Anahtarlar" description={description} />
+      <PageHeader
+        icon={ShieldOff}
+        title="Kusurlu Stok"
+        description="Arızalı bildirilen, değiştirilen veya geçersiz kılınan lisans/hesap kalemleri. Bu kalemler müşteriye TEKRAR TESLİM EDİLMEZ; tedarikçiye değişim fişiyle bildirilir."
+      />
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
@@ -58,22 +64,24 @@ export default async function QuarantinePage({
         <QuarantineTabs
           pendingCount={pendingRows.length}
           claimCount={claims.rows.length}
+          ledgerCount={rows.length}
           pending={
-            <>
-              <PendingClaimsPanel
-                rows={pendingRows}
-                suppliers={suppliers}
-                lastClaim={claims.rows[0] ?? null}
-              />
-              <QuarantineTable
-                rows={rows}
-                truncated={truncated}
-                limit={QUARANTINE_LIMIT}
-                filters={filters}
-              />
-            </>
+            <PendingClaimsPanel
+              rows={pendingRows}
+              suppliers={suppliers}
+              lastClaim={claims.rows[0] ?? null}
+              serverFiltered={serverFiltered}
+            />
           }
           claims={<ClaimsList rows={claims.rows} error={claims.error} />}
+          ledger={
+            <QuarantineTable
+              rows={rows}
+              truncated={truncated}
+              limit={QUARANTINE_LIMIT}
+              filters={filters}
+            />
+          }
         />
       )}
     </div>

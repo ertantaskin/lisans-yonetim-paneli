@@ -18,7 +18,7 @@ import {
 import { isAutoReceipt } from '@lisans/shared';
 import type { BatchRow } from '../app/batches/queries';
 import { fmtDateTime, includesTr } from '../lib/utils';
-import { supplyStatusLabel } from '../lib/labels';
+import { itemCount, supplyStatusLabel } from '../lib/labels';
 import { bulkReplaceBatchAction, recallBatchAction } from '../app/batches/actions';
 import { Badge, SupplyStatusBadge } from './ui/badge';
 import { Button } from './ui/button';
@@ -254,6 +254,8 @@ type RecallNotice = {
   label: string;
   /** Sonuç bandındaki "parti detayından tek tek karar ver" bağlantısı için. */
   batchId: string;
+  /** Partinin ürün tipi — sonuç metni "anahtar/hesap/kod" der (nötr "kalem" yerine). */
+  kind?: string;
   voided: number;
   soldNeedingReplacement: number;
 };
@@ -291,6 +293,7 @@ function RecallDialog({
         onDone({
           label: batch.label,
           batchId: batch.id,
+          kind: batch.productKind,
           voided: res.voided ?? 0,
           soldNeedingReplacement: res.soldNeedingReplacement ?? 0,
         });
@@ -334,15 +337,17 @@ function RecallDialog({
           <TriangleAlert />
           <div className="min-w-0 flex-1">
             <AlertDescription>
-              Stoktaki {batch.unsoldCount} anahtar geçersiz kılınacak (geri alınamaz).
+              Stoktaki {itemCount(batch.unsoldCount, batch.productKind)} geçersiz kılınacak (geri
+              alınamaz).
               {batch.customerCount > 0 && (
                 <>
                   {' '}
-                  Müşterilerdeki {batch.customerCount} anahtara <strong>dokunulmaz</strong> —
-                  çalışmaya devam eder; hangisini değiştireceğinize tek tek karar verirsiniz.
+                  Müşterilerdeki {itemCount(batch.customerCount, batch.productKind)}{' '}
+                  <strong>korunur</strong> — çalışmaya devam eder; hangisini değiştireceğinize tek
+                  tek karar verirsiniz.
                 </>
               )}{' '}
-              {/* Geri alınamaz karar öncesi etkilenecek anahtarlara bakma yolu (yeni sekme —
+              {/* Geri alınamaz karar öncesi etkilenecek kalemlere bakma yolu (yeni sekme —
                   modaldaki sebep metni kaybolmasın). */}
               <Link
                 href={`/batches/${batch.id}`}
@@ -383,7 +388,14 @@ function RecallDialog({
 }
 
 /** Toplu değiştirme sonucu bildirimi. */
-type BulkReplaceNotice = { label: string; total: number; replaced: number; skippedNoStock: number };
+type BulkReplaceNotice = {
+  label: string;
+  /** Partinin ürün tipi — sonuç metni "anahtar/hesap/kod" der (nötr "kalem" yerine). */
+  kind?: string;
+  total: number;
+  replaced: number;
+  skippedNoStock: number;
+};
 
 /**
  * Toplu değiştirme onay modalı (§13). Sebep girişi yok — onay + sonuç. Satılmış kalemler
@@ -408,6 +420,7 @@ function BulkReplaceDialog({
       if (res.ok) {
         onDone({
           label: batch.label,
+          kind: batch.productKind,
           total: res.total ?? 0,
           replaced: res.replaced ?? 0,
           skippedNoStock: res.skippedNoStock ?? 0,
@@ -452,14 +465,15 @@ function BulkReplaceDialog({
           <TriangleAlert />
           <div className="min-w-0 flex-1">
             <AlertDescription>
-              Müşterilerdeki {batch.replaceableCount} anahtar geri alınıp yerine BAŞKA bir
-              partiden taze anahtar atanacak. Stok yetmeyen kalemler atlanır (mevcut anahtar
-              korunur — müşteri boşta kalmaz).
+              Müşterilerdeki {itemCount(batch.replaceableCount, batch.productKind)} geri alınıp
+              yerine BAŞKA bir partiden tazesi atanacak. Stok yetmeyen kalemler atlanır (mevcut
+              kalem korunur — müşteri boşta kalmaz).
               {batch.customerCount > batch.replaceableCount && (
                 <>
                   {' '}
-                  Askıya alınmış {batch.customerCount - batch.replaceableCount} anahtar bu işleme
-                  DAHİL DEĞİL — askıyı bilerek siz koydunuz, elle işleyin.
+                  Askıya alınmış{' '}
+                  {itemCount(batch.customerCount - batch.replaceableCount, batch.productKind)} bu
+                  işleme DAHİL DEĞİL — askıyı bilerek siz koydunuz, elle işleyin.
                 </>
               )}{' '}
               Tek tek karar vermek isterseniz{' '}
@@ -552,12 +566,12 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
           <div className="min-w-0 flex-1">
             <AlertTitle>Parti geri çekildi — {notice.label}</AlertTitle>
             <AlertDescription>
-              Stoktaki {notice.voided} anahtar geçersiz kılındı.
+              Stoktaki {itemCount(notice.voided, notice.kind)} geçersiz kılındı.
               {notice.soldNeedingReplacement > 0 && (
                 <>
                   {' '}
-                  Müşterilerdeki {notice.soldNeedingReplacement} anahtar çalışmaya devam ediyor —
-                  hangisini değiştireceğinize{' '}
+                  Müşterilerdeki {itemCount(notice.soldNeedingReplacement, notice.kind)} çalışmaya
+                  devam ediyor — hangisini değiştireceğinize{' '}
                   <Link
                     href={`/batches/${notice.batchId}`}
                     className="underline underline-offset-4"
@@ -586,13 +600,13 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
           <div className="min-w-0 flex-1">
             <AlertTitle>Toplu değiştirme tamamlandı — {bulkNotice.label}</AlertTitle>
             <AlertDescription>
-              Müşterilerdeki {bulkNotice.total} anahtarın {bulkNotice.replaced} tanesi yenisiyle
-              değiştirildi.
+              Müşterilerdeki {itemCount(bulkNotice.total, bulkNotice.kind)} işlendi;{' '}
+              {bulkNotice.replaced} tanesi yenisiyle değiştirildi.
               {bulkNotice.skippedNoStock > 0 && (
                 <>
                   {' '}
-                  {bulkNotice.skippedNoStock} anahtar için uygun stok yoktu — eski anahtarları
-                  KORUNDU (müşteri boşta kalmadı), stok girince tekrar deneyin.
+                  {itemCount(bulkNotice.skippedNoStock, bulkNotice.kind)} için uygun stok yoktu —
+                  eskisi KORUNDU (müşteri boşta kalmadı), stok girince tekrar deneyin.
                 </>
               )}
             </AlertDescription>

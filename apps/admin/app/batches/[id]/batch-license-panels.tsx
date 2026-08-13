@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from '../../../components/ui/card';
 import { LicenseItemsTable } from '../../../components/inventory/license-items-table';
+import { itemCount } from '../../../lib/labels';
 
 /**
  * Parti detayının İKİ lisans tablosu — tek bir tazeleme sinyalini paylaşırlar.
@@ -30,11 +31,14 @@ export function BatchLicensePanels({
   batchLabel,
   customerCount,
   recalled,
+  kind,
 }: {
   batchId: string;
   batchLabel: string;
   customerCount: number;
   recalled: boolean;
+  /** Partinin ürün tipi — metinler "anahtar/hesap/kod" der; yoksa nötr "kalem". */
+  kind?: string;
 }) {
   const router = useRouter();
   const [refreshKey, setRefreshKey] = React.useState(0);
@@ -46,9 +50,9 @@ export function BatchLicensePanels({
 
   return (
     <>
-      {/* ── Müşterilerdeki anahtarlar (değişim karar listesi) ──
-          Geri çekme YALNIZ stoğu geçersiz kılar; teslim edilmiş anahtarlara dokunmaz çünkü
-          bir kısmı çalışıyor olabilir. Bu kart operatörün iş listesidir ve bir anahtar
+      {/* ── Müşterilerdeki kalemler (değişim karar listesi) ──
+          Geri çekme YALNIZ stoğu geçersiz kılar; teslim edilmiş kalemlere dokunmaz çünkü
+          bir kısmı çalışıyor olabilir. Bu kart operatörün iş listesidir ve bir kalem
           değiştirildikçe kendiliğinden kısalır (eski atama artık canlı değildir). */}
       {customerCount > 0 && (
         <Card>
@@ -56,12 +60,12 @@ export function BatchLicensePanels({
             <CardTitle icon={Users}>Müşterilerdeki lisanslar</CardTitle>
             <CardDescription>
               Bu partiden çıkmış ve <strong>şu anda müşterilerin elinde olan</strong>{' '}
-              {customerCount} anahtar. {recalled ? 'Parti geri çekildi ama b' : 'B'}
+              {itemCount(customerCount, kind)}. {recalled ? 'Parti geri çekildi ama b' : 'B'}
               unlar çalışmaya devam ediyor ve müşteri görmeye devam ediyor — otomatik iptal
               edilmezler. Sorunlu olanı satırdaki{' '}
-              <strong>“Yeni anahtarla değiştir”</strong> ile yenileyin: müşteriye başka bir
-              partiden taze anahtar atanır, eski anahtar karantinaya gider ve bu listeden düşer.
-              Uygun stok yoksa işlem yapılmaz, müşteri boşta kalmaz.
+              <strong>“Yenisiyle değiştir”</strong> ile yenileyin: müşteriye başka bir partiden
+              taze bir kalem atanır, eskisi karantinaya gider ve bu listeden düşer. Uygun stok
+              yoksa işlem yapılmaz, müşteri boşta kalmaz.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -81,9 +85,9 @@ export function BatchLicensePanels({
           <CardTitle icon={KeyRound}>Bu partideki lisanslar</CardTitle>
           <CardDescription>
             Yalnız <strong>{batchLabel}</strong> partisinden gelen kalemlerin tamamı — stoktakiler,
-            müşterilerdekiler, geçersiz kılınanlar ve karantinadakiler dahil. Bozuk anahtarları
+            müşterilerdekiler, geçersiz kılınanlar ve karantinadakiler dahil. Bozuk olanları
             satırları işaretleyip topluca stoktan düşebilirsiniz (yalnız stokta bekleyenler
-            seçilebilir; teslim edilmiş anahtar buradan öldürülmez).
+            seçilebilir; teslim edilmiş kalem buradan öldürülmez).
           </CardDescription>
         </CardHeader>
         <CardContent>

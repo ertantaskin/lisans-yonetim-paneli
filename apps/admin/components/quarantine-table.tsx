@@ -3,17 +3,17 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  Ban,
   Check,
   Copy,
   Download,
   ExternalLink,
   FileSpreadsheet,
   FileText,
+  Inbox,
   PackageX,
   RefreshCw,
+  Send,
   ShieldAlert,
-  Truck,
   X,
 } from 'lucide-react';
 import type { Column, ColumnDef } from '@tanstack/react-table';
@@ -24,7 +24,7 @@ import type {
   QuarantineStatusFilter,
 } from '../app/quarantine/queries';
 import { cn, fmtDateTime } from '../lib/utils';
-import { licenseItemStatusLabel, productKindLabel } from '../lib/labels';
+import { claimOutcomeLabel, licenseItemStatusLabel, productKindLabel } from '../lib/labels';
 import {
   downloadCsv,
   downloadText,
@@ -33,11 +33,12 @@ import {
   toTextList,
   type CsvColumn,
 } from '../lib/csv';
-import { StatusBadge } from './ui/badge';
+import { Badge, ClaimOutcomeBadge, StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
 import { Field } from './ui/field';
+import { HelpNote } from './ui/help-note';
 import { Input, checkboxClass } from './ui/input';
 import { SearchInput } from './ui/search-input';
 import { StatStrip } from './ui/stat-tile';
@@ -69,6 +70,29 @@ const statusText = (s?: string | null): string => (s ? licenseItemStatusLabel(s)
 
 /** Tedarikçisi olmayan kalemler için sanal süzgeç değeri (aşağıdaki nota bakın). */
 const NO_SUPPLIER = '__none__';
+
+/**
+ * BİLDİRİM DURUMU — "bu kusurlu kalemi tedarikçiye bildirdim mi?".
+ *
+ * Kullanıcı geri bildirimi: sekme "Bildirilecekler 1" derken tablo 16 satır gösteriyordu ve
+ * aradaki farkın nereden geldiği ekranda HİÇBİR YERDE yazmıyordu. Artık her satır kendi
+ * bildirim durumunu taşır (kolon + hızlı süzgeç).
+ *
+ * Yüklem sunucudaki `claimed` süzgeciyle BİREBİR aynı: reddedilen kalem havuza döndüğü için
+ * `claimId` boş gelir → burada da "Bildirilmedi" görünür (bilinçli, aynı tanım).
+ */
+type ClaimState = 'none' | 'open' | 'resolved';
+
+const CLAIM_STATE_LABEL: Record<ClaimState, string> = {
+  none: 'Bildirilmedi',
+  open: 'Fişte — yanıt bekliyor',
+  resolved: 'Tedarikçi yanıtladı',
+};
+
+function claimState(r: QuarantineItem): ClaimState {
+  if (!r.claimId) return 'none';
+  return r.claimOutcome && r.claimOutcome !== 'pending' ? 'resolved' : 'open';
+}
 
 /**
  * Durum rozeti — panelin TEK rozet bileşenine (`StatusBadge`) devredilir.
@@ -109,7 +133,7 @@ function KeyCell({ value }: { value: string }) {
         size="icon-sm"
         className="size-7 shrink-0"
         onClick={copy}
-        aria-label={copied ? 'Kopyalandı' : 'Lisans değerini kopyala'}
+        aria-label={copied ? 'Kopyalandı' : 'Kalem değerini kopyala'}
         title={copied ? 'Kopyalandı' : 'Kopyala'}
       >
         {copied ? <Check className="text-success" /> : <Copy />}
@@ -143,10 +167,38 @@ const columns: ColumnDef<QuarantineItem>[] = [
   {
     id: 'status',
     accessorFn: (r) => r.status ?? '',
-    meta: { title: 'Durum' },
-    header: 'Durum',
+    meta: { title: 'Kalem durumu' },
+    header: 'Kalem durumu',
     enableSorting: false,
     cell: ({ row }) => <QuarantineStatus status={row.original.status} />,
+  },
+  {
+    id: 'claim',
+    accessorFn: (r) => claimState(r),
+    meta: { title: 'Tedarikçiye bildirim' },
+    header: 'Tedarikçiye bildirim',
+    enableSorting: false,
+    cell: ({ row }) => {
+      const r = row.original;
+      if (!r.claimId) {
+        return (
+          <Badge variant="outline" title="Henüz bir değişim fişine girmedi.">
+            {CLAIM_STATE_LABEL.none}
+          </Badge>
+        );
+      }
+      return (
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <Link
+            href={`/quarantine/claims/${r.claimId}`}
+            className="truncate font-mono text-xs text-foreground underline-offset-4 hover:underline"
+          >
+            {r.claimCode ?? 'Fişi aç'}
+          </Link>
+          {r.claimOutcome && <ClaimOutcomeBadge outcome={r.claimOutcome} />}
+        </div>
+      );
+    },
   },
   {
     id: 'keyPreview',
@@ -182,7 +234,7 @@ const columns: ColumnDef<QuarantineItem>[] = [
       return (
         <div className="flex min-w-0 flex-col">
           {supplierId && supplierName ? (
-            // Tedarikçi karnesine kısa yol: "bu partiden şu anahtarlar bozuk" konuşmasını
+            // Tedarikçi karnesine kısa yol: "bu partiden şu kalemler bozuk" konuşmasını
             // başlatacak kişi/kayıt tek tıkla açılır.
             <Link
               href={`/suppliers/${supplierId}`}
@@ -270,8 +322,8 @@ const columns: ColumnDef<QuarantineItem>[] = [
   {
     id: 'quarantinedAt',
     accessorFn: (r) => r.quarantinedAt ?? '',
-    meta: { title: 'Karantina tarihi' },
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Karantina tarihi" />,
+    meta: { title: 'Kusur tarihi' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Kusur tarihi" />,
     // Kendi sıralayıcımız: `datetime` sortingFn null/boş tarihte patlar (bu alan null olabilir).
     sortingFn: (a, b) => ts(a.original.quarantinedAt) - ts(b.original.quarantinedAt),
     cell: ({ row }) => (
@@ -282,23 +334,28 @@ const columns: ColumnDef<QuarantineItem>[] = [
   },
 ];
 
-// ── Süzgeç modeli (İKİ KATMAN) ──────────────────────────────────────────────
+// ── Süzgeç modeli (İKİ KATMAN, TEK ARAÇ ÇUBUĞU) ─────────────────────────────
 // 1) SUNUCU süzgeci — durum · tarih aralığı · arama. URL'de taşınır, sayfa sunucuda yeniden
 //    render edilir; sorgu veritabanındaki TÜM kayıtları tarar (yalnız yüklenen pencereyi değil),
-//    sonuç en fazla `limit` kayıttır → kırpılırsa uyarı. Bkz. `QuarantineServerFilters`.
-// 2) YEREL (hızlı) süzgeç — aşağıdaki facet'ler + anlık arama; yalnız YÜKLENEN pencere içinde.
+//    sonuç en fazla `limit` kayıttır → kırpılırsa uyarı.
+// 2) YEREL (hızlı) süzgeç — facet'ler + anlık arama; yalnız YÜKLENEN pencere içinde.
+//
+// SUNUM KARARI (kullanıcı geri bildirimi: "çok karışık"): bu iki katman eskiden İKİ AYRI KART
+// ve İKİ AYRI ARAMA KUTUSU olarak duruyordu ("Sunucu süzgeci" / "Yüklenen liste içinde süz").
+// Operatör hangi kutuya yazacağını bilmiyordu. Artık TEK kart + TEK arama kutusu var:
+//   yazdıkça  → yüklenen listede anında süzer (yerel)
+//   Enter/düğme → veritabanındaki tüm kayıtlarda arar (sunucu) ve liste yeniden yüklenir
+// Katmanların teknik farkı kaybolmadı, yalnız "Nasıl çalışır?" kutusuna taşındı.
 //
 // Yerel süzme TABLONUN İÇİNDE değil BURADA yapılır (bkz. queries.ts notu): dışa aktarmanın
 // "görünen N kayıt" sayısı ancak süzülmüş küme tek yerde tutulursa dürüst olur.
-//
-// DURUM neden yerel facet DEĞİL: sunucu süzgecinde (tek doğruluk kaynağı). İkisi birden olsaydı
-// "durumu seçtim ama liste değişmedi/çakıştı" karmaşası doğardı.
 
-type FacetKey = 'product' | 'supplier' | 'site';
+type FacetKey = 'product' | 'supplier' | 'site' | 'claim';
 
-const FACET_KEYS: FacetKey[] = ['product', 'supplier', 'site'];
+const FACET_KEYS: FacetKey[] = ['claim', 'product', 'supplier', 'site'];
 
 const FACET_TITLE: Record<FacetKey, string> = {
+  claim: 'Bildirim',
   product: 'Ürün',
   supplier: 'Tedarikçi',
   site: 'Site',
@@ -314,6 +371,7 @@ const FACET_TITLE: Record<FacetKey, string> = {
  * boş bırakılmaz, adlandırılmış bir kovaya (NO_SUPPLIER) düşer.
  */
 const FACET_VALUE: Record<FacetKey, (r: QuarantineItem) => string | null> = {
+  claim: (r) => claimState(r),
   product: (r) => r.productId ?? r.productName ?? null,
   supplier: (r) => r.supplierId ?? (r.supplierName ? `name:${r.supplierName}` : NO_SUPPLIER),
   site: (r) => r.siteDomain ?? null,
@@ -321,6 +379,7 @@ const FACET_VALUE: Record<FacetKey, (r: QuarantineItem) => string | null> = {
 
 /** Süzgeç değerinin ekranda görünecek Türkçe karşılığı (ham enum/UUID ASLA çıkmaz). */
 const FACET_LABEL: Record<FacetKey, (r: QuarantineItem) => string> = {
+  claim: (r) => CLAIM_STATE_LABEL[claimState(r)],
   product: (r) => r.productName ?? 'Adsız ürün',
   // Üç ayrı durum: adı bilinen tedarikçi · kaydı olan ama adsız · hiç tedarikçisi olmayan.
   supplier: (r) => r.supplierName ?? (r.supplierId ? 'Adsız tedarikçi' : 'Tedarikçisi bilinmiyor'),
@@ -332,10 +391,6 @@ const FACET_LABEL: Record<FacetKey, (r: QuarantineItem) => string> = {
 // Denetim bulgusu: eskiden durum/tarih yalnız istemcideydi → "son 90 gün + tedarikçi X" seçimi
 // yalnız EN YENİ 5000 kaydın içinde arıyordu; 12.000 kayıtlı kurulumda eski kalemler "yok"
 // görünüyordu ve kırpılma uyarısının önerdiği eylem uygulanamıyordu.
-// G6 (bu dalganın kendi bulgusu): tarih süzgeci "sunucuda" ilan edilmiş ama SQL'e KONMAMIŞTI —
-// sunucu en yeni pencereyi çekip tarihi bellekte süzüyordu → geçmiş bir dönem seçilince liste
-// boş ve kırpılma uyarısı da yanlış (false) çıkıyordu. Artık tarih SQL'de ön-süzülür ve
-// kırpılma sinyali ham sorgu satır sayısından gelir.
 
 /** Durum süzgeci seçenekleri (Türkçe etiketler labels.ts tek kaynağından). */
 const STATUS_FILTERS: { value: QuarantineStatusFilter; label: string }[] = [
@@ -376,230 +431,10 @@ function rangeSummary(f: QuarantineFilterState): string | null {
   return `${f.from ? trDay(f.from) : '…'} – ${f.to ? trDay(f.to) : '…'}`;
 }
 
-/**
- * Sunucu süzgeci çubuğu. Her değişiklik URL'yi günceller (`router.push`) → sayfa sunucuda
- * yeniden çekilir. `useTransition` ile bekleme görünür olur (operatör "tıkladım, bir şey
- * olmadı" sanmasın); geçiş sırasında kontroller kilitlenir.
- */
-function QuarantineServerFilters({
-  filters,
-  limit,
-}: {
-  filters: QuarantineFilterState;
-  /** Sunucunun döndürebileceği en fazla kayıt — "tüm kayıtlarda arar AMA N kayıt döner" dürüstlüğü. */
-  limit?: number;
-}) {
-  const router = useRouter();
-  const [pending, startTransition] = React.useTransition();
-
-  // Taslak (henüz uygulanmamış) alanlar. Sunucudan gelen değer değişince senkronlanır —
-  // tarayıcı geri/ileri tuşu da doğru çalışsın.
-  const [range, setRange] = React.useState<QuarantineRange>(filters.range);
-  const [from, setFrom] = React.useState(filters.from);
-  const [to, setTo] = React.useState(filters.to);
-  const [search, setSearch] = React.useState(filters.search);
-
-  React.useEffect(() => {
-    setRange(filters.range);
-    setFrom(filters.from);
-    setTo(filters.to);
-    setSearch(filters.search);
-  }, [filters.range, filters.from, filters.to, filters.search]);
-
-  const go = React.useCallback(
-    (next: Partial<QuarantineFilterState>) => {
-      // Kutuda YAZILI olan arama metni her gezinmede taşınır: operatör "abc" yazıp Enter'a
-      // basmadan durum düğmesine tıklarsa yazdığı metin sessizce KAYBOLMAZ (kutuda görünen =
-      // uygulanan). Seçili aralık düğmesi de taşınır ("Özel aralık" açıkken durum değiştirince
-      // tarih kutuları kapanmasın). Tarih DEĞERLERİ bilinçli taslak kalır — "Uygula" ile gider.
-      const merged = { ...filters, search: search.trim(), range, ...next };
-      const params = new URLSearchParams();
-      if (merged.status) params.set('status', merged.status);
-      if (merged.range) params.set('range', merged.range);
-      if (merged.from) params.set('from', merged.from);
-      if (merged.to) params.set('to', merged.to);
-      if (merged.search) params.set('q', merged.search);
-      const qs = params.toString();
-      startTransition(() => router.push(qs ? `/quarantine?${qs}` : '/quarantine'));
-    },
-    [filters, router, search, range],
-  );
-
-  function pickRange(value: QuarantineRange) {
-    setRange(value);
-    // Özel aralık: tarihler girilip "Uygula"ya basılınca gider (her tıkta istek atma).
-    if (value === 'custom') return;
-    if (value === '') return go({ range: '', from: '', to: '' });
-    go({ range: value, from: isoDay(new Date(Date.now() - Number(value) * 86_400_000)), to: '' });
-  }
-
-  const active = Boolean(filters.status || filters.from || filters.to || filters.search);
-  const rangeLabel = rangeSummary(filters);
-  const summary = [
-    filters.status ? `Durum: ${statusText(filters.status)}` : null,
-    rangeLabel ? `Tarih: ${rangeLabel}` : null,
-    filters.search ? `Arama: “${filters.search}”` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
-  return (
-    <Card className="p-4" aria-busy={pending}>
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-semibold text-foreground">Sunucu süzgeci</h3>
-          <p className="text-xs text-muted-foreground">
-            Veritabanındaki TÜM kayıtlarda süzer ve listeyi yeniden yükler; tek seferde en fazla{' '}
-            {(limit ?? 5000).toLocaleString('tr-TR')} kayıt gelir (sığmazsa uyarı çıkar). Aşağıdaki
-            hızlı süzgeçler ise yalnız yüklenen liste içinde çalışır.
-          </p>
-          {pending && (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <RefreshCw className="size-3 animate-spin" aria-hidden />
-              Yükleniyor…
-            </span>
-          )}
-        </div>
-
-        {summary && (
-          <p className="text-xs text-foreground/80">
-            <span className="text-muted-foreground">Uygulanan sunucu süzgeci:</span> {summary}
-          </p>
-        )}
-
-        {/* Durum */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-foreground/70" id="karantina-durum-etiket">
-            Durum
-          </span>
-          <div className="flex flex-wrap gap-1" role="group" aria-labelledby="karantina-durum-etiket">
-            {STATUS_FILTERS.map((s) => (
-              <Button
-                key={s.value || 'all'}
-                type="button"
-                size="sm"
-                variant={filters.status === s.value ? 'default' : 'outline'}
-                aria-pressed={filters.status === s.value}
-                disabled={pending}
-                onClick={() => go({ status: s.value })}
-              >
-                {s.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {/* Karantina tarihi */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-foreground/70" id="karantina-tarih-etiket">
-            Karantina tarihi
-          </span>
-          <div className="flex flex-wrap gap-1" role="group" aria-labelledby="karantina-tarih-etiket">
-            {RANGE_PRESETS.map((p) => (
-              <Button
-                key={p.value || 'all'}
-                type="button"
-                size="sm"
-                variant={range === p.value ? 'default' : 'outline'}
-                aria-pressed={range === p.value}
-                disabled={pending}
-                onClick={() => pickRange(p.value)}
-              >
-                {p.label}
-              </Button>
-            ))}
-          </div>
-          {range === 'custom' && (
-            <div className="flex items-center gap-2">
-              <Input
-                id="karantina-baslangic"
-                type="date"
-                className="h-8 w-auto"
-                value={from}
-                max={to || undefined}
-                disabled={pending}
-                onChange={(e) => setFrom(e.target.value)}
-                aria-label="Başlangıç tarihi"
-              />
-              <span className="text-xs text-muted-foreground" aria-hidden>
-                –
-              </span>
-              <Input
-                id="karantina-bitis"
-                type="date"
-                className="h-8 w-auto"
-                value={to}
-                min={from || undefined}
-                disabled={pending}
-                onChange={(e) => setTo(e.target.value)}
-                aria-label="Bitiş tarihi"
-              />
-              <Button
-                type="button"
-                size="sm"
-                disabled={pending}
-                onClick={() =>
-                  from || to
-                    ? go({ range: 'custom', from, to })
-                    : go({ range: '', from: '', to: '' })
-                }
-              >
-                Uygula
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Sunucu araması */}
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            go({ search: search.trim() });
-          }}
-        >
-          <Field
-            label="Tüm kayıtlarda ara"
-            htmlFor="karantina-sunucu-ara"
-            className="min-w-0 flex-1 sm:max-w-md"
-            hint="Ürün adı/SKU, müşteri e-postası, sipariş no, parti etiketi veya tedarikçi adı. Anahtar içeriği aranmaz (şifreli)."
-          >
-            <SearchInput
-              id="karantina-sunucu-ara"
-              value={search}
-              onValueChange={setSearch}
-              placeholder="Sunucuda ara ve listeyi yeniden yükle…"
-              ariaLabel="Tüm karantina kayıtlarında ara (sunucu)"
-              className="w-full"
-              inputClassName="h-9"
-            />
-          </Field>
-          <Button type="submit" size="sm" variant="outline" disabled={pending} className="h-9">
-            Ara
-          </Button>
-          {active && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={pending}
-              className="h-9"
-              onClick={() => startTransition(() => router.push('/quarantine'))}
-            >
-              <X aria-hidden />
-              Sunucu süzgecini temizle
-            </Button>
-          )}
-        </form>
-      </div>
-    </Card>
-  );
-}
-
 // ── Dışa aktarma: İKİ AYRI İÇERİK ───────────────────────────────────────────
-// Bu ekranın ana işi "çalışmayan anahtarların listesini TEDARİKÇİYE ilet". O dosyada müşteri
+// Bu ekranın ana işi "çalışmayan kalemlerin listesini TEDARİKÇİYE ilet". O dosyada müşteri
 // e-postası ve mağaza sipariş numarası İŞİ GÖRMEZ ama 3. tarafa kişisel veri taşır (KVKK) —
-// üstelik TAM düz lisans anahtarıyla AYNI satırda birleşir. Bu yüzden dışa aktarma ikiye ayrıldı:
+// üstelik TAM düz lisans değeriyle AYNI satırda birleşir. Bu yüzden dışa aktarma ikiye ayrıldı:
 // tedarikçi bildirimi (kişisel veri YOK) ve iç denetim (tam set, panel dışına çıkmamalı).
 
 /** Tedarikçi bildirimi — kusurlu kalemi tanımlayan teknik/tedarik kolonları. Kişisel veri YOK. */
@@ -613,19 +448,22 @@ const supplierCsvColumns: CsvColumn<QuarantineItem>[] = [
   { header: 'Parti kodu', value: (r) => r.batchCode ?? '' },
   { header: 'Tedarikçi', value: (r) => r.supplierName ?? '' },
   { header: 'Stok giriş tarihi', value: (r) => csvDate(r.createdAt) },
-  { header: 'Karantina tarihi', value: (r) => csvDate(r.quarantinedAt) },
+  { header: 'Kusur tarihi', value: (r) => csvDate(r.quarantinedAt) },
 ];
 
 /** İç denetim — tedarikçi seti + izleme kolonları. KİŞİSEL VERİ İÇERİR (müşteri e-postası). */
 const auditCsvColumns: CsvColumn<QuarantineItem>[] = [
   ...supplierCsvColumns,
+  { header: 'Bildirim durumu', value: (r) => CLAIM_STATE_LABEL[claimState(r)] },
+  { header: 'Fiş no', value: (r) => r.claimCode ?? '' },
+  { header: 'Tedarikçi yanıtı', value: (r) => (r.claimOutcome ? claimOutcomeLabel(r.claimOutcome) : '') },
   { header: 'Mağaza sipariş no', value: (r) => r.remoteOrderId ?? r.sourceRemoteOrderId ?? '' },
   { header: 'Site', value: (r) => r.siteDomain ?? '' },
   { header: 'Müşteri e-postası', value: (r) => r.customerEmail ?? '' },
 ];
 
 /**
- * Düz metin satırı — tedarikçiye mesajda YAPIŞTIRMAK için: ürün + anahtar + sebep.
+ * Düz metin satırı — tedarikçiye mesajda YAPIŞTIRMAK için: ürün + değer + sebep.
  * Sütun/ayraç yok, tek okunabilir satır.
  */
 const supplierTextLine = (r: QuarantineItem, i: number): string =>
@@ -664,13 +502,13 @@ const EXPORT_VARIANT: Record<ExportVariant, VariantSpec> = {
   supplier: {
     title: 'Tedarikçi bildirimi',
     // Dosya adı içeriği de söyler: yanlışlıkla "iç denetim" dosyasını tedarikçiye göndermek zorlaşır.
-    file: 'karantina-tedarikci',
+    file: 'kusurlu-stok-tedarikci',
     columns: supplierCsvColumns,
     line: supplierTextLine,
   },
   audit: {
     title: 'İç denetim',
-    file: 'karantina-ic-denetim',
+    file: 'kusurlu-stok-ic-denetim',
     columns: auditCsvColumns,
     line: auditTextLine,
     warning: 'UYARI: Bu dosya müşteri kişisel verisi içerir — tedarikçiye/3. tarafa göndermeyin.',
@@ -755,12 +593,27 @@ export function QuarantineTable({
   /** URL'den gelen SUNUCU süzgeçleri (durum/tarih/arama) — sayfa tarafından doğrulanır. */
   filters: QuarantineFilterState;
 }) {
+  const router = useRouter();
+  const [pending, startTransition] = React.useTransition();
   const all = React.useMemo(() => rows ?? [], [rows]);
 
-  const [q, setQ] = React.useState('');
-  /** Debounce edilmiş arama terimi — süzme yalnız yazma durunca çalışsın. */
-  const [term, setTerm] = React.useState('');
+  // TEK arama kutusu: yazdıkça yerel süzer, Enter/düğme ile sunucuya gider.
+  // Sunucudan gelen değerle senkronlanır (tarayıcı geri/ileri tuşu doğru çalışsın).
+  const [q, setQ] = React.useState(filters.search);
+  const [term, setTerm] = React.useState(filters.search);
+  const [range, setRange] = React.useState<QuarantineRange>(filters.range);
+  const [from, setFrom] = React.useState(filters.from);
+  const [to, setTo] = React.useState(filters.to);
+
+  React.useEffect(() => {
+    setQ(filters.search);
+    setRange(filters.range);
+    setFrom(filters.from);
+    setTo(filters.to);
+  }, [filters.search, filters.range, filters.from, filters.to]);
+
   const [facetValues, setFacetValues] = React.useState<Record<FacetKey, string[]>>({
+    claim: [],
     product: [],
     supplier: [],
     site: [],
@@ -770,13 +623,39 @@ export function QuarantineTable({
     setFacetValues((prev) => ({ ...prev, [key]: values }));
   }, []);
 
-  // Yazma sırasında 5000 satırlık süzme + 3 facet sayacı her tuşta koşmasın (F14).
+  // Yazma sırasında 5000 satırlık süzme + facet sayaçları her tuşta koşmasın.
   React.useEffect(() => {
     const t = window.setTimeout(() => setTerm(q.trim()), 180);
     return () => window.clearTimeout(t);
   }, [q]);
 
   const needle = React.useMemo(() => lower(term), [term]);
+
+  const go = React.useCallback(
+    (next: Partial<QuarantineFilterState>) => {
+      // Kutuda YAZILI olan metin ve seçili aralık düğmesi her gezinmede taşınır: operatör
+      // yazdığını ya da seçtiğini sessizce kaybetmesin. Tarih DEĞERLERİ bilinçli taslak kalır
+      // — "Uygula" ile gider.
+      const merged = { ...filters, search: q.trim(), range, ...next };
+      const params = new URLSearchParams();
+      if (merged.status) params.set('status', merged.status);
+      if (merged.range) params.set('range', merged.range);
+      if (merged.from) params.set('from', merged.from);
+      if (merged.to) params.set('to', merged.to);
+      if (merged.search) params.set('q', merged.search);
+      const qs = params.toString();
+      startTransition(() => router.push(qs ? `/quarantine?${qs}` : '/quarantine'));
+    },
+    [filters, router, q, range],
+  );
+
+  function pickRange(value: QuarantineRange) {
+    setRange(value);
+    // Özel aralık: tarihler girilip "Uygula"ya basılınca gider (her tıkta istek atma).
+    if (value === 'custom') return;
+    if (value === '') return go({ range: '', from: '', to: '' });
+    go({ range: value, from: isoDay(new Date(Date.now() - Number(value) * 86_400_000)), to: '' });
+  }
 
   const indexed = React.useMemo<IndexedRow[]>(
     () =>
@@ -793,11 +672,13 @@ export function QuarantineTable({
             r.supplierName,
             r.siteDomain,
             r.reason,
+            r.claimCode,
           ]
             .filter(Boolean)
             .join(' '),
         ),
         keys: {
+          claim: FACET_VALUE.claim(r),
           product: FACET_VALUE.product(r),
           supplier: FACET_VALUE.supplier(r),
           site: FACET_VALUE.site(r),
@@ -866,12 +747,16 @@ export function QuarantineTable({
 
   /** Sunucu süzgeci etkin mi (boş sonuç metinleri ve dışa aktarma kapsamı bunu anlatır). */
   const serverFiltered = Boolean(filters.status || filters.from || filters.to || filters.search);
-  const hasFilters = Boolean(q || FACET_KEYS.some((k) => facetValues[k].length > 0));
+  // "Yerel süzgeç var mı" = sunucu aramasının ÜSTÜNE eklenmiş bir daraltma var mı. Arama kutusu
+  // sunucu terimini de gösterdiği için `term !== filters.search` karşılaştırması şart: aksi halde
+  // yalnız sunucuda arama yapıldığında da "hızlı süzgeçleri temizle" beliriyor ve hiçbir şey yapmıyordu.
+  const hasLocalFilters = Boolean(
+    term !== filters.search || FACET_KEYS.some((k) => facetValues[k].length > 0),
+  );
 
-  /** Aktif süzgeçler — tek tek kaldırılabilir rozetler. */
+  /** Aktif YEREL süzgeçler — tek tek kaldırılabilir rozetler. */
   const activeChips = React.useMemo(() => {
     const chips: { id: string; label: string; remove: () => void }[] = [];
-    if (q) chips.push({ id: 'q', label: `Arama: “${q}”`, remove: () => setQ('') });
     for (const key of FACET_KEYS) {
       for (const value of facetValues[key]) {
         // Liste yenilendiyse seçili değer artık bulunmayabilir; ham UUID/enum göstermek yerine
@@ -885,24 +770,27 @@ export function QuarantineTable({
       }
     }
     return chips;
-  }, [q, facetValues, facetOptions, setFacet]);
+  }, [facetValues, facetOptions, setFacet]);
 
   const counts = React.useMemo(() => {
-    let quarantined = 0;
-    let voided = 0;
-    let traceable = 0;
+    let none = 0;
+    let open = 0;
+    let resolved = 0;
+    let noSupplier = 0;
     for (const r of all) {
-      if (r.status === 'quarantined') quarantined += 1;
-      else if (r.status === 'voided') voided += 1;
-      if (r.supplierId || r.supplierName) traceable += 1;
+      const st = claimState(r);
+      if (st === 'none') none += 1;
+      else if (st === 'open') open += 1;
+      else resolved += 1;
+      if (!r.supplierId && !r.supplierName) noSupplier += 1;
     }
-    return { quarantined, voided, traceable };
+    return { none, open, resolved, noSupplier };
   }, [all]);
 
-  /** Yalnız YEREL süzgeçleri temizler (sunucu süzgeci kendi "temizle" düğmesindedir). */
-  function reset() {
-    setQ('');
-    setFacetValues({ product: [], supplier: [], site: [] });
+  /** Yalnız YEREL süzgeçleri temizler (sunucu araması kendi rozetinden kaldırılır). */
+  function resetLocal() {
+    setQ(filters.search);
+    setFacetValues({ claim: [], product: [], supplier: [], site: [] });
   }
 
   // ── Dışa aktarma paneli ───────────────────────────────────────────────────
@@ -925,7 +813,7 @@ export function QuarantineTable({
       downloadCsv(`${base}.csv`, toCsv(exportRows, spec.columns, spec.warning));
     } else {
       const header = [
-        `Karantina — ${spec.title}`,
+        `Kusurlu stok — ${spec.title}`,
         `${exportRows.length} kayıt · ${scope === 'visible' ? 'süzülmüş liste' : 'tüm liste'} · ${fmtDateTime(new Date().toISOString())}`,
         ...(spec.warning ? [spec.warning] : []),
         '─'.repeat(52),
@@ -935,38 +823,55 @@ export function QuarantineTable({
     setExportOpen(false);
   }
 
+  const rangeLabel = rangeSummary(filters);
+
   return (
     <div className="space-y-4">
       <StatStrip
         items={[
           {
             icon: PackageX,
-            label: 'Yüklenen kalem',
+            label: 'Kusurlu kalem',
             value: all.length,
-            hint: serverFiltered ? 'sunucu süzgeciyle' : undefined,
+            hint: serverFiltered ? 'süzülmüş' : undefined,
           },
           {
-            icon: ShieldAlert,
-            label: statusText('quarantined'),
-            value: counts.quarantined,
-            tone: 'danger',
+            icon: Inbox,
+            label: 'Bildirilmedi',
+            value: counts.none,
+            tone: counts.none > 0 ? 'warning' : 'default',
+            hint: counts.noSupplier > 0 ? `${counts.noSupplier} tanesinin tedarikçisi yok` : undefined,
           },
-          // Ton rozetle AYNI: "Geçersiz kılındı" da ölü kayıttır (rozet kırmızı, sayaç
-          // amber olunca aynı satırda iki farklı ciddiyet okunuyordu).
-          { icon: Ban, label: statusText('voided'), value: counts.voided, tone: 'danger' },
+          { icon: Send, label: 'Fişte, yanıt bekliyor', value: counts.open },
           {
-            icon: Truck,
-            label: 'Tedarikçisi belli',
-            value: counts.traceable,
-            // Bu sayaç tedarikçi zinciri KURULABİLEN kalemleri sayar; bir kısmı zaten
-            // fişe girmiş olabilir. "Talep edilebilir" demek yanıltıcı olurdu — bildirilmeyi
-            // BEKLEYENLER üstteki panelde ve sekme sayacında görünür.
-            hint: 'parti/tedarikçi izi var',
+            icon: Check,
+            label: 'Tedarikçi yanıtladı',
+            value: counts.resolved,
+            tone: counts.resolved > 0 ? 'success' : 'default',
           },
         ]}
       />
 
-      <QuarantineServerFilters filters={filters} limit={limit} />
+      <HelpNote title="Bu liste ne gösteriyor, süzgeçler nasıl çalışıyor?">
+        <p>
+          Bu sekme <strong>değişmez bir defterdir</strong>: arızalı bildirilen, değiştirilen veya
+          geçersiz kılınan TÜM kalemler — bildirilmiş olsun olmasın — burada durur. İş listesi
+          değildir; yapılacak işler <strong>“Bildirilecekler”</strong> sekmesindedir.
+        </p>
+        <p>
+          <strong>Arama kutusu iki iş yapar:</strong> yazdıkça yüklenen listeyi anında süzer
+          (lisans değeri ve sebep metni dahil); <strong>Enter</strong>&apos;a basarsanız
+          veritabanındaki tüm kayıtlarda arar ve liste yeniden yüklenir. Durum ve tarih süzgeçleri
+          de her zaman <strong>tüm kayıtlarda</strong> çalışır; tek seferde en fazla{' '}
+          {(limit ?? 5000).toLocaleString('tr-TR')} kayıt gelir (sığmazsa uyarı çıkar).{' '}
+          <strong>Bildirim / Ürün / Tedarikçi / Site</strong> hızlı süzgeçleri ise yalnız yüklenen
+          liste içinde çalışır.
+        </p>
+        <p>
+          <strong>Kusur tarihi</strong> kalemin öldüğü an, <strong>stok giriş tarihi</strong> ise
+          partinin panele girildiği andır — ikisi farklı kavramdır, süzgeç kusur tarihine bakar.
+        </p>
+      </HelpNote>
 
       {truncated && (
         <Alert variant="warning">
@@ -975,50 +880,141 @@ export function QuarantineTable({
             Bu sorgu sunucu üst sınırına{limit ? ` (${limit.toLocaleString('tr-TR')} kayıt)` : ''}{' '}
             dayandı — süzgece uyan bazı (daha eski) kalemler listeye GİRMEMİŞ olabilir. Aşağıdaki
             sayılar ve dışa aktarmadaki <strong className="font-medium">Tümü</strong> seçeneği
-            yalnız bu pencereyi kapsar. Eksiksiz liste için yukarıdaki{' '}
-            <strong className="font-medium">sunucu süzgecini</strong> daraltın (durum, tarih aralığı
-            veya arama) — bu süzgeçler veritabanındaki tüm kayıtlarda çalışır ve liste yeniden
-            yüklenir.
+            yalnız bu pencereyi kapsar. Eksiksiz liste için durumu, tarih aralığını ya da aramayı
+            daraltın — bunlar veritabanındaki tüm kayıtlarda çalışır ve liste yeniden yüklenir.
           </AlertDescription>
         </Alert>
       )}
 
-      <Card className="p-4">
+      <Card className="p-4" aria-busy={pending}>
         <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h3 className="text-sm font-semibold text-foreground">Yüklenen liste içinde süz</h3>
-            <p className="text-xs text-muted-foreground">
-              Anında çalışır, yeniden yükleme yapmaz — kapsamı yukarıdaki sunucu süzgeci belirler.
-            </p>
+          {/* ── Arama (tek kutu, iki kapsam) ── */}
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              go({ search: q.trim() });
+            }}
+          >
+            <Field
+              label="Ara"
+              htmlFor="kusurlu-ara"
+              className="min-w-0 flex-1 sm:max-w-md"
+              hint="Yazdıkça yüklenen listede süzer. Enter’a basarsanız veritabanındaki tüm kayıtlarda arar (lisans değeri şifreli olduğu için sunucuda aranmaz)."
+            >
+              <SearchInput
+                id="kusurlu-ara"
+                value={q}
+                onValueChange={setQ}
+                placeholder="Ürün, SKU, müşteri, sipariş no, parti, tedarikçi, fiş no…"
+                ariaLabel="Kusurlu stok kayıtlarında ara"
+                className="w-full"
+                inputClassName="h-9"
+              />
+            </Field>
+            <Button type="submit" size="sm" variant="outline" disabled={pending} className="h-9">
+              Tüm kayıtlarda ara
+            </Button>
+            {pending && (
+              <span className="inline-flex h-9 items-center gap-1 text-xs text-muted-foreground">
+                <RefreshCw className="size-3 animate-spin" aria-hidden />
+                Yükleniyor…
+              </span>
+            )}
+          </form>
+
+          {/* ── Sunucu süzgeçleri: durum + kusur tarihi ── */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-foreground/70" id="kusurlu-durum-etiket">
+                Kalem durumu
+              </span>
+              <div className="flex flex-wrap gap-1" role="group" aria-labelledby="kusurlu-durum-etiket">
+                {STATUS_FILTERS.map((s) => (
+                  <Button
+                    key={s.value || 'all'}
+                    type="button"
+                    size="sm"
+                    variant={filters.status === s.value ? 'default' : 'outline'}
+                    aria-pressed={filters.status === s.value}
+                    disabled={pending}
+                    onClick={() => go({ status: s.value })}
+                  >
+                    {s.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-foreground/70" id="kusurlu-tarih-etiket">
+                Kusur tarihi
+              </span>
+              <div className="flex flex-wrap gap-1" role="group" aria-labelledby="kusurlu-tarih-etiket">
+                {RANGE_PRESETS.map((p) => (
+                  <Button
+                    key={p.value || 'all'}
+                    type="button"
+                    size="sm"
+                    variant={range === p.value ? 'default' : 'outline'}
+                    aria-pressed={range === p.value}
+                    disabled={pending}
+                    onClick={() => pickRange(p.value)}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {/* Hızlı arama (yerel) */}
-          <Field
-            label="Listede hızlı ara"
-            htmlFor="karantina-ara"
-            className="max-w-lg"
-            hint={`Yüklenen ${all.length.toLocaleString('tr-TR')} kayıt içinde: ürün, SKU, lisans değeri, müşteri, sipariş no, parti veya tedarikçi.`}
-          >
-            <SearchInput
-              id="karantina-ara"
-              value={q}
-              onValueChange={setQ}
-              placeholder="Yüklenen kalemlerde ara…"
-              ariaLabel="Yüklenen karantina kalemlerinde ara"
-              className="w-full"
-              inputClassName="h-9"
-            />
-          </Field>
+          {range === 'custom' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                id="kusurlu-baslangic"
+                type="date"
+                className="h-8 w-auto"
+                value={from}
+                max={to || undefined}
+                disabled={pending}
+                onChange={(e) => setFrom(e.target.value)}
+                aria-label="Başlangıç tarihi"
+              />
+              <span className="text-xs text-muted-foreground" aria-hidden>
+                –
+              </span>
+              <Input
+                id="kusurlu-bitis"
+                type="date"
+                className="h-8 w-auto"
+                value={to}
+                min={from || undefined}
+                disabled={pending}
+                onChange={(e) => setTo(e.target.value)}
+                aria-label="Bitiş tarihi"
+              />
+              <Button
+                type="button"
+                size="sm"
+                disabled={pending}
+                onClick={() =>
+                  from || to ? go({ range: 'custom', from, to }) : go({ range: '', from: '', to: '' })
+                }
+              >
+                Uygula
+              </Button>
+            </div>
+          )}
 
-          {/* Faceted süzgeçler (DataTable araç çubuğuyla aynı bileşen ve görsel dil) */}
+          {/* ── Yerel hızlı süzgeçler ── */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-foreground/70" id="karantina-suzgec-etiket">
-              Süz
+            <span className="text-xs font-medium text-foreground/70" id="kusurlu-suzgec-etiket">
+              Hızlı süz
             </span>
             <div
               className="flex flex-wrap items-center gap-2"
               role="group"
-              aria-labelledby="karantina-suzgec-etiket"
+              aria-labelledby="kusurlu-suzgec-etiket"
             >
               {FACET_KEYS.map((key) => (
                 <DataTableFacetedFilter
@@ -1033,10 +1029,31 @@ export function QuarantineTable({
             </div>
           </div>
 
-          {/* Aktif süzgeç rozetleri */}
-          {activeChips.length > 0 && (
+          {/* ── Aktif süzgeç rozetleri (sunucu + yerel tek satırda) ── */}
+          {(activeChips.length > 0 || serverFiltered) && (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs text-muted-foreground">Aktif süzgeçler:</span>
+              {filters.search && (
+                <ServerChip
+                  label={`Tüm kayıtlarda: “${filters.search}”`}
+                  disabled={pending}
+                  onRemove={() => go({ search: '' })}
+                />
+              )}
+              {filters.status && (
+                <ServerChip
+                  label={`Kalem durumu: ${statusText(filters.status)}`}
+                  disabled={pending}
+                  onRemove={() => go({ status: '' })}
+                />
+              )}
+              {rangeLabel && (
+                <ServerChip
+                  label={`Kusur tarihi: ${rangeLabel}`}
+                  disabled={pending}
+                  onRemove={() => go({ range: '', from: '', to: '' })}
+                />
+              )}
               {activeChips.map((chip) => (
                 <button
                   key={chip.id}
@@ -1058,15 +1075,15 @@ export function QuarantineTable({
             <span className="font-medium tabular-nums text-foreground">{filtered.length}</span>
             {' / '}
             <span className="tabular-nums">{all.length}</span> kayıt gösteriliyor
-            {hasFilters && (
+            {hasLocalFilters && (
               <>
                 {' · '}
                 <button
                   type="button"
-                  onClick={reset}
+                  onClick={resetLocal}
                   className="rounded-sm text-foreground underline underline-offset-4 hover:no-underline"
                 >
-                  Yerel süzgeçleri temizle
+                  Hızlı süzgeçleri temizle
                 </button>
               </>
             )}
@@ -1082,7 +1099,7 @@ export function QuarantineTable({
             <PopoverContent align="end" className="w-[22rem] space-y-3 p-3">
               <ChoiceGroup<ExportScope>
                 legend="Hangi kayıtlar"
-                name="karantina-export-kapsam"
+                name="kusurlu-export-kapsam"
                 value={scope}
                 onChange={setScope}
                 options={[
@@ -1092,9 +1109,9 @@ export function QuarantineTable({
                     hint:
                       filtered.length === 0
                         ? 'Süzgeçlere uyan kayıt yok — “Yüklenen tümü”nü seçin ya da süzgeçleri gevşetin.'
-                        : hasFilters
-                          ? 'Yerel süzgeçlere uyanlar.'
-                          : 'Şu an yerel süzgeç yok — yüklenen liste ile aynı.',
+                        : hasLocalFilters
+                          ? 'Hızlı süzgeçlere uyanlar.'
+                          : 'Şu an hızlı süzgeç yok — yüklenen liste ile aynı.',
                     disabled: filtered.length === 0,
                   },
                   {
@@ -1110,19 +1127,19 @@ export function QuarantineTable({
 
               <ChoiceGroup<ExportVariant>
                 legend="Hangi bilgiler"
-                name="karantina-export-icerik"
+                name="kusurlu-export-icerik"
                 value={variant}
                 onChange={setVariant}
                 options={[
                   {
                     value: 'supplier',
                     label: 'Tedarikçi bildirimi',
-                    hint: 'Ürün, SKU, tür, lisans değeri, durum, sebep, parti, tedarikçi, tarihler. Müşteri e-postası ve sipariş no YOK.',
+                    hint: 'Ürün, SKU, tür, lisans/hesap değeri, durum, sebep, parti, tedarikçi, tarihler. Müşteri e-postası ve sipariş no YOK.',
                   },
                   {
                     value: 'audit',
                     label: 'İç denetim (tüm kolonlar)',
-                    hint: 'Yukarıdakiler + site, sipariş no ve müşteri e-postası.',
+                    hint: 'Yukarıdakiler + bildirim durumu, fiş no, site, sipariş no ve müşteri e-postası.',
                   },
                 ]}
               />
@@ -1139,7 +1156,7 @@ export function QuarantineTable({
 
               <ChoiceGroup<ExportFormat>
                 legend="Dosya biçimi"
-                name="karantina-export-bicim"
+                name="kusurlu-export-bicim"
                 value={format}
                 onChange={setFormat}
                 options={[
@@ -1147,7 +1164,7 @@ export function QuarantineTable({
                   {
                     value: 'txt',
                     label: 'Düz metin (.txt)',
-                    hint: 'Ürün + anahtar + sebep; tedarikçi mesajına yapıştırmak için.',
+                    hint: 'Ürün + değer + sebep; tedarikçi mesajına yapıştırmak için.',
                   },
                 ]}
               />
@@ -1175,12 +1192,36 @@ export function QuarantineTable({
         emptyLabel={
           all.length === 0
             ? serverFiltered
-              ? 'Sunucu süzgecine uyan kayıt yok — durumu/tarih aralığını gevşetin ya da aramayı değiştirin.'
-              : 'Karantinada kalem yok — arızalı bildirilen lisanslar burada listelenir.'
-            : 'Yerel süzgeçlere uyan kalem yok.'
+              ? 'Süzgece uyan kayıt yok — durumu/tarih aralığını gevşetin ya da aramayı değiştirin.'
+              : 'Hiç kusurlu kalem yok — arızalı bildirilen lisans/hesap kalemleri burada listelenir.'
+            : 'Hızlı süzgeçlere uyan kalem yok.'
         }
       />
     </div>
+  );
+}
+
+/** Sunucu süzgeci rozeti — kaldırıldığında sayfa yeniden yüklenir (yerel rozetten farkı budur). */
+function ServerChip({
+  label,
+  onRemove,
+  disabled,
+}: {
+  label: string;
+  onRemove: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      disabled={disabled}
+      aria-label={`${label} süzgecini kaldır`}
+      className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground ring-1 ring-inset ring-border transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+    >
+      {label}
+      <X className="size-3" aria-hidden />
+    </button>
   );
 }
 

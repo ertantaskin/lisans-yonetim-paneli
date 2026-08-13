@@ -319,17 +319,17 @@ export function LicenseItemsTable({
       const res = await confirm({
         title: `${ids.length} lisans stoktan düşülecek`,
         description:
-          'Bu kalemler "geçersiz" olur; bir daha teslim edilmezler ve Karantina ekranında sebebiyle listelenirler. İşlem geri alınamaz.',
+          'Bu kalemler "geçersiz" olur; bir daha teslim edilmezler ve Kusurlu Stok ekranında sebebiyle listelenirler. İşlem geri alınamaz.',
         details: preview,
         tone: 'danger',
         confirmLabel: label,
         reason: {
           label: 'Sebep',
-          placeholder: 'ör. tedarikçi partisi bozuk — anahtarlar etkinleşmiyor',
+          placeholder: 'ör. tedarikçi partisi bozuk — kalemler etkinleşmiyor',
           required: true,
           minLength: 3,
           inputType: 'textarea',
-          hint: 'Denetim kaydına ve Karantina listesine yazılır.',
+          hint: 'Denetim kaydına ve Kusurlu Stok listesine yazılır.',
         },
       });
       if (!res) return;
@@ -467,7 +467,7 @@ export function LicenseItemsTable({
             {selectedVisible.length} lisans seçildi
           </span>
           <span className="text-xs text-muted-foreground">
-            (yalnız stoktakiler seçilebilir — teslim edilmiş anahtar buradan düşülemez)
+            (yalnız stoktakiler seçilebilir — teslim edilmiş kalem buradan düşülemez)
           </span>
           <span className="ml-auto flex flex-wrap items-center gap-2">
             <Button
@@ -545,10 +545,10 @@ export function LicenseItemsTable({
                     icon={KeyRound}
                     title={
                       // Kilitli kapsamda boş liste bir SONUÇTUR, süzgeç hatası değil:
-                      // "bu partiden müşterilerde anahtar kalmadı" demektir (hepsi
+                      // "bu partiden müşterilerde kalem kalmadı" demektir (hepsi
                       // değiştirilmiş ya da hiç teslim edilmemiş) — öyle de yazar.
                       lockedHolder === 'customer' && !term && !status
-                        ? 'Bu partiden müşterilerde anahtar kalmadı.'
+                        ? 'Bu partiden müşterilerde kalem kalmadı.'
                         : term || status || holder
                           ? 'Bu süzgeçlerle kayıt bulunamadı.'
                           : productId
@@ -557,7 +557,7 @@ export function LicenseItemsTable({
                     }
                     description={
                       lockedHolder === 'customer' && !term && !status
-                        ? 'Değiştirilecek bir şey yok: bu partinin anahtarlarından hiçbiri şu an bir müşterinin elinde değil.'
+                        ? 'Değiştirilecek bir şey yok: bu partinin kalemlerinden hiçbiri şu an bir müşterinin elinde değil.'
                         : term || status || holder
                           ? 'Aramayı veya süzgeçleri değiştirip tekrar deneyin.'
                           : productId
@@ -847,7 +847,7 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
       >
         {row.value}
       </code>
-      <CopyButton text={row.value} label="Lisans anahtarını kopyala" />
+      <CopyButton text={row.value} label="Lisans/hesap değerini kopyala" />
     </div>
   );
 }

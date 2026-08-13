@@ -230,10 +230,16 @@ export default function GuidePage() {
           ön-seçili olarak açar. Ayrıntı için bir sonraki bölüme bakın.
         </p>
         <Tip>
-          Geçersiz kılınan (void) ve değiştirilen ölü anahtarlar silinmez;{' '}
-          <R href="/quarantine">Kusurlu Anahtarlar</R> ekranında sebebi ve kaynak siparişiyle
+          Geçersiz kılınan (void) ve değiştirilen ölü kalemler silinmez;{' '}
+          <R href="/quarantine">Kusurlu Stok</R> ekranında sebebi ve kaynak siparişiyle
           birlikte durur. Oradan tedarikçiye <strong>değişim fişi</strong> kesip süreci takip
           edebilirsiniz — bkz. aşağıdaki bölüm.
+        </Tip>
+        <Tip>
+          <strong>Terim:</strong> panelde tek bir stok satırına <strong>kalem</strong> denir. Ürün
+          tipine göre bu bir <em>lisans anahtarı</em>, bir <em>hesap</em> ya da bir{' '}
+          <em>kod/hediye çeki</em> olabilir. Ekranlar tek tipten oluşan bir listede o tipin adını
+          (&quot;3 hesap&quot;), karışık listede nötr adı (&quot;3 kalem&quot;) kullanır.
         </Tip>
       </Section>
 
@@ -260,7 +266,7 @@ export default function GuidePage() {
             alan-alan girilir (ör. kullanıcı adı + parola).
           </li>
           <li>
-            <strong>&quot;Önizle (kuru çalıştır)&quot;</strong> ile doğrulayın: kaç anahtar kabul edilecek,
+            <strong>&quot;Önizle (kuru çalıştır)&quot;</strong> ile doğrulayın: kaç kalem kabul edilecek,
             kaçı mükerrer, kaçı reddedilecek. <strong>Hiçbir şey kaydedilmez.</strong>
           </li>
           <li>
@@ -271,20 +277,20 @@ export default function GuidePage() {
         <p className="font-medium text-foreground">İki yol:</p>
         <Bullets>
           <li>
-            <strong>Hızlı giriş (Partisiz):</strong> yalnız anahtarları girersiniz. Tedarikçi ve maliyet
-            izi <strong>tutulmaz</strong> → bu anahtarlar maliyet raporlarında{' '}
+            <strong>Hızlı giriş (Partisiz):</strong> yalnız kalemleri girersiniz. Tedarikçi ve maliyet
+            izi <strong>tutulmaz</strong> → bu kalemler maliyet raporlarında{' '}
             <strong>&quot;kapsanamayan&quot;</strong> görünür ve bu sonradan düzeltilemez; geri çekme
-            (recall) ve tedarikçi karnesi de bu girişi kapsamaz. Elinizde maliyet/tedarikçi bilgisi yoksa
-            veya tekil/deneme anahtarı giriyorsanız uygundur.
+            (recall), tedarikçi karnesi ve <strong>değişim fişi</strong> de bu girişi kapsamaz.
+            Elinizde maliyet/tedarikçi bilgisi yoksa veya tekil/deneme kalemi giriyorsanız uygundur.
           </li>
           <li>
             <strong>Tedarikli giriş (Yeni parti):</strong> tedarikçi + alım tarihi + parti etiketi + birim
             maliyet girersiniz. Panel aynı adımda <strong>teslim alınmış</strong> bir{' '}
-            <strong>Satın Alma Emri</strong> ve ona bağlı bir <strong>Parti</strong> açar; anahtarlar o
+            <strong>Satın Alma Emri</strong> ve ona bağlı bir <strong>Parti</strong> açar; kalemler o
             partiye bağlanır. Maliyet raporu, tedarikçi karnesi ve geri çekme bu girişi kapsar.
           </li>
           <li>
-            <strong>Mevcut parti:</strong> daha önce açılmış bir partiye ek anahtar girersiniz. Yalnız o
+            <strong>Mevcut parti:</strong> daha önce açılmış bir partiye ek kalem girersiniz. Yalnız o
             ürünün <em>aktif</em> partileri listelenir (geri çekilmiş/iptal partiye ekleme yapılamaz).
           </li>
         </Bullets>
@@ -432,19 +438,52 @@ export default function GuidePage() {
         <Bullets>
           <li><strong><R href="/suppliers">Tedarikçiler</R>:</strong> tedarikçi kartı + karne (teslim performansı, geri-çekilme oranı, para birimi başına maliyet).</li>
           <li><strong><R href="/purchase-orders">Satın Alma</R>:</strong> açık/kapalı emirler ve teslim alma. &quot;Otomatik&quot; rozetli emirlerde teslim alma adımı yoktur (mal zaten girilmiştir).</li>
-          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi anahtar hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> anahtarlar geçersiz kılınır. <strong>Müşterilerdeki anahtarlara DOKUNULMAZ</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yeni anahtarla değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır (askıya alınmış atamalar buna dahil değildir, onlar elle işlenir).</li>
-          <li><strong><R href="/quarantine">Kusurlu Anahtarlar → Değişim fişi</R>:</strong> bozuk çıkan anahtarları tedarikçiye <strong>toplu bildirmenin</strong> yolu. <em>Bekleyenler</em> sekmesi henüz bildirilmemiş kusurluları tedarikçi ve parti kırılımıyla gösterir; <strong>“Fiş oluştur”</strong> deyip tarih aralığı seçtiğinizde o pencerede biriken tüm kusurlular otomatik gelir (istemediğinizi çıkarırsınız) ve <code>DEG-YYYYAAGG-NN</code> numaralı bir fiş kesilir. Fişi <strong>.txt veya .csv</strong> olarak indirip tedarikçiye gönderin, sonra “Gönderildi” işaretleyin. Tedarikçi cevap verdikçe kalemleri <em>Yenisi geldi / Bedeli iade edildi / Reddedildi</em> olarak işaretlersiniz. <strong>Reddedilen anahtar bekleyenler havuzuna GERİ DÖNER</strong> ve yeniden bildirilebilir; yenilenen kapanır. Fiş kesilen anahtar bir daha aynı listeye düşmez — aynı kusuru iki kez bildirmezsiniz.</li>
+          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi kalem hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> kalemler geçersiz kılınır. <strong>Müşterilerdekiler KORUNUR</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yenisiyle değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır (askıya alınmış atamalar buna dahil değildir, onlar elle işlenir).</li>
         </Bullets>
+
+        <p className="font-medium text-foreground">Kusurlu stok → tedarikçiye değişim fişi:</p>
+        <p>
+          <R href="/quarantine">Kusurlu Stok</R> ekranı bozuk çıkan kalemleri tedarikçiye{' '}
+          <strong>toplu bildirmenin</strong> yoludur ve <strong>üç sekmeden</strong> oluşur:
+        </p>
+        <Bullets>
+          <li>
+            <strong>Bildirilecekler</strong> — henüz hiçbir fişe girmemiş kusur havuzu, tedarikçi
+            ve parti kırılımıyla (parti satırını açarsanız içindeki kalemleri görürsünüz). Bu
+            sekme <em>iş listesidir</em>.
+          </li>
+          <li>
+            <strong>Değişim Fişleri</strong> — kesilmiş fişler, durumları ve tedarikçi yanıtları.
+          </li>
+          <li>
+            <strong>Tüm Kayıtlar</strong> — bildirilmiş olsun olmasın TÜM ölü kalemlerin değişmez
+            defteri; süzgeç ve dışa aktarma buradadır. Her satır kendi{' '}
+            <strong>bildirim durumunu</strong> gösterir (Bildirilmedi / Fişte / Yanıtlandı).
+          </li>
+        </Bullets>
+        <p>
+          Akış: <strong>“Fiş oluştur”</strong> deyip tedarikçi ve tarih aralığı seçtiğinizde o
+          pencerede biriken tüm kusurlular otomatik gelir (istemediğinizi çıkarırsınız) ve{' '}
+          <code>DEG-YYYYAAGG-NN</code> numaralı bir fiş kesilir. Fişi <strong>.txt veya .csv</strong>{' '}
+          olarak indirip tedarikçiye gönderin, sonra “Gönderildi” işaretleyin — yanıt ancak bundan
+          sonra girilebilir. Tedarikçi cevap verdikçe kalemleri <em>Yenisi geldi / Bedeli iade
+          edildi / Tedarikçi kabul etmedi</em> olarak işaretlersiniz.{' '}
+          <strong>Kabul edilmeyen kalem bildirilecekler havuzuna GERİ DÖNER</strong> ve yeniden
+          bildirilebilir; yenilenen kapanır. Fişe giren kalem bir daha aynı listeye düşmez — aynı
+          kusuru iki kez bildirmezsiniz.
+        </p>
         <Tip>
           Tedarikçiye giden dosyada <strong>müşteri e-postası ve sipariş numarası BULUNMAZ</strong> (KVKK):
-          yalnız ürün, anahtar, parti, kusur gerekçesi ve tarih. Fiş içeriği kesildiği andaki
-          <strong> anlık görüntüdür</strong> — ürün adı değişse ya da parti silinse bile gönderdiğiniz
-          dosyayla panelde gördüğünüz liste birebir aynı kalır. Tedarikçinin kusur oranını ve ortalama
-          çözülme süresini <R href="/suppliers">tedarikçi karnesinde</R> görürsünüz.
+          yalnız ürün, tür (anahtar/hesap/kod), kalem değeri, parti, kusur gerekçesi ve tarih. Fiş
+          içeriği kesildiği andaki <strong>anlık görüntüdür</strong> — ürün adı değişse ya da parti
+          silinse bile gönderdiğiniz dosyayla panelde gördüğünüz liste birebir aynı kalır.
+          Tedarikçinin kusur oranını ve ortalama çözülme süresini{' '}
+          <R href="/suppliers">tedarikçi karnesinde</R> görürsünüz.
         </Tip>
         <Tip>
-          Partisiz (hızlı) giriş yaparsanız o anahtarlar hiçbir partiye bağlanmaz: maliyet raporunda
-          &quot;kapsanamayan&quot; sayılır, geri çekme ve tedarikçi karnesi de onları kapsamaz. İzlenebilirlik
+          Partisiz (hızlı) giriş yaparsanız o kalemler hiçbir partiye bağlanmaz: maliyet raporunda
+          &quot;kapsanamayan&quot; sayılır, geri çekme ve tedarikçi karnesi de onları kapsamaz —
+          <strong> tedarikçisi bilinmediği için fiş de kesilemez</strong>. İzlenebilirlik
           istiyorsanız girişte tedarikçi ve maliyeti doldurun.
         </Tip>
       </Section>
@@ -462,8 +501,8 @@ export default function GuidePage() {
         </p>
         <Tip>
           Stokun <strong>gerçekten</strong> düşmesi için &quot;Stoktan düşülecek lisans&quot; alanında ilgili
-          anahtarı seçmelisiniz; boş bırakırsanız kayıt yalnız deftere yazılır, stok değişmez (ekran bunu
-          satır satır belirtir). Düşülen anahtarlar <R href="/quarantine">Karantina</R> ekranında görünür.
+          kalemi seçmelisiniz; boş bırakırsanız kayıt yalnız deftere yazılır, stok değişmez (ekran bunu
+          satır satır belirtir). Düşülen kalemler <R href="/quarantine">Kusurlu Stok</R> ekranında görünür.
         </Tip>
       </Section>
 

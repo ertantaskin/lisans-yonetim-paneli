@@ -337,7 +337,7 @@ export async function replaceDeliveredLicenseAction(input: {
     // Parti detayı dinamik segment → sayfa şablonuyla tazelenir (sayaçlar güncellensin).
     revalidatePath('/batches/[id]', 'page');
     if (input?.orderId && UUID_RE.test(input.orderId)) revalidatePath(`/orders/${input.orderId}`);
-    return { ok: true, message: 'Yeni anahtar atandı — eski anahtar karantinaya alındı.' };
+    return { ok: true, message: 'Yeni kalem atandı — eskisi karantinaya alındı.' };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Değişim başarısız.' };
   }

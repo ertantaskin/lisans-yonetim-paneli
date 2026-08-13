@@ -136,9 +136,9 @@ export function AssignmentActions({
 
   const replace = async () => {
     const res0 = await confirm({
-      title: 'Anahtar değiştirilsin mi?',
+      title: 'Lisans kalemi değiştirilsin mi?',
       description:
-        'Eski anahtar karantinaya alınır ve aynı üründen TAZE bir anahtar atanır. Stok yoksa değişim yapılmaz (eski anahtar yerinde kalır).',
+        'Mevcut kalem (anahtar/hesap/kod) karantinaya alınır ve aynı üründen TAZE bir kalem atanır. Stok yoksa değişim yapılmaz (eskisi yerinde kalır).',
       confirmLabel: 'Değiştir',
       reason: {
         label: 'Değişim sebebi',

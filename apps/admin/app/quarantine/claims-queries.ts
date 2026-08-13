@@ -39,6 +39,11 @@ export interface ClaimItemRow {
   batchLabel: string | null;
   productName: string | null;
   sku: string | null;
+  /**
+   * Fiş anındaki ürün tipi ('key' | 'account' | 'code' | 'custom'). 0034 öncesi kesilen
+   * fişlerde ürün silinmişse null kalabilir → ekran nötr "kalem" diline düşer.
+   */
+  productKind: string | null;
   keySnapshot: string | null;
   reason: string | null;
   defectKind: string | null;

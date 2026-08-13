@@ -2,7 +2,15 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, FileText, Package, Send, Truck } from 'lucide-react';
+import {
+  ChevronRight,
+  FileText,
+  Inbox,
+  Package,
+  PackageX,
+  Send,
+  Truck,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   createClaimAction,
@@ -17,9 +25,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Combobox } from '../ui/combobox';
 import { EmptyState } from '../ui/page-header';
 import { Field } from '../ui/field';
+import { HowItWorks } from '../ui/help-note';
 import { Input, Textarea } from '../ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet';
-import { defectKindLabel } from '../../lib/labels';
+import {
+  claimStatusHint,
+  defectKindLabel,
+  itemCount,
+  productKindLabel,
+} from '../../lib/labels';
 import { cn, fmtDateTime } from '../../lib/utils';
 
 /** Tarih ön ayarları — /quarantine sunucu süzgeciyle AYNI dil (7/30/90/özel). */
@@ -33,12 +47,40 @@ const RANGE_PRESETS = [
 
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
 
+/** Parti satırı açıldığında gösterilecek en fazla kalem (DOM ağırlığı sınırı). */
+const BATCH_ROW_CAP = 50;
+
+/** Süreç özeti — ekranın en üstünde, her zaman görünür (kullanıcı: "rehber niteliğinde"). */
+export const CLAIM_FLOW_STEPS = [
+  {
+    title: 'Kusurlu kalem havuza düşer',
+    text: 'Müşteri değişimi, parti geri çekme, hasar ya da elle geçersiz kılma sonucu ölen kalemler burada birikir. Bu kalemler müşteriye bir daha teslim edilmez.',
+  },
+  {
+    title: 'Tedarikçiye fiş kesersiniz',
+    text: 'Tedarikçi + tarih aralığı seçin; o pencerede biriken tüm kalemler otomatik gelir (istemediğinizi çıkarırsınız). Fişe giren kalem bu listeden düşer — aynı kusuru iki kez bildirmezsiniz.',
+  },
+  {
+    title: 'Yanıtı işlersiniz',
+    text: 'Raporu .txt/.csv indirip tedarikçiye gönderin, “Gönderildi” işaretleyin. Yanıt geldikçe kalemleri işaretleyin; tedarikçi kabul etmezse kalem bu havuza geri döner.',
+  },
+];
+
 /** Tedarikçi → parti kırılımı (havuzdaki bekleyen kusurlular). */
+interface BatchGroup {
+  batchId: string | null;
+  batchCode: string;
+  /** Partinin stok GİRİŞ tarihi (kullanıcı "partinin eklendiği tarih" istedi). */
+  oldest: string | null;
+  rows: QuarantineItem[];
+}
 interface SupplierGroup {
   supplierId: string | null;
   supplierName: string;
   total: number;
-  batches: Array<{ batchId: string | null; batchCode: string; count: number; oldest: string | null }>;
+  /** Gruptaki ürün tipleri — "3 hesap" mı "3 kalem" mi yazılacağını belirler. */
+  kinds: Array<string | null | undefined>;
+  batches: BatchGroup[];
 }
 
 function groupBySupplier(rows: QuarantineItem[]): SupplierGroup[] {
@@ -52,19 +94,20 @@ function groupBySupplier(rows: QuarantineItem[]): SupplierGroup[] {
         supplierId: sid,
         supplierName: r.supplierName ?? 'Tedarikçisi bilinmiyor',
         total: 0,
+        kinds: [],
         batches: [],
       };
       map.set(key, g);
     }
     g.total += 1;
+    g.kinds.push(r.productKind);
     const bkey = r.batchId ?? '__nobatch__';
     let b = g.batches.find((x) => (x.batchId ?? '__nobatch__') === bkey);
     if (!b) {
-      b = { batchId: r.batchId ?? null, batchCode: r.batchCode ?? 'Partisiz', count: 0, oldest: null };
+      b = { batchId: r.batchId ?? null, batchCode: r.batchCode ?? 'Partisiz', oldest: null, rows: [] };
       g.batches.push(b);
     }
-    b.count += 1;
-    // Partinin STOK GİRİŞ tarihi (kullanıcı "partinin eklendiği tarih" istedi).
+    b.rows.push(r);
     const created = r.createdAt ?? null;
     if (created && (!b.oldest || created < b.oldest)) b.oldest = created;
   }
@@ -73,21 +116,26 @@ function groupBySupplier(rows: QuarantineItem[]): SupplierGroup[] {
 }
 
 /**
- * KUSURLU ANAHTARLAR — "Bekleyenler" sekmesinin üst paneli.
+ * BİLDİRİLECEKLER — kusur havuzunun iş görünümü.
  *
- * Aşağıdaki tablo (mevcut `QuarantineTable`) ham listeyi ve dışa aktarmayı taşır; bu panel
- * kullanıcının istediği İŞ GÖRÜNÜMÜNÜ verir: hangi tedarikçiye hangi partiden kaç anahtar
- * bildirilecek, ve tek tıkla fiş kesme. Gruplama İSTEMCİDE yapılır (satırlar zaten yüklü) —
- * ikinci bir sorgu açmak "havuzda kaç kalem var" sorusuna iki farklı cevap üretirdi.
+ * Hangi tedarikçiye, hangi partiden kaç kalem bildirilecek; tek tıkla fiş. Parti satırı
+ * KATLANIR (`<details>`): kalemleri görmek için ayrı bir ekrana gitmek gerekmiyor ama liste
+ * varsayılan olarak kısa kalıyor.
+ *
+ * Gruplama İSTEMCİDE yapılır (satırlar zaten yüklü) — ikinci bir sorgu açmak "havuzda kaç
+ * kalem var" sorusuna iki farklı cevap üretirdi (bu projede "satılmış 6 birim" hatasının kaynağı).
  */
 export function PendingClaimsPanel({
   rows,
   suppliers,
   lastClaim,
+  serverFiltered = false,
 }: {
   rows: QuarantineItem[];
   suppliers: Array<{ id: string; name: string }>;
   lastClaim: ClaimRow | null;
+  /** "Tüm Kayıtlar" sekmesindeki sunucu süzgeci etkinse bu liste de daralmıştır — söylenir. */
+  serverFiltered?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const [preset, setPreset] = React.useState<string>('');
@@ -96,7 +144,7 @@ export function PendingClaimsPanel({
   const openFor = (supplierId: string | null) => {
     if (!supplierId) {
       toast.error(
-        'Bu anahtarların partisi (dolayısıyla tedarikçisi) yok — fiş kesilemez. Stok girişinde tedarikçi/parti girerseniz izlenebilir olur.',
+        'Bu kalemlerin partisi (dolayısıyla tedarikçisi) yok — fiş kesilemez. Stok girişinde tedarikçi ve alım tarihi girerseniz izlenebilir olur.',
       );
       return;
     }
@@ -106,17 +154,29 @@ export function PendingClaimsPanel({
 
   return (
     <>
+      <HowItWorks steps={CLAIM_FLOW_STEPS} />
+
+      {serverFiltered && (
+        <Alert variant="warning">
+          <AlertDescription>
+            “Tüm Kayıtlar” sekmesinde bir sunucu süzgeci etkin — aşağıdaki havuz da yalnız o
+            süzgece uyan kalemleri kapsıyor.{' '}
+            <Link href="/quarantine" className="font-medium underline underline-offset-4">
+              Süzgeci temizle
+            </Link>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle icon={Truck}>Tedarikçiye bildirilecekler</CardTitle>
           <CardDescription>
-            Henüz hiçbir değişim fişine girmemiş kusurlu anahtarlar — tedarikçi ve parti
-            kırılımıyla. Bir fiş kestiğinizde bu anahtarlar listeden düşer; tedarikçi bir
-            kalemi <strong>reddederse</strong> otomatik olarak buraya geri döner.
+            Henüz hiçbir değişim fişine girmemiş kusurlu kalemler — tedarikçi ve parti kırılımıyla.
             {lastClaim && (
               <>
                 {' '}
-                Son fiş:{' '}
+                Son kesilen fiş:{' '}
                 <Link
                   href={`/quarantine/claims/${lastClaim.id}`}
                   className="font-mono text-foreground underline-offset-4 hover:underline"
@@ -131,9 +191,9 @@ export function PendingClaimsPanel({
         <CardContent>
           {groups.length === 0 ? (
             <EmptyState
-              icon={FileText}
-              title="Bildirilecek kusurlu anahtar yok."
-              description="Yüklenen listede tedarikçiye bildirilmeyi bekleyen kalem bulunmuyor. (Süzgeçleri daralttıysanız genişletmeyi deneyin.)"
+              icon={Inbox}
+              title="Bildirilecek kusurlu kalem yok."
+              description="Tedarikçiye bildirilmeyi bekleyen kalem bulunmuyor. Yeni bir kusur oluştuğunda (müşteri değişimi, parti geri çekme, elle geçersiz kılma) burada belirir."
             />
           ) : (
             <ul className="divide-y divide-border">
@@ -154,7 +214,7 @@ export function PendingClaimsPanel({
                           {g.supplierName}
                         </span>
                       )}
-                      <Badge variant="warning">{g.total} anahtar</Badge>
+                      <Badge variant="warning">{itemCount(g.total, g.kinds)}</Badge>
                     </div>
                     <Button
                       variant={g.supplierId ? 'default' : 'outline'}
@@ -164,25 +224,11 @@ export function PendingClaimsPanel({
                       <Send /> Fiş oluştur
                     </Button>
                   </div>
-                  <ul className="mt-2 space-y-1 pl-6">
+
+                  <ul className="mt-2 space-y-1.5 pl-6">
                     {g.batches.map((b) => (
-                      <li
-                        key={b.batchId ?? '__nobatch__'}
-                        className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground"
-                      >
-                        <Package className="size-3.5" aria-hidden />
-                        {b.batchId ? (
-                          <Link
-                            href={`/batches/${b.batchId}`}
-                            className="font-mono text-foreground underline-offset-4 hover:underline"
-                          >
-                            {b.batchCode}
-                          </Link>
-                        ) : (
-                          <span className="font-mono">{b.batchCode}</span>
-                        )}
-                        <span className="tabular-nums">{b.count} anahtar</span>
-                        {b.oldest && <span>· stok girişi {fmtDateTime(b.oldest)}</span>}
+                      <li key={b.batchId ?? '__nobatch__'}>
+                        <BatchDisclosure group={b} />
                       </li>
                     ))}
                   </ul>
@@ -200,6 +246,70 @@ export function PendingClaimsPanel({
         presetSupplierId={preset}
       />
     </>
+  );
+}
+
+/**
+ * Parti satırı: özet + katlanır kalem listesi.
+ *
+ * `<details>` bilinçli (JS durumu yok): kapalıyken satır tek satır kalır, açıldığında partideki
+ * kalemler ürün/tip/değer/sebep ile görünür. Operatör "bu partiden tam olarak neler bozuk"
+ * sorusunu ekranı terk etmeden yanıtlar.
+ */
+function BatchDisclosure({ group }: { group: BatchGroup }) {
+  const kinds = group.rows.map((r) => r.productKind);
+  // `<details>` kapalıyken de çocukları DOM'a girer → yüzlerce kalemli partide sayfa ağırlaşır.
+  // İlk 50 satır gösterilir, kalanı sayıyla belirtilir (tam liste "Tüm Kayıtlar" sekmesinde).
+  const shown = group.rows.slice(0, BATCH_ROW_CAP);
+  const hidden = group.rows.length - shown.length;
+  return (
+    <details className="group rounded-md border border-border/70 bg-muted/20">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          className="size-3.5 shrink-0 transition-transform group-open:rotate-90"
+          aria-hidden
+        />
+        <Package className="size-3.5 shrink-0" aria-hidden />
+        <span className="font-mono text-foreground">{group.batchCode}</span>
+        <span className="tabular-nums">{itemCount(group.rows.length, kinds)}</span>
+        {group.oldest && <span>· stok girişi {fmtDateTime(group.oldest)}</span>}
+        {group.batchId && (
+          <Link
+            href={`/batches/${group.batchId}`}
+            className="ml-auto underline-offset-4 hover:text-foreground hover:underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Partiyi aç
+          </Link>
+        )}
+      </summary>
+      <ul className="divide-y divide-border/60 border-t border-border/60">
+        {shown.map((r) => (
+          <li key={r.licenseItemId} className="flex flex-wrap gap-x-3 gap-y-0.5 px-2.5 py-1.5 text-xs">
+            <span className="min-w-0 flex-1 truncate font-mono text-foreground" title={r.keyPreview ?? ''}>
+              {r.keyPreview ?? '—'}
+            </span>
+            <span className="truncate text-muted-foreground">
+              {r.productName ?? '—'}
+              {r.productKind ? ` · ${productKindLabel(r.productKind)}` : ''}
+            </span>
+            {r.defectKind && (
+              <span className="text-muted-foreground">{defectKindLabel(r.defectKind)}</span>
+            )}
+            {r.reason && (
+              <span className="max-w-[16rem] truncate text-muted-foreground" title={r.reason}>
+                “{r.reason}”
+              </span>
+            )}
+          </li>
+        ))}
+        {hidden > 0 && (
+          <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
+            …ve {hidden.toLocaleString('tr-TR')} kalem daha — tamamı “Tüm Kayıtlar” sekmesinde.
+          </li>
+        )}
+      </ul>
+    </details>
   );
 }
 
@@ -246,7 +356,7 @@ function CreateClaimSheet({
 
   const applyPreset = (v: string) => {
     setRange(v);
-    if (v === '' ) {
+    if (v === '') {
       setFrom('');
       setTo('');
     } else if (v !== 'custom') {
@@ -280,6 +390,7 @@ function CreateClaimSheet({
   }, [open, supplierId, from, to, load]);
 
   const selected = (rows ?? []).filter((r) => !excluded.has(r.licenseItemId));
+  const selectedKinds = selected.map((r) => r.productKind);
 
   const submit = async () => {
     setBusy(true);
@@ -293,7 +404,7 @@ function CreateClaimSheet({
         note,
       });
       if (res.ok) {
-        toast.success(`${res.code} oluşturuldu — ${res.itemCount} anahtar fişe alındı.`);
+        toast.success(`${res.code} oluşturuldu — ${itemCount(res.itemCount)} fişe alındı.`);
         onOpenChange(false);
         // Fişi hemen aç: operatörün sıradaki işi indirip göndermek.
         router.push(`/quarantine/claims/${res.id}`);
@@ -311,8 +422,8 @@ function CreateClaimSheet({
         <SheetHeader>
           <SheetTitle>Değişim fişi oluştur</SheetTitle>
           <SheetDescription>
-            Seçtiğiniz aralıkta biriken, henüz bildirilmemiş kusurlu anahtarlar otomatik gelir.
-            İstemediğinizi listeden çıkarın. Fiş kesildiğinde bu anahtarlar havuzdan düşer ve
+            Seçtiğiniz aralıkta biriken, henüz bildirilmemiş kusurlu kalemler otomatik gelir.
+            İstemediğinizi listeden çıkarın. Fiş kesildiğinde bu kalemler havuzdan düşer ve
             bir daha aynı fişe girmez.
           </SheetDescription>
         </SheetHeader>
@@ -329,7 +440,7 @@ function CreateClaimSheet({
 
           <Field
             label="Tarih aralığı"
-            hint="Kusurun oluştuğu (karantinaya düştüğü) tarihe göre. Gün sonu raporu için 'Son 7 gün' yeterlidir."
+            hint="Kusurun oluştuğu (karantinaya düştüğü) tarihe göre. Gün sonu raporu için “Son 7 gün” yeterlidir."
           >
             <div className="flex flex-wrap items-center gap-1.5">
               {RANGE_PRESETS.map((p) => (
@@ -369,7 +480,7 @@ function CreateClaimSheet({
                 <p className="text-sm font-medium text-foreground">
                   {loading
                     ? 'Adaylar aranıyor…'
-                    : `${selected.length} anahtar fişe girecek`}
+                    : `${itemCount(selected.length, selectedKinds)} fişe girecek`}
                   {!loading && excluded.size > 0 && (
                     <span className="ml-1 font-normal text-muted-foreground">
                       ({excluded.size} çıkarıldı)
@@ -386,7 +497,7 @@ function CreateClaimSheet({
               {!loading && rows && rows.length === 0 && (
                 <Alert variant="muted">
                   <AlertDescription>
-                    Bu tedarikçi için seçilen aralıkta bildirilmemiş kusurlu anahtar yok.
+                    Bu tedarikçi için seçilen aralıkta bildirilmemiş kusurlu kalem yok.
                   </AlertDescription>
                 </Alert>
               )}
@@ -409,6 +520,7 @@ function CreateClaimSheet({
                           </div>
                           <div className="truncate text-muted-foreground">
                             {r.productName ?? '—'}
+                            {r.productKind ? ` · ${productKindLabel(r.productKind)}` : ''}
                             {r.batchCode ? ` · ${r.batchCode}` : ''}
                             {r.defectKind ? ` · ${defectKindLabel(r.defectKind)}` : ''}
                           </div>
@@ -449,7 +561,8 @@ function CreateClaimSheet({
               Vazgeç
             </Button>
             <Button onClick={() => void submit()} disabled={busy || selected.length === 0}>
-              <FileText /> {busy ? 'Oluşturuluyor…' : `Fiş oluştur (${selected.length})`}
+              <FileText />{' '}
+              {busy ? 'Oluşturuluyor…' : `Fiş oluştur (${itemCount(selected.length, selectedKinds)})`}
             </Button>
           </div>
         </div>
@@ -458,7 +571,7 @@ function CreateClaimSheet({
   );
 }
 
-/** Fiş geçmişi — "Fişler" sekmesi. */
+/** Fiş geçmişi — "Değişim Fişleri" sekmesi. */
 export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | null }) {
   if (error) {
     return (
@@ -472,7 +585,7 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
       <EmptyState
         icon={FileText}
         title="Henüz değişim fişi kesilmedi."
-        description="“Bekleyenler” sekmesinden bir tedarikçi seçip fiş oluşturduğunuzda burada listelenir."
+        description="“Bildirilecekler” sekmesinden bir tedarikçi seçip fiş oluşturduğunuzda kesilen fişler burada listelenir; her fişin içinde tedarikçinin kalem kalem yanıtını işlersiniz."
       />
     );
   }
@@ -494,14 +607,25 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                  <span className="tabular-nums">{c.itemCount} anahtar</span>
-                  {c.replacedCount > 0 && <span>{c.replacedCount} yenilendi</span>}
-                  {c.rejectedCount > 0 && <span>{c.rejectedCount} reddedildi</span>}
-                  {c.pendingCount > 0 && <span>{c.pendingCount} cevap bekliyor</span>}
-                  <span>· {fmtDateTime(c.createdAt)}</span>
-                  {c.sentAt && <span>· gönderildi {fmtDateTime(c.sentAt)}</span>}
-                  {c.closedAt && <span>· kapandı {fmtDateTime(c.closedAt)}</span>}
+                  <span className="inline-flex items-center gap-1 tabular-nums">
+                    <PackageX className="size-3.5" aria-hidden />
+                    {itemCount(c.itemCount)}
+                  </span>
+                  {c.pendingCount > 0 && (
+                    <span>{c.pendingCount} kalem tedarikçi yanıtı bekliyor</span>
+                  )}
+                  {c.replacedCount > 0 && <span>{c.replacedCount} yenisi geldi</span>}
+                  {c.creditedCount > 0 && <span>{c.creditedCount} bedeli iade</span>}
+                  {c.rejectedCount > 0 && (
+                    <span>{c.rejectedCount} kabul edilmedi (havuza döndü)</span>
+                  )}
                 </div>
+                {/* Durumun ANLAMI: operatör "sırada ne var" için fişi açmak zorunda kalmasın. */}
+                <p className="text-xs text-muted-foreground/80">
+                  {claimStatusHint(c.status)} · Oluşturma {fmtDateTime(c.createdAt)}
+                  {c.sentAt ? ` · Gönderildi ${fmtDateTime(c.sentAt)}` : ''}
+                  {c.closedAt ? ` · Kapandı ${fmtDateTime(c.closedAt)}` : ''}
+                </p>
               </div>
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             </Link>
@@ -511,4 +635,3 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
     </div>
   );
 }
-

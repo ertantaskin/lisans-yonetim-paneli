@@ -62,7 +62,9 @@ export const NAV: NavSection[] = [
       { label: 'Ürün Eşleştirme', href: '/mappings', icon: Link2 },
       // Karantina lisans/hesap kalemleriyle ilgilidir (arızalı → tedarikçiye iade/değişim akışı),
       // güvenlik olaylarıyla değil → "Sistem" yerine Envanter altında (kullanıcı geri bildirimi).
-      { label: 'Kusurlu Anahtarlar', href: '/quarantine', icon: ShieldOff },
+      // AD: "Kusurlu Anahtarlar" DEĞİL — ekran hesap/kod kalemlerini de taşır (kullanıcı
+      // geri bildirimi: "sadece anahtar değil, hesap/varyasyon da olabilir").
+      { label: 'Kusurlu Stok', href: '/quarantine', icon: ShieldOff },
       { label: 'Kanallar / Siteler', href: '/sites', icon: Globe },
     ],
   },

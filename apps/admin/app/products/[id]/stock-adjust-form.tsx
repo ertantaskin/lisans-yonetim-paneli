@@ -50,9 +50,9 @@ export function StockAdjustForm({ productId }: { productId: string }) {
 
       <p className="inline-flex items-start gap-1.5 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        Bozuk anahtarları gerçekten stoktan düşmek için <strong>Envanter</strong> sekmesinden
+        Bozuk kalemleri gerçekten stoktan düşmek için <strong>Envanter</strong> sekmesinden
         satırları işaretleyip “{adjustmentActionLabel('void')}” ya da “
-        {adjustmentActionLabel('damage')}” deyin — birden fazla anahtar tek seferde seçilebilir.
+        {adjustmentActionLabel('damage')}” deyin — birden fazla kalem tek seferde seçilebilir.
       </p>
 
       <Field label="Sebep" htmlFor="adj-reason" required hint="Denetim (audit) kaydına yazılır.">

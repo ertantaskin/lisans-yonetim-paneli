@@ -21,7 +21,7 @@ import {
 } from '../ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { useConfirm } from '../ui/confirm';
-import { licenseItemStatusLabel } from '../../lib/labels';
+import { itemNoun, licenseItemStatusLabel } from '../../lib/labels';
 import type { PayloadFieldDef } from '../../lib/api';
 
 /** Durum etiketi — TEK KAYNAK `lib/labels.ts` (bilinmeyen anahtar → ham değer). */
@@ -40,8 +40,8 @@ export function editability(row: LicenseInventoryRow): { editable: boolean; reas
     return {
       editable: false,
       reason:
-        'Bu anahtar müşteride. İçeriğini düzenlemek yerine "Yeni anahtarla değiştir" ile' +
-        ' taze bir anahtar atayın (eski anahtar karantinaya gider, denetim izi kalır).',
+        `Bu ${itemNoun(row.productType)} müşteride. İçeriğini düzenlemek yerine "Yenisiyle` +
+        ` değiştir" ile taze bir kalem atayın (eskisi karantinaya gider, denetim izi kalır).`,
     };
   }
   if (row.status !== 'available') {
@@ -172,23 +172,25 @@ function ReplaceDeliveredButton({
   // askıyı operatör bilerek koymuştur, değişim onu sessizce geri açardı). Düğmeyi burada da
   // kapat: tıklanıp hata veren bir düğme, hiç sunulmayandan daha kötüdür.
   const isSuspended = d.assignmentStatus === 'suspended';
+  /** Metinlerde ürün tipine göre doğru ad: anahtar / hesap / kod (bilinmiyorsa 'kalem'). */
+  const noun = itemNoun(row.productType);
 
   const run = async () => {
     const res = await confirm({
-      title: 'Bu anahtar yenisiyle değiştirilsin mi?',
+      title: `Bu ${noun} yenisiyle değiştirilsin mi?`,
       description:
-        'Müşteriye BAŞKA bir partiden taze anahtar atanır; şu anki anahtar karantinaya alınır' +
+        `Müşteriye BAŞKA bir partiden taze bir ${noun} atanır; şu anki kayıt karantinaya alınır` +
         ' ve bir daha satılmaz. Uygun stok yoksa işlem yapılmaz — müşteri boşta kalmaz.',
       details: [
         `Sipariş ${d.remoteOrderId} · ${d.customerEmail}`,
         `Ürün: ${row.productName}`,
-        'Müşteri değişimden hemen sonra yeni anahtarı görür.',
+        `Müşteri değişimden hemen sonra yeni ${noun} bilgisini görür.`,
       ],
       tone: 'danger',
       confirmLabel: 'Değiştir',
       reason: {
         label: 'Değişim sebebi',
-        placeholder: 'ör. geri çekilen partiden geldi, müşteri "geçersiz anahtar" bildirdi',
+        placeholder: 'ör. geri çekilen partiden geldi, müşteri "çalışmıyor" bildirdi',
         required: true,
         minLength: 3,
         inputType: 'textarea',
@@ -221,7 +223,7 @@ function ReplaceDeliveredButton({
     const why = isSuspended
       ? 'Bu atama askıya alınmış. Değişim yalnız AKTİF atamada yapılır — önce siparişten' +
         ' "Geri aç" deyin, sonra değiştirin. (Askıyı sessizce kaldırmamak için bilinçli.)'
-      : 'Çok kullanımlı (MAK) anahtar otomatik değiştirilemez — aynı paylaşımlı anahtar yeniden' +
+      : 'Çok kullanımlı (MAK) kalem otomatik değiştirilemez — aynı paylaşımlı kayıt yeniden' +
         ' atanırdı. Siparişten elle işleyin.';
     return (
       <Tooltip>
@@ -244,9 +246,9 @@ function ReplaceDeliveredButton({
         size="sm"
         onClick={() => void run()}
         disabled={busy}
-        aria-label={`${d.remoteOrderId} siparişindeki anahtarı yenisiyle değiştir`}
+        aria-label={`${d.remoteOrderId} siparişindeki kalemi yenisiyle değiştir`}
       >
-        <RefreshCw aria-hidden /> {busy ? 'Değişiyor…' : 'Yeni anahtarla değiştir'}
+        <RefreshCw aria-hidden /> {busy ? 'Değişiyor…' : 'Yenisiyle değiştir'}
       </Button>
       {dialog}
     </div>
@@ -518,7 +520,7 @@ function VoidLicenseSheet({
             <AlertDescription>
               Kayıt veritabanından <strong>silinmez</strong>: izlenebilirlik için
               &quot;Geçersiz kılındı&quot; durumuna geçer, satılabilir stoktan düşer ve
-              Karantina ekranında sebebiyle görünür.
+              Kusurlu Stok ekranında sebebiyle görünür.
             </AlertDescription>
           </Alert>
 

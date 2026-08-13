@@ -6,42 +6,73 @@ import { toast } from 'sonner';
 import { updateClaimAction, updateClaimItemsAction } from '../../app/quarantine/claims-actions';
 import type { ClaimItemRow, ClaimRow } from '../../app/quarantine/claims-queries';
 import { Alert, AlertDescription } from '../ui/alert';
-import { Badge, ClaimOutcomeBadge, ClaimStatusBadge } from '../ui/badge';
+import { Badge, ClaimOutcomeBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Checkbox } from '../ui/checkbox';
 import { useConfirm } from '../ui/confirm';
+import { HowItWorks, LegendList } from '../ui/help-note';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
-import { claimOutcomeLabel, defectKindLabel } from '../../lib/labels';
+import {
+  claimOutcomeHint,
+  claimOutcomeLabel,
+  defectKindLabel,
+  itemCount,
+  productKindLabel,
+} from '../../lib/labels';
 import { downloadCsv, downloadText, stamp, toCsv, toTextList, type CsvColumn } from '../../lib/csv';
 import { fmtDateTime } from '../../lib/utils';
 
 /**
  * RAPOR KOLONLARI — tedarikçiye giden dosya.
  *
- * KİŞİSEL VERİ YOK (KVKK): müşteri e-postası / sipariş no BU DOSYADA BULUNMAZ. Karantina
+ * KİŞİSEL VERİ YOK (KVKK): müşteri e-postası / sipariş no BU DOSYADA BULUNMAZ. Kusurlu stok
  * ekranındaki "Tedarikçi bildirimi" varyantının aynı kuralı — hem işe yaramaz hem düz lisans
- * anahtarıyla aynı satırda birleşmesi risktir. Fiş zaten SNAPSHOT'tan üretilir: kaynak kayıt
+ * değeriyle aynı satırda birleşmesi risktir. Fiş zaten SNAPSHOT'tan üretilir: kaynak kayıt
  * sonradan değişse de dosya aynı kalır.
+ *
+ * "Tür" kolonu (§0034): tedarikçi kalemin ANAHTAR mı HESAP mı KOD mu olduğunu bilmeli —
+ * panelde tek ürün tipi yok ve aynı fişte karışık kalemler bulunabilir.
  */
 const CSV_COLUMNS: CsvColumn<ClaimItemRow>[] = [
   { header: 'Ürün', value: (r) => r.productName ?? '' },
   { header: 'SKU', value: (r) => r.sku ?? '' },
+  { header: 'Tür', value: (r) => (r.productKind ? productKindLabel(r.productKind) : '') },
   { header: 'Lisans/Hesap değeri', value: (r) => r.keySnapshot ?? '' },
   { header: 'Parti', value: (r) => r.batchLabel ?? '' },
   { header: 'Kusur kaynağı', value: (r) => (r.defectKind ? defectKindLabel(r.defectKind) : '') },
   { header: 'Sebep', value: (r) => r.reason ?? '' },
-  { header: 'Karantina tarihi', value: (r) => (r.quarantinedAt ? fmtDateTime(r.quarantinedAt) : '') },
-  { header: 'Sonuç', value: (r) => claimOutcomeLabel(r.outcome) },
+  { header: 'Kusur tarihi', value: (r) => (r.quarantinedAt ? fmtDateTime(r.quarantinedAt) : '') },
+  { header: 'Tedarikçi yanıtı', value: (r) => claimOutcomeLabel(r.outcome) },
 ];
 
 const textLine = (r: ClaimItemRow, i: number): string =>
-  `${i + 1}. ${r.productName ?? '—'}${r.sku ? ` (${r.sku})` : ''} — ${r.keySnapshot ?? '—'}` +
+  `${i + 1}. ${r.productName ?? '—'}${r.sku ? ` (${r.sku})` : ''}` +
+  `${r.productKind ? ` [${productKindLabel(r.productKind)}]` : ''} — ${r.keySnapshot ?? '—'}` +
   `${r.batchLabel ? ` — Parti: ${r.batchLabel}` : ''}` +
   `${r.defectKind ? ` — ${defectKindLabel(r.defectKind)}` : ''}` +
   `${r.reason ? ` — Sebep: ${r.reason}` : ''}`;
 
-/** Fiş detayı: üst şerit + indirme + durum düğmeleri + kalem sonucu işaretleme. */
+/** Fiş durumuna göre "sırada ne var" — operatör ekrana bakınca ne yapacağını bilsin. */
+function nextStepsFor(status: string) {
+  if (status === 'draft') {
+    return [
+      { title: 'Raporu indirin', text: 'Aşağıdaki “Metin (.txt)” veya “Excel (.csv)” düğmesiyle listeyi alın.' },
+      { title: 'Tedarikçiye gönderin', text: 'Dosyayı kendi kanalınızdan (mail/panel/WhatsApp) iletin — panel göndermez.' },
+      { title: '“Gönderildi” işaretleyin', text: 'İşaretledikten sonra kalem kalem yanıt girebilirsiniz; fiş artık iptal edilemez.' },
+    ];
+  }
+  if (status === 'sent') {
+    return [
+      { title: 'Yanıtı bekleyin', text: 'Tedarikçi listeye dönene kadar kalemler “yanıt bekleniyor” kalır.' },
+      { title: 'Kalemleri işaretleyin', text: 'Satırları seçip “Yenisi geldi / Bedeli iade / Kabul edilmedi” deyin. Kabul edilmeyen kalem bildirilecekler havuzuna geri döner.' },
+      { title: 'Fişi kapatın', text: 'Süreç bittiğinde “Fişi kapat” deyin; kayıt tedarikçi karnesine işlenir.' },
+    ];
+  }
+  return null;
+}
+
+/** Fiş detayı: aksiyon çubuğu + sıradaki adım + kalem tablosu (tedarikçi yanıtı işaretleme). */
 export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimItemRow[] }) {
   const router = useRouter();
   const { confirm, dialog } = useConfirm();
@@ -51,6 +82,8 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
   const canMarkOutcome = claim.status === 'sent' || claim.status === 'closed';
   const selectableIds = React.useMemo(() => items.map((i) => i.id), [items]);
   const allSelected = selectableIds.length > 0 && selected.size === selectableIds.length;
+  const kinds = React.useMemo(() => items.map((i) => i.productKind), [items]);
+  const steps = nextStepsFor(claim.status);
 
   const download = (format: 'csv' | 'txt') => {
     const base = `degisim-fisi_${claim.code}_${stamp()}`;
@@ -61,7 +94,7 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
       const header = [
         `Değişim Fişi ${claim.code}`,
         `Tedarikçi: ${claim.supplierName ?? '—'}`,
-        `${items.length} anahtar · oluşturma ${fmtDateTime(claim.createdAt)}`,
+        `${itemCount(items.length, kinds)} · oluşturma ${fmtDateTime(claim.createdAt)}`,
         claim.note ? `Not: ${claim.note}` : '',
         '─'.repeat(52),
       ].filter(Boolean);
@@ -76,21 +109,21 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
         ? {
             title: 'Fiş gönderildi olarak işaretlensin mi?',
             description:
-              'Dosyayı tedarikçiye ilettiyseniz bunu işaretleyin. Sonrasında fiş iptal edilemez, yalnız kapatılabilir; kalem sonuçlarını da bundan sonra girebilirsiniz.',
+              'Dosyayı tedarikçiye ilettiyseniz bunu işaretleyin. Sonrasında fiş iptal edilemez, yalnız kapatılabilir; kalem yanıtlarını da bundan sonra girebilirsiniz.',
             confirmLabel: 'Gönderildi',
             tone: 'default' as const,
           }
         : status === 'closed'
           ? {
               title: 'Fiş kapatılsın mı?',
-              description: 'Tedarikçiyle süreç bitti demektir. Kalem sonuçları düzenlenebilir kalır.',
+              description: 'Tedarikçiyle süreç bitti demektir. Kalem yanıtları düzenlenebilir kalır.',
               confirmLabel: 'Kapat',
               tone: 'default' as const,
             }
           : {
               title: 'Fiş iptal edilsin mi?',
               description:
-                'Fiş yanlış kesildiyse kullanın: kalemleri silinir ve anahtarlar bildirilmeyi bekleyen havuza GERİ DÖNER.',
+                'Fiş yanlış kesildiyse kullanın: kalemleri silinir ve bildirilmeyi bekleyen havuza GERİ DÖNER.',
               confirmLabel: 'İptal et',
               tone: 'danger' as const,
             };
@@ -98,7 +131,9 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
     const ok = await confirm({
       title: copy.title,
       description: copy.description,
-      details: [`${claim.code} · ${claim.supplierName ?? '—'} · ${items.length} anahtar`],
+      details: [
+        `${claim.code} · ${claim.supplierName ?? '—'} · ${itemCount(items.length, kinds)}`,
+      ],
       confirmLabel: copy.confirmLabel,
       tone: copy.tone,
     });
@@ -123,18 +158,18 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
     if (ids.length === 0) return;
 
     const res = await confirm({
-      title: `${ids.length} kalem "${claimOutcomeLabel(outcome)}" olarak işaretlensin mi?`,
+      title: `${ids.length} kalem “${claimOutcomeLabel(outcome)}” olarak işaretlensin mi?`,
       description:
         outcome === 'rejected'
-          ? 'Tedarikçi bu anahtarları kabul etmedi. Bekleyen havuza GERİ DÖNERLER ve yeniden fişlenebilirler.'
+          ? 'Tedarikçi bu kalemleri kabul etmedi. Bildirilecekler havuzuna GERİ DÖNERLER ve yeniden fişlenebilirler.'
           : outcome === 'pending'
-            ? 'Sonuç işareti kaldırılır; kalemler yeniden cevap bekliyor sayılır.'
-            : 'Bu anahtarlar için süreç kapanır; havuza geri dönmezler.',
+            ? 'Yanıt işareti kaldırılır; kalemler yeniden “tedarikçi yanıtı bekleniyor” sayılır.'
+            : 'Bu kalemler için süreç kapanır; havuza geri dönmezler.',
       tone: outcome === 'rejected' ? 'danger' : 'default',
       confirmLabel: 'İşaretle',
       reason: {
         label: 'Not (isteğe bağlı)',
-        placeholder: 'ör. tedarikçi 3 anahtarı seri no uyuşmazlığı gerekçesiyle reddetti',
+        placeholder: 'ör. tedarikçi 3 kalemi seri no uyuşmazlığı gerekçesiyle kabul etmedi',
         inputType: 'textarea',
       },
     });
@@ -162,6 +197,9 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
 
   return (
     <div className="space-y-4">
+      {/* ── Sırada ne var (durum bazlı rehber) ── */}
+      {steps && <HowItWorks steps={steps} />}
+
       {/* ── Aksiyon çubuğu ── */}
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => download('txt')}>
@@ -193,24 +231,16 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
         )}
       </div>
 
-      {claim.status === 'draft' && (
-        <Alert variant="info">
-          <AlertDescription>
-            Bu fiş <strong>taslak</strong>. Raporu indirip tedarikçiye ilettikten sonra
-            &quot;Gönderildi olarak işaretle&quot; deyin — kalem sonuçlarını ancak o zaman
-            girebilirsiniz. Yanlış kestiyseniz iptal edin, anahtarlar havuza geri döner.
-          </AlertDescription>
-        </Alert>
-      )}
-
       {/* ── Kalemler ── */}
       <Card>
         <CardHeader>
-          <CardTitle icon={FileText}>Fişteki anahtarlar</CardTitle>
+          <CardTitle icon={FileText}>Fişteki kalemler</CardTitle>
           <CardDescription>
             Bu satırlar fiş kesildiği andaki <strong>anlık görüntüdür</strong> — kaynak kayıt
-            sonradan değişse bile rapor değişmez. Tedarikçinin yanıtını satırları işaretleyip
-            girin; <strong>reddedilenler</strong> bildirilmeyi bekleyen havuza geri döner.
+            sonradan değişse bile rapor değişmez.{' '}
+            {canMarkOutcome
+              ? 'Tedarikçinin yanıtını satırları seçip girin; kabul edilmeyenler bildirilecekler havuzuna geri döner.'
+              : 'Yanıt girebilmek için önce fişi “Gönderildi” olarak işaretleyin.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -241,7 +271,7 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
                 onClick={() => void markOutcome('rejected')}
                 disabled={busy}
               >
-                <Ban /> Reddedildi
+                <Ban /> Kabul edilmedi
               </Button>
               <Button
                 variant="ghost"
@@ -249,7 +279,7 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
                 onClick={() => void markOutcome('pending')}
                 disabled={busy}
               >
-                <Undo2 /> Sonucu geri al
+                <Undo2 /> Yanıtı geri al
               </Button>
             </div>
           )}
@@ -271,10 +301,10 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
                     </TableHead>
                   )}
                   <TableHead>Ürün</TableHead>
-                  <TableHead>Lisans / hesap</TableHead>
+                  <TableHead>Lisans / hesap değeri</TableHead>
                   <TableHead>Parti</TableHead>
                   <TableHead>Kusur</TableHead>
-                  <TableHead>Sonuç</TableHead>
+                  <TableHead>Tedarikçi yanıtı</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -307,9 +337,10 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
                       )}
                       <TableCell>
                         <div className="text-sm text-foreground">{i.productName ?? '—'}</div>
-                        {i.sku && (
-                          <div className="font-mono text-xs text-muted-foreground">{i.sku}</div>
-                        )}
+                        <div className="text-xs text-muted-foreground">
+                          {i.productKind ? productKindLabel(i.productKind) : 'Tür bilinmiyor'}
+                          {i.sku ? ` · ${i.sku}` : ''}
+                        </div>
                       </TableCell>
                       <TableCell className="max-w-56">
                         <div className="truncate font-mono text-xs" title={i.keySnapshot ?? ''}>
@@ -341,15 +372,27 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
               </TableBody>
             </Table>
           </div>
+
+          {/* Rozet sözlüğü — "bu rozet ne demek" sorusu ekranın kendi içinde yanıtlanır. */}
+          <LegendList
+            className="pt-1"
+            items={(['pending', 'replaced', 'credited', 'rejected'] as const).map((o) => ({
+              term: <ClaimOutcomeBadge outcome={o} />,
+              text: claimOutcomeHint(o),
+            }))}
+          />
         </CardContent>
       </Card>
+
+      {claim.status === 'canceled' && (
+        <Alert variant="muted">
+          <AlertDescription>
+            Bu fiş iptal edildi; kalemleri bildirilecekler havuzuna döndü ve yeniden fişlenebilir.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {dialog}
     </div>
   );
-}
-
-/** Üst şerit — sunucu bileşeninde kullanılır (istemci durumu gerekmez). */
-export function ClaimHeaderBadge({ status }: { status: string }) {
-  return <ClaimStatusBadge status={status} />;
 }

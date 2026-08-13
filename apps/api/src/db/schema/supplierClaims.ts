@@ -108,6 +108,16 @@ export const supplierClaimItems = pgTable(
     productName: text('product_name'),
     sku: text('sku'),
     /**
+     * Ürün TİPİ anlık görüntüsü: 'key' | 'account' | 'code' | 'custom' (`products.kind`).
+     *
+     * NEDEN SNAPSHOT: panel yalnız lisans anahtarı satmıyor — hesap, kod/hediye çeki ve özel
+     * ürünler de var. Tedarikçiye giden raporda "bu bir HESAP mı yoksa ANAHTAR mı" ayrımı
+     * gerekiyor; ayrıca ekranda tek tip fişte doğru isim ("3 hesap"), karışık fişte nötr isim
+     * ("3 kalem") yazabilmek için gerek. Metin (enum değil): yeni ürün tipi migration
+     * gerektirmesin. Eski satırlarda NULL olabilir → ekran nötr dile düşer.
+     */
+    productKind: text('product_kind'),
+    /**
      * Anahtarın fiş anındaki gösterimi. Hesap ürünlerinde YALNIZ sır-olmayan alanlar
      * (parola asla); key ürünlerinde düz anahtar — tedarikçi zaten onu tanımak zorunda.
      */

@@ -79,7 +79,7 @@ function ReplacementRow({
     const ok = await confirm({
       title: 'Değişim onaylansın mı?',
       description:
-        'Mevcut atama geri alınır ve stoktan TAZE bir anahtar atanır. Stok yoksa işlem yapılmaz — eski anahtar yerinde kalır.',
+        'Mevcut atama geri alınır ve stoktan TAZE bir kalem atanır. Stok yoksa işlem yapılmaz — eskisi yerinde kalır.',
       confirmLabel: 'Onayla ve değiştir',
     });
     if (!ok) return;
@@ -89,7 +89,7 @@ function ReplacementRow({
   const reject = async () => {
     const res = await confirm({
       title: 'Değişim talebi reddedilsin mi?',
-      description: 'Müşteriye red bildirimi gider; mevcut anahtar aynen kalır.',
+      description: 'Müşteriye red bildirimi gider; mevcut lisans aynen kalır.',
       tone: 'danger',
       confirmLabel: 'Reddet',
       reason: {

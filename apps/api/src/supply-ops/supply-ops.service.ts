@@ -83,6 +83,12 @@ export interface BatchRow {
   productId: string;
   productSku: string;
   productName: string;
+  /**
+   * Ürün tipi ('key' | 'account' | 'code' | 'custom'). Parti TEK bir ürüne bağlıdır
+   * (`batches.product_id NOT NULL`) → ekran "5 anahtar" mı "5 hesap" mı yazacağını buradan
+   * bilir. Panel yalnız anahtar satmıyor; her yere "anahtar" yazmak yanlış (kullanıcı bulgusu).
+   */
+  productKind: string;
   /** Partideki TOPLAM lisans kalemi (aşağıdaki kovaların toplamı DEĞİL — bkz. MAK notu). */
   totalCount: number;
   /** `status='available'` — geri çekmenin GEÇERSİZ KILACAĞI küme. */
@@ -161,6 +167,7 @@ export class SupplyOpsService {
       product_id: string;
       product_sku: string;
       product_name: string;
+      product_kind: string;
       total_count: number;
       unsold_count: number;
       customer_count: number;
@@ -179,6 +186,7 @@ export class SupplyOpsService {
         b.product_id,
         p.sku AS product_sku,
         p.name AS product_name,
+        p.kind::text AS product_kind,
         coalesce(c.total_c, 0)::int      AS total_count,
         coalesce(c.unsold_c, 0)::int     AS unsold_count,
         coalesce(c.customer_c, 0)::int   AS customer_count,
@@ -236,6 +244,7 @@ export class SupplyOpsService {
       productId: r.product_id,
       productSku: r.product_sku,
       productName: r.product_name,
+      productKind: r.product_kind,
       totalCount: Number(r.total_count),
       unsoldCount: Number(r.unsold_count),
       customerCount: Number(r.customer_count),

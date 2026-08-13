@@ -19,6 +19,12 @@ export interface BatchRow {
   productId: string;
   productSku: string;
   productName: string;
+  /**
+   * 'key' | 'account' | 'code' | 'custom' — parti tek ürüne bağlı olduğu için tipi bellidir.
+   * Ekran metinleri buna göre "anahtar"/"hesap"/"kod" der (`lib/labels.itemCount`).
+   * API sapmasında eksik gelebilir → çağıran `?? undefined` ile nötr "kalem" diline düşer.
+   */
+  productKind?: string;
   /** 'active' | 'recalled' | 'voided' */
   status: string;
   qtyReceived: number;

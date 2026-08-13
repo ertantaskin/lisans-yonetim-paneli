@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { PackageX } from 'lucide-react';
 import { recallBatchAction } from '../app/batches/actions';
+import { itemCount } from '../lib/labels';
 import { Alert, AlertDescription } from './ui/alert';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
@@ -20,6 +21,7 @@ export function BatchRecallButton({
   label,
   unsold,
   customer,
+  kind,
 }: {
   batchId: string;
   label: string;
@@ -27,6 +29,8 @@ export function BatchRecallButton({
   unsold: number;
   /** Müşterilerdeki (canlı atamalı) adet — geri çekme bunlara DOKUNMAZ. */
   customer: number;
+  /** Partinin ürün tipi — metinler "anahtar/hesap/kod" der; yoksa nötr "kalem". */
+  kind?: string;
 }) {
   const router = useRouter();
   const { confirm, dialog } = useConfirm();
@@ -36,15 +40,15 @@ export function BatchRecallButton({
 
   const run = async () => {
     const details = [
-      `Stoktaki ${unsold} anahtar geçersiz kılınacak — bu geri alınamaz.`,
+      `Stoktaki ${itemCount(unsold, kind)} geçersiz kılınacak — bu geri alınamaz.`,
       customer > 0
-        ? `Müşterilerdeki ${customer} anahtara DOKUNULMAZ: çalışmaya devam eder ve müşteri görmeye devam eder. Hangisini değiştireceğinize aşağıdaki "Müşterilerdeki lisanslar" listesinden tek tek karar verirsiniz.`
-        : 'Bu partiden müşteride duran anahtar yok.',
+        ? `Müşterilerdeki ${itemCount(customer, kind)} KORUNUR: çalışmaya devam eder ve müşteri görmeye devam eder. Hangisini değiştireceğinize aşağıdaki "Müşterilerdeki lisanslar" listesinden tek tek karar verirsiniz.`
+        : 'Bu partiden müşteride duran kalem yok.',
     ];
     const res = await confirm({
       title: `${label} partisi geri çekilecek`,
       description:
-        'Parti "geri çekildi" durumuna geçer. Geri çekme YALNIZ stoğu etkiler — teslim edilmiş anahtarlar kendiliğinden iptal olmaz, çünkü çalışıyor olabilirler.',
+        'Parti "geri çekildi" durumuna geçer. Geri çekme YALNIZ stoğu etkiler — teslim edilmiş kalemler kendiliğinden iptal olmaz, çünkü çalışıyor olabilirler.',
       details,
       tone: 'danger',
       confirmLabel: 'Geri Çek',
@@ -67,14 +71,14 @@ export function BatchRecallButton({
       if (out.ok) {
         // SAYI HİZASI: band, onay modali ve alttaki "Müşterilerdeki lisanslar" listesi AYNI
         // kümeyi (aktif + askıda) saymalı. Eskiden band `soldNeedingReplacement` (yalnız
-        // AKTİF) kullanıyordu → askıda ataması olan partide modal "2 anahtar" der, band
-        // "1 anahtar" derdi ve işaret ettiği liste 2 satır gösterirdi.
+        // AKTİF) kullanıyordu → askıda ataması olan partide modal "2 kalem" der, band
+        // "1 kalem" derdi ve işaret ettiği liste 2 satır gösterirdi.
         const held = out.customerHeld ?? out.soldNeedingReplacement ?? 0;
         const auto = out.soldNeedingReplacement ?? 0;
         setNote(
-          `Stoktaki ${out.voided ?? 0} anahtar geçersiz kılındı.` +
+          `Stoktaki ${itemCount(out.voided ?? 0, kind)} geçersiz kılındı.` +
             (held > 0
-              ? ` Müşterilerdeki ${held} anahtar çalışmaya devam ediyor` +
+              ? ` Müşterilerdeki ${itemCount(held, kind)} çalışmaya devam ediyor` +
                 (held > auto ? ` (${held - auto} tanesi askıda)` : '') +
                 ' — aşağıdaki listeden tek tek inceleyip gerekeni değiştirin.'
               : ''),

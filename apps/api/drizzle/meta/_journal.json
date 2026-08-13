@@ -239,6 +239,13 @@
       "when": 1786639201572,
       "tag": "0033_supplier_claims",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786643071095,
+      "tag": "0034_claim_item_product_kind",
+      "breakpoints": true
     }
   ]
 }

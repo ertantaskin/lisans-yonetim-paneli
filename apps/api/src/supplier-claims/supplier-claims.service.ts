@@ -42,6 +42,8 @@ export interface ClaimItemRow {
   batchLabel: string | null;
   productName: string | null;
   sku: string | null;
+  /** 'key' | 'account' | 'code' | 'custom' — fiş anındaki ürün tipi (eski fişlerde null). */
+  productKind: string | null;
   keySnapshot: string | null;
   reason: string | null;
   defectKind: string | null;
@@ -185,6 +187,7 @@ export class SupplierClaimsService {
           batchLabel: r.batchCode ?? null,
           productName: r.productName ?? null,
           sku: r.sku ?? null,
+          productKind: r.productKind ?? null,
           keySnapshot: r.keyPreview ?? null,
           reason: r.reason ?? null,
           defectKind: r.defectKind ?? null,
@@ -327,6 +330,7 @@ export class SupplierClaimsService {
         batchLabel: i.batchLabel,
         productName: i.productName,
         sku: i.sku,
+        productKind: i.productKind,
         keySnapshot: i.keySnapshot,
         reason: i.reason,
         defectKind: i.defectKind,

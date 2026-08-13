@@ -128,6 +128,7 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
                 label={batch.label}
                 unsold={batch.unsoldCount}
                 customer={batch.customerCount}
+                kind={batch.productKind}
               />
             )}
           </div>
@@ -185,13 +186,14 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
 
       {/* ── Lisans tabloları ──
           İKİSİ BİR ARADA ve ORTAK TAZELEME sinyaliyle: aynı kalem her iki listede de
-          görünebildiği için (canlı atamalı anahtar) birinden yapılan değişim diğerini
+          görünebildiği için (canlı atamalı kalem) birinden yapılan değişim diğerini
           bayat bırakıyordu. Ayrıntı: `batch-license-panels.tsx`. */}
       <BatchLicensePanels
         batchId={batch.id}
         batchLabel={batch.label}
         customerCount={batch.customerCount}
         recalled={recalled}
+        kind={batch.productKind}
       />
     </div>
   );

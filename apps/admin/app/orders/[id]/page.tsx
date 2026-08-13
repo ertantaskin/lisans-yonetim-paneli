@@ -523,7 +523,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     {activeLine.length === 0 ? (
                       <p className="px-4 py-3 text-sm text-muted-foreground">
                         {lineAsg.length > 0
-                          ? 'Aktif lisans yok — anahtarlar iptal/değiştirilmiş (aşağıdaki geçmişe bakın).'
+                          ? 'Aktif lisans yok — kalemler iptal/değiştirilmiş (aşağıdaki geçmişe bakın).'
                           : l.canceled
                             ? 'İade/iptal edildi.'
                             : 'Henüz lisans atanmadı.'}
@@ -584,7 +584,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <details className="group rounded-xl border border-border bg-card">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-medium text-muted-foreground">
                 <RefreshCw className="size-4" />
-                Değişim geçmişi — eski anahtarlar ({history.length})
+                Değişim geçmişi — değiştirilen kalemler ({history.length})
                 <span className="ml-auto text-xs text-muted-foreground group-open:hidden">
                   göster
                 </span>

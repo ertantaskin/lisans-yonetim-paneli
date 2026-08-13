@@ -261,7 +261,7 @@ export default async function ProductDetailPage({
             <CardHeader>
               <CardTitle icon={Package}>Partiler</CardTitle>
               <CardDescription>
-                Bu ürünün stok partileri — hangi anahtarlar kimden, ne zaman geldi. Parti,{' '}
+                Bu ürünün stok partileri — hangi kalemler kimden, ne zaman geldi. Parti,{' '}
                 <strong>Stok Girişi</strong>&apos;nde tedarikçi/maliyet girildiğinde ya da bir satın
                 alma emri teslim alındığında oluşur; geri çekme (recall) bu partiler üzerinden yapılır.
               </CardDescription>
@@ -271,7 +271,7 @@ export default async function ProductDetailPage({
                 <EmptyState
                   icon={Package}
                   title="Parti yok"
-                  description="Bu ürünün anahtarları bir partiye bağlı değil (ya hiç stok girilmedi ya da partisiz/hızlı giriş yapıldı). Maliyet ve tedarikçi izi için stok girişinde tedarikçi + alım tarihi + birim maliyet doldurun."
+                  description="Bu ürünün kalemleri bir partiye bağlı değil (ya hiç stok girilmedi ya da partisiz/hızlı giriş yapıldı). Maliyet ve tedarikçi izi için stok girişinde tedarikçi + alım tarihi + birim maliyet doldurun."
                 >
                   <Button asChild size="sm" variant="outline">
                     <Link href={importHref}>
@@ -423,12 +423,12 @@ export default async function ProductDetailPage({
               <CardTitle icon={ClipboardList}>Stok Düzeltmeleri</CardTitle>
               <CardDescription>
                 Geçmiş manuel düzeltme kayıtları — kimin yaptığı ve stokun gerçekten değişip
-                değişmediği ile birlikte. Geçersiz kılınan anahtarlar{' '}
+                değişmediği ile birlikte. Geçersiz kılınan kalemler{' '}
                 <Link
                   href="/quarantine?status=voided"
                   className="text-foreground underline underline-offset-4"
                 >
-                  Karantina
+                  Kusurlu Stok
                 </Link>{' '}
                 ekranında listelenir.
               </CardDescription>
