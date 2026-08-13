@@ -165,6 +165,20 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     await expectRejected('SELECT umoptions FROM some_view');
   });
 
+  it('tedarikçi fişi tabloları + key_snapshot kolonu reddedilir — fiş maskesi bypass kapısı', async () => {
+    // `supplier_claim_items.key_snapshot` fiş KESİLİRKEN çağıranın yetkisiyle donar: owner
+    // kestiyse DÜZ lisans değeri taşır ve satır KALICIDIR. Fiş detayı ucu bunu okuma anında
+    // rol-farkında maskeler (A1/M1) ama NL→SQL raporu o maskeyi TAMAMEN atlıyordu.
+    // (a) Kolon adı kapısı — tablo adı geçmese bile (görünüm/alias) yakalar:
+    await expectRejected('SELECT key_snapshot FROM some_view');
+    // (b) Tablo kapısı — kolon adını hiç yazmayan vektörler de kapanır:
+    await expectRejected('SELECT id FROM supplier_claim_items');
+    await expectRejected('SELECT count(*) FROM supplier_claims');
+    await expectRejected('SELECT key_snapshot FROM supplier_claim_items');
+    // (c) DÖNEN kolon süzgeci aynı diziden (SECRET_COLUMN_SET) beslenir → takma ad da yakalanır.
+    await expectRejected('SELECT 1 AS key_snapshot');
+  });
+
   it('unicode-escape sözdizimi (U&"..." / U&\'...\') reddedilir — denylist obfuscation kapısı', async () => {
     // U&'\0061dmin_users' gibi kod-noktası kaçışı denylist ADlarını gizleyip TÜM metin
     // denylist'lerini (tablo/kolon/fonksiyon) atlatabilir → sözdizimini tümden reddet.

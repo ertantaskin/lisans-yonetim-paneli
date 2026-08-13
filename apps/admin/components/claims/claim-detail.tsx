@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Ban, CheckCircle2, Download, FileText, Send, Undo2 } from 'lucide-react';
+import { Ban, CheckCircle2, Download, FileText, Send, TriangleAlert, Undo2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { updateClaimAction, updateClaimItemsAction } from '../../app/quarantine/claims-actions';
 import type { ClaimItemRow, ClaimRow } from '../../app/quarantine/claims-queries';
@@ -84,6 +84,9 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
   const allSelected = selectableIds.length > 0 && selected.size === selectableIds.length;
   const kinds = React.useMemo(() => items.map((i) => i.productKind), [items]);
   const steps = nextStepsFor(claim.status);
+  // Rapor değerleri maskeli mi — YALNIZ API bayrağına bakılır. Alanı döndürmeyen eski
+  // sürümde (deploy sapması) sessiz kalınır: uydurma bir tespit yanlış alarm üretirdi.
+  const maskedReport = claim.masked === true;
 
   const download = (format: 'csv' | 'txt') => {
     const base = `degisim-fisi_${claim.code}_${stamp()}`;
@@ -230,6 +233,23 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
           </Button>
         )}
       </div>
+
+      {/* MASKELİ RAPOR UYARISI: indirilen dosya tedarikçiye `••••••1234` listesi olarak
+          gidebilir ve operatör bunu dosyayı açana kadar fark etmez. İndirme ENGELLENMEZ
+          (iç denetim için yine gerekli olabilir) — yalnız açıkça söylenir. `=== true`:
+          alanı döndürmeyen eski API sürümünde hiçbir uyarı çıkmaz. */}
+      {maskedReport && (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <AlertDescription>
+            Bu fişteki lisans/hesap değerleri <strong>maskeli</strong> (ör.{' '}
+            <span className="font-mono">••••••1234</span>) — indirilen rapor tedarikçiye bu hâliyle
+            gider ve kalem tanınamaz. Dosyayı göndermeden önce <strong>owner hesabıyla</strong>{' '}
+            yeniden indirin; değerler hâlâ maskeliyse fiş owner olmayan bir hesapla kesilmiş
+            demektir (anlık görüntü maskeli dondu) ve fişin yeniden kesilmesi gerekir.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* ── Kalemler ── */}
       <Card>

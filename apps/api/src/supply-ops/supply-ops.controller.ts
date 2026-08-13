@@ -14,6 +14,16 @@ import { AdminActor } from '../auth/admin-actor.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { SupplyOpsService } from './supply-ops.service';
 
+/**
+ * Parti listesi süzgeci. `productId` boş string olarak da gelebilir (istemci `?productId=`
+ * yazarsa) → `''` MEŞRU kabul edilip "süzgeç yok"a çevrilir; geçersiz bir UUID ise 400.
+ * (ParseUUIDPipe query'de `''`i reddederdi; supplier-claims.controller'daki aynı desen.)
+ */
+const BatchListQuery = z.object({
+  productId: z.union([z.literal(''), z.string().uuid()]).optional(),
+});
+type BatchListQuery = z.infer<typeof BatchListQuery>;
+
 const RecallBody = z.object({ reason: z.string().min(1) });
 type RecallBody = z.infer<typeof RecallBody>;
 
@@ -58,10 +68,15 @@ export class SupplyOpsController {
    * admin tarafındaki savunmalı okuyucular (`Array.isArray(d) ? d : d?.items ?? []`) tam olarak
    * bunu bekliyor. Başka bir ad (ör. `rows`) sessizce BOŞ liste gösterirdi — bu projede daha
    * önce yaşanmış sessiz-kırpma sınıfı.
+   *
+   * `?productId=<uuid>` (opsiyonel): üst sınır O ÜRÜNÜN partilerine uygulanır. Süzgeç yalnız
+   * istemcide kalırsa, ürünün aktif partisi global pencerenin dışında kaldığında seçicide hiç
+   * görünmez ve operatöre yanlışlıkla "bu ürünün aktif partisi yok" denir. Yanıt şekli AYNI.
    */
   @Get('batches')
-  async listBatches() {
-    const { rows, truncated } = await this.supplyOps.listBatches();
+  async listBatches(@Query(new ZodBody(BatchListQuery)) q: BatchListQuery) {
+    const productId = (q.productId ?? '').trim() || undefined;
+    const { rows, truncated } = await this.supplyOps.listBatches(undefined, productId);
     return { items: rows, truncated };
   }
 

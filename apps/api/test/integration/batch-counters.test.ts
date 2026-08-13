@@ -200,6 +200,30 @@ describe('parti sayaçları — kovalar DURUMDAN değil ATAMADAN türer', () => 
     expect(b.unsoldCount + b.customerCount + b.deadCount).toBeGreaterThan(b.totalCount);
   });
 
+  it('ürün süzgeci SUNUCUDA uygulanır — başka ürünün partisi dönmez, truncated yanlış alarm vermez', async () => {
+    // NEDEN: süzgeç yalnız İSTEMCİDE kalırsa, ürünün AKTİF partisi global "en yeni 500"
+    // penceresinin dışında kaldığında seçicide HİÇ görünmez ve operatöre yanlışlıkla
+    // "bu ürünün aktif partisi yok" denir. Bu yüzden koşul LIMIT'ten ÖNCE uygulanmalı.
+    const mine = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
+    const other = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
+    const mineBatch = await createBatch(mine.id, 'urun-suzgec-a');
+    const otherBatch = await createBatch(other.id, 'urun-suzgec-b');
+
+    const res = await supplyOps.listBatches(undefined, mine.id);
+    const ids = res.rows.map((r) => r.id);
+    expect(ids).toContain(mineBatch);
+    expect(ids).not.toContain(otherBatch);
+    expect(res.rows.every((r) => r.productId === mine.id)).toBe(true);
+    // Tavan+1 çekilip JS'te kırpılır → tavanın ALTINDAKİ liste ASLA "kırpıldı" demez.
+    expect(res.truncated).toBe(false);
+
+    // Süzgeçsiz global liste ikisini de görür (süzgeç dış SELECT'te değil, pencerede).
+    const all = await supplyOps.listBatches();
+    const allIds = all.rows.map((r) => r.id);
+    expect(allIds).toContain(mineBatch);
+    expect(allIds).toContain(otherBatch);
+  });
+
   it('tek parti sorgusu (getBatch) alt sorguyu da o partiye daraltır — başka partiler sızmaz', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
     const aIds = await insertLicenseItems(db, crypto, { productId: product.id, count: 2, tag });

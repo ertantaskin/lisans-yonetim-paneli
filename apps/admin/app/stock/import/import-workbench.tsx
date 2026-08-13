@@ -499,13 +499,19 @@ export function ImportWorkbench({
     setRows([emptyAccountRow(width)]);
   }, [width, productId]);
 
-  // Ürün değişince o ürünün AKTİF partilerini çek (tümünü önden yükleme — /batches
-  // ürün filtresi kabul etmez ve iki tam GROUP BY yapar).
+  // Ürün değişince o ürünün AKTİF partilerini çek (tümünü önden yükleme pahalı: /batches
+  // iki tam GROUP BY yapar). Süzgeç sunucuya `?productId=` ile gider.
+  //
+  // BAYAT BAYRAK YOK: `inactiveBatchCount` ve `batchListTruncated` ÖNCEKİ ürüne aitti —
+  // hata/erken-dönüş yollarında sıfırlanmazsa yeni üründe yanlış uyarı basılır ("bu ürünün
+  // eski partileri eksik olabilir" derken aslında hiç çekim yapılmamıştır). Üç yol da (ürün
+  // temizleme · `else` · `.catch`) bayrakları sıfırlar.
   const skipFirstBatchFetch = React.useRef(Boolean(initialProductId));
   React.useEffect(() => {
     if (!productId) {
       setBatches([]);
       setInactiveBatchCount(0);
+      setBatchListTruncated(false);
       setBatchesError(null);
       return;
     }
@@ -531,12 +537,20 @@ export function ImportWorkbench({
           setInactiveBatchCount(r.inactiveCount ?? 0);
           setBatchListTruncated(r.listTruncated === true);
         } else {
+          // Başarısız çekimde ÖNCEKİ ürünün listesi/sayaçları taşınmaz (yanlış parti seçimi
+          // API'de 400 olurdu; bayat "kırpıldı" uyarısı da yanıltıcıdır).
           setBatches([]);
+          setInactiveBatchCount(0);
+          setBatchListTruncated(false);
           setBatchesError(r.error ?? 'Partiler alınamadı');
         }
       })
       .catch(() => {
-        if (alive) setBatchesError('Partiler alınamadı');
+        if (!alive) return;
+        setBatches([]);
+        setInactiveBatchCount(0);
+        setBatchListTruncated(false);
+        setBatchesError('Partiler alınamadı');
       })
       .finally(() => {
         if (alive) setBatchesLoading(false);
@@ -1081,7 +1095,9 @@ export function ImportWorkbench({
                     iptal edilmiş).
                   </p>
                 )}
-                {batchListTruncated && (
+                {/* Hata varken kırpma uyarısı BASILMAZ: liste hiç gelmediyse "kırpıldı" demek
+                    yanlış sebep gösterir (asıl mesaj `batchesError`). */}
+                {!batchesError && batchListTruncated && (
                   <p className="text-xs text-warning">
                     Parti listesi sunucuda üst sınıra dayandı — bu ürünün çok eski partileri burada
                     görünmeyebilir. Aradığınız parti yoksa Partiler ekranından açıp oradan stok girin.

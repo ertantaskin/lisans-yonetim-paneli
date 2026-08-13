@@ -19,8 +19,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *  · `?batch=<uuid>`   — /batches "Bu partiye stok gir" (mevcut parti modu seçili gelir).
  *
  * Ürünün partileri BURADA (yalnız derin bağlantı varsa) ön-yüklenir; ürün değişince istemci
- * `fetchProductBatchesAction` ile yeniden çeker. Tüm partileri önden yüklemeyiz: `/v1/admin/batches`
- * ürün filtresi kabul etmez ve iki tam GROUP BY yapar.
+ * `fetchProductBatchesAction` ile yeniden çeker — o da süzgeci SUNUCUYA taşır (`?productId=`),
+ * böylece ürünün partisi global "en yeni N" penceresinin dışında kalıp kaybolmaz. Tüm partileri
+ * önden yüklemeyiz: `/v1/admin/batches` iki tam GROUP BY yapar.
  */
 export default async function StockImportPage({
   searchParams,

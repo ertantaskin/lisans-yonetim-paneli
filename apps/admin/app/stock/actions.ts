@@ -402,9 +402,15 @@ export async function importStockAction(
 /**
  * Bir ÜRÜNE ait aktif partiler (stok girişi ekranındaki "mevcut parti" seçicisi).
  *
- * NEDEN AYRI ÇAĞRI: `GET /v1/admin/batches` ürün filtresi kabul etmez ve iki tam GROUP BY
- * (satılmış/satılmamış sayımı) yapar → tüm partileri sayfa açılışında önden yüklemek pahalı.
- * Ürün seçilince/değişince yalnız o an gerekli liste çekilir.
+ * NEDEN AYRI ÇAĞRI: `GET /v1/admin/batches` iki tam GROUP BY (satılmış/satılmamış sayımı)
+ * yapar → tüm partileri sayfa açılışında önden yüklemek pahalı. Ürün seçilince/değişince
+ * yalnız o an gerekli liste çekilir.
+ *
+ * SÜZGEÇ SUNUCUDA: `?productId=` gönderilir — uç, üst sınırı (LIMIT) o ürünün partilerine
+ * uygular. Süzme yalnız istemcide kalsaydı, ürünün AKTİF partisi global "en yeni N" penceresinin
+ * dışında kaldığında seçicide hiç görünmez ve operatöre "bu ürünün aktif partisi yok" denirdi.
+ * Aşağıdaki `productId` eşitliği yine de UYGULANIR: parametreyi tanımayan eski API sürümüne
+ * (deploy sapması) karşı savunmadır — o durumda davranış eski hâline döner.
  *
  * Yalnız `status='active'` partiler döner: API aktif olmayan partiye stok eklemeyi 409 ile
  * reddeder (recall süpürmesi geçmiş partiye taze anahtar eklenmesin) — listede göstermek
@@ -434,7 +440,7 @@ export async function fetchProductBatchesAction(productId: string): Promise<{
   try {
     // API dizi VEYA {items} döndürebilir (batches/queries.ts ile aynı savunma).
     const data = await apiGet<RawBatch[] | { items: RawBatch[]; truncated?: boolean }>(
-      '/v1/admin/batches',
+      `/v1/admin/batches?productId=${encodeURIComponent(id)}`,
     );
     const listTruncated = !Array.isArray(data) && data?.truncated === true;
     const all = (Array.isArray(data) ? data : (data?.items ?? [])).filter(
@@ -444,8 +450,8 @@ export async function fetchProductBatchesAction(productId: string): Promise<{
     return {
       ok: true,
       inactiveCount: all.length - active.length,
-      // Süzme İSTEMCİDE yapılıyor: sunucu listesi kırpıldıysa bu ürünün eski partileri hiç
-      // gelmemiş olabilir → seçici "yok" gibi görünür. Sessiz bırakılmaz (bkz. dürüst-kırpma).
+      // Sunucu bu ÜRÜNÜN parti listesini bile üst sınırda kırptıysa (ya da eski API sürümünde
+      // süzgeç uygulanmadıysa) eski partiler eksik olabilir → sessiz bırakılmaz (dürüst-kırpma).
       listTruncated,
       batches: active.map((b) => ({
         id: b.id,

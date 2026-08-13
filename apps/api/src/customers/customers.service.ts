@@ -121,6 +121,11 @@ export class CustomersService {
     // doğrusal büyür). Çözüm SESSİZ DEĞİL: cömert bir tavan + `truncated` bayrağı — operatör
     // listenin kırpıldığını GÖRÜR ve aramayı daraltır (sunucu-taraflı sayfalama gerekirse ayrı iş).
     // Sıralamada stabil ikincil anahtar (email) zaten var → tavan sınırı deterministik.
+    //
+    // TAVAN+1 çekilir (proje deseni: pending-lines.service / readonly-sql — "tavan+1 çek, JS'te
+    // kırp"): eski `LIMIT TAVAN` + `n >= TAVAN` yüklemi TAM 2000 müşteri varken hiçbir şey
+    // kırpılmamışken "liste eksik" uyarısı basıyordu (yanlış alarm → operatör GERÇEK kırpmaya
+    // da inanmaz olur).
     const rows = await rawRows<{
       email: string;
       order_count: number;
@@ -169,13 +174,15 @@ export class CustomersService {
       LEFT JOIN customers c ON c.email = so.email
       GROUP BY so.email, a.assignment_count, r.replacement_count, c.tags
       ORDER BY MAX(so.created_at) DESC, so.email ASC
-      LIMIT ${CUSTOMER_LIST_LIMIT}
+      LIMIT ${CUSTOMER_LIST_LIMIT + 1}
     `);
 
     // Kırpılma sinyali HAM SQL satır sayısından türer (JS süzme yok → sayı birebir aynı).
-    const truncated = rows.length >= CUSTOMER_LIST_LIMIT;
+    // TAVAN+1 çekildiği için `>` KESİN sinyaldir: tam TAVAN kadar müşteride uyarı BASILMAZ.
+    const truncated = rows.length > CUSTOMER_LIST_LIMIT;
 
-    const items = rows.map((row) => {
+    // Tespit için çekilen fazladan satır YANITA GİRMEZ (sözleşme: en fazla TAVAN satır).
+    const items = rows.slice(0, CUSTOMER_LIST_LIMIT).map((row) => {
       const assignmentCount = Number(row.assignment_count);
       const replacementCount = Number(row.replacement_count);
       return {

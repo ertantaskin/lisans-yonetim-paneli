@@ -22,6 +22,7 @@ import {
 import { alias } from 'drizzle-orm/pg-core';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
+import { lineStatusFor, remainingUnits } from './fill-target';
 import { recordReplacementLineage } from './assignment-history';
 import { buildStoreAdminUrl } from './store-admin-url';
 import { FulfillmentService } from './fulfillment.service';
@@ -596,6 +597,7 @@ export class AdminOrdersService {
           remoteVariationId: orderLines.remoteVariationId,
           remoteName: orderLines.remoteName,
           qty: orderLines.qty,
+          canceledUnits: orderLines.canceledUnits,
           fulfilledQty: orderLines.fulfilledQty,
           status: orderLines.status,
           productId: orderLines.productId,
@@ -846,6 +848,7 @@ export class AdminOrdersService {
             productId: l.productId,
             status: l.status,
             qty: l.qty,
+            canceledUnits: l.canceledUnits,
             fulfilledQty: l.fulfilledQty,
             policy: l.policyOverride ?? l.productPolicy ?? null,
             stockless: l.productStockless ?? false,
@@ -971,6 +974,7 @@ export class AdminOrdersService {
     productId: string | null;
     status: string;
     qty: number;
+    canceledUnits?: number | null;
     fulfilledQty: number;
     policy: string | null;
     stockless: boolean;
@@ -984,7 +988,9 @@ export class AdminOrdersService {
     if (l.stockless && l.releaseAt && new Date(l.releaseAt).getTime() > Date.now()) {
       return 'release_gated';
     }
-    const remaining = l.qty - l.fulfilledQty;
+    // Hedef = qty − canceled_units (fill-target.ts): panelden kalıcı iptal edilen birim
+    // "bekleyen iş" DEĞİLDİR — aksi halde tanı "stok yok" der ama teslimat hiç denenmez.
+    const remaining = remainingUnits(l);
     if (remaining <= 0) return null;
     const available = l.availableStock ?? 0;
     if (available <= 0) return 'no_stock';
@@ -1066,56 +1072,69 @@ export class AdminOrdersService {
         .for('update');
       if (line) {
         const nf = Math.max(0, line.fulfilledQty - asg.units);
-        // markLineCanceled (varsayılan true): GERÇEK iade/iptal (refund / admin-revoke) → satırın
-        // geri alınan birimleri partial-auto yeniden-atama havuzundan KALICI çıkarılır (iade edilen
+        // markLineCanceled (varsayılan true): GERÇEK iade/iptal (refund / admin-revoke) → geri
+        // alınan birimler partial-auto yeniden-atama havuzundan KALICI çıkarılır (iade edilen
         // müşteriye taze key ile bedava lisans gitmez, §2). AMA değişim / recall-bulkReplace /
         // sipariş-adedi-düşür gibi "revoke sonrası MEŞRU yeniden-atama" akışları false geçer →
         // satır completeLine ile yeniden atanabilir kalır (aksi halde "stok yok" hatası).
         //
-        // DENETİM (correctness, orta): `canceled` KOŞULSUZ set edilirse çok-adetli satırda tek
-        // atamayı iptal etmek satırın TAMAMINI terminal yapıyordu; getDeliveries iptal satırı
-        // elediği için müşteri elinde HÂLÂ GEÇERLİ (active) kardeş anahtarlar dururken 0 lisans
-        // görüyordu (sessiz lisans kaybı). Ayrım:
-        //   - kardeş kalmadı  → satır tamamen bitti  → canceled=true (eski davranış, terminal)
-        //   - kardeş var      → yalnız BU birimler düşer → qty -= units (fulfilled == qty kalır →
-        //                       autoComplete/"Kalanları Ata" taze key ile DOLDURMAZ, H1 korunur)
-        // qty'ye yalnız markLineCanceled=true dalında dokunulur; değişim/recall yolları etkilenmez.
-        const liveSiblings = markLineCanceled
-          ? (
-              await tx
-                .select({ id: assignments.id })
-                .from(assignments)
-                .where(
-                  and(
-                    eq(assignments.lineId, line.id),
-                    inArray(assignments.status, ['active', 'suspended']),
-                  ),
-                )
-                .limit(1)
-            ).length > 0
-          : false;
-        const newQty = markLineCanceled && liveSiblings ? Math.max(0, line.qty - asg.units) : line.qty;
-        const lineStatus = nf >= newQty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+        // ÖLÇEK AYRIMI (denetim + re-doğrulama): `canceled` SATIR ölçeğinde terminal bir bayrak,
+        // per-atama iptal ise ATAMA ölçeğinde bir eylem. Bayrak koşulsuz set edilince çok-adetli
+        // satırda tek anahtarı iptal etmek satırın TAMAMINI terminal yapıyor ve getDeliveries
+        // iptal satırını elediği için müşteri elinde HÂLÂ GEÇERLİ kardeş anahtarlar dururken
+        // 0 lisans görüyordu. Ara çözüm olarak `qty` düşürmek ise İKİ YÖNLÜ bozuktu: (a) mağaza
+        // re-push'u `qty`'yi geri yükseltip iptal edilen birime TAZE anahtar teslim ediyordu
+        // (H1 bedava lisans), (b) iptal sebebi "kusurlu anahtar" ise müşterinin ÖDEDİĞİ hak
+        // sessizce kısılıyordu. Doğru ayrım: `qty` MAĞAZA GERÇEĞİ olarak DOKUNULMADAN kalır,
+        // iptaller `canceled_units` defterinde birikir; doldurma hedefi `fillTarget` ile
+        // `qty - canceled_units`. Böylece re-push hedefi geri açamaz (mağazada karşılığı yok).
+        //   - kardeş yok → satır tamamen bitti → canceled=true (terminal, eski davranış)
+        //   - kardeş var → canceled_units += units (satır canlı kalır, kardeşler görünür)
+        //
+        // Satır ZATEN terminalse (revokeOrderForSite önce tüm satırları canceled yapar, sonra
+        // atamaları tek tek geri alır) deftere DOKUNMA: aksi halde tam iadede son atama hariç
+        // her çağrı "kardeş var" görüp sayacı şişirir ve gereksiz olay yazardı.
+        const liveSiblings =
+          markLineCanceled && !line.canceled
+            ? (
+                await tx
+                  .select({ id: assignments.id })
+                  .from(assignments)
+                  .where(
+                    and(
+                      eq(assignments.lineId, line.id),
+                      inArray(assignments.status, ['active', 'suspended']),
+                    ),
+                  )
+                  .limit(1)
+              ).length > 0
+            : false;
+        const addCanceled = liveSiblings ? asg.units : 0;
+        const newCanceledUnits = Math.min(line.qty, (line.canceledUnits ?? 0) + addCanceled);
+        const lineStatus = lineStatusFor({
+          qty: line.qty,
+          canceledUnits: newCanceledUnits,
+          fulfilledQty: nf,
+        });
         await tx
           .update(orderLines)
           .set({
             fulfilledQty: nf,
             status: lineStatus,
-            ...(newQty !== line.qty ? { qty: newQty } : {}),
-            ...(markLineCanceled && !liveSiblings ? { canceled: true } : {}),
+            ...(addCanceled > 0 ? { canceledUnits: newCanceledUnits } : {}),
+            ...(markLineCanceled && !liveSiblings && !line.canceled ? { canceled: true } : {}),
           })
           .where(eq(orderLines.id, line.id));
-        if (newQty !== line.qty) {
-          // Adet düşüşü GÖRÜNÜR olmalı: mağazada karşılığı olmayan (panelden yapılan) bir iptal,
-          // mağaza siparişi yeniden gönderirse reconcileOrder qty'yi mağazanın adedine geri
-          // yükseltir ve eksik birim taze anahtarla dolar. Operatör bunu bilmeli (sessiz kapı yok).
+        if (addCanceled > 0) {
+          // İptal GÖRÜNÜR olmalı: mağaza tarafında karşılığı olmayan bir panel işlemi.
           await tx.insert(fulfillmentEvents).values({
             orderId: asg.orderId,
             type: 'order_edited',
             message:
-              `Satır adedi ${line.qty} → ${newQty} düşürüldü (${asg.units} birim iptal edildi). ` +
-              `Mağazada da iptal/iade edilmezse sipariş yeniden gönderildiğinde adet geri yükselir ` +
-              `ve eksik birim taze anahtarla teslim edilir.`,
+              `${asg.units} birim kalıcı olarak iptal edildi (satır adedi ${line.qty}, ` +
+              `iptal edilen toplam ${newCanceledUnits}). Bu birimler yeni anahtarla ` +
+              `DOLDURULMAZ; mağazada da iade/iptal işlenmezse sipariş adedi mağaza tarafında ` +
+              `değişmeden kalır.`,
           });
         }
       }

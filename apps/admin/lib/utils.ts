@@ -25,11 +25,27 @@ export function lowerTr(value: unknown): string {
  * Türkçe-duyarlı "içeriyor mu" — tablo arama/filtre (`filterFn`) fonksiyonlarında kullanılır.
  * TanStack'in yerleşik `includesString` süzgeci ham `toLowerCase()` kullandığı için
  * TÜRKÇE KAYITLARDA BOZUKTUR; onun yerine bu yardımcı çağrılır.
+ *
+ * İKİ GEÇİŞ (tr-TR **VE** nötr) — neden tek katlama YETMEZ: Türkçe kuralında ASCII `I`
+ * NOKTASIZ `ı` olur. Panel içeriği karışıktır; İngilizce kısaltmalar (AI, ID, IBAN, SKU-ID…)
+ * tr-TR katlamasıyla `aı`/`ıd`/`ıban` olur ve operatör doğal biçimde "ai"/"id" yazınca
+ * EŞLEŞMEZ — üstelik sessizce (hata yok, boş liste; Ctrl+K'da "AI Operasyon" bulunamıyordu).
+ * Ters yön de doğrudur: yalnız nötr katlama "IŞIK"/"İhsan" gibi Türkçe kayıtları kaçırır.
+ * Bu yüzden her iki katlama denenir, HERHANGİ BİRİ tutarsa eşleşme kabul edilir.
+ *
+ * Gevşeme bilinçlidir: iki geçiş birkaç fazladan eşleşme üretebilir (ör. "işik" → "IŞIK"),
+ * ama bu bir SÜZGEÇ — fazladan satır görmek, aranan kaydı sessizce kaybetmekten iyidir.
+ *
+ * NOT: `lowerTr` sıralama/karşılaştırma için de kullanılıyor; davranışı DEĞİŞMEDİ.
  */
 export function includesTr(haystack: unknown, needle: unknown): boolean {
-  const q = lowerTr(needle).trim();
-  if (!q) return true; // boş sorgu = süzme yok
-  return lowerTr(haystack).includes(q);
+  const rawNeedle = (needle == null ? '' : String(needle)).trim();
+  if (!rawNeedle) return true; // boş sorgu = süzme yok
+  const rawHay = haystack == null ? '' : String(haystack);
+  // 1) Türkçe katlama: "IŞIK Bilişim" ⊃ "ışık", "İhsan" ⊃ "ihsan"
+  if (lowerTr(rawHay).includes(lowerTr(rawNeedle))) return true;
+  // 2) Nötr katlama: "AI Operasyon" ⊃ "ai", "IBAN" ⊃ "iban" (tr-TR'de 'aı'/'ıban' olurdu)
+  return rawHay.toLowerCase().includes(rawNeedle.toLowerCase());
 }
 
 /** ISO tarihi tr-TR biçimler. */

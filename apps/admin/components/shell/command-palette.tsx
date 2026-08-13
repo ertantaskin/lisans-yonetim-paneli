@@ -94,7 +94,9 @@ export function CommandPalette() {
   // Statik sayfalar (mevcut davranış korunur). shouldFilter=false olduğundan burada
   // elle filtreleriz; sunucu sonuçları ise zaten sunucuda filtrelenmiştir.
   // Türkçe-duyarlı karşılaştırma (`includesTr`): ham `toLowerCase()` ile "İ"/"I" içeren
-  // sayfa adları ("İnceleme", "Siparişler") sessizce bulunamıyordu. Boş sorguda
+  // sayfa adları ("İnceleme", "Siparişler") sessizce bulunamıyordu. `includesTr` artık
+  // tr-TR VE nötr katlamayı birlikte dener → "ai" yazınca "AI Operasyon" da bulunur
+  // (tek başına tr-TR katlaması onu 'aı operasyon' yapıp gizliyordu). Boş sorguda
   // `includesTr` true döner → tüm sayfalar listelenir (eski davranış birebir).
   const pages = NAV.flatMap((s) => s.items.filter((i) => !i.soon));
   const filteredPages = pages.filter((i) => includesTr(i.label, query));

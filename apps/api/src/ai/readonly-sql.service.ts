@@ -40,6 +40,12 @@ const SECRET_COLUMN_DENYLIST = [
   'code_hash',
   'password_hash',
   'scrypt',
+  // Denetim (fiş maskesi bypass'ı): supplier_claim_items.key_snapshot, fiş KESİLİRKEN çağıranın
+  // yetkisiyle donar → owner kestiyse içinde TAM DÜZ lisans değeri (anahtar/hesap alanları) durur.
+  // Fiş detayı ucu bunu okuma anında rol-farkında maskeler; NL→SQL raporu o maskeyi TAMAMEN
+  // atlıyordu (owner-olmayan admin düz metinleri okuyabiliyordu). Kolon adı hem metin kapısında
+  // hem DÖNEN kolon süzgecinde (SECRET_COLUMN_SET aynı diziden beslenir) reddedilir.
+  'key_snapshot',
   // Denetim M2: Postgres rol/sistem katalogları parola-hash kolonları — superuser rolünde okunabilir.
   // Tablo-kapısı (pg_authid/pg_shadow) bunları zaten reddeder; kolon-adı katmanı bir görünüm/alias
   // üzerinden dönmeleri ihtimaline karşı savunma-derinliği.
@@ -115,6 +121,13 @@ const CAST_TO_SCALAR_RE =
 const TABLE_DENYLIST = [
   'admin_users',
   'site_connect_tokens',
+  // Denetim (fiş maskesi bypass'ı): tedarikçi değişim fişi kalemleri `key_snapshot` içinde DÜZ
+  // lisans değeri taşıyabilir (fiş owner tarafından kesildiyse) ve bu satır KALICIDIR. Kolon-adı
+  // kapısı tek başına yeterli değildir (kolon adını yazmayan vektörler); tablo kapısı kesindir.
+  // Başlık tablosu da tutarlılık için kapalı — iş raporları fiş tablolarına muhtaç değildir
+  // (tedarikçi kusur karnesi kendi ucundan okunur).
+  'supplier_claim_items',
+  'supplier_claims',
   // Denetim M2: Postgres kimlik/rol katalogları — superuser DB rolünde parola hash'i (pg_authid.
   // rolpassword), passwd (pg_shadow), yabancı sunucu kimlik bilgileri (pg_user_mapping.umoptions)
   // taşırlar. İş raporları bunlara ASLA ihtiyaç duymaz → tablo-kapısında reddedilir.
@@ -266,12 +279,12 @@ export class ReadonlySqlService {
         HttpStatus.BAD_REQUEST,
       );
     }
-    // AUTH/kimlik tablosu kapısı: rapor bu tablolara (scrypt hash / bağlan-kodu / rol katalogları)
-    // ASLA erişmemeli → adları geçen sorgu reddedilir (çıplak-record/::text dahil TÜM sızıntı
-    // vektörlerini kapatır).
+    // AUTH/kimlik + sır-snapshot tablosu kapısı: rapor bu tablolara (scrypt hash / bağlan-kodu /
+    // rol katalogları / fiş anahtar snapshot'ı) ASLA erişmemeli → adları geçen sorgu reddedilir
+    // (çıplak-record/::text dahil TÜM sızıntı vektörlerini kapatır).
     if (TABLE_DENYLIST_RE.test(q)) {
       throw new HttpException(
-        'Sorgu kimlik/auth tablolarına erişemez.',
+        'Sorgu kimlik/sır taşıyan tablolara erişemez.',
         HttpStatus.BAD_REQUEST,
       );
     }

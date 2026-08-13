@@ -163,7 +163,10 @@ export class OrdersService {
       // (3) §7 kısmi ilerleme: teslim/toplam BİRİM (satır toplamı, iptal satır hariç).
       this.db
         .select({
-          total: sql<number>`coalesce(sum(${orderLines.qty}), 0)`,
+          // TOPLAM = teslim edilmesi GEREKEN birim (hedef) = qty − canceled_units. Ham qty
+          // kullanılırsa panelden kalıcı iptal edilen birim müşteriye "eksik teslimat" gibi
+          // görünür (2/3) — oysa o birim hiç teslim edilmeyecek (fill-target.ts ile aynı tanım).
+          total: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.canceledUnits}, 0)), 0)`,
           fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}), 0)`,
         })
         .from(orderLines)
@@ -727,6 +730,19 @@ export class OrdersService {
           // (a) Artış: qty'yi yükselt; DOLUM commit SONRASI (completeLine kendi satır kilidiyle
           // serileşir → advisory kilidini dolum süresince tutmaya gerek yok, ABBA/kilit-uzatma riski yok).
           await tx.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
+          // Panelde KALICI iptal edilmiş birim varsa, mağaza adedi geri yükselse bile o birimler
+          // DOLDURULMAZ (hedef = qty − canceled_units, fill-target.ts) — H1 bedava-lisans sınıfı.
+          // Bu sessiz kalmasın: operatör "mağaza 3 diyor ama 2 teslim edildi" farkını görebilmeli.
+          if ((line.canceledUnits ?? 0) > 0) {
+            await tx.insert(fulfillmentEvents).values({
+              orderId: order.id,
+              type: 'order_edited',
+              message:
+                `Mağaza adedi ${line.qty} → ${newQty} yükseldi, ancak bu satırda panelden kalıcı ` +
+                `iptal edilmiş ${line.canceledUnits} birim var; o birimler yeni anahtarla ` +
+                `doldurulmaz. Gerçekten teslim edilmesi gerekiyorsa iptali gözden geçirin.`,
+            });
+          }
           if (line.productId) {
             const product = await this.products.getById(line.productId);
             const policy = line.policyOverride ?? product.fulfillmentPolicy;
@@ -738,7 +754,19 @@ export class OrdersService {
           if (line.fulfilledQty > newQty) {
             await this.revokeExcess(tx, site, line.id, line.fulfilledQty - newQty);
           }
-          await tx.update(orderLines).set({ qty: newQty }).where(eq(orderLines.id, line.id));
+          // ÇİFT SAYIM ÖNLEME: mağaza adedi D kadar DÜŞTÜYSE, mağaza o iptali kendi kaydına
+          // işlemiş demektir → panelin `canceled_units` defterinden en fazla D birim düşülür.
+          // Aksi halde aynı iptal iki kez sayılır (hem qty azalır hem defter dolu kalır) ve
+          // hedef gereğinden küçük çıkıp müşterinin ÖDEDİĞİ hak sessizce kısılırdı.
+          const drop = line.qty - newQty;
+          const nextCanceled = Math.max(0, (line.canceledUnits ?? 0) - drop);
+          await tx
+            .update(orderLines)
+            .set({
+              qty: newQty,
+              ...(nextCanceled !== (line.canceledUnits ?? 0) ? { canceledUnits: nextCanceled } : {}),
+            })
+            .where(eq(orderLines.id, line.id));
         }
         changedLineIds.push(line.id);
       }
@@ -854,7 +882,7 @@ export class OrdersService {
         // WHERE değil FILTER: satırlarının HEPSİ iptal edilmiş sipariş yanıttan düşmemeli
         // (WP o siparişi de yokluyor; 0/0 dönmesi doğru cevaptır).
         fulfilled: sql<number>`coalesce(sum(${orderLines.fulfilledQty}) filter (where ${orderLines.canceled} = false), 0)::int`,
-        total: sql<number>`coalesce(sum(${orderLines.qty}) filter (where ${orderLines.canceled} = false), 0)::int`,
+        total: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.canceledUnits}, 0)) filter (where ${orderLines.canceled} = false), 0)::int`,
       })
       .from(orders)
       .leftJoin(orderLines, eq(orderLines.orderId, orders.id))

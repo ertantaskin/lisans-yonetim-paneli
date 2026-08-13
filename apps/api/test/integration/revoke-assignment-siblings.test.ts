@@ -32,8 +32,12 @@ import {
  *
  * Düzeltme iki yönlü olmalı ve İKİSİ de burada kilitlenir:
  *   (a) kardeş atama kaldıysa satır canceled OLMAZ (müşteri kalan anahtarları görmeye devam eder),
- *   (b) ama qty geri alınan birim kadar DÜŞER → fulfilled == qty ⇒ partial-auto/"Kalanları Ata"
- *       taze anahtarla DOLDURMAZ (H1 bedava-lisans sınıfı korunur).
+ *   (b) ama iptal edilen birim `canceled_units` defterine yazılır → DOLDURMA HEDEFİ
+ *       (qty − canceled_units) düşer ⇒ partial-auto/"Kalanları Ata" taze anahtarla DOLDURMAZ
+ *       (H1 bedava-lisans sınıfı korunur).
+ *   (c) `qty` MAĞAZA GERÇEĞİ olarak DOKUNULMADAN kalır → mağazadan gelen re-push hedefi geri
+ *       açamaz (ilk düzeltmede qty düşürülüyordu; re-doğrulama bunun H1'i yeniden açtığını
+ *       gösterdi) ve müşterinin ÖDEDİĞİ hak sessizce kısılmaz.
  * Kardeş kalmadıysa eski davranış aynen sürer: satır terminal (canceled=true).
  */
 
@@ -108,7 +112,7 @@ describe('per-atama iptal: kardeş atamalar korunur, refill açılmaz', () => {
     await end();
   });
 
-  it('3 atamalı satırda 1 iptal → satır canceled OLMAZ, kardeşler aktif kalır, qty 3→2 düşer', async () => {
+  it('3 atamalı satırda 1 iptal → satır canceled OLMAZ, kardeşler aktif kalır, iptal deftere yazılır', async () => {
     const product = await createProduct(db, {
       tag,
       kind: 'key',
@@ -125,6 +129,7 @@ describe('per-atama iptal: kardeş atamalar korunur, refill açılmaz', () => {
       .select({
         canceled: schema.orderLines.canceled,
         qty: schema.orderLines.qty,
+        canceledUnits: schema.orderLines.canceledUnits,
         fulfilledQty: schema.orderLines.fulfilledQty,
         status: schema.orderLines.status,
       })
@@ -133,8 +138,10 @@ describe('per-atama iptal: kardeş atamalar korunur, refill açılmaz', () => {
       .limit(1);
     // (a) satır TERMİNAL DEĞİL → getDeliveries kardeşleri elemez (asıl kusur buydu).
     expect(line!.canceled).toBe(false);
-    // (b) talep geri alınan birim kadar düştü → fulfilled == qty ⇒ refill kapısı kapalı.
-    expect(line!.qty).toBe(2);
+    // (b) qty MAĞAZA GERÇEĞİ olarak korunur; iptal AYRI deftere yazılır.
+    expect(line!.qty).toBe(3);
+    expect(line!.canceledUnits).toBe(1);
+    // (c) hedef = 3 − 1 = 2, teslim = 2 ⇒ satır tamamlanmış sayılır, refill kapısı kapalı.
     expect(line!.fulfilledQty).toBe(2);
     expect(line!.status).toBe('fulfilled');
 
@@ -186,6 +193,55 @@ describe('per-atama iptal: kardeş atamalar korunur, refill açılmaz', () => {
     expect(freshAfter!.status).toBe('available');
   });
 
+  it('MAĞAZA RE-PUSH adedi geri yükseltse bile iptal edilen birim TAZE anahtarla dolmaz', async () => {
+      // RE-DOĞRULAMA BULGUSU (H1 sınıfı, kendi düzeltmemin açtığı yol): ilk çözümde iptal
+      // `qty`'den düşülüyordu. Ama `qty` MAĞAZA GERÇEĞİDİR — mağaza siparişi yeniden gönderince
+      // (ör. WooCommerce'te sipariş kalemleri kutusu kaydedilince `resync_items`) reconcileOrder
+      // qty'yi mağazanın adedine GERİ YÜKSELTİYOR ve satır artık terminal olmadığı için
+      // partial-auto iptal edilen birime taze anahtar teslim ediyordu (bedava lisans).
+      // Artık iptal AYRI deftere yazıldığı için mağaza qty'yi geri yazsa da hedef değişmez.
+      const product = await createProduct(db, {
+        tag,
+        kind: 'key',
+        usageMode: 'single',
+        fulfillmentPolicy: 'partial-auto',
+      });
+      const items = await insertLicenseItems(db, crypto, { productId: product.id, count: 3, tag });
+      const { lineId, assignmentIds } = await deliverLine(product.id, 3, items as string[]);
+      await admin.revokeAssignment(assignmentIds[0]!, 'Müşteri 1 birim iade etti', 'admin@test');
+
+      // Mağaza re-push'unun NET etkisini simüle et: reconcileOrder qty'yi mağaza adedine yazar.
+      // (Burada qty zaten 3; açıkça yazarak "mağaza 3 diyor" durumunu sabitliyoruz.)
+      await db
+        .update(schema.orderLines)
+        .set({ qty: 3 })
+        .where(eq(schema.orderLines.id, lineId));
+
+      // Taze stok gir + tamamlama motorunu çalıştır (partial-auto).
+      const [fresh] = await insertLicenseItems(db, crypto, {
+        productId: product.id,
+        count: 1,
+        tag,
+        payloadPrefix: 'REPUSH',
+      });
+      await fulfillment.autoCompleteProduct(product.id);
+      // Manuel "Kalanları Ata" yolu da aynı hedefi görmeli.
+      const manual = await fulfillment.completeLine(lineId);
+
+      expect(manual.added).toBe(0);
+      const active = await db
+        .select({ id: schema.assignments.id })
+        .from(schema.assignments)
+        .where(and(eq(schema.assignments.lineId, lineId), eq(schema.assignments.status, 'active')));
+      expect(active.length).toBe(2); // yalnız iki kardeş; yeni atama AÇILMADI
+      const [freshAfter] = await db
+        .select({ status: schema.licenseItems.status })
+        .from(schema.licenseItems)
+        .where(eq(schema.licenseItems.id, fresh!))
+        .limit(1);
+      expect(freshAfter!.status).toBe('available'); // taze anahtar YANMADI
+    });
+
   it('SON aktif atama iptal edilirse satır terminal kalır (canceled=true, qty korunur)', async () => {
     const product = await createProduct(db, {
       tag,
@@ -202,6 +258,7 @@ describe('per-atama iptal: kardeş atamalar korunur, refill açılmaz', () => {
       .select({
         canceled: schema.orderLines.canceled,
         qty: schema.orderLines.qty,
+        canceledUnits: schema.orderLines.canceledUnits,
         fulfilledQty: schema.orderLines.fulfilledQty,
       })
       .from(schema.orderLines)
@@ -209,6 +266,7 @@ describe('per-atama iptal: kardeş atamalar korunur, refill açılmaz', () => {
       .limit(1);
     expect(line!.canceled).toBe(true);
     expect(line!.qty).toBe(1); // qty'ye DOKUNULMAZ (terminal satırda anlamsız + reconcile zaten atlar)
+    expect(line!.canceledUnits).toBe(0); // kardeş yok ⇒ defter yerine terminal bayrak kullanılır
     expect(line!.fulfilledQty).toBe(0);
   });
 });

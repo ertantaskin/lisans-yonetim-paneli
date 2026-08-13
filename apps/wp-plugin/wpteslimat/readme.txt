@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,16 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.0.4 =
+* Panelde yeni sürüm yayınlandığı hâlde indirme adresi güvenlik kontrolüne takılırsa güncelleyici
+  artık SESSİZ kalmıyor: yöneticiye nedenini (reddedilen adres + beklenen host) söyleyen bir uyarı
+  basıyor. Güvenlik kararı gevşetilmedi, yalnız görünür kılındı.
+* Bu uyarının aynı sunucu / Docker iç ağı kurulumlarında YANLIŞ tetiklenmesi giderildi: paket adresi
+  denetimi artık panel adresiyle aynı kuralı kullanıyor (1.0.3'te iki kapı çelişiyor ve kapatılamayan
+  kalıcı bir hata bandı bırakabiliyordu). Çok siteli (multisite) kurulumda uyarı doğru kapsamda
+  saklanıyor ve ağ yöneticisine de gösteriliyor; panele ulaşılamadığında bilginin eski olduğu belirtiliyor.
+* İç tanımlayıcılar `wpt_` önekine taşındı (davranış değişmez; ad çakışması riski azalır).
 
 = 1.0.3 =
 * Panel adresi doğrulaması (is_secure_panel_url) aynı sunucu / Docker iç ağı gibi MEŞRU

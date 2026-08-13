@@ -5,7 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
-import { maskAccountFields, maskSecret } from '@lisans/shared';
+import {
+  AccountPayloadSchema,
+  maskAccountFields,
+  maskSecret,
+  type PayloadField,
+} from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { auditLog } from '../db/schema/audit';
@@ -70,6 +75,13 @@ const MAX_CLAIM_ITEMS = 2000;
 const MAX_NOTE_CHARS = 2000;
 
 /**
+ * Maske GÖVDESİ — sabit KOPYALANMAZ, shared `maskSecret`ten türetilir (boş değer kuyruksuz
+ * gövdeyi döndürür). "Bu snapshot zaten maskeli mi?" testi ve `detail().masked` bayrağı bunu
+ * kullanır; gövde shared'da değişirse burası kendiliğinden uyar.
+ */
+const MASK_MARK = maskSecret('');
+
+/**
  * OKUMA-anı snapshot maskesi (denetim A1/M1 — düz-metin sır YALNIZ owner'a).
  *
  * NEDEN GEREKLİ: `keySnapshot` fiş KESİLİRKEN çağıranın yetkisiyle donar; owner kestiyse içinde
@@ -77,24 +89,38 @@ const MAX_NOTE_CHARS = 2000;
  * bir admin ölü anahtarların düz metnini görüyordu (karantina/envanter/sipariş detayı maskesiyle
  * çelişki). Maske artık okuma anında YENİDEN uygulanır.
  *
- * `listQuarantine`in reveal=false yolu ile aynı davranış:
+ * `listQuarantine`in reveal=false yolu ile BİREBİR aynı davranış (aynı shared yardımcılar):
  *   · key/code/custom (+ ürün tipi bilinmeyen eski satır → fail-safe) → `maskSecret` (••••••+son-4).
- *   · account → alan-alan maske. Snapshot düz bir `Etiket: değer · Etiket: değer` metnidir; hangi
- *     alanın `secret` olduğu geri türetilemez → TÜM değerler maskelenir (quarantine'in secret-olmayan
- *     alanı açık bırakmasından daha DAR; güvenli yön). Ayırıcı bulunamayan parça tümden maskelenir.
- * Maske gövdesi shared `maskAccountFields`ten gelir — sabit KOPYALANMAZ (tek kaynak).
+ *   · account → `maskAccountFields`: YALNIZ `secret` alanlar maskelenir, secret OLMAYAN alanlar
+ *     (etiket/kullanıcı adı) KORUNUR. Eski hâli tüm segmentleri `secret: true` sayıp snapshot'ı
+ *     tümden eziyordu → tedarikçi raporu bilgisiz kalıyordu (hangi hesap olduğu anlaşılmıyordu)
+ *     ve `listQuarantine` ile çelişiyordu. Snapshot düz bir `Etiket: değer · …` metni olduğundan
+ *     alanın sır olup olmadığı ürünün `payload_schema`sından (etiket eşleşmesi) çözülür; şemada
+ *     BULUNAMAYAN etiket fail-safe SIR sayılır.
+ *
+ * ÇİFT MASKELEME YOK: zaten maskeli yazılmış bir snapshot (fişi owner-OLMAYAN kesmişse) yeniden
+ * maskelenmez — `maskSecret('••••••')` gövdeyi ikiye katlardı (`••••••••••`).
  */
-function maskClaimSnapshot(snapshot: string | null, productKind: string | null): string | null {
+function maskClaimSnapshot(
+  snapshot: string | null,
+  productKind: string | null,
+  secretByLabel?: Map<string, boolean>,
+): string | null {
   if (!snapshot) return snapshot;
-  if (productKind !== 'account') return maskSecret(snapshot);
+  if (productKind !== 'account') {
+    return snapshot.startsWith(MASK_MARK) ? snapshot : maskSecret(snapshot);
+  }
 
-  const fields = snapshot.split(' · ').map((seg) => {
+  const fields: PayloadField[] = snapshot.split(' · ').map((seg) => {
     const at = seg.indexOf(': ');
+    const label = at > 0 ? seg.slice(0, at) : '';
+    const value = at > 0 ? seg.slice(at + 2) : seg;
     return {
-      key: 'v',
-      label: at > 0 ? seg.slice(0, at) : '',
-      value: at > 0 ? seg.slice(at + 2) : seg,
-      secret: true,
+      key: label || 'v',
+      label,
+      value,
+      // Şema bilinmiyorsa / etiket eşleşmiyorsa GÜVENLİ taraf: sır say.
+      secret: secretByLabel?.get(label) ?? true,
     };
   });
   return maskAccountFields(fields)
@@ -344,15 +370,59 @@ export class SupplierClaimsService {
   }
 
   /**
+   * Hesap tipli kalemlerin ALAN SIR HARİTASI: `productId → (etiket → secret)`.
+   *
+   * Snapshot düz bir `Etiket: değer · …` metnidir; hangi alanın sır olduğu metinden geri
+   * türetilemez → ürünün `payload_schema`sından okunur (`listQuarantine`in kullandığı AYNI
+   * kaynak). YALNIZ maskeleme gerektiğinde çağrılır (owner yolunda ek sorgu yok).
+   * Şeması çözülemeyen ürün haritaya GİRMEZ → çağıran tarafta fail-safe "hepsi sır" davranır.
+   */
+  private async accountSecretLabels(
+    items: Array<{ productId: string | null; productKind: string | null }>,
+  ): Promise<Map<string, Map<string, boolean>>> {
+    const out = new Map<string, Map<string, boolean>>();
+    const ids = [
+      ...new Set(
+        items
+          .filter((i) => i.productKind === 'account' && i.productId)
+          .map((i) => i.productId as string),
+      ),
+    ];
+    if (ids.length === 0) return out;
+
+    // `= ANY(${dizi}::uuid[])` KULLANILMAZ: drizzle `sql` şablonunda JS dizisi bozuk SQL üretir
+    // (Postgres 42846) — bu tuzak projede KVKK anonymize ve toplu stok düşme yollarında yaşandı.
+    const idList = sql.join(
+      ids.map((v) => sql`${v}::uuid`),
+      sql`, `,
+    );
+    const rows = await rawRows<{ id: string; payload_schema: unknown }>(this.db, sql`
+      SELECT id, payload_schema FROM products WHERE id IN (${idList});
+    `);
+    for (const r of rows) {
+      const parsed = AccountPayloadSchema.safeParse(r.payload_schema);
+      if (!parsed.success) continue;
+      out.set(r.id, new Map(parsed.data.map((f) => [f.label, f.secret])));
+    }
+    return out;
+  }
+
+  /**
    * Fiş + kalemleri. Kalem anahtarları SNAPSHOT'tan okunur (canlı veriden DEĞİL).
    *
    * `reveal` (denetim A1/M1) düz-metin yetkisidir — varsayılan `true` GERİYE DÖNÜK uyum içindir
    * (rol geçmeyen iç çağrılar/testler tam metin alır; HTTP ucu daima açıkça geçirir).
+   *
+   * Yanıttaki `masked` (denetim): dönen kalem snapshot'larının EN AZ BİRİ maskeli mi. Operatör
+   * bu raporu indirip tedarikçiye gönderiyor — maskeli bir listeyi (`••••••1234`) farkında
+   * olmadan göndermemeli. İKİ kaynağı da kapsar: (a) okuyan owner-OLMAYAN olduğu için ŞİMDİ
+   * maskelendi, (b) fişi KESEN owner-olmayan olduğu için snapshot ZATEN maskeli yazıldı — bu
+   * ikincisinde owner okusa bile maskeli kalır, dolayısıyla dönen değerlerde maske işareti aranır.
    */
   async detail(
     id: string,
     opts: { reveal?: boolean; actor?: string } = {},
-  ): Promise<{ claim: ClaimRow; items: ClaimItemRow[] }> {
+  ): Promise<{ claim: ClaimRow; items: ClaimItemRow[]; masked: boolean }> {
     const reveal = opts.reveal ?? true;
     const [claim] = await this.list({ onlyId: id });
     if (!claim) throw new NotFoundException('Fiş bulunamadı');
@@ -362,6 +432,9 @@ export class SupplierClaimsService {
       .from(supplierClaimItems)
       .where(eq(supplierClaimItems.claimId, id))
       .orderBy(desc(supplierClaimItems.quarantinedAt), supplierClaimItems.id);
+
+    // Alan-alan maske için ürün şemaları (yalnız maskeleme yolunda).
+    const secretLabels = reveal ? null : await this.accountSecretLabels(items);
 
     // "reveal audit'e düşer" (§17) — fiş detayı ölü anahtarların DÜZ METNİNİ toplu döndürür
     // (operatör tedarikçiye bildirir). listQuarantine deseni: tek kayıt = tek görüntüleme
@@ -386,26 +459,37 @@ export class SupplierClaimsService {
       }
     }
 
-    return {
-      claim,
-      items: items.map((i) => ({
-        id: i.id,
-        licenseItemId: i.licenseItemId,
-        productId: i.productId,
-        batchId: i.batchId,
-        batchLabel: i.batchLabel,
-        productName: i.productName,
-        sku: i.sku,
-        productKind: i.productKind,
-        keySnapshot: reveal ? i.keySnapshot : maskClaimSnapshot(i.keySnapshot, i.productKind),
-        reason: i.reason,
-        defectKind: i.defectKind,
-        quarantinedAt: i.quarantinedAt,
-        outcome: i.outcome,
-        outcomeNote: i.outcomeNote,
-        resolvedAt: i.resolvedAt,
-      })),
-    };
+    const mapped: ClaimItemRow[] = items.map((i) => ({
+      id: i.id,
+      licenseItemId: i.licenseItemId,
+      productId: i.productId,
+      batchId: i.batchId,
+      batchLabel: i.batchLabel,
+      productName: i.productName,
+      sku: i.sku,
+      productKind: i.productKind,
+      keySnapshot: reveal
+        ? i.keySnapshot
+        : maskClaimSnapshot(
+            i.keySnapshot,
+            i.productKind,
+            secretLabels?.get(i.productId ?? '') ?? undefined,
+          ),
+      reason: i.reason,
+      defectKind: i.defectKind,
+      quarantinedAt: i.quarantinedAt,
+      outcome: i.outcome,
+      outcomeNote: i.outcomeNote,
+      resolvedAt: i.resolvedAt,
+    }));
+
+    // (a) okuma anında maske uyguladıysak snapshot'ı olan her kalem maskelenmiş sayılır;
+    // (b) uygulamadıysak (owner) snapshot ZATEN maskeli yazılmış olabilir → maske işareti aranır.
+    const masked = mapped.some(
+      (i) => i.keySnapshot != null && (!reveal || i.keySnapshot.includes(MASK_MARK)),
+    );
+
+    return { claim, items: mapped, masked };
   }
 
   /**

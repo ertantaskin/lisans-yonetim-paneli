@@ -69,15 +69,23 @@ export function CompleteLineButton({ lineId, orderId }: { lineId: string; orderI
 /**
  * Atama moderasyon aksiyonları (askıya al / iptal / askıdan çıkar). İptal ve askıya al
  * geri-dönüşsüz/hassas olduğu için onay ister (§5); sonuç inline gösterilir.
+ *
+ * `siblingActiveCount`: AYNI sipariş kalemindeki DİĞER canlı (aktif|askıda) atama sayısı.
+ * Yalnız SUNUM içindir — iptal onayının ne vaat ettiğini backend davranışına hizalar:
+ * kardeş varsa satır terminal YAPILMAZ (yalnız bu birim iptal edilir, müşterinin diğer
+ * lisansları çalışmaya devam eder); kardeş yoksa satırın tamamı iptal işaretlenir.
+ * Sayı bilinmiyorsa (prop verilmedi) eski, tek dallı metin korunur.
  */
 export function AssignmentActions({
   assignmentId,
   orderId,
   status,
+  siblingActiveCount,
 }: {
   assignmentId: string;
   orderId: string;
   status: string;
+  siblingActiveCount?: number;
 }) {
   const [pending, startTransition] = React.useTransition();
   const [state, setState] = React.useState<MutationState | null>(null);
@@ -104,10 +112,25 @@ export function AssignmentActions({
     // Sebep zorunlu DEĞİL (boşsa "admin iptali" yazılır) ama modal onay görevi de görür.
     // Sebep audit_log + fulfillment_events'e düşer → iade mi, dolandırıcılık mı, kusurlu key
     // mi sonradan ayırt edilebilir.
+    //
+    // Metin backend davranışına göre DALLANIR (eskiden her durumda "satır iptal işaretlenir"
+    // deniyordu; kardeş lisans varken bu GERÇEKLEŞMİYOR ve operatöre yanlış söz veriliyordu).
+    const siblings = siblingActiveCount ?? 0;
+    const hasSiblings = siblings > 0;
     const res0 = await confirm({
-      title: 'Lisans iptal edilsin mi?',
-      description:
-        'Lisans karantinaya alınır, müşteri görünümünden düşer ve satır iptal işaretlenir. GERİ ALINAMAZ.',
+      title: hasSiblings ? 'Bu lisans iptal edilsin mi?' : 'Lisans iptal edilsin mi?',
+      description: hasSiblings
+        ? 'Yalnız bu kalem karantinaya alınır ve müşterinin görünümünden düşer. GERİ ALINAMAZ.'
+        : 'Lisans karantinaya alınır, müşteri görünümünden düşer ve sipariş satırı iptal işaretlenir. GERİ ALINAMAZ.',
+      details: hasSiblings
+        ? [
+            `Aynı ürün kaleminde ${siblings} lisans daha var — bunlar geçerli kalmaya devam eder, müşteri kullanmayı sürdürür.`,
+            'Sipariş satırı iptal (terminal) İŞARETLENMEZ; yalnız bu birim kadar kapatılır.',
+          ]
+        : [
+            'Bu kalemde başka canlı lisans yok — sipariş satırının tamamı iptal (terminal) işaretlenir.',
+            'Terminal satıra sonradan taze lisans atanmaz (iade edilen kalem yeniden teslim edilmez).',
+          ],
       tone: 'danger',
       confirmLabel: 'İptal et',
       reason: {

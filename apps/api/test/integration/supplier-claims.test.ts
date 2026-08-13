@@ -5,7 +5,7 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import * as schema from '../../src/db/schema';
 import { SupplierClaimsService } from '../../src/supplier-claims/supplier-claims.service';
 import { AdminOrdersService } from '../../src/orders/admin-orders.service';
-import type { CryptoService } from '../../src/crypto/crypto.service';
+import { CryptoService } from '../../src/crypto/crypto.service';
 import {
   cleanupByTag,
   createProduct,
@@ -87,6 +87,58 @@ async function seedDefects(opts: {
   return { productId: product.id, supplierId: supplier.id, batchId: batch!.id, itemIds };
 }
 
+/** Hesap (account) tipli kusurlu kalem — alan-alan maske yolunu kanıtlar. */
+const ACC_USER = 'hesap-kullanici-42';
+const ACC_PASS = 'CokGizliParola-42';
+
+async function seedAccountDefect(
+  label: string,
+): Promise<{ supplierId: string; productId: string; itemId: string }> {
+  const product = await createProduct(db, {
+    tag,
+    kind: 'account',
+    usageMode: 'single',
+    payloadSchema: [
+      { key: 'username', label: 'Kullanıcı', secret: false, required: true },
+      { key: 'password', label: 'Parola', secret: true, required: true },
+    ],
+  });
+  const supplier = await createSupplier(db, { tag });
+  const [batch] = await db
+    .insert(schema.batches)
+    .values({
+      productId: product.id,
+      supplierId: supplier.id,
+      label: `${tagPrefix(tag)}-${label}`,
+      qtyReceived: 1,
+      receivedAt: new Date(),
+    })
+    .returning({ id: schema.batches.id });
+
+  // Kanonik hesap payload'ı (anahtarlar sıralı) — serializeAccountPayload ile aynı biçim.
+  const itemId = randomUUID();
+  const plain = JSON.stringify({ password: ACC_PASS, username: ACC_USER });
+  await db.insert(schema.licenseItems).values({
+    id: itemId,
+    productId: product.id,
+    payloadEnc: crypto.encrypt(plain, CryptoService.licenseItemAad(itemId)),
+    payloadHash: crypto.payloadHash(plain),
+    payloadSuffixHash: crypto.payloadSuffixHash(plain),
+    status: 'voided',
+    maxUses: 1,
+    batchId: batch!.id,
+  });
+  await db.insert(schema.stockAdjustments).values({
+    productId: product.id,
+    licenseItemId: itemId,
+    action: 'damage' as const,
+    qty: 1,
+    reason: `hesap kusuru (${label})`,
+    actor: ACTOR,
+  });
+  return { supplierId: supplier.id, productId: product.id, itemId };
+}
+
 /** Havuzda (bildirilmemiş) kaç kusurlu kalem var? */
 async function poolCount(supplierId: string): Promise<number> {
   const res = await claims.candidates({ supplierId, reveal: true, actor: ACTOR });
@@ -161,6 +213,47 @@ describe('tedarikçi değişim fişleri', () => {
     // Sır OLMAYAN snapshot alanları maskelenmez (rapor bağlamı korunur).
     expect(other.items[0]!.reason).toContain('tedarikçi kusuru');
     expect(other.items[0]!.batchLabel).toContain('mask');
+  });
+
+  it('HESAP kaleminde maske SIR OLMAYAN alanı SİLMEZ (listQuarantine(reveal=false) ile birebir)', async () => {
+    const { supplierId } = await seedAccountDefect('acc');
+    // Fişi owner keser → snapshot yalnız SIR OLMAYAN alanları taşır ("Kullanıcı: ...").
+    const c = await claims.create({ supplierId }, ACTOR, true);
+
+    const owner = await claims.detail(c.id, { reveal: true, actor: ACTOR });
+    expect(owner.items).toHaveLength(1);
+    expect(owner.items[0]!.keySnapshot).toContain(ACC_USER);
+    // Parola snapshot'a HİÇ girmez (owner yolunda bile: liste bağlamı toplu parola dökmez).
+    expect(owner.items[0]!.keySnapshot).not.toContain(ACC_PASS);
+
+    // owner-OLMAYAN okuma: ESKİ davranış tüm segmentleri sır sayıp "Kullanıcı: ••••••" üretiyordu
+    // → tedarikçi raporu bilgisiz kalıyordu (hangi hesap olduğu anlaşılmıyor).
+    const other = await claims.detail(c.id, { reveal: false, actor: 'panel:admin' });
+    expect(other.items[0]!.keySnapshot).toContain('Kullanıcı');
+    expect(other.items[0]!.keySnapshot).toContain(ACC_USER);
+    expect(other.items[0]!.keySnapshot).not.toContain(ACC_PASS);
+  });
+
+  it('detail().masked: okuma-anı maske DE, snapshot-anı maske DE bildirilir', async () => {
+    // (a) owner keser + owner okur → hiçbir şey maskeli değil.
+    const a = await seedDefects({ count: 2, label: 'mk-a' });
+    const ca = await claims.create({ supplierId: a.supplierId }, ACTOR, true);
+    expect((await claims.detail(ca.id, { reveal: true, actor: ACTOR })).masked).toBe(false);
+
+    // (b) owner keser + owner-OLMAYAN okur → okuma anında maskelendi.
+    expect((await claims.detail(ca.id, { reveal: false, actor: 'panel:admin' })).masked).toBe(true);
+
+    // (c) owner-OLMAYAN keser → snapshot ZATEN maskeli yazıldı; owner okusa BİLE maskeli kalır
+    //     (operatör bu raporu tedarikçiye `••••••1234` listesi olarak göndermemeli).
+    const b = await seedDefects({ count: 2, label: 'mk-b' });
+    const cb = await claims.create({ supplierId: b.supplierId }, 'panel:admin', false);
+    const ownerRead = await claims.detail(cb.id, { reveal: true, actor: ACTOR });
+    expect(ownerRead.masked).toBe(true);
+    expect(ownerRead.items[0]!.keySnapshot).toMatch(/^••••••/);
+
+    // ÇİFT MASKELEME YOK: zaten maskeli snapshot ikinci kez maskelenmez (gövde ikiye katlanmaz).
+    const otherRead = await claims.detail(cb.id, { reveal: false, actor: 'panel:admin' });
+    expect(otherRead.items[0]!.keySnapshot).toBe(ownerRead.items[0]!.keySnapshot);
   });
 
   it('AYNI kalem ikinci bir fişe GİREMEZ (kısmi unique index)', async () => {

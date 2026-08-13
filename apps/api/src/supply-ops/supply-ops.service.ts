@@ -162,7 +162,18 @@ export class SupplyOpsService {
    */
   private static readonly BATCH_LIST_LIMIT = 500;
 
-  async listBatches(onlyId?: string): Promise<{ rows: BatchRow[]; truncated: boolean }> {
+  /**
+   * @param onlyId    Tek parti (detay ekranı) — süzgeç LIMIT'ten önce uygulanır, `truncated` daima false.
+   * @param productId ÜRÜN süzgeci (stok girişi ekranındaki parti seçicisi). SUNUCUDA süzülür ve
+   *   üst sınır O ÜRÜNÜN partilerine uygulanır. Süzme yalnız istemcide kalsaydı (eski davranış),
+   *   ürünün AKTİF partisi global "en yeni 500" penceresinin dışında kaldığında seçicide HİÇ
+   *   görünmez ve operatöre yanlışlıkla "bu ürünün aktif partisi yok" denirdi. Bu yüzden koşul
+   *   `picked` CTE'sinin WHERE'ine (LIMIT'ten ÖNCE) iner, dış SELECT'e değil.
+   */
+  async listBatches(
+    onlyId?: string,
+    productId?: string,
+  ): Promise<{ rows: BatchRow[]; truncated: boolean }> {
     const list = await rawRows<{
       id: string;
       label: string;
@@ -187,11 +198,18 @@ export class SupplyOpsService {
         -- Tie-break (b.id) ŞART: LIMIT'li bir ORDER BY'da eşit received_at satırlarında pencere
         -- sınırı keyfi kalırdı (proje dersi: LIMIT'li her ORDER BY'ın tie-break'i olmalı).
         -- NULLS sırası DEĞİŞMEDİ (DESC → NULLS FIRST, eski davranış).
+        --
+        -- LIMIT = TAVAN + 1 (proje deseni: pending-lines.service / readonly-sql — "tavan+1 çek,
+        -- JS'te kırp"). Eskiden LIMIT TAVAN + (truncated = n >= TAVAN) idi: TAM 500 parti
+        -- varken hiçbir şey kırpılmamışken "liste eksik" uyarısı basılıyordu (yanlış alarm →
+        -- operatör GERÇEK kırpmaya da inanmaz). Fazladan satır ORDER BY tie-break'i (b.id)
+        -- sayesinde deterministiktir.
         SELECT b.id
         FROM batches b
         WHERE ${onlyId ? sql`b.id = ${onlyId}` : sql`true`}
+          AND ${productId ? sql`b.product_id = ${productId}` : sql`true`}
         ORDER BY b.received_at DESC, b.id DESC
-        LIMIT ${SupplyOpsService.BATCH_LIST_LIMIT}
+        LIMIT ${SupplyOpsService.BATCH_LIST_LIMIT + 1}
       )
       SELECT
         b.id,
@@ -253,10 +271,12 @@ export class SupplyOpsService {
     `);
 
     // KIRPILMA (DÜRÜSTLÜK): sinyal HAM SQL satır sayısından türer (JS süzme yok, birebir aynı sayı).
+    // TAVAN+1 çekildiği için `>` KESİN sinyaldir: tam TAVAN kadar satır varken uyarı BASILMAZ.
     // `onlyId` yolu tek satır döndürür → limitten etkilenmez, daima false.
-    const truncated = !onlyId && list.length >= SupplyOpsService.BATCH_LIST_LIMIT;
+    const truncated = !onlyId && list.length > SupplyOpsService.BATCH_LIST_LIMIT;
 
-    const rows = list.map((r) => ({
+    // Tespit için çekilen fazladan satır YANITA GİRMEZ (sözleşme: en fazla TAVAN satır).
+    const rows = list.slice(0, SupplyOpsService.BATCH_LIST_LIMIT).map((r) => ({
       id: r.id,
       label: r.label,
       status: r.status,

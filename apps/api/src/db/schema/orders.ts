@@ -91,6 +91,20 @@ export const orderLines = pgTable(
      */
     bundleQty: integer('bundle_qty'),
     fulfilledQty: integer('fulfilled_qty').notNull().default(0),
+    /**
+     * Operatörün panelden KALICI olarak iptal ettiği birim sayısı (per-atama "İptal").
+     *
+     * NEDEN AYRI KOLON: `qty` MAĞAZA GERÇEĞİDİR (müşterinin ödediği adet) ve mağazadan gelen her
+     * re-push onu yeniden yazar. Bir dönem iptal edilen birimler doğrudan `qty`'den düşülüyordu;
+     * bu `qty`'ye ikinci bir anlam (= "doldurmaya razı olduğumuz birim") yükledi ve İKİ YÖNLÜ
+     * bozuldu: (a) mağaza siparişi yeniden gönderince `reconcileOrder` adedi geri yükseltip iptal
+     * edilen birime TAZE anahtar teslim ediyordu (H1 bedava lisans), (b) iptal sebebi gerçek iade
+     * değil "kusurlu anahtar" ise müşterinin ÖDEDİĞİ hak sessizce kısılıyordu.
+     * Artık iki anlam ayrı: `qty` mağazadan gelir, `canceled_units` panelde birikir ve
+     * DOLDURMA HEDEFİ tek noktada `qty - canceled_units` olarak hesaplanır (bkz.
+     * `orders/fill-target.ts`). Satırın tamamı iptal edilirse ayrıca `canceled=true` olur.
+     */
+    canceledUnits: integer('canceled_units').notNull().default(0),
     status: orderLineStatusEnum('status').notNull().default('pending'),
     // İade/iptal terminal işareti (§2): revoke ile geri alınan satır TRUE olur ve otomatik/elle
     // yeniden teslime UYGUN DEĞİLDİR — aksi halde iade edilen satır taze key ile yeniden

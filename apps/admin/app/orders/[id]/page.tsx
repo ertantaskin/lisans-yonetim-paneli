@@ -129,8 +129,22 @@ const auditTitle = (a: AuditRow) =>
     ? 'Ürün eşlemesi geriye dönük uygulandı'
     : auditActionLabel(a.action);
 
-/** Tek aktif lisans satırı — kompakt: anahtar + yanında Göster, sağda ikon aksiyonlar. */
-function LicenseRow({ a, orderId }: { a: Assignment; orderId: string }) {
+/**
+ * Tek aktif lisans satırı — kompakt: anahtar + yanında Göster, sağda ikon aksiyonlar.
+ *
+ * `siblingActiveCount`: AYNI sipariş kalemindeki DİĞER canlı (aktif|askıda) atama sayısı —
+ * iptal onay metni buna göre dallanır (kardeş varsa satır terminal yapılmaz). Bu sayfa
+ * atamaları zaten satır bazında grupluyor; ekstra istek yok.
+ */
+function LicenseRow({
+  a,
+  orderId,
+  siblingActiveCount,
+}: {
+  a: Assignment;
+  orderId: string;
+  siblingActiveCount: number;
+}) {
   const vu = fmtValidUntil(a.validUntil);
   const isMulti = a.maxUses > 1;
   return (
@@ -151,7 +165,12 @@ function LicenseRow({ a, orderId }: { a: Assignment; orderId: string }) {
         </span>
       )}
       <div className="ml-auto">
-        <AssignmentActions assignmentId={a.id} orderId={orderId} status={a.status} />
+        <AssignmentActions
+          assignmentId={a.id}
+          orderId={orderId}
+          status={a.status}
+          siblingActiveCount={siblingActiveCount}
+        />
       </div>
     </div>
   );
@@ -529,7 +548,15 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                             : 'Henüz lisans atanmadı.'}
                       </p>
                     ) : (
-                      activeLine.map((a) => <LicenseRow key={a.id} a={a} orderId={order.id} />)
+                      activeLine.map((a) => (
+                        <LicenseRow
+                          key={a.id}
+                          a={a}
+                          orderId={order.id}
+                          // "Diğer" canlı kalem sayısı: kendisi hariç (iptal onayı metni buna dallanır).
+                          siblingActiveCount={activeLine.length - 1}
+                        />
+                      ))
                     )}
                   </div>
                 </Card>

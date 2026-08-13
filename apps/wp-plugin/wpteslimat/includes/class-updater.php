@@ -61,7 +61,11 @@ class Wpteslimat_Updater {
         add_filter('pre_set_site_transient_update_plugins', [$this, 'check_update']);
         add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
         // Paket URL'i reddedilip güncelleme düşürüldüyse yöneticiye GÖRÜNÜR uyarı bas.
+        // Multisite: eklenti güncellemesini yapabilen kişi NETWORK yöneticisidir ve o kullanıcı
+        // günlerce tek bir blogun panosuna hiç uğramayabilir → uyarıyı network ekranlarına da bağla.
+        // (İki kanca aynı ekranda ateşlemez: `admin_notices` network-admin ekranlarında çalışmaz.)
         add_action('admin_notices', [$this, 'package_rejected_notice']);
+        add_action('network_admin_notices', [$this, 'package_rejected_notice']);
     }
 
     /** Bu eklentinin plugin_basename değeri (ör. "wpteslimat/wpteslimat.php"). */
@@ -173,39 +177,137 @@ class Wpteslimat_Updater {
     }
 
     /**
-     * Kurulacak paket URL'i güvenli mi? (denetim W1) YALNIZ panelin KENDİ host'undan + https
-     * (localhost hariç) indirilebilir → MITM ile enjekte edilmiş düz-metin/yabancı-host bir .zip
-     * WP çekirdeğine KURDURULMAZ (RCE savunması). Panel host'u ile birebir eşleşme + şema kontrolü.
+     * Kurulacak paket URL'i güvenli mi? (denetim W1) YALNIZ panelin KENDİ host'undan
+     * indirilebilir → MITM ile enjekte edilmiş düz-metin/yabancı-host bir .zip WP çekirdeğine
+     * KURDURULMAZ (RCE savunması). İKİ koşul birlikte aranır: (1) kanal güvenli, (2) host panelle aynı.
+     *
+     * KANAL KAPISI TEK TANIMA BAĞLIDIR: `Wpteslimat_Settings::is_secure_panel_url()`. Burada eskiden
+     * ayrı ve DAHA DAR bir kural vardı (http yalnız localhost/127.0.0.1/::1) — 1.0.3'te panel kapısı
+     * genişletilince (özel IP · tek etiketli Docker servis adı · .local/.internal/.test) iki kapı
+     * ÇELİŞTİ: `http://api:3001` gibi MEŞRU bir iç kurulumda panel adresi kabul edilirken paket adresi
+     * reddediliyor, üstelik bu red artık GÖRÜNÜR bir uyarı bastığı için operatörün kapatamayacağı
+     * kalıcı bir hata bandına dönüşüyordu. Doğrudan `is_secure_panel_url($download)` çağrılıyor
+     * (yardımcıyı `public` yapmak yerine): `is_private_host` PRIVATE kalır, yeni yüzey açılmaz ve
+     * kural gelecekte tek yerde değişir. TEHDİT MODELİ AYNI — host eşitliği şartı KALDIRILMADI.
      */
     private static function is_valid_package_url($download) {
         if ($download === '') {
             return false;
         }
-        $scheme = strtolower((string) wp_parse_url($download, PHP_URL_SCHEME));
         $host = strtolower((string) wp_parse_url($download, PHP_URL_HOST));
         $panel_host = strtolower((string) wp_parse_url(Wpteslimat_Settings::panel_url(), PHP_URL_HOST));
         if ($host === '' || $panel_host === '') {
             return false;
         }
-        $is_local = ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1');
-        if (!$is_local && $scheme !== 'https') {
+        // Şemayı önce http(s) ile sınırla: `is_secure_panel_url` yalnız "https mi, değilse host özel mi"
+        // sorusunu yanıtlar → özel host'ta ftp:/file: gibi bir şema kapıdan geçebilirdi (eski kural da
+        // öyleydi). Burada tavan daraltılıyor, gevşetilmiyor.
+        $scheme = strtolower((string) wp_parse_url($download, PHP_URL_SCHEME));
+        if ($scheme !== 'https' && $scheme !== 'http') {
+            return false;
+        }
+        // Şema kapısı: https her zaman; http YALNIZ kanıtlanabilir özel/iç adreslerde (panel kapısının
+        // birebir aynısı). Trafik özel ağı terk etmiyorsa araya girecek bir ağ da yoktur.
+        if (!Wpteslimat_Settings::is_secure_panel_url($download)) {
             return false;
         }
         return $host === $panel_host;
     }
 
     /**
+     * Uyarı metnine girecek URL'i güvenle kısalt.
+     *
+     * Ham `substr()` BAYT keser; çok baytlı (UTF-8) bir karakterin ortasından bölerse `esc_html()`
+     * geçersiz diziyi BOŞ string'e çevirir → operatör teşhis edilemez, bomboş bir kırmızı kutu görür.
+     * mbstring varsa karakter bazında kesilir; yoksa bayt kesiminin bozuk kuyruğu WP'nin kendi
+     * `wp_check_invalid_utf8(..., true)` süzgeciyle atılır. Kırpma SESSİZ değildir — görünür işaretlenir.
+     */
+    private static function truncate_url($url, $limit = 200) {
+        $url = (string) $url;
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($url, 'UTF-8') <= $limit) {
+                return $url;
+            }
+            return mb_substr($url, 0, $limit, 'UTF-8') . ' … (kırpıldı)';
+        }
+        if (strlen($url) <= $limit) {
+            return $url;
+        }
+        return wp_check_invalid_utf8(substr($url, 0, $limit), true) . ' … (kırpıldı)';
+    }
+
+    /**
+     * PKG_REJECT bayrağı okuma/yazma/silme — MULTISITE kapsam düzeltmesi.
+     *
+     * `set_transient()` ailesi BLOG kapsamlıdır; oysa tetikleyen `update_plugins` transient'i SİTE
+     * (network) kapsamlıdır → bayrağı yazan blog ile temizleyen blog farklı olabilir ve uyarı yanlış
+     * yerde asılı kalırdı. Multisite'ta site kapsamlı (`*_site_transient`) API kullanılır; tekil
+     * kurulumda davranış AYNEN eskisi gibidir.
+     */
+    private static function flag_get() {
+        return is_multisite()
+            ? get_site_transient(self::PKG_REJECT_KEY)
+            : get_transient(self::PKG_REJECT_KEY);
+    }
+
+    private static function flag_set($value, $ttl) {
+        if (is_multisite()) {
+            set_site_transient(self::PKG_REJECT_KEY, $value, $ttl);
+            return;
+        }
+        set_transient(self::PKG_REJECT_KEY, $value, $ttl);
+    }
+
+    private static function flag_delete() {
+        if (is_multisite()) {
+            delete_site_transient(self::PKG_REJECT_KEY);
+            return;
+        }
+        delete_transient(self::PKG_REJECT_KEY);
+    }
+
+    /**
      * Paket URL'i reddedildi → bayrağı yaz (SESSİZ düşürme yok). Güvenlik kararı DEĞİŞMEZ,
      * yalnız görünür olur. Kısa TTL: panel/panel_url düzeltilince uyarı kendiliğinden söner
      * (bir sonraki denetim ya kaydı yeniler ya da siler).
+     *
+     * `checked_at`/`expires_at`: bayrağın NE ZAMAN doğrulandığını ve ne zaman düşeceğini payload'ın
+     * KENDİSİ taşır → panele ulaşılamadığı turlarda kayıt "bayat" damgasıyla TTL UZATILMADAN
+     * yeniden yazılabilir (bkz. mark_flag_stale).
      */
     private static function flag_package_rejected($version, $download) {
-        set_transient(self::PKG_REJECT_KEY, [
+        $now = time();
+        self::flag_set([
             'version'    => (string) $version,
-            'url'        => substr((string) $download, 0, 200),
+            'url'        => self::truncate_url($download),
             'host'       => strtolower((string) wp_parse_url($download, PHP_URL_HOST)),
             'panel_host' => strtolower((string) wp_parse_url(Wpteslimat_Settings::panel_url(), PHP_URL_HOST)),
+            'checked_at' => $now,
+            'expires_at' => $now + self::PKG_REJECT_TTL,
         ], self::PKG_REJECT_TTL);
+    }
+
+    /**
+     * Panelden bilgi ALINAMADI (erişilemez / yayın yok / panel adresi güvensiz) ve elde eski bir
+     * red bayrağı var → bayrağı SİLME. Silmek gerçek bir reddi tekrar sessizleştirirdi; asıl sorun
+     * bilginin DOĞRULANAMAMIŞ olmasıdır. Bayrak `stale_since` damgasıyla yeniden yazılır ve uyarı
+     * daha yumuşak bir metne döner. TTL UZATILMAZ: kalan süre payload'daki `expires_at`'ten
+     * hesaplanır (süre dolduysa hiç yazılmaz, kayıt kendiliğinden düşer).
+     */
+    private static function mark_flag_stale() {
+        $flag = self::flag_get();
+        if (!is_array($flag)) {
+            return;
+        }
+        $expires = isset($flag['expires_at']) ? (int) $flag['expires_at'] : 0;
+        $left = $expires - time();
+        if ($left <= 0) {
+            return;
+        }
+        if (empty($flag['stale_since'])) {
+            $flag['stale_since'] = time();
+        }
+        self::flag_set($flag, $left);
     }
 
     /**
@@ -214,14 +316,37 @@ class Wpteslimat_Updater {
      * beklenen host). Aksi halde operatör "panelde yayınladım, sitede görünmüyor" ile kalıyor.
      */
     public function package_rejected_notice() {
-        if (!current_user_can('manage_options')) return;
-        $flag = get_transient(self::PKG_REJECT_KEY);
+        // Network ekranlarında yetkili kişi network yöneticisidir; blog ekranlarında mevcut kural korunur.
+        $cap = (function_exists('is_network_admin') && is_network_admin())
+            ? 'manage_network_options'
+            : 'manage_options';
+        if (!current_user_can($cap)) return;
+        $flag = self::flag_get();
         if (!is_array($flag)) return;
 
         $version    = isset($flag['version']) ? (string) $flag['version'] : '';
         $url        = isset($flag['url']) ? (string) $flag['url'] : '';
         $host       = isset($flag['host']) ? (string) $flag['host'] : '';
         $panel_host = isset($flag['panel_host']) ? (string) $flag['panel_host'] : '';
+
+        // BAYAT kayıt: bilgi eski bir denetimden geliyor, panele ŞU AN ulaşılamıyor. Kesin bir
+        // güvenlik reddi gibi sunulmamalı (kullanıcı çaresiz hissetmesin) → yumuşak uyarı.
+        if (!empty($flag['stale_since'])) {
+            $checked = isset($flag['checked_at']) ? (int) $flag['checked_at'] : 0;
+            $fmt = get_option('date_format') . ' ' . get_option('time_format');
+            $when = $checked > 0
+                ? (function_exists('wp_date') ? wp_date($fmt, $checked) : date_i18n($fmt, $checked))
+                : '—';
+            echo '<div class="notice notice-warning"><p>' . esc_html(sprintf(
+                'Teslimat eklentisi: Panelde yeni sürüm (%1$s) için güncelleme sunulamamıştı — indirme ' .
+                'adresi geçerli değildi. Bu bilgi en son %2$s tarihinde doğrulandı ve panele ŞU AN ' .
+                'ulaşılamıyor, yani durum değişmiş olabilir. Panel erişimini ve adresini kontrol edip ' .
+                '"Kontrol Paneli → Güncellemeler" sayfasından tekrar denetleyin.',
+                $version !== '' ? $version : '—',
+                $when
+            )) . '</p></div>';
+            return;
+        }
 
         if ($url === '') {
             $msg = sprintf(
@@ -234,7 +359,8 @@ class Wpteslimat_Updater {
             $msg = sprintf(
                 'Teslimat eklentisi: Panelde yeni sürüm (%1$s) var ama güncelleme SUNULMUYOR — ' .
                 'panelin bildirdiği indirme adresi güvenlik kontrolüne takıldı. Reddedilen adres: %2$s ' .
-                '(host: %3$s). Beklenen: https şeması ve "%4$s" host\'u. Panelin PUBLIC_API_URL ayarı ' .
+                '(host: %3$s). Beklenen: "%4$s" host\'u ve https şeması (http yalnız iç/özel adreslerde ' .
+                'kabul edilir). Panelin PUBLIC_API_URL ayarı ' .
                 'ile buradaki panel adresi AYNI host olmalı; düzelttikten sonra "Kontrol Paneli → ' .
                 'Güncellemeler" sayfasından tekrar denetleyin.',
                 $version,
@@ -257,6 +383,9 @@ class Wpteslimat_Updater {
 
         $info = self::fetch_info();
         if ($info === null) {
+            // Panel erişilemez / yayın yok / adres güvensiz → red bayrağı DOĞRULANAMADI.
+            // Silme (gerçek reddi sessizleştirir), aynen bırakma (12 saat bayat uyarı) → BAYAT damgala.
+            self::mark_flag_stale();
             return $transient;
         }
 
@@ -276,7 +405,7 @@ class Wpteslimat_Updater {
                 $transient->no_update = [];
             }
             // Daha yeni sürüm YOK → düşürülmüş bir güncelleme de yok; bayrak varsa temizle.
-            delete_transient(self::PKG_REJECT_KEY);
+            self::flag_delete();
             $transient->no_update[$basename] = (object) [
                 'slug'        => 'wpteslimat',
                 'plugin'      => $basename,
@@ -296,7 +425,7 @@ class Wpteslimat_Updater {
         }
 
         // Paket URL'i geçerli → varsa eski uyarı bayrağını temizle.
-        delete_transient(self::PKG_REJECT_KEY);
+        self::flag_delete();
 
         if (!isset($transient->response) || !is_array($transient->response)) {
             $transient->response = [];

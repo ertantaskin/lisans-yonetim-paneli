@@ -29,6 +29,15 @@ export interface ClaimRow {
   replacedCount: number;
   creditedCount: number;
   rejectedCount: number;
+  /**
+   * Kalem anlık görüntülerinin EN AZ BİRİ maskeli mi (`••••••1234`).
+   *
+   * İki yoldan olabilir: (a) fişi KESEN kişi owner değildi → snapshot maskeli DONDU ve
+   * sonradan owner açsa da maskeli kalır; (b) fişi OKUYAN owner değil → yanıt maskeli döner.
+   * Her iki durumda indirilen rapor tedarikçiye işe yaramaz bir liste olarak gider →
+   * ekranda uyarılır. Eski API sürümü bu alanı döndürmez (savunmacı: `=== true` kontrolü).
+   */
+  masked?: boolean;
 }
 
 export interface ClaimItemRow {

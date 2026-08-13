@@ -23,6 +23,7 @@ import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
 import { notExpiredCond, releaseAllocations } from '../assignment/assign';
 import { recomputeOrderStatus } from './order-status';
+import { fillTarget, lineStatusFor, remainingUnits } from './fill-target';
 
 export interface CompleteResult {
   lineId: string;
@@ -108,7 +109,10 @@ export class FulfillmentService {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
       }
 
-      const remaining = line.qty - line.fulfilledQty;
+      // Hedef = qty − canceled_units (fill-target.ts, TEK tanım). `qty` mağaza gerçeğidir ve
+      // re-push onu yeniden yazar; operatörün panelden kalıcı iptal ettiği birimler ayrı
+      // deftere yazıldığı için re-push onları GERİ AÇAMAZ (H1 bedava-lisans sınıfı kapalı).
+      const remaining = remainingUnits(line);
       const toAssign = maxUnits ? Math.min(remaining, maxUnits) : remaining;
       if (toAssign <= 0) {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
@@ -147,8 +151,8 @@ export class FulfillmentService {
       // Taze teslim / releaseHeld (maxUnits yok) da hedef = qty.
       const target =
         isReplacement && maxUnits != null
-          ? Math.min(line.qty, line.fulfilledQty + toAssign)
-          : line.qty;
+          ? Math.min(fillTarget(line), line.fulfilledQty + toAssign)
+          : fillTarget(line);
       if (policy === 'all-or-nothing' && line.fulfilledQty + added < target) {
         await releaseAllocations(tx, allocations);
         allocations.length = 0;
@@ -177,8 +181,7 @@ export class FulfillmentService {
       }
 
       const fulfilledAfter = line.fulfilledQty + added;
-      const status =
-        fulfilledAfter >= line.qty ? 'fulfilled' : fulfilledAfter > 0 ? 'partial' : 'pending';
+      const status = lineStatusFor({ ...line, fulfilledQty: fulfilledAfter });
       await tx
         .update(orderLines)
         .set({ fulfilledQty: fulfilledAfter, status })
