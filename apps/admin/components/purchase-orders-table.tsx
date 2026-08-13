@@ -3,6 +3,7 @@ import Link from 'next/link';
 import * as React from 'react';
 import { ArrowRight } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
+import { isAutoReceipt } from '@lisans/shared';
 import type { PurchaseOrderRow } from '@/app/purchase-orders/queries';
 import { Badge, type BadgeProps } from './ui/badge';
 import { Button } from './ui/button';
@@ -67,7 +68,25 @@ const columns: ColumnDef<PurchaseOrderRow>[] = [
     accessorKey: 'status',
     meta: { title: 'Durum' },
     header: 'Durum',
-    cell: ({ row }) => <POStatusBadge status={row.original.status} />,
+    cell: ({ row }) => (
+      <span className="flex flex-wrap items-center gap-1.5">
+        <POStatusBadge status={row.original.status} />
+        {/*
+          OTOMATİK EMİR (§12): bu emri operatör açmadı — Stok Girişi ekranı, girilen mala
+          maliyet/izlenebilirlik defteri tutmak için türetti. Mal ZATEN girilmiştir, yani
+          teslim alınacak bir şey yoktur; uç ikinci teslim almayı reddeder. İşaret olmadan
+          operatör satırı elle açılmış açık emir sanıp "Teslim Al" deniyor ve hataya çarpıyordu.
+        */}
+        {isAutoReceipt(row.original.notes) && (
+          <Badge
+            variant="outline"
+            title="Stok girişinden otomatik oluşturuldu — teslim alma adımı yoktur, mal zaten girildi."
+          >
+            Otomatik
+          </Badge>
+        )}
+      </span>
+    ),
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
   {

@@ -13,6 +13,7 @@ import { Queue } from 'bullmq';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import {
   AccountPayloadSchema,
+  AUTO_RECEIPT_NOTE_PREFIX,
   parseAccountPayload,
   serializeAccountPayload,
   maskSecret,
@@ -31,6 +32,7 @@ import {
   products,
   purchaseOrders,
   stockAdjustments,
+  suppliers,
   type NewLicenseItem,
   type Product,
 } from '../db/schema';
@@ -52,6 +54,80 @@ export interface ImportRejection {
   reason: string;
 }
 
+/**
+ * Stok girişiyle AYNI istekte "teslim alınmış" parti (+ otomatik satın alma emri) açma
+ * girdisi (§12). Sözleşme doğrulaması controller'dadır; servis de aynı kuralları
+ * SAVUNMA amaçlı yeniden uygular (iç çağıranlar controller'ı atlayabilir).
+ *
+ * `qtyReceived` BİLEREK YOKTUR — adet, gerçekten girilen kayıt sayısından türetilir.
+ */
+export interface NewBatchInput {
+  /** Mevcut tedarikçi. `supplierName` ile birlikte verilemez. */
+  supplierId?: string;
+  /** Serbest tedarikçi adı — aynı ad varsa YENİDEN KULLANILIR, yoksa oluşturulur. */
+  supplierName?: string;
+  label: string;
+  /** ISO tarih. Verilmezse "şimdi". Aralık: [2000-01-01, şimdi+24sa]. */
+  receivedAt?: string;
+  /** Birim maliyet (kuruş) — satın alma emrinde tutulur, tedarikçi ZORUNLUDUR. */
+  unitCostCents?: number;
+  currency?: string;
+  /** Operatör notu (otomatik oluşturma önekinin ardına eklenir). */
+  notes?: string;
+}
+
+/**
+ * Yeni parti sonucunun raporu. `created=false` iken `reason` neden oluşmadığını söyler
+ * (kuru çalıştırma / tüm satırlar reddedildi) — sessiz "oluştu sandım" durumu olmasın.
+ */
+export interface NewBatchOutcome {
+  created: boolean;
+  reason?: 'dry_run' | 'all_rejected';
+  batchId?: string;
+  purchaseOrderId?: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  /** Tedarikçi bu istekte OLUŞTURULDU mu? (kuru çalıştırmada: oluşturulacak mı — tahmin) */
+  supplierCreated?: boolean;
+  /** Ad eşleşmesiyle MEVCUT tedarikçi mi kullanıldı? (mükerrer 'Acme' üretilmedi) */
+  supplierExisting?: boolean;
+  label: string;
+  receivedAt: string;
+  qtyReceived: number;
+  unitCostCents: number | null;
+  currency: string | null;
+  /** Girilen lisans kayıtlarına COGS maliyet anlık-görüntüsü yazıldı mı? */
+  costSnapshotApplied: boolean;
+  /** Aynı üründe aynı etiketli parti zaten var mı? Engel DEĞİL — yalnız uyarı. */
+  labelDuplicate?: boolean;
+}
+
+/**
+ * Yeni parti PLANI — transaction içinde hesaplanır, satırlar adet belli olunca yazılır.
+ * (Dışa açılmaz: yalnız import akışının iç adımıdır.)
+ */
+interface AutoReceiptPlan {
+  batchId: string;
+  purchaseOrderId: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  supplierCreated: boolean;
+  label: string;
+  receivedAt: Date;
+  unitCostCents: number | null;
+  currency: string | null;
+  /** Operatör notu (ham) — otomatik önekin ardına eklenir. */
+  notes: string | null;
+  labelDuplicate: boolean;
+  /** license_items'a yazılacak COGS anlık-görüntüsü (yalnız maliyet + tedarikçi varsa). */
+  costSnapshot: { unitCostCents: number; costCurrency: string } | null;
+}
+
+/** Maliyet girildi ama tedarikçi yok — controller ve servis AYNI metni kullanır. */
+const COST_NEEDS_SUPPLIER_MSG =
+  'Birim maliyet girildi ama tedarikçi seçilmedi. Maliyet satın alma emrinde tutulur; ' +
+  'tedarikçi seçin ya da maliyeti boş bırakın.';
+
 export interface ImportResult {
   requested: number;
   imported: number;
@@ -72,6 +148,17 @@ export interface ImportResult {
   dryRun?: boolean;
   /** Kuru çalıştırma tahmini: doğrulamayı geçip (dedupe sonrası) GİRİLECEK satır sayısı. */
   wouldImport?: number;
+  /**
+   * Aynı istekte parti (+ otomatik satın alma emri) istendiyse sonucu. Alan OPSİYONELDİR —
+   * `newBatch` gönderilmeyen klasik import'ta HİÇ dönmez (mevcut sözleşme değişmez).
+   */
+  newBatch?: NewBatchOutcome;
+  /**
+   * Operatörün YAPIŞTIRDIĞI satır sayısı ile gerçekten kaydedilen adet farklıysa (mükerrer
+   * ya da reddedilen satırlar) uyarı. Satın alma emri GERÇEK adetle açıldığı için harcama
+   * doğrudur; bu alan yalnız "beklediğinden az girdi" bilgisini görünür kılar.
+   */
+  qtyMismatch?: { declared: number; imported: number };
 }
 
 export type ImportItem = { payload: string | Record<string, unknown>; expiresAt?: string };
@@ -272,6 +359,18 @@ export class StockService {
    * Stok import (§12). Her payload şifrelenir (envelope), içerik hash'iyle mükerrer
    * engellenir (UNIQUE payload_hash → onConflictDoNothing). Çok kullanımlıkta (multi)
    * her key ürünün max_uses kapasitesiyle girer.
+   *
+   * `newBatch` (opsiyonel, §12): operatör "12 Ağustos'ta Acme'den aldım, birim 10,00 ₺"
+   * bilgisini stok girişiyle AYNI istekte verir → panel tedarikçiyi çözer (ad eşleşiyorsa
+   * MEVCUDU kullanır), `status='received'` bir satın alma emri + partiyi TEK transaction'da
+   * açar ve lisans kayıtlarını o partiye bağlar. Adet operatörün BEYANINDAN değil, gerçekten
+   * girilen (mükerrer/reddedilen düşülmüş) kayıt sayısından türer. Migration GEREKMEZ —
+   * mevcut suppliers/purchase_orders/batches tabloları kullanılır.
+   *
+   * TRANSACTION SINIRI (bilinçli): payload ŞİFRELEME ve `autoCompleteProduct` + kuyruk
+   * tx DIŞINDADIR. autoComplete kendi transaction'ını açar; SKIP LOCKED ile henüz commit
+   * EDİLMEMİŞ satırlarımızı göremez (sessizce hep 0 tamamlar) ve dış tx olarak thread
+   * edilirse yan etkiler ertelenir → teslimat maili + `order.fulfilled` webhook'u HİÇ gitmez.
    */
   async import(
     productId: string,
@@ -279,8 +378,20 @@ export class StockService {
     batchId?: string,
     dryRun = false,
     actor = 'panel:admin',
+    newBatch?: NewBatchInput,
   ): Promise<ImportResult> {
     const product = await this.products.getById(productId);
+
+    // Sözleşme guard'ları — controller'daki superRefine ile AYNI kurallar. Servis de uygular
+    // çünkü iç çağıranlar (test/script/başka servis) controller'ı atlayabilir.
+    if (newBatch && batchId) {
+      throw new BadRequestException(
+        'Mevcut parti ile yeni parti bilgisi birlikte gönderilemez — birini seçin.',
+      );
+    }
+    if (newBatch?.unitCostCents != null && !newBatch.supplierId && !newBatch.supplierName) {
+      throw new BadRequestException(COST_NEEDS_SUPPLIER_MSG);
+    }
 
     // Çok kullanımlık (MAK) ürün maxUses>1 ZORUNLU — aksi halde her key kapasite=1'e
     // düşer ve MAK anahtarı tek satışta tükenir (sessiz misconfig'i erken yakala).
@@ -294,11 +405,6 @@ export class StockService {
     // Hesap ürünü için alan şemasını çöz (import doğrulaması + kanonik serialize).
     const accountSchema = this.resolveAccountSchema(product);
     const keyRegex = this.compileKeyFormat(product);
-
-    // Parti (batch) DOĞRULAMASI + COGS maliyet anlık-görüntüsü — tek okumada.
-    // Parti verilmişse ait olduğu ürün ve durumu ÖNCE doğrulanır (aksi halde stok yanlış
-    // ürünün ya da geri çağrılmış bir partinin altına yazılabiliyordu — bkz. resolveBatchForImport).
-    const costSnapshot = await this.resolveBatchForImport(productId, batchId);
 
     const rejections: ImportRejection[] = [];
     const values: NewLicenseItem[] = [];
@@ -317,18 +423,27 @@ export class StockService {
       values.push({
         id,
         productId,
-        batchId: batchId ?? null,
+        // batch_id + COGS snapshot TRANSACTION İÇİNDE doldurulur (aşağıda): parti ya orada
+        // DOĞRULANIR (legacy `batchId`) ya da orada OLUŞTURULUR (`newBatch`). Pahalı olan
+        // şifreleme burada, tx dışında kalır.
+        batchId: null,
         payloadEnc: this.crypto.encrypt(plaintext, CryptoService.licenseItemAad(id)),
         payloadHash: this.crypto.payloadHash(plaintext),
         payloadSuffixHash: this.crypto.payloadSuffixHash(plaintext),
         maxUses,
         expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
         status: 'available',
-        // COGS snapshot (varsa) — parti PO'sunun import anındaki maliyeti.
-        unitCostCents: costSnapshot?.unitCostCents ?? null,
-        costCurrency: costSnapshot?.costCurrency ?? null,
+        unitCostCents: null,
+        costCurrency: null,
       });
     });
+
+    // Erken çıkış yolları (kuru çalıştırma / hepsi reddedildi) TX AÇMAZ; ama legacy `batchId`
+    // doğrulaması BUGÜNKÜ gibi burada da koşar → geçersiz/başka ürüne ait/geri çağrılmış parti
+    // sessizce 200 dönmez (davranış korunur).
+    if ((dryRun || values.length === 0) && batchId) {
+      await this.resolveBatchForImport(productId, batchId);
+    }
 
     // Kuru çalıştırma (§7): payloadlar DOĞRULANDI + rejected raporu üretildi; buradan
     // ötesi (DB insert, audit, autoCompleteProduct) HİÇ ÇALIŞMAZ — hiçbir şey commit edilmez.
@@ -354,6 +469,9 @@ export class StockService {
           }
         }
       }
+      // Yeni parti istendiyse KURU ÇALIŞTIRMA da onu DOĞRULAR (tedarikçi var mı, tarih
+      // aralığı, etiket çakışması, ad eşleşmesi) ve sonucu echo eder. Aksi halde kuru koşu
+      // "temiz" der, gerçek koşu 404/400 verirdi — mevcut `batchId` davranışıyla simetri.
       return {
         requested: items.length,
         imported: 0,
@@ -363,10 +481,14 @@ export class StockService {
         autoCompleted: 0,
         dryRun: true,
         wouldImport,
+        newBatch: newBatch ? await this.probeNewBatch(productId, newBatch, wouldImport) : undefined,
       };
     }
 
     if (values.length === 0) {
+      // Hiçbir satır doğrulamayı geçmedi → parti/satın alma emri OLUŞTURULMAZ (boş parti
+      // + sıfır adetli emir tedarik raporlarını kirletirdi). Tarih/tedarikçi doğrulaması
+      // bilerek koşmaz: operatörün görmesi gereken asıl sorun `rejections` listesidir.
       return {
         requested: items.length,
         imported: 0,
@@ -374,25 +496,98 @@ export class StockService {
         rejected: rejections.length,
         rejections,
         autoCompleted: 0,
+        newBatch: newBatch
+          ? {
+              created: false,
+              reason: 'all_rejected',
+              supplierId: newBatch.supplierId ?? null,
+              supplierName: newBatch.supplierName?.trim() ?? null,
+              label: (newBatch.label ?? '').trim(),
+              receivedAt: newBatch.receivedAt ?? new Date().toISOString(),
+              qtyReceived: 0,
+              unitCostCents: newBatch.unitCostCents ?? null,
+              currency: newBatch.currency ? normalizeCurrency(newBatch.currency) : null,
+              costSnapshotApplied: false,
+            }
+          : undefined,
       };
     }
 
-    const inserted = await this.db
-      .insert(licenseItems)
-      .values(values)
-      .onConflictDoNothing({ target: licenseItems.payloadHash })
-      .returning({ id: licenseItems.id });
+    // ── TEK TRANSACTION: parti çözümü/oluşumu + lisans kayıtları + audit ──
+    // Legacy `batchId` doğrulaması da buraya taşındı: doğrulama ile insert arasındaki
+    // TOCTOU (araya giren recall) ücretsiz kapanır. Yeni parti ise henüz commit edilmediği
+    // için ancak AYNI tx'ten görülebilir → `resolveBatchForImport` de `exec` alır.
+    const { inserted, duplicates, outcome } = await this.db.transaction(async (tx) => {
+      let plan: AutoReceiptPlan | null = null;
+      let resolvedBatchId: string | null = batchId ?? null;
+      let costSnapshot: { unitCostCents: number; costCurrency: string } | null = null;
 
-    // duplicates = doğrulamayı geçip DB'de mükerrer (payload_hash) çıkanlar.
-    const duplicates = values.length - inserted.length;
+      if (newBatch) {
+        plan = await this.prepareAutoReceipt(tx, productId, newBatch, actor);
+        resolvedBatchId = plan.batchId;
+        costSnapshot = plan.costSnapshot;
+      } else {
+        costSnapshot = await this.resolveBatchForImport(productId, batchId, tx);
+      }
 
-    // Sebepli stok değişikliği audit'e düşer (§12). Aktör çağırandan gelir (x-admin-actor).
-    await this.db.insert(auditLog).values({
-      action: 'import',
-      actor,
-      targetType: 'product',
-      targetId: productId,
-      meta: { imported: inserted.length, duplicates, rejected: rejections.length },
+      for (const v of values) {
+        v.batchId = resolvedBatchId;
+        // COGS snapshot: legacy yolda partinin PO'sundan OKUNUR; yeni parti yolunda İSTEK
+        // gövdesinden gelir (parti henüz yeni yazıldı, DB'den okumaya gerek yok).
+        v.unitCostCents = costSnapshot?.unitCostCents ?? null;
+        v.costCurrency = costSnapshot?.costCurrency ?? null;
+      }
+
+      const rows = await tx
+        .insert(licenseItems)
+        .values(values)
+        .onConflictDoNothing({ target: licenseItems.payloadHash })
+        .returning({ id: licenseItems.id });
+
+      // duplicates = doğrulamayı geçip DB'de mükerrer (payload_hash) çıkanlar.
+      const dup = values.length - rows.length;
+
+      // Tek bir TAZE kayıt bile girmediyse yeni parti/emir AÇILMAZ → tam rollback (aksi
+      // halde 0 adetli hayalet emir + boş parti kalırdı). Legacy/partisiz yol DEĞİŞMEDİ:
+      // orada mükerrer giriş bugünkü gibi 200 + duplicates döner.
+      if (plan && rows.length === 0) {
+        throw new ConflictException(
+          `Girilen ${values.length} anahtarın tamamı sistemde zaten kayıtlı — ` +
+            'yeni parti ve satın alma emri OLUŞTURULMADI.',
+        );
+      }
+
+      // PO + parti lisans kayıtlarından SONRA yazılır: adet, operatörün beyanı değil
+      // GERÇEKTEN girilen kayıt sayısıdır (license_items.batch_id'de FK yok, id'ler
+      // uygulamada üretildiği için sıra serbest — hepsi aynı tx'te commit olur).
+      const receipt = plan
+        ? await this.commitAutoReceipt(tx, productId, plan, rows.length, actor)
+        : undefined;
+
+      // Sebepli stok değişikliği audit'e düşer (§12). Aktör çağırandan gelir (x-admin-actor).
+      await tx.insert(auditLog).values({
+        action: 'import',
+        actor,
+        targetType: 'product',
+        targetId: productId,
+        meta: {
+          imported: rows.length,
+          duplicates: dup,
+          rejected: rejections.length,
+          ...(resolvedBatchId ? { batchId: resolvedBatchId } : {}),
+          ...(receipt
+            ? {
+                autoReceipt: {
+                  purchaseOrderId: receipt.purchaseOrderId ?? null,
+                  supplierId: receipt.supplierId,
+                  label: receipt.label,
+                },
+              }
+            : {}),
+        },
+      });
+
+      return { inserted: rows.length, duplicates: dup, outcome: receipt };
     });
 
     // Stok girişinde tamamlama motorunu tetikle (§5 partial-auto FIFO).
@@ -405,7 +600,7 @@ export class StockService {
     // Davranış: küçük backlog → eski hızlı deneyim; büyük backlog → import HIZLI döner + kalan arkada.
     let autoCompleted = 0;
     let autoCompleteQueued = false;
-    if (inserted.length > 0) {
+    if (inserted > 0) {
       const cap = this.inlineCap();
       const inline = await this.fulfillment.autoCompleteProduct(productId, cap);
       autoCompleted = inline.completed;
@@ -433,12 +628,19 @@ export class StockService {
 
     return {
       requested: items.length,
-      imported: inserted.length,
+      imported: inserted,
       duplicates,
       rejected: rejections.length,
       rejections,
       autoCompleted,
       autoCompleteQueued,
+      newBatch: outcome,
+      // Yapıştırılan satır sayısı ile kaydedilen adet ayrıştıysa görünür kıl (emir GERÇEK
+      // adetle açıldı; operatör "100 girdim ama 97 kaydedildi" bilgisini kaybetmesin).
+      qtyMismatch:
+        outcome && items.length !== inserted
+          ? { declared: items.length, imported: inserted }
+          : undefined,
     };
   }
 
@@ -460,13 +662,19 @@ export class StockService {
    * (kayıt snapshot'sız kalır → maliyet raporunda "kapsanamayan"). PO join'i LEFT'tir:
    * PO'suz elle parti artık DOĞRULAMADAN geçer ama maliyetsiz kalır (eskiden innerJoin
    * olduğu için bu satır zaten null dönüyordu — davranış aynı).
+   *
+   * `exec`: import artık TEK transaction'da koştuğu için okuma da o tx'ten yapılmalıdır —
+   * aksi halde aynı istekte oluşturulan parti (henüz commit edilmemiş) GÖRÜLMEZ ve 404 tüm
+   * transaction'ı geri alır. Erken çıkış yolları (kuru çalıştırma / hepsi reddedildi) tx
+   * açmadığı için varsayılan `this.db` ile çağırır.
    */
   private async resolveBatchForImport(
     productId: string,
     batchId?: string,
+    exec: Database = this.db,
   ): Promise<{ unitCostCents: number; costCurrency: string } | null> {
     if (!batchId) return null;
-    const [row] = await this.db
+    const [row] = await exec
       .select({
         batchProductId: batches.productId,
         batchStatus: batches.status,
@@ -495,6 +703,264 @@ export class StockService {
     }
     if (row.unitCostCents == null || row.costCurrency == null) return null;
     return { unitCostCents: row.unitCostCents, costCurrency: row.costCurrency };
+  }
+
+  // ─── Stok girişiyle aynı istekte parti + otomatik satın alma emri (§12) ──────────────
+
+  /**
+   * Yeni parti PLANI (transaction İÇİNDE hesaplanır): tedarikçi çözümü + kimlikler +
+   * tarih/maliyet doğrulaması. Hiçbir PO/parti satırı BURADA yazılmaz — adet henüz
+   * bilinmiyor (gerçekten girilen kayıt sayısından türeyecek), bkz. commitAutoReceipt.
+   */
+  private async prepareAutoReceipt(
+    exec: Database,
+    productId: string,
+    input: NewBatchInput,
+    actor: string,
+  ): Promise<AutoReceiptPlan> {
+    const label = (input.label ?? '').trim();
+    if (!label) throw new BadRequestException('Parti etiketi zorunludur.');
+
+    const receivedAt = parseReceivedAt(input.receivedAt);
+    const supplier = await this.resolveSupplier(exec, input, true, actor);
+    if (input.unitCostCents != null && !supplier) {
+      throw new BadRequestException(COST_NEEDS_SUPPLIER_MSG);
+    }
+
+    const currency = normalizeCurrency(input.currency);
+    // Satın alma emri YALNIZ tedarikçi çözüldüyse açılır; tedarikçisiz giriş bağımsız parti
+    // olur (batches.supplier_id / purchase_order_id NULL olabilir — şema destekliyor).
+    const purchaseOrderId = supplier ? randomUUID() : null;
+
+    return {
+      batchId: randomUUID(),
+      purchaseOrderId,
+      supplierId: supplier?.id ?? null,
+      supplierName: supplier?.name ?? null,
+      supplierCreated: supplier?.created ?? false,
+      label,
+      receivedAt,
+      unitCostCents: input.unitCostCents ?? null,
+      currency: purchaseOrderId ? currency : null,
+      notes: (input.notes ?? '').trim() || null,
+      labelDuplicate: await this.hasBatchLabel(exec, productId, label),
+      costSnapshot:
+        purchaseOrderId && input.unitCostCents != null
+          ? { unitCostCents: input.unitCostCents, costCurrency: currency }
+          : null,
+    };
+  }
+
+  /**
+   * Planı yazar: (varsa) 'received' satın alma emri + parti + denetim izi.
+   * `qty` GERÇEKTEN girilen kayıt sayısıdır — operatörün beyanı değil.
+   */
+  private async commitAutoReceipt(
+    exec: Database,
+    productId: string,
+    plan: AutoReceiptPlan,
+    qty: number,
+    actor: string,
+  ): Promise<NewBatchOutcome> {
+    const note = autoReceiptNote(plan.label, plan.notes);
+
+    if (plan.purchaseOrderId && plan.supplierId) {
+      await exec.insert(purchaseOrders).values({
+        id: plan.purchaseOrderId,
+        supplierId: plan.supplierId,
+        productId,
+        // Mal zaten elde: emir doğrudan 'received' açılır (panel 'Teslim Al' eylemini
+        // otomatik-giriş önekinden tanıyıp gizler → ikinci kez teslim alınıp stok şişmez).
+        status: 'received',
+        // Mükerrer atlanan anahtarlar ZATEN önceki partide sayıldı; onları da yazmak
+        // tedarik harcamasını ÇİFT gösterirdi.
+        qtyOrdered: qty,
+        qtyReceived: qty,
+        unitCostCents: plan.unitCostCents,
+        currency: plan.currency ?? 'TRY',
+        // orderedAt BİLEREK null: tedarikçi karnesi avgLeadDays = avg(received_at − ordered_at)
+        // hesaplar; ikisini eşitlemek her stok girişine "0 gün" ekleyip KPI'ı sıfıra çekerdi.
+        orderedAt: null,
+        eta: null,
+        receivedAt: plan.receivedAt,
+        notes: note,
+      });
+    }
+
+    await exec.insert(batches).values({
+      id: plan.batchId,
+      supplierId: plan.supplierId,
+      purchaseOrderId: plan.purchaseOrderId,
+      productId,
+      label: plan.label,
+      qtyReceived: qty,
+      // AÇIKÇA yazılır (kolon default'u now()): maliyet raporu ayları doğrudan bu tarihe göre
+      // gruplar — operatörün bildirdiği teslim tarihi korunmalı.
+      receivedAt: plan.receivedAt,
+      notes: note,
+    });
+
+    await exec.insert(auditLog).values({
+      action: 'receive',
+      actor,
+      targetType: plan.purchaseOrderId ? 'purchase_order' : 'batch',
+      targetId: plan.purchaseOrderId ?? plan.batchId,
+      meta: {
+        kind: 'stock_import_auto_receipt',
+        source: 'stock_import',
+        batchId: plan.batchId,
+        purchaseOrderId: plan.purchaseOrderId,
+        supplierId: plan.supplierId,
+        label: plan.label,
+        qtyReceived: qty,
+        unitCostCents: plan.unitCostCents,
+        currency: plan.currency,
+        receivedAt: plan.receivedAt.toISOString(),
+      },
+    });
+
+    return {
+      created: true,
+      batchId: plan.batchId,
+      purchaseOrderId: plan.purchaseOrderId,
+      supplierId: plan.supplierId,
+      supplierName: plan.supplierName,
+      supplierCreated: plan.supplierCreated,
+      supplierExisting: plan.supplierId != null && !plan.supplierCreated,
+      label: plan.label,
+      receivedAt: plan.receivedAt.toISOString(),
+      qtyReceived: qty,
+      unitCostCents: plan.unitCostCents,
+      currency: plan.currency,
+      costSnapshotApplied: plan.costSnapshot != null,
+      labelDuplicate: plan.labelDuplicate,
+    };
+  }
+
+  /**
+   * Kuru çalıştırma SONDASI: hiçbir şey yazmaz ama gerçek koşuda patlayacak her şeyi
+   * ŞİMDİ doğrular (tedarikçi var mı → 404, tarih aralığı → 400, maliyet-tedarikçi
+   * tutarlılığı → 400) ve tahmini sonucu echo eder. `supplierCreated` burada bir
+   * TAHMİNDİR ("bu adla tedarikçi açılacak"), gerçek koşuda kilit altında kesinleşir.
+   */
+  private async probeNewBatch(
+    productId: string,
+    input: NewBatchInput,
+    qty: number,
+  ): Promise<NewBatchOutcome> {
+    const label = (input.label ?? '').trim();
+    if (!label) throw new BadRequestException('Parti etiketi zorunludur.');
+
+    const receivedAt = parseReceivedAt(input.receivedAt);
+    const supplier = await this.resolveSupplier(this.db, input, false, 'panel:admin');
+    if (input.unitCostCents != null && !supplier) {
+      throw new BadRequestException(COST_NEEDS_SUPPLIER_MSG);
+    }
+    const currency = normalizeCurrency(input.currency);
+
+    return {
+      created: false,
+      reason: 'dry_run',
+      purchaseOrderId: null,
+      supplierId: supplier?.id ?? null,
+      supplierName: supplier?.name ?? null,
+      supplierCreated: supplier?.created ?? false,
+      supplierExisting: supplier?.existing ?? false,
+      label,
+      receivedAt: receivedAt.toISOString(),
+      qtyReceived: qty,
+      unitCostCents: input.unitCostCents ?? null,
+      currency: supplier ? currency : null,
+      costSnapshotApplied: supplier != null && input.unitCostCents != null,
+      labelDuplicate: await this.hasBatchLabel(this.db, productId, label),
+    };
+  }
+
+  /**
+   * Tedarikçi çözümü. `supplierId` verilmişse VARLIĞI doğrulanır (FK ihlaliyle 500 yerine
+   * temiz 404). `supplierName` verilmişse ad eşleşmesi aranır: bulunursa MEVCUT kayıt
+   * yeniden kullanılır (aksi halde her girişte bir 'Acme' daha birikirdi — `suppliers.name`
+   * UNIQUE DEĞİL), yoksa `create=true` iken yeni kayıt açılır.
+   *
+   * KİLİT: ad yolunda `pg_advisory_xact_lock` alınır (voidLicenseItem deseni) — kilitsiz iki
+   * eşzamanlı giriş "yok → ekle" yarışında iki ayrı tedarikçi üretirdi. Kilit anahtarı SQL
+   * `lower()` ile kurulur ki arama yüklemiyle BİREBİR aynı normalizasyonu kullansın (JS
+   * `toLowerCase` Türkçe 'İ'de ayrışabilir).
+   *
+   * `create=false` (kuru çalıştırma) yalnız sondalar: kilit almaz, kayıt açmaz.
+   */
+  private async resolveSupplier(
+    exec: Database,
+    input: NewBatchInput,
+    create: boolean,
+    actor: string,
+  ): Promise<{ id: string | null; name: string; created: boolean; existing: boolean } | null> {
+    if (input.supplierId && input.supplierName) {
+      throw new BadRequestException(
+        'Tedarikçi ya listeden seçilir ya da yeni ad girilir — ikisi birlikte gönderilemez.',
+      );
+    }
+
+    if (input.supplierId) {
+      const [row] = await exec
+        .select({ id: suppliers.id, name: suppliers.name })
+        .from(suppliers)
+        .where(eq(suppliers.id, input.supplierId))
+        .limit(1);
+      if (!row) throw new NotFoundException('Seçilen tedarikçi bulunamadı.');
+      return { id: row.id, name: row.name, created: false, existing: true };
+    }
+
+    const name = (input.supplierName ?? '').trim();
+    if (!name) return null;
+
+    if (create) {
+      await exec.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext('supplier:name:' || lower(${name})))`,
+      );
+    }
+
+    // Pasif (active=false) tedarikçi de YENİDEN KULLANILIR: aynı gerçek firmadır, ikinci bir
+    // kayıt açmak mükerrer ad üretirdi. Pasiflik ayrı bir yönetim kararıdır (/suppliers).
+    const [existing] = await rawRows<{ id: string; name: string }>(exec, sql`
+      SELECT id, name FROM suppliers
+      WHERE lower(name) = lower(${name})
+      ORDER BY created_at ASC
+      LIMIT 1;
+    `);
+    if (existing) return { id: existing.id, name: existing.name, created: false, existing: true };
+    if (!create) return { id: null, name, created: true, existing: false };
+
+    const [row] = await exec
+      .insert(suppliers)
+      .values({ name, notes: `${AUTO_RECEIPT_NOTE_PREFIX} Stok girişinde otomatik oluşturuldu.` })
+      .returning({ id: suppliers.id, name: suppliers.name });
+    if (!row) throw new ConflictException('Tedarikçi oluşturulamadı — girişi tekrarlayın.');
+
+    // NOT: audit_action enum'unda 'create' YOK ve migration eklemiyoruz → kaydın kaynağı
+    // 'import' eylemi + meta.op ile taşınır (targetType='supplier').
+    await exec.insert(auditLog).values({
+      action: 'import',
+      actor,
+      targetType: 'supplier',
+      targetId: row.id,
+      meta: { op: 'create', source: 'stock_import', name: row.name },
+    });
+    return { id: row.id, name: row.name, created: true, existing: false };
+  }
+
+  /** Aynı üründe aynı etiketli parti var mı? Engel DEĞİL — yalnız operatöre uyarı. */
+  private async hasBatchLabel(
+    exec: Database,
+    productId: string,
+    label: string,
+  ): Promise<boolean> {
+    const rows = await rawRows<{ id: string }>(exec, sql`
+      SELECT id FROM batches
+      WHERE product_id = ${productId} AND lower(label) = lower(${label})
+      LIMIT 3;
+    `);
+    return rows.length > 0;
   }
 
   /** Ürün account ise payloadSchema'yı doğrulayıp döner; değilse null. */
@@ -1256,6 +1722,48 @@ function clampPageSize(n?: number): number {
 /** ILIKE joker karakterlerini (\, %, _) kaçırır — ESCAPE '\' ile birlikte kullanılır. */
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * Teslim alma tarihi doğrulaması: [2000-01-01, şimdi + 24 saat].
+ *
+ * Gelecek tarih reddi KRİTİK: maliyet raporu (`costs.byMonth`) doğrudan `batches.received_at`
+ * ile ay kovası yapar ve tarihi düzeltecek bir uç YOKTUR → ileri tarihli tek giriş raporda
+ * kalıcı "hayalet ay" satırı bırakır. Alt sınır ise yanlış yazılmış yıl (ör. 0205) içindir.
+ */
+function parseReceivedAt(raw?: string): Date {
+  if (!raw) return new Date();
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    throw new BadRequestException('Teslim alma tarihi okunamadı (ISO tarih bekleniyor).');
+  }
+  const min = Date.UTC(2000, 0, 1);
+  const max = Date.now() + 24 * 60 * 60 * 1000;
+  if (d.getTime() < min || d.getTime() > max) {
+    throw new BadRequestException(
+      'Teslim alma tarihi 1 Ocak 2000 ile bugünden en çok 24 saat sonrası arasında olmalı. ' +
+        'Maliyet raporu ayları bu tarihe göre gruplanır; ileri/çok geri tarihli giriş ' +
+        'raporda kalıcı hayalet satır bırakır.',
+    );
+  }
+  return d;
+}
+
+/**
+ * Para birimi normalizasyonu. Maliyet raporu `GROUP BY currency` yapıyor — 'try' ile 'TRY'
+ * aynı raporu ikiye bölerdi. Boş/verilmemişse şema varsayılanı ('TRY') kullanılır.
+ */
+function normalizeCurrency(raw?: string): string {
+  return (raw ?? '').trim().toUpperCase() || 'TRY';
+}
+
+/**
+ * Otomatik oluşturulan satın alma emri/parti notu. Önek `AUTO_RECEIPT_NOTE_PREFIX`'tir:
+ * panel bu öneke bakıp 'Otomatik' rozeti gösterir ve 'Teslim Al' eylemini gizler.
+ */
+function autoReceiptNote(label: string, operatorNote: string | null): string {
+  const base = `${AUTO_RECEIPT_NOTE_PREFIX} Stok girişinden otomatik oluşturuldu (parti: ${label}).`;
+  return operatorNote ? `${base} ${operatorNote}` : base;
 }
 
 // NOT: mağaza admin sipariş linki YEREL KOPYA DEĞİL — tek kaynak `orders/store-admin-url.ts`

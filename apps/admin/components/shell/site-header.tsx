@@ -27,6 +27,9 @@ const LABELS: Record<string, string> = {
   pending: 'Bekleyen Teslimatlar',
   stock: 'Stok & Ürünler',
   sites: 'Kanallar / Siteler',
+  // NAV'dan türeyen anahtarlar tek segmenttir ('/stock/import' → 'stock/import' asla eşleşmez),
+  // bu yüzden çok segmentli rotaların son parçası burada elle karşılanır.
+  import: 'Stok Girişi',
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

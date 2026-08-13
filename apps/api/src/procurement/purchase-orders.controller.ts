@@ -9,8 +9,11 @@ const CreatePoBody = z.object({
   productId: z.string().uuid(),
   // Oluştururken yalnız draft veya ordered (partial/received teslim almayla oluşur).
   status: z.enum(['draft', 'ordered']).default('draft'),
-  qtyOrdered: z.number().int().positive(),
-  unitCostCents: z.number().int().nonnegative().optional(),
+  // Üst sınırlar int4 taşmasına karşı (PG kolonları `integer`): sınırsız girdi 2147483647
+  // üstünde PG 22003 ile 500 üretirdi; artık kullanıcı 400 alır.
+  // qtyOrdered: stok import tavanıyla (stock.controller count max 1_000_000) hizalı.
+  qtyOrdered: z.number().int().positive().max(1_000_000),
+  unitCostCents: z.number().int().nonnegative().max(2_000_000_000).optional(),
   currency: z.string().min(1).max(8).optional(),
   eta: z.string().datetime().optional(),
   notes: z.string().optional(),
@@ -25,7 +28,9 @@ const UpdatePoBody = z.object({
 type UpdatePoBody = z.infer<typeof UpdatePoBody>;
 
 const ReceiveBody = z.object({
-  qty: z.number().int().positive(),
+  // Kabul edilen adet servis tarafında min(qty, kalan) ile zaten kırpılır (int4 taşması YOK),
+  // yine de qtyOrdered ile aynı tavan: absürt girdi doğrulamada 400 alsın, aritmetiğe girmesin.
+  qty: z.number().int().positive().max(1_000_000),
   batchLabel: z.string().min(1),
   notes: z.string().optional(),
 });

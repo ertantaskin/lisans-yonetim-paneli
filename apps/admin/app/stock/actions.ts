@@ -2,6 +2,47 @@
 import { revalidatePath } from 'next/cache';
 import { apiGet, apiPost, apiSend, type CatalogRow } from '../../lib/api';
 import { getActor } from '../../lib/session';
+import { MAX_IMPORT_ITEMS } from './import/limits';
+import { liraToCents, type ImportItemInput } from './import/parse';
+
+/**
+ * Reddedilen satır. `index` API'nin gönderilen `items[]` dizisindeki SIRASI, `line` ise
+ * kullanıcının EKRANDA gördüğü satır numarasıdır — boş/başlık satırları atlandığı için
+ * ikisi aynı DEĞİLDİR. `line` yalnız yeni /stock/import ekranı satır haritası gönderince
+ * dolar; eski form (keys textarea) için tanımsız kalır (çağıran `index + 1`'e düşer).
+ */
+export interface ImportRejectionView {
+  index: number;
+  reason: string;
+  line?: number;
+}
+
+/**
+ * Stok girişiyle AYNI istekte açılan parti (+ otomatik satın alma emri) sonucu.
+ * API `ImportResult.newBatch` (apps/api/src/stock/stock.service.ts → NewBatchOutcome)
+ * alanlarının aynası. `created=false` iken `reason` NEDEN oluşmadığını söyler.
+ */
+export interface ImportNewBatchOutcome {
+  created: boolean;
+  reason?: 'dry_run' | 'all_rejected';
+  batchId?: string;
+  purchaseOrderId?: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  /** Tedarikçi bu istekte oluşturuldu mu (kuru çalıştırmada: oluşturulacak mı). */
+  supplierCreated?: boolean;
+  /** Ad eşleşmesiyle MEVCUT tedarikçi kullanıldı mı (mükerrer 'Acme' üretilmedi). */
+  supplierExisting?: boolean;
+  label: string;
+  receivedAt: string;
+  qtyReceived: number;
+  unitCostCents: number | null;
+  currency: string | null;
+  /** Girilen lisans kayıtlarına COGS maliyet anlık-görüntüsü yazıldı mı. */
+  costSnapshotApplied: boolean;
+  /** Aynı üründe aynı etiketli parti zaten var mı? Engel DEĞİL — yalnız uyarı. */
+  labelDuplicate?: boolean;
+}
 
 export interface ImportState {
   ok: boolean;
@@ -11,12 +52,89 @@ export interface ImportState {
     imported: number;
     duplicates: number;
     rejected: number;
-    rejections?: Array<{ index: number; reason: string }>;
+    rejections?: ImportRejectionView[];
     autoCompleted: number;
+    /** Inline cap'i aşan bekleyen satırlar arka plan kuyruğuna atıldı mı. */
+    autoCompleteQueued?: boolean;
     /** Kuru çalıştırma (§7): true ise hiçbir şey kaydedilmedi (yalnız önizleme). */
     dryRun?: boolean;
     /** Kuru çalıştırma tahmini: dedupe sonrası girilecek satır sayısı. */
     wouldImport?: number;
+    /** Aynı istekte parti istendiyse sonucu (istenmediyse hiç dönmez). */
+    newBatch?: ImportNewBatchOutcome;
+    /** Yapıştırılan satır sayısı ≠ gerçekten kaydedilen adet (mükerrer/ret) uyarısı. */
+    qtyMismatch?: { declared: number; imported: number };
+  };
+}
+
+/** Stok girişi ekranındaki parti seçici satırı (yalnız AKTİF partiler listelenir). */
+export interface ProductBatchOption {
+  id: string;
+  label: string;
+  status: string;
+  receivedAt: string | null;
+  supplierName: string | null;
+  qtyReceived: number;
+}
+
+/** Maliyet girildi ama tedarikçi yok — API ile AYNI metin (tek dil). */
+const COST_NEEDS_SUPPLIER =
+  'Birim maliyet girildi ama tedarikçi seçilmedi. Maliyet satın alma emrinde tutulur; ' +
+  'tedarikçi seçin ya da maliyeti boş bırakın.';
+
+/**
+ * Yeni parti (`newBatch`) gövdesini form alanlarından kurar.
+ *
+ * BOŞ ALAN GÖNDERİLMEZ: API `receivedAt` için `.datetime()`, `supplierId` için `.uuid()`
+ * bekler — boş string bu doğrulamaları 400'e düşürürdü. Doğrulama burada da yapılır ki
+ * operatör API'nin İngilizce/teknik hatası yerine Türkçe, alan-özel mesaj görsün.
+ */
+function buildNewBatchBody(formData: FormData): { body?: Record<string, unknown>; error?: string } {
+  const label = String(formData.get('batchLabel') || '').trim();
+  if (!label) return { error: 'Yeni parti için etiket zorunlu (ör. 2026-08-A).' };
+
+  const supplierId = String(formData.get('supplierId') || '').trim();
+  const supplierName = String(formData.get('supplierName') || '').trim();
+  if (supplierId && supplierName) {
+    return {
+      error: 'Tedarikçi ya listeden seçilir ya da yeni ad girilir — ikisi birlikte gönderilemez.',
+    };
+  }
+
+  // Maliyet KURUŞ değil LİRA olarak girilir; dönüşüm tek yerde (parse.liraToCents).
+  const costRaw = String(formData.get('unitCostLira') || '').trim();
+  let unitCostCents: number | null = null;
+  if (costRaw) {
+    unitCostCents = liraToCents(costRaw);
+    if (unitCostCents == null) {
+      return { error: 'Birim maliyet okunamadı. Lira olarak girin — ör. 12,50' };
+    }
+  }
+  if (unitCostCents != null && !supplierId && !supplierName) return { error: COST_NEEDS_SUPPLIER };
+
+  // <input type="date"> → 'yyyy-mm-dd'; API ISO datetime ister. Yerel gün başlangıcı
+  // kullanılır (sunucu TZ Europe/Istanbul) → maliyet raporu ayları doğru bucket'lanır.
+  const receivedAtRaw = String(formData.get('receivedAt') || '').trim();
+  let receivedAt: string | undefined;
+  if (receivedAtRaw) {
+    const d = new Date(`${receivedAtRaw}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return { error: 'Alım tarihi okunamadı.' };
+    receivedAt = d.toISOString();
+  }
+
+  const currency = String(formData.get('currency') || '').trim().toUpperCase();
+  const notes = String(formData.get('batchNotes') || '').trim();
+
+  return {
+    body: {
+      label,
+      ...(supplierId ? { supplierId } : {}),
+      ...(supplierName ? { supplierName } : {}),
+      ...(receivedAt ? { receivedAt } : {}),
+      ...(unitCostCents != null ? { unitCostCents } : {}),
+      ...(currency ? { currency } : {}),
+      ...(notes ? { notes } : {}),
+    },
   };
 }
 
@@ -156,45 +274,182 @@ export async function updateProductAction(
   }
 }
 
-/** Stok import — textarea'daki her satır bir key. */
+/**
+ * Stok import (§12). İki girdi yolu:
+ *  · `itemsJson` — yeni "Stok Girişi" ekranı (app/stock/import). İstemci kayıtları (key satırı ya da hesap
+ *    NESNESİ) ve her kaydın EKRANDAKİ satır numarasını birlikte gönderir → reddedilen satır
+ *    raporu doğru satırı işaret eder. Hesap satırları API'ye NESNE olarak gider (payload
+ *    union'ı nesneyi kabul eder) — JSON string'e çevrilmez.
+ *  · `keys` — ürün detayındaki mevcut form (her satır bir key). GERİYE DÖNÜK korunur.
+ *
+ * Parti üç moddan biriyle bağlanır (`batchMode`): partisiz · mevcut parti (`batchId`) ·
+ * stok girişiyle AYNI istekte açılan yeni parti (`newBatch`). İkisi karşılıklı dışlayıcıdır.
+ */
 export async function importStockAction(
   _prev: ImportState,
   formData: FormData,
 ): Promise<ImportState> {
   const productId = String(formData.get('productId') || '');
-  const batchId = String(formData.get('batchId') || '').trim();
   // Kuru çalıştırma (§7): "Kuru Çalıştır" butonu name=dryRun value=true gönderir.
   const dryRun = String(formData.get('dryRun') || '') === 'true';
-  const raw = String(formData.get('keys') || '');
-  const items = raw
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((payload) => ({ payload }));
   if (!productId) return { ok: false, error: 'Ürün seçin' };
-  if (items.length === 0) return { ok: false, error: 'En az bir key girin' };
+
+  const items: Array<{ payload: string | Record<string, string> }> = [];
+  /** items[i] → kullanıcının ekranda gördüğü satır no (rejections eşlemesi için). */
+  const sourceLines: number[] = [];
+
+  const itemsJson = String(formData.get('itemsJson') || '').trim();
+  if (itemsJson) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(itemsJson);
+    } catch {
+      return { ok: false, error: 'Girilen kayıtlar okunamadı (biçim hatası). Tekrar deneyin.' };
+    }
+    if (!Array.isArray(parsed)) {
+      return { ok: false, error: 'Girilen kayıtlar okunamadı (beklenmeyen biçim).' };
+    }
+    parsed.forEach((raw, i) => {
+      const it = raw as ImportItemInput | null;
+      const payload = it?.payload;
+      if (typeof payload === 'string') {
+        if (!payload) return;
+        items.push({ payload });
+      } else if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        items.push({ payload: payload as Record<string, string> });
+      } else {
+        return;
+      }
+      const line = it?.line;
+      sourceLines.push(typeof line === 'number' && line > 0 ? line : i + 1);
+    });
+  } else {
+    String(formData.get('keys') || '')
+      .split('\n')
+      .forEach((l, i) => {
+        const trimmed = l.trim();
+        if (!trimmed) return;
+        items.push({ payload: trimmed });
+        sourceLines.push(i + 1);
+      });
+  }
+
+  if (items.length === 0) return { ok: false, error: 'En az bir kayıt girin' };
+  if (items.length > MAX_IMPORT_ITEMS) {
+    return {
+      ok: false,
+      error: `Tek seferde en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} kayıt girilebilir. Girdiyi bölün.`,
+    };
+  }
+
+  // Parti modu: yeni ekran `batchMode` gönderir; eski form yalnız `batchId` (mod alanı yok).
+  const batchIdRaw = String(formData.get('batchId') || '').trim();
+  const batchMode = String(formData.get('batchMode') || '').trim();
+  let batchId: string | undefined;
+  let newBatch: Record<string, unknown> | undefined;
+  if (batchMode === 'new') {
+    const built = buildNewBatchBody(formData);
+    if (built.error) return { ok: false, error: built.error };
+    newBatch = built.body;
+  } else if (batchMode === 'existing' || (!batchMode && batchIdRaw)) {
+    batchId = batchIdRaw || undefined;
+  }
+
   try {
-    const result = await apiPost<ImportState['result']>(
+    const result = await apiPost<NonNullable<ImportState['result']>>(
       '/v1/admin/stock/import',
       {
         productId,
         items,
         // Boşsa gönderme — API opsiyonel uuid bekler (boş string uuid doğrulamasını bozar).
         ...(batchId ? { batchId } : {}),
+        ...(newBatch ? { newBatch } : {}),
         // Kuru çalıştırmada yalnız true gönder; gerçek import'ta bayrağı hiç ekleme.
         ...(dryRun ? { dryRun: true } : {}),
       },
       await getActor(),
     );
+
+    // Reddedilen satırlara EKRANDAKİ satır numarasını iliştir (API yalnız items[] sırasını
+    // bilir; boş/başlık satırları atlandığı için ikisi aynı değildir).
+    const rejections = (result?.rejections ?? []).map((r) => ({
+      index: r.index,
+      reason: r.reason,
+      ...(sourceLines[r.index] != null ? { line: sourceLines[r.index] } : {}),
+    }));
+
     // Kuru çalıştırma DB'yi değiştirmez → cache invalidation gereksiz; yalnız gerçek import'ta.
-    // Import artık ürün detayında yapılıyor → o sayfayı tazele (+ /stock stok kolonu için).
     if (!dryRun) {
       revalidatePath(`/products/${productId}`);
       revalidatePath('/stock');
+      revalidatePath('/stock/import');
+      // Parti/satın alma emri sayaçları bu istekte değişebilir (newBatch) ya da mevcut
+      // partiye kayıt eklenir → iki ekran da bayat kalmasın (eskiden eksikti).
+      revalidatePath('/batches');
+      revalidatePath('/purchase-orders');
+      // Stok gelince bekleyen satırlar tamamlanmış olabilir.
+      if (result?.autoCompleted) {
+        revalidatePath('/orders');
+        revalidatePath('/pending');
+      }
     }
-    return { ok: true, result };
+    return { ok: true, result: { ...result, rejections } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
+  }
+}
+
+/**
+ * Bir ÜRÜNE ait aktif partiler (stok girişi ekranındaki "mevcut parti" seçicisi).
+ *
+ * NEDEN AYRI ÇAĞRI: `GET /v1/admin/batches` ürün filtresi kabul etmez ve iki tam GROUP BY
+ * (satılmış/satılmamış sayımı) yapar → tüm partileri sayfa açılışında önden yüklemek pahalı.
+ * Ürün seçilince/değişince yalnız o an gerekli liste çekilir.
+ *
+ * Yalnız `status='active'` partiler döner: API aktif olmayan partiye stok eklemeyi 409 ile
+ * reddeder (recall süpürmesi geçmiş partiye taze anahtar eklenmesin) — listede göstermek
+ * garantili bir hataya davet olurdu. Elenen adet `inactiveCount` ile DÜRÜSTÇE bildirilir.
+ */
+export async function fetchProductBatchesAction(productId: string): Promise<{
+  ok: boolean;
+  batches?: ProductBatchOption[];
+  inactiveCount?: number;
+  error?: string;
+}> {
+  const id = String(productId || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return { ok: false, error: 'Geçersiz ürün' };
+  }
+  interface RawBatch {
+    id: string;
+    label: string;
+    productId: string;
+    status: string;
+    qtyReceived?: number;
+    receivedAt?: string | null;
+    supplierName?: string | null;
+  }
+  try {
+    // API dizi VEYA {items} döndürebilir (batches/queries.ts ile aynı savunma).
+    const data = await apiGet<RawBatch[] | { items: RawBatch[] }>('/v1/admin/batches');
+    const all = (Array.isArray(data) ? data : (data?.items ?? [])).filter(
+      (b) => b?.productId === id,
+    );
+    const active = all.filter((b) => b.status === 'active');
+    return {
+      ok: true,
+      inactiveCount: all.length - active.length,
+      batches: active.map((b) => ({
+        id: b.id,
+        label: b.label,
+        status: b.status,
+        receivedAt: b.receivedAt ?? null,
+        supplierName: b.supplierName ?? null,
+        qtyReceived: Number(b.qtyReceived ?? 0),
+      })),
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Partiler alınamadı' };
   }
 }
 
@@ -205,6 +460,14 @@ export interface PreviewState {
     count: number;
     pendingLines: number;
     pendingUnits: number;
+    /**
+     * Stok girişiyle OTOMATİK dolacak bekleyen birim (efektif politika partial-auto +
+     * ön sipariş penceresi kapalı). İstemci `wouldFill = min(satır sayısı, autoUnits)`
+     * hesabını BUNDAN yapar → satır sayısı değiştikçe yeni ağ turu gerekmez.
+     */
+    autoUnits: number;
+    /** Otomatik DOLMAYACAK bekleyen birim (all-or-nothing / onaylı / ön sipariş). */
+    manualUnits: number;
     wouldFill: number;
     remainingAfter: number;
   };
@@ -222,10 +485,16 @@ export async function previewStockAction(
   const count = Number(String(formData.get('count') || '0')) || 0;
   if (!productId) return { ok: false, error: 'Ürün seçin' };
   try {
-    const result = await apiPost<PreviewState['result']>('/v1/admin/stock/preview', {
-      productId,
-      count: Math.max(0, Math.floor(count)),
-    });
+    const result = await apiPost<PreviewState['result']>(
+      '/v1/admin/stock/preview',
+      {
+        productId,
+        count: Math.max(0, Math.floor(count)),
+      },
+      // Aktör iletilir (diğer stok çağrılarıyla simetri; API tarafında audit/izleme
+      // aynı admin'e attribute edilir). Eskiden bu çağrıda eksikti.
+      await getActor(),
+    );
     return { ok: true, result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Hata' };

@@ -22,8 +22,17 @@ import {
 /** Uygulama kenar menüsü — marka + gruplu bilgi mimarisi + kullanıcı (§17). */
 export function AppSidebar({ user }: { user?: { name: string; email: string; role?: string } }) {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    href !== '#' && (pathname === href || pathname.startsWith(href + '/'));
+  // Aktif öğe = pathname'e uyan EN UZUN href. Düz prefix eşleşmesi kullanılamaz:
+  // /stock/import açıkken hem "Stok & Ürünler" (/stock) hem "Stok Girişi" aktif görünürdü.
+  let activeHref = '';
+  for (const section of NAV) {
+    for (const item of section.items) {
+      if (item.href === '#') continue;
+      const hit = pathname === item.href || pathname.startsWith(item.href + '/');
+      if (hit && item.href.length > activeHref.length) activeHref = item.href;
+    }
+  }
+  const isActive = (href: string) => href !== '#' && href === activeHref;
   // ownerOnly öğeler: auth kapalıysa (user yok) VEYA owner ise görünür.
   const canSee = (item: { ownerOnly?: boolean }) => !item.ownerOnly || !user || user.role === 'owner';
 

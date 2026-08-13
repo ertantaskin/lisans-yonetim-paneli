@@ -1,0 +1,1290 @@
+'use client';
+import * as React from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  Banknote,
+  Boxes,
+  Braces,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  ClipboardList,
+  ExternalLink,
+  Eye,
+  FileUp,
+  Info,
+  KeyRound,
+  Package,
+  Table2,
+  TriangleAlert,
+  Truck,
+  Upload,
+} from 'lucide-react';
+import {
+  fetchProductBatchesAction,
+  importStockAction,
+  previewStockAction,
+  type ImportState,
+  type PreviewState,
+  type ProductBatchOption,
+} from '../actions';
+import type { ProductRow } from '../../../lib/api';
+import { useAnnouncer } from '../../../components/a11y/announcer';
+import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
+import { Badge } from '../../../components/ui/badge';
+import { Button } from '../../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
+import { Combobox } from '../../../components/ui/combobox';
+import { Field, FieldRow } from '../../../components/ui/field';
+import { Input, Textarea, checkboxClass, selectClass } from '../../../components/ui/input';
+import { Separator } from '../../../components/ui/separator';
+import { productKindLabel, supplyStatusLabel, usageModeLabel } from '../../../lib/labels';
+import { cn, formatDate } from '../../../lib/utils';
+import { AccountRowsEditor, emptyAccountRow, type AccountColumn } from './account-rows-editor';
+import { MAX_IMPORT_BYTES, MAX_IMPORT_ITEMS, MAX_IMPORT_LABEL, formatBytes } from './limits';
+import {
+  formatMoney,
+  liraToCents,
+  splitLines,
+  type ImportItemInput,
+} from './parse';
+
+const importInitial: ImportState = { ok: false };
+const previewInitial: PreviewState = { ok: false };
+
+/** Parti modu — üçü karşılıklı dışlayıcı (API `batchId` ile `newBatch`'i birlikte kabul etmez). */
+type BatchMode = 'none' | 'new' | 'existing';
+
+/** Anahtar girdisi kaynağı (key/code/custom ürünler). */
+type KeySource = 'paste' | 'file';
+
+/**
+ * Tedarikçi seçeneği — `/v1/admin/suppliers` satırının bu ekranda kullanılan alt kümesi.
+ * Tip `app/purchase-orders/queries.ts`'ten IMPORT EDİLMEZ: o modül `server-only` taşır ve
+ * istemci bileşenine sızmamalıdır (tip elenirdi ama bağı hiç kurmamak daha güvenli).
+ */
+export interface SupplierPick {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+/** Hesap girdisi kaynağı (account ürünler). */
+type AccountSource = 'table' | 'json';
+
+const CURRENCIES = ['TRY', 'USD', 'EUR', 'GBP'] as const;
+
+/** ISO gününü <input type="date"> biçimine çevirir (yerel gün — UTC kaymasız). */
+function todayInputValue(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** UTF-8 bayt uzunluğu (gövde sınırı bayt üzerinden uygulanır, karakter değil). */
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+/**
+ * Stok Girişi iş tezgâhı (§12/§13).
+ *
+ * YERLEŞİM: tek sayfa, iki kolon. Sol kolon sırayla **1 Ürün → 2 Tedarik bilgisi → 3 Anahtarlar**;
+ * sağ kolon yapışkan bir "özet + onay" rayıdır (canlı satır sayımı, bekleyen sipariş etkisi,
+ * kuru çalıştırma ve birincil "Onayla ve Dağıt").
+ *
+ * TASARIM KARARLARI
+ * - Bölüm 2 **katlanır ve varsayılan KAPALIDIR** ama başlığında her zaman tek cümlelik özet
+ *   taşır — operatör açmadan da "partisiz giriyorum" gerçeğini görür (partisiz giriş maliyet
+ *   raporlarında geri dönülemez biçimde "kapsanamayan" olur).
+ * - Katlanan bölüm DOM'dan kaldırılmaz, yalnız `display:none` olur → içindeki alanlar formla
+ *   birlikte gönderilmeye devam eder (kapatınca sessizce veri kaybı olmaz).
+ * - Birim maliyet **LİRA** olarak girilir; kuruşa dönüşüm tek yerde (`liraToCents`) yapılır.
+ *   Alan eskiden kuruştu ve "12" yazan operatör 0,12 ₺ kaydediyordu.
+ * - Reddedilen satırlar **kaynak satır numarasıyla** listelenir (API'nin `items[]` sırası değil).
+ */
+export function ImportWorkbench({
+  products,
+  suppliers,
+  initialProductId,
+  initialBatchId,
+  initialBatches,
+  initialInactiveBatchCount,
+}: {
+  products: ProductRow[];
+  suppliers: SupplierPick[];
+  /** ?product= derin bağlantısı (ürün detayından "Stok gir"). */
+  initialProductId: string;
+  /** ?batch= derin bağlantısı — "mevcut parti" modunu seçili getirir. */
+  initialBatchId: string;
+  /** Sunucuda ön-yüklenmiş parti listesi (yalnız ?product= verildiyse dolu). */
+  initialBatches: ProductBatchOption[];
+  initialInactiveBatchCount: number;
+}) {
+  const router = useRouter();
+  const announce = useAnnouncer();
+
+  const [state, action, pending] = React.useActionState(importStockAction, importInitial);
+  const [previewState, previewDispatch] = React.useActionState(previewStockAction, previewInitial);
+
+  // ── Bölüm 1: ürün ──────────────────────────────────────────────────────────
+  const [productId, setProductId] = React.useState(initialProductId);
+  const selected = products.find((p) => p.id === productId);
+  const isAccount = selected?.kind === 'account';
+  const columns: AccountColumn[] = React.useMemo(
+    () =>
+      (selected?.payloadSchema ?? []).map((f) => ({
+        key: f.key,
+        label: f.label || f.key,
+        secret: Boolean(f.secret),
+        required: Boolean(f.required),
+      })),
+    [selected],
+  );
+  const width = Math.max(columns.length, 1);
+
+  // ── Bölüm 2: tedarik bilgisi ───────────────────────────────────────────────
+  const [batchOpen, setBatchOpen] = React.useState(Boolean(initialBatchId));
+  const [batchMode, setBatchMode] = React.useState<BatchMode>(initialBatchId ? 'existing' : 'none');
+  const [batchId, setBatchId] = React.useState(initialBatchId);
+  const [batches, setBatches] = React.useState<ProductBatchOption[]>(initialBatches);
+  const [inactiveBatchCount, setInactiveBatchCount] = React.useState(initialInactiveBatchCount);
+  const [batchesLoading, setBatchesLoading] = React.useState(false);
+  const [batchesError, setBatchesError] = React.useState<string | null>(null);
+
+  const [supplierNew, setSupplierNew] = React.useState(false);
+  const [supplierId, setSupplierId] = React.useState('');
+  const [supplierName, setSupplierName] = React.useState('');
+  const [batchLabel, setBatchLabel] = React.useState('');
+  const [receivedAt, setReceivedAt] = React.useState(todayInputValue);
+  const [unitCostLira, setUnitCostLira] = React.useState('');
+  const [currency, setCurrency] = React.useState<string>('TRY');
+  const [batchNotes, setBatchNotes] = React.useState('');
+
+  // ── Bölüm 3: anahtarlar ────────────────────────────────────────────────────
+  const [keySource, setKeySource] = React.useState<KeySource>('paste');
+  const [accountSource, setAccountSource] = React.useState<AccountSource>('table');
+  const [keys, setKeys] = React.useState('');
+  const [json, setJson] = React.useState('');
+  const [rows, setRows] = React.useState<string[][]>(() => [emptyAccountRow(1)]);
+  const [fileNote, setFileNote] = React.useState<string | null>(null);
+  const [fileError, setFileError] = React.useState<string | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  // Kalıcı sonuç paneli (form temizlense de görünür kalır).
+  const [result, setResult] = React.useState<ImportState['result'] | null>(null);
+  const [previewNonce, setPreviewNonce] = React.useState(0);
+
+  // Ürün değişince şema genişliği değişir → tablo satırlarını yeniden hizala.
+  React.useEffect(() => {
+    setRows([emptyAccountRow(width)]);
+  }, [width, productId]);
+
+  // Ürün değişince o ürünün AKTİF partilerini çek (tümünü önden yükleme — /batches
+  // ürün filtresi kabul etmez ve iki tam GROUP BY yapar).
+  const skipFirstBatchFetch = React.useRef(Boolean(initialProductId));
+  React.useEffect(() => {
+    if (!productId) {
+      setBatches([]);
+      setInactiveBatchCount(0);
+      setBatchesError(null);
+      return;
+    }
+    if (skipFirstBatchFetch.current) {
+      skipFirstBatchFetch.current = false;
+      return;
+    }
+    let alive = true;
+    // Parti bir ÜRÜNE aittir: ürün değişince önceki seçim geçersizdir (API başka ürünün
+    // partisini 400 ile reddeder) → sessizce taşınmasın.
+    setBatchId('');
+    setBatchesLoading(true);
+    setBatchesError(null);
+    void fetchProductBatchesAction(productId)
+      .then((r) => {
+        if (!alive) return;
+        if (r.ok) {
+          setBatches(r.batches ?? []);
+          setInactiveBatchCount(r.inactiveCount ?? 0);
+        } else {
+          setBatches([]);
+          setBatchesError(r.error ?? 'Partiler alınamadı');
+        }
+      })
+      .catch(() => {
+        if (alive) setBatchesError('Partiler alınamadı');
+      })
+      .finally(() => {
+        if (alive) setBatchesLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [productId]);
+
+  // Bekleyen talep önizlemesi — ürün başına BİR kez çekilir; satır sayısı değiştikçe
+  // hesap istemcide yapılır (ağ turu yok).
+  React.useEffect(() => {
+    if (!productId) return;
+    const fd = new FormData();
+    fd.set('productId', productId);
+    fd.set('count', '0');
+    React.startTransition(() => previewDispatch(fd));
+  }, [productId, previewNonce, previewDispatch]);
+
+  // ── Girdi → kayıt listesi ──────────────────────────────────────────────────
+  const { items, blankLines } = React.useMemo((): {
+    items: ImportItemInput[];
+    blankLines: number;
+  } => {
+    if (!selected) return { items: [], blankLines: 0 };
+
+    /** Son dolu satırdan ÖNCEKİ boş satırları sayar (sondaki satır sonu gürültü değildir). */
+    const countBlanks = (flags: boolean[]): number => {
+      let last = -1;
+      flags.forEach((filled, i) => {
+        if (filled) last = i;
+      });
+      return flags.slice(0, Math.max(last, 0)).filter((f) => !f).length;
+    };
+
+    if (isAccount && accountSource === 'table') {
+      const out: ImportItemInput[] = [];
+      const flags: boolean[] = [];
+      rows.forEach((row, i) => {
+        const filled = row.some((v) => v.trim() !== '');
+        flags.push(filled);
+        if (!filled) return;
+        const payload: Record<string, string> = {};
+        columns.forEach((c, j) => {
+          payload[c.key] = row[j] ?? '';
+        });
+        out.push({ payload, line: i + 1 });
+      });
+      return { items: out, blankLines: countBlanks(flags) };
+    }
+
+    if (isAccount) {
+      // JSON (gelişmiş): her satır bir nesne. Bozuk satır HAM METİN olarak gönderilir →
+      // API "Hesap payload geçerli JSON değil" der ve satır no doğru raporlanır.
+      const out: ImportItemInput[] = [];
+      const flags: boolean[] = [];
+      splitLines(json).forEach((line, i) => {
+        const trimmed = line.trim();
+        flags.push(trimmed !== '');
+        if (!trimmed) return;
+        let payload: string | Record<string, string> = trimmed;
+        try {
+          const parsed: unknown = JSON.parse(trimmed);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            payload = parsed as Record<string, string>;
+          }
+        } catch {
+          /* ham metin kalır — doğrulamayı API yapar */
+        }
+        out.push({ payload, line: i + 1 });
+      });
+      return { items: out, blankLines: countBlanks(flags) };
+    }
+
+    const out: ImportItemInput[] = [];
+    const flags: boolean[] = [];
+    splitLines(keys).forEach((line, i) => {
+      const trimmed = line.trim();
+      flags.push(trimmed !== '');
+      if (!trimmed) return;
+      out.push({ payload: trimmed, line: i + 1 });
+    });
+    return { items: out, blankLines: countBlanks(flags) };
+  }, [selected, isAccount, accountSource, rows, columns, json, keys]);
+
+  /** Aynı içerikli (mükerrer görünen) satır sayısı — API dedupe'undan ÖNCE uyarır. */
+  const duplicateCount = React.useMemo(() => {
+    const seen = new Set<string>();
+    let dup = 0;
+    for (const it of items) {
+      const key =
+        typeof it.payload === 'string'
+          ? it.payload
+          : JSON.stringify(columns.map((c) => (it.payload as Record<string, string>)[c.key] ?? ''));
+      if (seen.has(key)) dup += 1;
+      else seen.add(key);
+    }
+    return dup;
+  }, [items, columns]);
+
+  const itemsJson = React.useMemo(() => JSON.stringify(items), [items]);
+  const payloadBytes = React.useMemo(() => byteLength(itemsJson), [itemsJson]);
+
+  // ── Doğrulama / engeller ───────────────────────────────────────────────────
+  const costCents = unitCostLira.trim() ? liraToCents(unitCostLira) : null;
+  const costInvalid = Boolean(unitCostLira.trim()) && costCents == null;
+  const supplierChosen = supplierNew ? supplierName.trim() !== '' : supplierId !== '';
+  const newBatchActive = batchMode === 'new';
+  const labelMissing = newBatchActive && batchLabel.trim() === '';
+  const costWithoutSupplier = newBatchActive && Boolean(unitCostLira.trim()) && !supplierChosen;
+  const tooManyItems = items.length > MAX_IMPORT_ITEMS;
+  const tooLarge = payloadBytes > MAX_IMPORT_BYTES;
+
+  const blockers: string[] = [];
+  if (!productId) blockers.push('Ürün seçin.');
+  if (productId && items.length === 0) blockers.push('En az bir kayıt girin.');
+  if (labelMissing) blockers.push('Yeni parti için etiket girin (ör. 2026-08-A).');
+  if (newBatchActive && costInvalid) blockers.push('Birim maliyeti lira olarak girin — ör. 12,50.');
+  if (costWithoutSupplier) {
+    blockers.push('Birim maliyet girdiniz — tedarikçi seçin ya da maliyeti boşaltın.');
+  }
+  if (tooManyItems) {
+    blockers.push(
+      `Tek seferde en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} kayıt girilebilir.`,
+    );
+  }
+  if (tooLarge) {
+    blockers.push(`Girdi ${MAX_IMPORT_LABEL} sınırını aşıyor (${formatBytes(payloadBytes)}).`);
+  }
+  const blocked = blockers.length > 0;
+
+  // ── Bekleyen sipariş etkisi (istemcide hesaplanır) ─────────────────────────
+  const autoUnits = previewState.result?.autoUnits ?? 0;
+  const manualUnits = previewState.result?.manualUnits ?? 0;
+  const pendingUnits = previewState.result?.pendingUnits ?? 0;
+  const wouldFill = Math.min(items.length, autoUnits);
+  const remainingAfter = Math.max(items.length - autoUnits, 0);
+
+  const selectedBatch = batches.find((b) => b.id === batchId);
+
+  // ── Sonuç ──────────────────────────────────────────────────────────────────
+  React.useEffect(() => {
+    if (!state.ok || !state.result) return;
+    const r = state.result;
+    setResult(r);
+    if (r.dryRun) {
+      announce(
+        `Kuru çalıştırma: ${r.wouldImport ?? 0} kabul edilecek, ${r.duplicates} mükerrer, ${r.rejected} reddedilecek.`,
+      );
+      return;
+    }
+    // Gerçek giriş — formu temizle (ürün seçili kalır: aynı ürüne devam edilebilir).
+    setKeys('');
+    setJson('');
+    setRows([emptyAccountRow(width)]);
+    setFileNote(null);
+    setFileError(null);
+    if (fileRef.current) fileRef.current.value = '';
+    setBatchMode('none');
+    setBatchId('');
+    setBatchLabel('');
+    setSupplierId('');
+    setSupplierName('');
+    setSupplierNew(false);
+    setUnitCostLira('');
+    setBatchNotes('');
+    setPreviewNonce((n) => n + 1);
+    router.refresh();
+    announce(
+      `${r.imported} kayıt girildi, ${r.duplicates} mükerrer atlandı, ${r.rejected} reddedildi.` +
+        (r.autoCompleted > 0 ? ` ${r.autoCompleted} bekleyen sipariş tamamlandı.` : ''),
+    );
+  }, [state, width, router, announce]);
+
+  const onFile = async (file: File | null) => {
+    setFileError(null);
+    setFileNote(null);
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      setFileError(
+        `Dosya çok büyük (${formatBytes(file.size)}). En çok ${MAX_IMPORT_LABEL} yükleyebilirsiniz — ` +
+          'dosyayı bölüp parça parça girin.',
+      );
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
+    try {
+      // Dosya TARAYICIDA okunur: içerik (lisans anahtarı) sunucu loguna/geçici dosyaya düşmez.
+      const text = await file.text();
+      setKeys(text);
+      const lines = splitLines(text).filter((l) => l.trim() !== '').length;
+      setFileNote(`${file.name} okundu — ${lines} dolu satır (${formatBytes(file.size)}).`);
+    } catch {
+      setFileError('Dosya okunamadı. Düz metin (.txt/.csv) seçtiğinizden emin olun.');
+    }
+  };
+
+  const batchSummary = (): string => {
+    if (batchMode === 'none') return 'Partisiz — maliyet raporlarında kapsanamayan';
+    if (batchMode === 'existing') {
+      return selectedBatch ? `Mevcut parti: ${selectedBatch.label}` : 'Mevcut parti seçilmedi';
+    }
+    const parts = [batchLabel.trim() || 'etiket girilmedi'];
+    if (supplierChosen) {
+      parts.push(supplierNew ? supplierName.trim() : (suppliers.find((s) => s.id === supplierId)?.name ?? ''));
+    }
+    if (costCents != null && items.length > 0) {
+      parts.push(`${items.length} × ${formatMoney(costCents, currency)}`);
+    }
+    return `Yeni parti: ${parts.filter(Boolean).join(' · ')}`;
+  };
+
+  return (
+    <form action={action} className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
+      {/* Kayıtlar tek gizli alanla taşınır: hesap satırları API'ye NESNE olarak gider
+          (JSON string'e çevrilmez) ve her kaydın EKRANDAKİ satır numarası birlikte gider. */}
+      <input type="hidden" name="itemsJson" value={itemsJson} />
+      <input type="hidden" name="batchMode" value={batchMode} />
+
+      {/* ══ SOL KOLON ══════════════════════════════════════════════════════ */}
+      <div className="space-y-4">
+        {/* ── 1. Ürün ───────────────────────────────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <CardTitle icon={Package}>
+              <span className="text-muted-foreground">1.</span> Ürün
+            </CardTitle>
+            <CardDescription>Anahtarların hangi panel ürününe gireceğini seçin.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Field label="Ürün" htmlFor="si-product" required hint="Ada veya SKU'ya göre arayın.">
+              <Combobox
+                id="si-product"
+                name="productId"
+                required
+                ariaLabel="Ürün"
+                className="max-w-lg"
+                value={productId}
+                onValueChange={setProductId}
+                items={products.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                  hint: `${p.sku} · ${productKindLabel(p.kind)}`,
+                  keywords: [p.sku, p.kind],
+                }))}
+                placeholder="— ürün seçin —"
+                searchPlaceholder="Ürün adı veya SKU…"
+                emptyText="Ürün bulunamadı"
+              />
+            </Field>
+
+            {selected && (
+              <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Badge variant="accent">{productKindLabel(selected.kind)}</Badge>
+                  <Badge variant="outline">{usageModeLabel(selected.usageMode)}</Badge>
+                  {selected.usageMode === 'multi' && selected.maxUses ? (
+                    <Badge variant="outline">Anahtar başına {selected.maxUses} kullanım</Badge>
+                  ) : null}
+                  <span className="font-mono text-xs text-muted-foreground">{selected.sku}</span>
+                </div>
+                <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Boxes className="size-4 text-muted-foreground" aria-hidden />
+                    <span className="text-muted-foreground">Mevcut stok</span>
+                    <strong className="tabular-nums text-foreground">
+                      {selected.availableStock}
+                    </strong>
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <ClipboardList className="size-4 text-muted-foreground" aria-hidden />
+                    <span className="text-muted-foreground">Bekleyen talep</span>
+                    <strong className="tabular-nums text-foreground">
+                      {previewState.ok ? pendingUnits : '…'}
+                    </strong>
+                    <span className="text-xs text-muted-foreground">birim</span>
+                  </span>
+                  <Link
+                    href={`/products/${selected.id}`}
+                    className="inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+                  >
+                    Ürün detayı <ExternalLink className="size-3" aria-hidden />
+                  </Link>
+                </div>
+                {selected.usageMode === 'multi' && (
+                  <p className="text-xs text-muted-foreground">
+                    Çok kullanımlık (MAK) ürün: girilen her anahtar {selected.maxUses ?? '?'}{' '}
+                    kullanım kapasitesiyle stoğa eklenir.
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ── 2. Tedarik bilgisi (katlanır) ─────────────────────────────── */}
+        {/* Ürün seçili değilken SOLUK görünür ama KİLİTLİ DEĞİLDİR (operatör sırayı bozup
+            önce tedarik bilgisini doldurabilir; kilitlemek gereksiz bir duvar olurdu). */}
+        <Card className={cn(!selected && 'opacity-60')}>
+          <button
+            type="button"
+            onClick={() => setBatchOpen((v) => !v)}
+            aria-expanded={batchOpen}
+            aria-controls="si-supply"
+            className="flex w-full items-start gap-3 rounded-xl px-5 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          >
+            {batchOpen ? (
+              <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+            ) : (
+              <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Truck className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <span>
+                  <span className="text-muted-foreground">2.</span> Tedarik bilgisi
+                </span>
+                <span className="text-xs font-normal text-muted-foreground">(isteğe bağlı)</span>
+              </span>
+              <span
+                className={cn(
+                  'mt-0.5 block truncate text-xs',
+                  batchMode === 'none' ? 'text-warning' : 'text-muted-foreground',
+                )}
+              >
+                {batchSummary()}
+              </span>
+            </span>
+          </button>
+
+          {/* DOM'dan kaldırılmaz — yalnız gizlenir: kapatınca alanlar gönderilmeye devam eder. */}
+          <div id="si-supply" className={cn('px-5 pb-5', !batchOpen && 'hidden')}>
+            <Separator className="mb-4" />
+            <fieldset className="space-y-3">
+              <legend className="sr-only">Parti bağlama modu</legend>
+              {(
+                [
+                  {
+                    value: 'none' as const,
+                    title: 'Partisiz',
+                    desc: 'Yalnız anahtarları gir. Maliyet/tedarikçi izi tutulmaz.',
+                  },
+                  {
+                    value: 'new' as const,
+                    title: 'Yeni parti',
+                    desc: 'Bu girişle birlikte teslim alınmış bir parti (+ satın alma emri) aç.',
+                  },
+                  {
+                    value: 'existing' as const,
+                    title: 'Mevcut parti',
+                    desc: 'Bu ürünün daha önce açılmış bir partisine ekle.',
+                  },
+                ] satisfies Array<{ value: BatchMode; title: string; desc: string }>
+              ).map((opt) => (
+                <label
+                  key={opt.value}
+                  className={cn(
+                    'flex cursor-pointer items-start gap-2.5 rounded-md border p-3 transition-colors',
+                    batchMode === opt.value
+                      ? 'border-ring bg-accent/40'
+                      : 'border-border hover:bg-accent/20',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="batchModeChoice"
+                    value={opt.value}
+                    checked={batchMode === opt.value}
+                    onChange={() => setBatchMode(opt.value)}
+                    className={cn(checkboxClass, 'mt-0.5 rounded-full')}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">{opt.title}</span>
+                    <span className="block text-xs text-muted-foreground">{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+
+            {batchMode === 'none' && (
+              <Alert variant="warning" className="mt-4">
+                <TriangleAlert />
+                <AlertDescription>
+                  Bu anahtarların maliyeti raporlarda &quot;kapsanamayan&quot; görünür ve sonradan
+                  düzeltilemez. Geri çekme (recall) ve tedarikçi karnesi de bu girişi kapsamaz.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {batchMode === 'existing' && (
+              <div className="mt-4 space-y-2">
+                <Field
+                  label="Parti"
+                  htmlFor="si-batch"
+                  hint="Yalnız bu ürünün AKTİF partileri listelenir; geri çekilmiş/iptal partiye stok eklenemez."
+                >
+                  <Combobox
+                    id="si-batch"
+                    name="batchId"
+                    ariaLabel="Parti"
+                    className="max-w-lg"
+                    value={batchId}
+                    onValueChange={setBatchId}
+                    disabled={batchesLoading}
+                    items={batches.map((b) => ({
+                      value: b.id,
+                      label: b.label,
+                      hint: [
+                        b.supplierName ?? null,
+                        b.receivedAt ? formatDate(b.receivedAt, false) : null,
+                        supplyStatusLabel(b.status),
+                      ]
+                        .filter(Boolean)
+                        .join(' · '),
+                      keywords: [b.supplierName ?? '', b.status].filter(Boolean),
+                    }))}
+                    allowClear
+                    clearLabel="— seçimi temizle —"
+                    placeholder={batchesLoading ? 'Partiler yükleniyor…' : '— parti seçin —'}
+                    searchPlaceholder="Parti etiketi veya tedarikçi…"
+                    emptyText="Bu ürünün aktif partisi yok"
+                  />
+                </Field>
+                {inactiveBatchCount > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {inactiveBatchCount} parti aktif olmadığı için listelenmedi (geri çekilmiş /
+                    iptal edilmiş).
+                  </p>
+                )}
+                {batchesError && <p className="text-xs text-destructive">{batchesError}</p>}
+                {batchId && !selectedBatch && !batchesLoading && (
+                  <p className="text-xs text-warning">
+                    Bağlantıyla gelen parti bu ürünün aktif partileri arasında yok. Doğru partiyi
+                    seçin ya da seçimi temizleyin.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {batchMode === 'new' && (
+              <div className="mt-4 space-y-3">
+                <FieldRow>
+                  {supplierNew ? (
+                    <Field
+                      label="Yeni tedarikçi adı"
+                      htmlFor="si-supplier-name"
+                      hint="Aynı adla kayıt varsa YENİDEN KULLANILIR; yoksa oluşturulur."
+                    >
+                      <Input
+                        id="si-supplier-name"
+                        name="supplierName"
+                        value={supplierName}
+                        onChange={(e) => setSupplierName(e.target.value)}
+                        placeholder="ör. Acme Yazılım"
+                      />
+                    </Field>
+                  ) : (
+                    <Field
+                      label="Tedarikçi"
+                      htmlFor="si-supplier"
+                      hint="Maliyet gireceksen zorunlu — maliyet satın alma emrinde tutulur."
+                    >
+                      <Combobox
+                        id="si-supplier"
+                        name="supplierId"
+                        ariaLabel="Tedarikçi"
+                        value={supplierId}
+                        onValueChange={setSupplierId}
+                        items={suppliers
+                          .filter((s) => s.active)
+                          .map((s) => ({ value: s.id, label: s.name }))}
+                        allowClear
+                        clearLabel="— tedarikçisiz —"
+                        placeholder="— tedarikçi seçin —"
+                        searchPlaceholder="Tedarikçi ara…"
+                        emptyText="Tedarikçi bulunamadı"
+                      />
+                    </Field>
+                  )}
+                  <Field
+                    label="Alım tarihi"
+                    htmlFor="si-received"
+                    hint="Maliyet raporu ayları bu tarihe göre gruplanır. Varsayılan: bugün."
+                  >
+                    <Input
+                      id="si-received"
+                      name="receivedAt"
+                      type="date"
+                      value={receivedAt}
+                      onChange={(e) => setReceivedAt(e.target.value)}
+                    />
+                  </Field>
+                </FieldRow>
+
+                <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={supplierNew}
+                    onChange={(e) => {
+                      // İki alan KARŞILIKLI DIŞLAYICI (API ikisi birlikte gelirse 400 döner) →
+                      // mod değişince diğerinin değeri temizlenir.
+                      setSupplierNew(e.target.checked);
+                      setSupplierId('');
+                      setSupplierName('');
+                    }}
+                    className={checkboxClass}
+                  />
+                  Tedarikçi listede yok — yeni ad gireceğim
+                </label>
+
+                <Field
+                  label="Parti etiketi"
+                  htmlFor="si-label"
+                  required
+                  hint="Partiyi tanıdığınız ad. Aynı ürüne aynı etiket ikinci kez girilirse uyarılırsınız."
+                >
+                  <Input
+                    id="si-label"
+                    name="batchLabel"
+                    value={batchLabel}
+                    onChange={(e) => setBatchLabel(e.target.value)}
+                    placeholder="2026-08-A"
+                    className="max-w-xs"
+                    aria-invalid={labelMissing || undefined}
+                  />
+                </Field>
+
+                <FieldRow>
+                  <Field
+                    label="Birim maliyet (LİRA)"
+                    htmlFor="si-cost"
+                    error={costInvalid ? 'Sayı okunamadı. Örnek: 12,50' : undefined}
+                    hint="Kuruş DEĞİL, lira girin — ör. 12,50 (panel kuruşa kendisi çevirir). Boş bırakılabilir."
+                  >
+                    <Input
+                      id="si-cost"
+                      name="unitCostLira"
+                      inputMode="decimal"
+                      value={unitCostLira}
+                      onChange={(e) => setUnitCostLira(e.target.value)}
+                      placeholder="12,50"
+                      aria-invalid={costInvalid || undefined}
+                    />
+                  </Field>
+                  <Field label="Para birimi" htmlFor="si-currency">
+                    <select
+                      id="si-currency"
+                      name="currency"
+                      value={currency}
+                      onChange={(e) => setCurrency(e.target.value)}
+                      className={cn(selectClass, 'w-full')}
+                    >
+                      {CURRENCIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </FieldRow>
+
+                <Field label="Not" htmlFor="si-notes" hint="Serbest not (opsiyonel).">
+                  <Textarea
+                    id="si-notes"
+                    name="batchNotes"
+                    rows={2}
+                    value={batchNotes}
+                    onChange={(e) => setBatchNotes(e.target.value)}
+                    placeholder="Fatura no, teslim şekli…"
+                    className="max-w-lg"
+                  />
+                </Field>
+
+                <Alert variant="info">
+                  <Banknote />
+                  <AlertDescription>
+                    {items.length > 0 && costCents != null ? (
+                      <>
+                        <strong className="text-foreground">
+                          {items.length} kayıt × {formatMoney(costCents, currency)} ={' '}
+                          {formatMoney(costCents * items.length, currency)}
+                        </strong>{' '}
+                        tutarında, {receivedAt ? formatDate(`${receivedAt}T00:00:00`, false) : 'bugün'}{' '}
+                        teslim alınmış bir satın alma emri + parti açılacak. Adet BEYAN DEĞİL,
+                        gerçekten kaydedilen kayıt sayısıdır.
+                      </>
+                    ) : (
+                      <>
+                        Bu girişle birlikte &quot;teslim alındı&quot; durumunda bir parti açılır.
+                        Tedarikçi + birim maliyet girerseniz satın alma emri de oluşur ve maliyet
+                        her lisans kaydına anlık-görüntü olarak yazılır.
+                      </>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* ── 3. Anahtarlar ─────────────────────────────────────────────── */}
+        <Card className={cn(!selected && 'opacity-60')}>
+          <CardHeader>
+            <CardTitle icon={KeyRound}>
+              <span className="text-muted-foreground">3.</span>{' '}
+              {isAccount ? 'Hesaplar' : 'Anahtarlar'}
+            </CardTitle>
+            <CardDescription>
+              {!selected
+                ? 'Önce ürün seçin — girdi biçimi ürün tipine göre değişir.'
+                : isAccount
+                  ? 'Her satır bir hesap. Alanlar ürünün şemasından gelir.'
+                  : 'Her satır bir anahtar. Boş satırlar atlanır, baştaki/sondaki boşluk kırpılır.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Sekme görünümü: tabs primitifi YOK → Button varyantı + koşullu render. */}
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Girdi biçimi">
+              {isAccount ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={accountSource === 'table' ? 'secondary' : 'ghost'}
+                    aria-pressed={accountSource === 'table'}
+                    onClick={() => setAccountSource('table')}
+                  >
+                    <Table2 /> Tablo
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={accountSource === 'json' ? 'secondary' : 'ghost'}
+                    aria-pressed={accountSource === 'json'}
+                    onClick={() => setAccountSource('json')}
+                  >
+                    <Braces /> JSON (gelişmiş)
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={keySource === 'paste' ? 'secondary' : 'ghost'}
+                    aria-pressed={keySource === 'paste'}
+                    onClick={() => setKeySource('paste')}
+                  >
+                    <ClipboardList /> Yapıştır
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={keySource === 'file' ? 'secondary' : 'ghost'}
+                    aria-pressed={keySource === 'file'}
+                    onClick={() => setKeySource('file')}
+                  >
+                    <FileUp /> Dosya
+                  </Button>
+                </>
+              )}
+            </div>
+
+            {isAccount && accountSource === 'table' && columns.length === 0 && (
+              <Alert variant="warning">
+                <TriangleAlert />
+                <AlertDescription>
+                  Bu hesap ürününün alan şeması (payloadSchema) tanımlı değil — tablo
+                  oluşturulamıyor. Ürün detayından alanları tanımlayın.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {isAccount && accountSource === 'table' && columns.length > 0 && (
+              <AccountRowsEditor columns={columns} rows={rows} onRowsChange={setRows} />
+            )}
+
+            {isAccount && accountSource === 'json' && (
+              <Field
+                label="Her satır bir JSON nesne"
+                htmlFor="si-json"
+                hint={
+                  <>
+                    Alanlar: {columns.map((c) => c.key).join(', ') || '(şema tanımsız)'} — örn:{' '}
+                    <code className="text-foreground">
+                      {JSON.stringify(
+                        Object.fromEntries(
+                          (columns.length ? columns : [{ key: 'username' }, { key: 'password' }]).map(
+                            (c) => [c.key, '…'],
+                          ),
+                        ),
+                      )}
+                    </code>
+                  </>
+                }
+              >
+                <Textarea
+                  id="si-json"
+                  rows={10}
+                  value={json}
+                  onChange={(e) => setJson(e.target.value)}
+                  className="font-mono text-xs"
+                  spellCheck={false}
+                  placeholder={'{"username":"…","password":"…"}\n{"username":"…","password":"…"}'}
+                />
+              </Field>
+            )}
+
+            {!isAccount && keySource === 'paste' && (
+              <Field label="Anahtarlar" htmlFor="si-keys" hint="Her satıra bir anahtar.">
+                <Textarea
+                  id="si-keys"
+                  rows={12}
+                  value={keys}
+                  onChange={(e) => setKeys(e.target.value)}
+                  className="font-mono text-xs"
+                  spellCheck={false}
+                  placeholder={'XXXXX-XXXXX-XXXXX-XXXXX-11111\nXXXXX-XXXXX-XXXXX-XXXXX-22222'}
+                />
+              </Field>
+            )}
+
+            {!isAccount && keySource === 'file' && (
+              <div className="space-y-2">
+                <Field
+                  label="Anahtar listesi (.txt / .csv)"
+                  htmlFor="si-file"
+                  hint={`Dosya TARAYICIDA okunur (içerik sunucu loguna düşmez). En çok ${MAX_IMPORT_LABEL}.`}
+                >
+                  {/*
+                    `name` YOK: dosya sunucu action gövdesine EKLENMEZ — içeriği zaten metin
+                    olarak okuyup `itemsJson` ile gönderiyoruz (aynı veriyi iki kez taşımak
+                    gövde sınırını gereksiz yere doldururdu).
+                  */}
+                  <Input
+                    id="si-file"
+                    ref={fileRef}
+                    type="file"
+                    accept=".txt,.csv,text/plain,text/csv"
+                    onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
+                    className="max-w-lg"
+                  />
+                </Field>
+                {fileNote && <p className="text-xs text-success">{fileNote}</p>}
+                {fileError && (
+                  <p role="alert" className="text-xs text-destructive">
+                    {fileError}
+                  </p>
+                )}
+                {keys && (
+                  <Field
+                    label="Okunan içerik (düzenlenebilir)"
+                    htmlFor="si-file-preview"
+                    hint="Dosyadan gelen satırları buradan düzeltebilirsiniz."
+                  >
+                    <Textarea
+                      id="si-file-preview"
+                      rows={8}
+                      value={keys}
+                      onChange={(e) => setKeys(e.target.value)}
+                      className="font-mono text-xs"
+                      spellCheck={false}
+                    />
+                  </Field>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ══ SAĞ RAY (yapışkan özet + onay) ═════════════════════════════════ */}
+      <aside className="space-y-4 lg:sticky lg:top-4">
+        <Card>
+          <CardHeader>
+            <CardTitle icon={Eye}>Özet</CardTitle>
+            <CardDescription>Girmeden önce ne olacağını gösterir.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Girilecek kayıt</dt>
+                <dd className="text-lg font-semibold tabular-nums text-foreground">
+                  {items.length}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Mükerrer görünen</dt>
+                <dd
+                  className={cn(
+                    'tabular-nums',
+                    duplicateCount > 0 ? 'text-warning' : 'text-foreground',
+                  )}
+                >
+                  {duplicateCount}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Atlanan boş satır</dt>
+                <dd className="tabular-nums text-foreground">{blankLines}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-muted-foreground">Gövde boyutu</dt>
+                <dd className={cn('tabular-nums', tooLarge ? 'text-destructive' : 'text-foreground')}>
+                  {formatBytes(payloadBytes)}
+                </dd>
+              </div>
+            </dl>
+
+            <Separator />
+
+            <div className="space-y-1 text-sm">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Bekleyen sipariş etkisi
+              </div>
+              {!productId ? (
+                <p className="text-xs text-muted-foreground">Ürün seçilince hesaplanır.</p>
+              ) : previewState.error ? (
+                <p className="text-xs text-destructive">{previewState.error}</p>
+              ) : !previewState.ok ? (
+                <p className="text-xs text-muted-foreground">Hesaplanıyor…</p>
+              ) : (
+                <>
+                  <p className="text-foreground">
+                    Bu giriş <strong className="tabular-nums">{wouldFill}</strong> bekleyen birimi
+                    otomatik tamamlar.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {remainingAfter > 0
+                      ? `Kalan ${remainingAfter} kayıt stoğa eklenir. `
+                      : autoUnits > items.length
+                        ? `${autoUnits - items.length} birim talep açık kalır. `
+                        : ''}
+                    {manualUnits > 0 && (
+                      <>
+                        {manualUnits} birim elle işlem bekliyor (ya hep ya hiç / onaylı teslimat) —
+                        stok girişi bunları otomatik doldurmaz.
+                      </>
+                    )}
+                  </p>
+                </>
+              )}
+            </div>
+
+            {blocked && (
+              <ul className="space-y-1 rounded-md border border-warning/40 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] p-2.5 text-xs text-foreground">
+                {blockers.map((b) => (
+                  <li key={b} className="flex items-start gap-1.5">
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex flex-col gap-2">
+              {/* Gerçek giriş: name=dryRun value=false → sunucu commit eder. */}
+              <Button type="submit" name="dryRun" value="false" disabled={pending || blocked}>
+                <Upload />
+                {pending ? 'İşleniyor…' : 'Onayla ve Dağıt'}
+              </Button>
+              {/* Kuru çalıştırma (§7): yalnız doğrular, hiçbir şey kaydetmez. */}
+              <Button
+                type="submit"
+                name="dryRun"
+                value="true"
+                variant="outline"
+                disabled={pending || blocked}
+              >
+                <Eye />
+                Önizle (kuru çalıştır)
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Kuru çalıştırma hiçbir şey kaydetmez: kaç kayıt kabul edilecek, kaçı mükerrer, kaçı
+                reddedilecek — önce gösterir.
+              </p>
+            </div>
+
+            {state.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {state.error}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {result && <ResultPanel result={result} productId={productId} />}
+      </aside>
+    </form>
+  );
+}
+
+/**
+ * Kalıcı sonuç paneli. Kuru çalıştırma ve gerçek giriş AYNI bileşende gösterilir; ikisi
+ * arasındaki fark (kaydedildi mi?) en üstte AÇIKÇA yazılır. `imported === 0` asla "başarılı"
+ * yeşiliyle gösterilmez.
+ */
+function ResultPanel({
+  result,
+  productId,
+}: {
+  result: NonNullable<ImportState['result']>;
+  productId: string;
+}) {
+  const dry = Boolean(result.dryRun);
+  const ok = dry ? (result.wouldImport ?? 0) > 0 : result.imported > 0;
+  const nb = result.newBatch;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle icon={dry ? Eye : ok ? CheckCircle2 : TriangleAlert}>
+          {dry ? 'Kuru çalıştırma sonucu' : ok ? 'Stok girildi' : 'Hiçbir kayıt girilmedi'}
+        </CardTitle>
+        <CardDescription>
+          {dry
+            ? 'Hiçbir şey kaydedilmedi — yalnız doğrulama yapıldı.'
+            : 'Aşağıdaki özet kalıcıdır; aynı ürüne yeni giriş yapabilirsiniz.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <dl className="space-y-1.5">
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-muted-foreground">{dry ? 'Kabul edilecek' : 'Girildi'}</dt>
+            <dd
+              className={cn(
+                'text-lg font-semibold tabular-nums',
+                ok ? 'text-success' : 'text-warning',
+              )}
+            >
+              {dry ? (result.wouldImport ?? 0) : result.imported}
+            </dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-muted-foreground">Mükerrer (atlandı)</dt>
+            <dd className="tabular-nums text-foreground">{result.duplicates}</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-muted-foreground">Reddedildi</dt>
+            <dd className={cn('tabular-nums', result.rejected > 0 ? 'text-warning' : 'text-foreground')}>
+              {result.rejected}
+            </dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-muted-foreground">İstenen</dt>
+            <dd className="tabular-nums text-muted-foreground">{result.requested}</dd>
+          </div>
+        </dl>
+
+        {!dry && result.autoCompleted > 0 && (
+          <p className="flex items-start gap-1.5 text-success">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              {result.autoCompleted} bekleyen sipariş satırı tamamlandı.{' '}
+              <Link href="/orders" className="underline underline-offset-4">
+                Siparişleri gör
+              </Link>
+            </span>
+          </p>
+        )}
+        {!dry && result.autoCompleteQueued && (
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>
+              Kalan bekleyen siparişler arka planda tamamlanıyor — birkaç dakika içinde
+              &quot;Bekleyen Teslimatlar&quot; listesinden düşerler.
+            </span>
+          </p>
+        )}
+
+        {result.qtyMismatch && (
+          <Alert variant="warning">
+            <TriangleAlert />
+            <AlertTitle>Beklenenden az kayıt girdi</AlertTitle>
+            <AlertDescription>
+              {result.qtyMismatch.declared} satır gönderildi, {result.qtyMismatch.imported} kayıt
+              girdi (mükerrer/reddedilenler düşüldü). Satın alma emri GERÇEK adetle açıldığı için
+              harcama doğrudur.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {nb && (
+          <div className="space-y-1 rounded-md border border-border bg-muted/30 p-3 text-sm">
+            {nb.created ? (
+              <p className="font-medium text-foreground">
+                {`Parti ${nb.label} oluşturuldu`}
+                {(() => {
+                  const meta = [
+                    nb.supplierName,
+                    nb.receivedAt ? formatDate(nb.receivedAt, false) : null,
+                  ].filter(Boolean);
+                  return meta.length > 0 ? ` (${meta.join(' · ')})` : '';
+                })()}
+                .
+              </p>
+            ) : (
+              <p className="font-medium text-warning">
+                Parti OLUŞTURULMADI —{' '}
+                {nb.reason === 'dry_run'
+                  ? 'kuru çalıştırmada hiçbir şey kaydedilmez (gerçek girişte oluşacak).'
+                  : 'hiçbir satır doğrulamadan geçmediği için boş parti açılmadı.'}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {nb.qtyReceived} adet
+              {nb.unitCostCents != null
+                ? ` · birim ${formatMoney(nb.unitCostCents, nb.currency ?? 'TRY')}`
+                : ' · maliyet girilmedi'}
+              {nb.supplierCreated ? ' · tedarikçi bu girişte oluşturuldu' : ''}
+              {nb.supplierExisting ? ' · mevcut tedarikçi kullanıldı' : ''}
+              {nb.costSnapshotApplied ? ' · maliyet lisans kayıtlarına yazıldı' : ''}
+            </p>
+            {nb.labelDuplicate && (
+              <p className="text-xs text-warning">
+                Bu üründe aynı etiketli başka bir parti daha var — karışmaması için etiketleri
+                ayırmayı düşünün.
+              </p>
+            )}
+            {nb.created && (
+              <div className="flex flex-wrap gap-3 pt-1 text-xs">
+                <Link href="/batches" className="text-primary underline-offset-4 hover:underline">
+                  Partiler
+                </Link>
+                {nb.purchaseOrderId && (
+                  <Link
+                    href={`/purchase-orders/${nb.purchaseOrderId}`}
+                    className="text-primary underline-offset-4 hover:underline"
+                  >
+                    Satın alma emri
+                  </Link>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {result.rejected > 0 && result.rejections && result.rejections.length > 0 && (
+          <div className="space-y-1">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Reddedilen satırlar
+            </div>
+            <ul className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-xs">
+              {result.rejections.map((r) => (
+                <li key={`${r.index}-${r.line ?? ''}`} className="flex gap-2">
+                  {/* Satır no EKRANDAKİ satırdır — API'nin items[] sırası değil (boş/başlık
+                      satırları atlandığı için ikisi farklıdır). */}
+                  <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
+                    satır {r.line ?? r.index + 1}
+                  </span>
+                  <span className="text-foreground">{r.reason}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {productId && (
+          <div className="flex flex-wrap gap-3 text-xs">
+            <Link
+              href={`/products/${productId}`}
+              className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+            >
+              Ürün envanteri <ExternalLink className="size-3" aria-hidden />
+            </Link>
+            <Link href="/stock" className="text-primary underline-offset-4 hover:underline">
+              Stok &amp; Ürünler
+            </Link>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

@@ -113,6 +113,36 @@ export async function createProduct(
   return { id: row!.id, sku: row!.sku };
 }
 
+export interface CreatedSupplier {
+  id: string;
+  name: string;
+}
+
+/**
+ * Tedarikçi oluşturur (suppliers tablosu doğrudan insert).
+ *
+ * KRİTİK: üretilen `name` HER ZAMAN tag önekini (`it-<tag>-`) taşır — `cleanupByTag`
+ * tedarikçiyi (id değil) AD üzerinden LIKE ile bulur. `opts.name` verilse bile önek
+ * korunur; aksi hâlde satır temizlikte yetim kalır ve purchase_orders RESTRICT FK'si
+ * sonraki koşularda patlar.
+ */
+export async function createSupplier(
+  db: Db,
+  opts: { tag: string; name?: string; contact?: string; notes?: string; active?: boolean },
+): Promise<CreatedSupplier> {
+  const name = `${tagPrefix(opts.tag)}-sup-${opts.name ?? randomUUID().slice(0, 8)}`;
+  const [row] = await db
+    .insert(schema.suppliers)
+    .values({
+      name,
+      contact: opts.contact ?? null,
+      notes: opts.notes ?? null,
+      active: opts.active ?? true,
+    })
+    .returning({ id: schema.suppliers.id, name: schema.suppliers.name });
+  return { id: row!.id, name: row!.name };
+}
+
 export interface CreatedSite {
   id: string;
   domain: string;
@@ -242,8 +272,10 @@ export async function createOrderWithLine(
 /**
  * Bu tag'le eklenen HER şeyi siler. Sıra FK kısıtlarına saygılıdır:
  *   assignments(restrict→license_items) → orders(cascade→lines+assignments)
- *   → license_items → products → sites.
- * sku `it-<tag>-...`, domain `it-<tag>-...` prefiksinden LIKE ile bulunur.
+ *   → license_items → stock_adjustments → batches → purchase_orders → suppliers
+ *   → products → sites.
+ * sku `it-<tag>-...`, domain `it-<tag>-...`, tedarikçi adı `it-<tag>-sup-...`
+ * prefiksinden LIKE ile bulunur.
  */
 export async function cleanupByTag(db: Db, tag: string): Promise<void> {
   const like = `${tagPrefix(tag)}-%`;
@@ -275,7 +307,30 @@ export async function cleanupByTag(db: Db, tag: string): Promise<void> {
     DELETE FROM license_items
     WHERE product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
   `);
-  // 4) Ürünler + siteler.
+  // 4) Tedarik zinciri (§12) — products'a RESTRICT FK'li olanlar ürün silinmeden ÖNCE.
+  //    SIRA ZORUNLU: stock_adjustments/batches (products→restrict) → purchase_orders
+  //    (products→restrict VE suppliers→restrict) → suppliers. PO tedarikçiden ÖNCE
+  //    gitmezse suppliers DELETE'i RESTRICT ile patlar. batches.purchase_order_id ve
+  //    batches.supplier_id SET NULL olduğundan parti silmek PO/tedarikçiyi bloklamaz.
+  //    Parti/PO yaratmayan testlerde tüm adımlar no-op (0 satır) — geriye dönük güvenli;
+  //    recall.test.ts / bulk-replace.test.ts gibi ELLE temizleyenlerde de no-op (zaten silinmiş).
+  await db.execute(sql`
+    DELETE FROM stock_adjustments
+    WHERE product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
+  `);
+  await db.execute(sql`
+    DELETE FROM batches
+    WHERE product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
+  `);
+  // PO: tag'li ürüne VEYA tag'li tedarikçiye bağlı olanlar — ikinci koşul, tedarikçi
+  // silinirken RESTRICT'e takılmamak için (PO'nun ürünü tag'siz olabilir).
+  await db.execute(sql`
+    DELETE FROM purchase_orders
+    WHERE product_id IN (SELECT id FROM products WHERE sku LIKE ${like})
+       OR supplier_id IN (SELECT id FROM suppliers WHERE name LIKE ${like})
+  `);
+  await db.execute(sql`DELETE FROM suppliers WHERE name LIKE ${like}`);
+  // 5) Ürünler + siteler.
   await db.execute(sql`DELETE FROM products WHERE sku LIKE ${like}`);
   await db.execute(sql`DELETE FROM sites WHERE domain LIKE ${like}`);
 }

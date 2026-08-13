@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Wrench,
   Upload,
+  PackagePlus,
   Link2,
   Pencil,
 } from 'lucide-react';
@@ -42,7 +43,6 @@ import {
 import { getProductDetail, type ProductDetail } from './queries';
 import { StockAdjustForm } from './stock-adjust-form';
 import { ProductEditSheet } from '../../../components/product-edit-sheet';
-import { ImportStockForm } from '../../../components/import-stock-form';
 import { MappingsManager } from '../../../components/mappings-manager';
 import { LicenseItemsTable } from '../../../components/inventory/license-items-table';
 
@@ -75,8 +75,13 @@ export default async function ProductDetailPage({
   searchParams: Promise<{ batchId?: string }>;
 }) {
   const { id } = await params;
-  // ?batchId= — /batches "Bu partiye stok gir" derin bağlantısı import formunu ön-doldurur.
+  /**
+   * ?batchId= — ESKİ derin bağlantı biçimi. Stok girişi bu sayfadan `/stock/import` ekranına
+   * taşındı; eski yer imleri/linkler kaybolmasın diye parti kimliği ORADAKİ forma taşınır
+   * (aşağıdaki "Stok Girişi" düğmesinin hedefine `&batch=` olarak eklenir).
+   */
   const { batchId } = await searchParams;
+  const importHref = `/stock/import?product=${id}${batchId ? `&batch=${batchId}` : ''}`;
 
   let data: ProductDetail | null = null;
   let sites: SiteRow[] = [];
@@ -216,22 +221,30 @@ export default async function ProductDetailPage({
       <div className="grid gap-4 lg:grid-cols-3">
         {/* SOL (geniş) — ana çalışma alanı: içe aktar + eşlemeler */}
         <div className="space-y-4 lg:col-span-2">
-          {/* Key/Stok import — ürün-merkezli (ürün SABİT, dropdown yok). ?batchId= ön-doldurur. */}
+          {/*
+            Key/Stok girişi ARTIK BURADA DEĞİL: kendi ekranına (`/stock/import`) taşındı — o
+            ekran menüden de bulunabiliyor ve doğrulama/önizleme adımlarına yer açıyor. Burada
+            yalnız bağlamsal kısayol kalır: ürün (ve varsa parti) hedef ekranda ön-seçili gelir.
+          */}
           <Card>
             <CardHeader>
               <CardTitle icon={Upload}>Key / Stok İçe Aktar</CardTitle>
               <CardDescription>
-                Bu ürüne yeni key/hesap ekleyin. &apos;Kuru Çalıştır&apos; ile önce güvenle doğrulayın.
+                Bu ürüne yeni key/hesap eklemek Stok Girişi ekranında yapılır — ürün ön-seçili
+                açılır, girmeden önce &apos;Kuru Çalıştır&apos; ile güvenle doğrulayabilirsiniz.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {/* batches: parti alanı ham UUID istemek yerine bu ürünün partilerinden seçtirir. */}
-              <ImportStockForm
-                fixedProductId={product.id}
-                products={[{ ...product, availableStock: stock.available }]}
-                defaultBatchId={batchId}
-                batches={batches}
-              />
+              <Button asChild>
+                <Link href={importHref}>
+                  <PackagePlus /> Bu ürüne stok gir
+                </Link>
+              </Button>
+              {batchId && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Seçtiğiniz parti Stok Girişi ekranına taşınır.
+                </p>
+              )}
             </CardContent>
           </Card>
 
@@ -297,10 +310,13 @@ export default async function ProductDetailPage({
                         </TableCell>
                         <TableCell className="text-right">
                           {/* Parti için ayrı detay rotası YOK → yapılabilir tek bağlamsal iş:
-                              bu partiye stok girmek (import formunu ön-doldurur). */}
+                              bu partiye stok girmek (Stok Girişi ekranını ürün + parti ile
+                              ön-doldurur; eskiden aynı sayfaya ?batchId= ile dönüyordu). */}
                           {b.status === 'active' ? (
                             <Button asChild variant="ghost" size="sm">
-                              <Link href={`/products/${product.id}?batchId=${b.id}`}>Stok gir</Link>
+                              <Link href={`/stock/import?product=${product.id}&batch=${b.id}`}>
+                                Stok gir
+                              </Link>
                             </Button>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>

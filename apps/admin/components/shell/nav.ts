@@ -14,6 +14,7 @@ import {
   ClipboardList,
   ClipboardCheck,
   PackageCheck,
+  PackagePlus,
   MailWarning,
   Settings,
   ShieldCheck,
@@ -54,6 +55,10 @@ export const NAV: NavSection[] = [
     title: 'Envanter',
     items: [
       { label: 'Stok & Ürünler', href: '/stock', icon: Boxes },
+      // Stok girişi operasyonun EN SIK yapılan işi ama menüde hiç yoktu → operatör önce
+      // ürünü bulup detayına inmek zorundaydı (keşfedilebilirlik sorunu). Artık kendi
+      // ekranı var; ürün/parti seçimi ekranın içinde yapılır (?product= / ?batch= ile de gelir).
+      { label: 'Stok Girişi', href: '/stock/import', icon: PackagePlus },
       { label: 'Ürün Eşleştirme', href: '/mappings', icon: Link2 },
       // Karantina lisans/hesap kalemleriyle ilgilidir (arızalı → tedarikçiye iade/değişim akışı),
       // güvenlik olaylarıyla değil → "Sistem" yerine Envanter altında (kullanıcı geri bildirimi).

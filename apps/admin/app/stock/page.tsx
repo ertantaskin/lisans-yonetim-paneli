@@ -1,7 +1,9 @@
-import { Boxes, KeyRound } from 'lucide-react';
+import Link from 'next/link';
+import { Boxes, KeyRound, PackagePlus } from 'lucide-react';
 import { apiGet } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { ProductsTable, type ProductTableRow } from '../../components/products-table';
 import { ProductCreateSheet } from '../../components/product-create-sheet';
@@ -10,9 +12,13 @@ import { LicenseItemsTable } from '../../components/inventory/license-items-tabl
 export const dynamic = 'force-dynamic';
 
 /**
- * Stok & Ürünler — ürün-merkezli sadeleştirilmiş liste. Üstte ürün tablosu + "Yeni Ürün" (Sheet),
- * altta ürün-bağımsız "Son Eklenen Lisanslar" envanteri. Key import, site eşlemeleri ve düzenleme
- * her ürünün DETAY sayfasında (bağlamsal) → bu ekran çok üründe bile taranabilir kalır.
+ * Stok & Ürünler — ürün-merkezli sadeleştirilmiş liste. Üstte ürün tablosu + "Stok Girişi"
+ * (ayrı ekran) + "Yeni Ürün" (Sheet), altta ürün-bağımsız "Son Eklenen Lisanslar" envanteri.
+ *
+ * Stok girişi artık kendi ekranındadır (`/stock/import`): eskiden yalnız ürün DETAYINDA
+ * bulunabiliyordu, yani operatörün en sık yaptığı işe ulaşmak için önce doğru ürünü bulup
+ * detayına inmesi gerekiyordu. Site eşlemeleri ve ürün düzenleme bağlamsal kaldığı için
+ * hâlâ ürün detayındadır → bu ekran çok üründe bile taranabilir kalır.
  */
 export default async function StockPage() {
   // ProductTableRow = ProductRow + eşleme boyutu (mappedSites/mappingCount). Alanlar
@@ -30,8 +36,14 @@ export default async function StockPage() {
       <PageHeader
         icon={Boxes}
         title="Stok & Ürünler"
-        description="Ürünleri yönetin. Key import, site eşlemeleri ve düzenleme her ürünün detay sayfasında."
+        description="Ürünleri yönetin ve stok girin. Yeni key/hesap eklemek için 'Stok Girişi' ekranını kullanın; site eşlemeleri ile ürün düzenleme her ürünün detay sayfasındadır."
       >
+        {/* Birincil iş: stok girmek (en sık yapılan işlem). Ürün seçimi hedef ekranda yapılır. */}
+        <Button asChild>
+          <Link href="/stock/import">
+            <PackagePlus className="size-4" /> Stok Girişi
+          </Link>
+        </Button>
         <ProductCreateSheet />
       </PageHeader>
 

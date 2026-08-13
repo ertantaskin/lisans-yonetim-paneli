@@ -12,6 +12,7 @@ import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Field, FieldRow } from './ui/field';
 import { supplyStatusLabel } from '../lib/labels';
+import { isAutoReceipt } from '@lisans/shared';
 
 /**
  * useActionState başlangıç durumu — 'use server' dosyasından obje export EDİLEMEZ
@@ -34,13 +35,18 @@ export function POReceiveForm({ po }: { po: PurchaseOrderRow }) {
   const done = remaining === 0;
 
   if (done) {
+    // Stok girişinden otomatik doğan emirlerde qtyOrdered === qtyReceived olduğu için
+    // form zaten görünmez; mesajı bağlama uydur ki operatör "neden teslim alamıyorum" demesin.
+    const auto = isAutoReceipt(po.notes);
     return (
       <Alert variant="success">
         <CheckCircle2 />
         <div className="min-w-0 flex-1">
-          <AlertTitle>Tamamı teslim alındı</AlertTitle>
+          <AlertTitle>{auto ? 'Stok girişiyle teslim alındı' : 'Tamamı teslim alındı'}</AlertTitle>
           <AlertDescription>
-            {po.qtyReceived}/{po.qtyOrdered} adet teslim alındı.
+            {auto
+              ? `Bu emir stok girişinden otomatik oluşturuldu; ${po.qtyReceived} adet zaten teslim alındı ve partiye bağlandı.`
+              : `${po.qtyReceived}/${po.qtyOrdered} adet teslim alındı.`}
           </AlertDescription>
         </div>
       </Alert>
@@ -52,7 +58,8 @@ export function POReceiveForm({ po }: { po: PurchaseOrderRow }) {
       <input type="hidden" name="id" value={po.id} />
       <p className="text-xs text-muted-foreground">
         Kalan: <span className="font-medium tabular-nums text-foreground">{remaining}</span> adet.
-        Teslim alınca yeni parti oluşur (gerçek key girişi ayrıdır: Stok Import).
+        Teslim alınca yeni parti oluşur; anahtarların kendisi ayrıca &quot;Stok Girişi&quot; ekranından
+        girilir (orada tedarikçi/tarih/maliyet vererek partiyi tek adımda da oluşturabilirsiniz).
       </p>
       <FieldRow>
         <Field

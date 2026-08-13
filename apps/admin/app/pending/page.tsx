@@ -3,6 +3,7 @@ import {
   Inbox,
   Clock3,
   Boxes,
+  PackagePlus,
   PackageX,
   ArrowRight,
   Link2,
@@ -152,8 +153,8 @@ export default async function DashboardPage() {
 
   /**
    * Ürün bazında "stok bekleyen talep" — listelenen siparişlerin ürün kırılımı toplanır.
-   * Operatörün asıl sorusu "neyi stoklayayım": şeritteki her satır doğrudan o ürünün
-   * detayına gider ("Stok Gir" böylece DOĞRU ürüne açılır).
+   * Operatörün asıl sorusu "neyi stoklayayım": şeritteki her çip doğrudan Stok Girişi
+   * ekranını O ÜRÜN ön-seçili açar (tek tık — arada ürün detayına uğramak gerekmez).
    *
    * DÜRÜSTLÜK: kaynak LİSTELENEN satırlardır (sunucu kuyruğu kırpar) → şerit "genel toplam"
    * değildir ve bu ekranda açıkça yazılır. İncelemedeki siparişler talebe DAHİL EDİLMEZ:
@@ -198,9 +199,12 @@ export default async function DashboardPage() {
             </Link>
           </Button>
         )}
+        {/* Doğrudan stok giriş ekranı — eskiden ürün LİSTESİNE (/stock) gidiyordu, yani
+            "Stok Gir" düğmesi hiçbir şey girmiyordu; operatör oradan ürünü bulup detayına
+            inmek zorundaydı. Ürün seçimi artık hedef ekranın kendi içinde. */}
         <Button asChild variant="outline" size="sm">
-          <Link href="/stock">
-            <Boxes className="size-4" /> Stok Gir
+          <Link href="/stock/import">
+            <PackagePlus className="size-4" /> Stok Gir
           </Link>
         </Button>
       </PageHeader>
@@ -314,8 +318,8 @@ export default async function DashboardPage() {
 
           {/*
             ÜRÜN BAZINDA STOK TALEBİ: "neyi stoklayayım" sorusunun tek bakışta cevabı. Her çip
-            ürünün detayına gider → stok girişi doğru ürüne açılır (eskiden operatör siparişleri
-            tek tek açıyordu). Kaynak yalnız LİSTELENEN siparişlerdir; bu açıkça yazılır.
+            Stok Girişi ekranını o ürün ön-seçili açar (eskiden operatör siparişleri tek tek
+            açıyordu). Kaynak yalnız LİSTELENEN siparişlerdir; bu açıkça yazılır.
           */}
           {demandTop.length > 0 && (
             <Card className="mb-4 p-4">
@@ -330,9 +334,9 @@ export default async function DashboardPage() {
                 {demandTop.map((d) => (
                   <Link
                     key={d.productId}
-                    href={`/products/${d.productId}`}
+                    href={`/stock/import?product=${d.productId}`}
                     className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
-                    title={`${d.name} — ${d.orders} siparişte toplam ${d.missing} lisans eksik. Ürün detayından stok girin.`}
+                    title={`${d.name} — ${d.orders} siparişte toplam ${d.missing} lisans eksik. Tıklayınca Stok Girişi bu ürünle açılır.`}
                   >
                     <span className="max-w-[16rem] truncate font-medium text-foreground">{d.name}</span>
                     <span className="shrink-0 tabular-nums text-destructive">{d.missing} eksik</span>

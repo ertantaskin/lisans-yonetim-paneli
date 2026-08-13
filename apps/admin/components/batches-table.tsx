@@ -159,8 +159,8 @@ function canAddStock(batch: BatchRow) {
 /**
  * Parti satır aksiyonları — Bu partiye stok gir (aktif) · Geri Çek (aktif) VEYA
  * Toplu Değiştir (geri çekilmiş + satılmış). Recall/toplu-değiştirme aksiyonları değişmedi;
- * stok girişi artık ÜRÜN DETAYINDA (import ürün-merkezli oldu) → ön-dolumlu import formuna
- * (/products/{productId}?batchId=…) bağlanan ayrı bir menü kalemi.
+ * stok girişi kendi ekranındadır → ürün + parti ön-seçili gelen Stok Girişi ekranına
+ * (/stock/import?product=…&batch=…) bağlanan ayrı bir menü kalemi.
  */
 function BatchRowActions({
   batch,
@@ -200,7 +200,7 @@ function BatchRowActions({
         </DropdownMenuItem>
         {addStockable && (
           <DropdownMenuItem asChild>
-            <Link href={`/products/${batch.productId}?batchId=${batch.id}`}>
+            <Link href={`/stock/import?product=${batch.productId}&batch=${batch.id}`}>
               <PackagePlus />
               Bu partiye stok gir
             </Link>

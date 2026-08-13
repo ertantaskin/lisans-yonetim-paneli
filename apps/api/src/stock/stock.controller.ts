@@ -17,23 +17,85 @@ import { AdminRole, canRevealPlaintext } from '../auth/admin-role.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { LICENSE_ITEM_STATUSES, StockService } from './stock.service';
 
-const ImportBody = z.object({
-  productId: z.string().uuid(),
-  /** Opsiyonel parti bağlama (§12): verilirse tüm satırlar bu batch'e yazılır (recall/toplu-değiştir). */
-  batchId: z.string().uuid().optional(),
-  /** Kuru çalıştırma (§7): true ise yalnız DOĞRULA + önizleme raporu — hiçbir şey commit edilmez. */
-  dryRun: z.boolean().optional(),
-  items: z
-    .array(
-      z.object({
-        // key/code/custom: düz string. account: alan→değer nesnesi (veya JSON string).
-        payload: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
-        expiresAt: z.string().datetime().optional(),
-      }),
-    )
-    .min(1)
-    .max(10_000),
+/**
+ * Stok girişiyle AYNI istekte "teslim alınmış" parti + satın alma emri açma (§12).
+ *
+ * Operatör "12 Ağustos'ta Acme'den aldım, birim 10,00 ₺" bilgisini stok girerken verir;
+ * panel arka planda tedarikçi (varsa yeniden kullanılır), `status='received'` bir satın
+ * alma emri ve partiyi oluşturur. Böylece maliyet/karne raporları için ÖNCE PO açıp sonra
+ * teslim alma zorunluluğu kalkar.
+ *
+ * `qtyReceived` alanı BİLEREK YOKTUR: adet operatörün beyanından değil, GERÇEKTEN girilen
+ * (mükerrer/reddedilen düşülmüş) kayıt sayısından türetilir — aksi halde harcama şişerdi.
+ */
+const NewBatchBody = z.object({
+  /** Mevcut tedarikçi (listeden seçim). `supplierName` ile birlikte gönderilemez. */
+  supplierId: z.string().uuid().optional(),
+  /** Yeni/serbest tedarikçi adı — aynı ad varsa YENİDEN KULLANILIR (mükerrer 'Acme' birikmez). */
+  supplierName: z.string().trim().min(1).max(200).optional(),
+  /** Parti etiketi (ör. "2026-08 Acme #1") — operatörün partiyi tanıdığı ad. */
+  label: z.string().trim().min(1).max(120),
+  /** Teslim alma tarihi (ISO). Verilmezse "şimdi". Aralık kontrolü serviste. */
+  receivedAt: z.string().datetime().optional(),
+  /** Birim maliyet (kuruş). Maliyet satın alma emrinde tutulur → tedarikçi ZORUNLU olur. */
+  unitCostCents: z.number().int().min(0).max(2_000_000_000).optional(),
+  /** Para birimi (ör. TRY/USD). Serviste büyük harfe çevrilir (rapor 'try' vs 'TRY' bölünmesin). */
+  currency: z.string().trim().min(1).max(8).optional(),
+  /** Operatör notu — otomatik oluşturma önekinin ARDINA eklenir. */
+  notes: z.string().max(2_000).optional(),
 });
+
+const ImportBody = z
+  .object({
+    productId: z.string().uuid(),
+    /** Opsiyonel parti bağlama (§12): verilirse tüm satırlar bu batch'e yazılır (recall/toplu-değiştir). */
+    batchId: z.string().uuid().optional(),
+    /** Kuru çalıştırma (§7): true ise yalnız DOĞRULA + önizleme raporu — hiçbir şey commit edilmez. */
+    dryRun: z.boolean().optional(),
+    /** Stok girişiyle AYNI istekte yeni parti (+ otomatik satın alma emri) oluştur. */
+    newBatch: NewBatchBody.optional(),
+    items: z
+      .array(
+        z.object({
+          // key/code/custom: düz string. account: alan→değer nesnesi (veya JSON string).
+          payload: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
+          expiresAt: z.string().datetime().optional(),
+        }),
+      )
+      .min(1)
+      .max(10_000),
+  })
+  // NOT: z.preprocess/z.coerce KULLANILMAZ (aşağıdaki `optionalUuid` notu: ikisi de girdi
+  // tipini `unknown` yapıp `ZodBody<T>` ile çakışır). superRefine girdi/çıktı tipini
+  // DEĞİŞTİRMEZ → güvenlidir (UpdateLicenseItemBody'deki `.refine` ile aynı desen).
+  .superRefine((body, ctx) => {
+    const nb = body.newBatch;
+    if (!nb) return;
+    if (body.batchId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newBatch'],
+        message: 'Mevcut parti ile yeni parti bilgisi birlikte gönderilemez — birini seçin.',
+      });
+    }
+    if (nb.supplierId && nb.supplierName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newBatch', 'supplierName'],
+        message:
+          'Tedarikçi ya listeden seçilir ya da yeni ad girilir — ikisi birlikte gönderilemez.',
+      });
+    }
+    if (nb.unitCostCents != null && !nb.supplierId && !nb.supplierName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['newBatch', 'unitCostCents'],
+        message:
+          'Birim maliyet girildi ama tedarikçi seçilmedi. Maliyet satın alma emrinde tutulur; ' +
+          'tedarikçi seçin ya da maliyeti boş bırakın.',
+      });
+    }
+  });
 type ImportBody = z.infer<typeof ImportBody>;
 
 const PreviewBody = z.object({
@@ -103,7 +165,8 @@ export class StockController {
     // Kuru çalıştırma (§7): body.dryRun VEYA ?dryRun=true|1 → yalnız doğrula, commit etme.
     const dryRun = body.dryRun === true || dryRunQuery === 'true' || dryRunQuery === '1';
     // Eylemi yapan admin (x-admin-actor) audit'e düşürülür — 'panel:admin' sabiti yerine gerçek aktör.
-    return this.stock.import(body.productId, body.items, body.batchId, dryRun, actor);
+    // `newBatch` SON (6.) argümandır: pozisyonel sıra korunur → mevcut çağıranlar/testler kırılmaz.
+    return this.stock.import(body.productId, body.items, body.batchId, dryRun, actor, body.newBatch);
   }
 
   /** "Onayla ve Dağıt" önizleme (§13): bu giriş bekleyen talebi ne kadar karşılar. */

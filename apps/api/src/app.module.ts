@@ -65,6 +65,11 @@ import { RateLimitModule } from './common/rate-limit.module';
             'req.headers["x-api-key"]',
             'req.headers["x-signature"]',
             'req.body.payload',
+            // Stok import gövdesi payload'ı DİZİ İÇİNDE taşır ({ items: [{ payload: … }] });
+            // skaler 'req.body.payload' yolu bunu KAPSAMAZ → lisans anahtarları loga sızardı.
+            // Hem eleman-bazlı wildcard hem de tüm dizi (yeni alan eklenirse de kapalı kalsın).
+            'req.body.items[*].payload',
+            'req.body.items',
           ],
           remove: true,
         },
