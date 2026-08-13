@@ -30,7 +30,7 @@ import { aiCategoryLabel, aiPriorityLabel, supportStatusLabel } from '../../lib/
 import { formatDate, relativeTime } from '../../lib/utils';
 import { useAnnouncer } from '../a11y/announcer';
 import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
-import { Badge, type BadgeProps } from '../ui/badge';
+import { Badge, StatusBadge, type BadgeProps } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Label, Textarea } from '../ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet';
@@ -52,25 +52,14 @@ import { SupportThread } from './support-thread';
 // ── Paylaşılan rozetler ─────────────────────────────────────────────────────
 
 /**
- * Durum → rozet tonu. Etiket TEK KAYNAK `lib/labels.ts:supportStatusLabel` (ham enum
- * `info_requested` operatöre asla çıkmaz); burada yalnız ton/ikon eşlemesi var.
+ * Durum rozeti — panelin TEK rozet bileşenine (StatusBadge) devredilir.
+ *
+ * Buradaki yerel ton/ikon sözlüğü paylaşılan haritayla BİREBİR aynıydı; iki kopya
+ * tutmak yeni bir durum eklendiğinde sessizce ayrışma üretir. Etiket kaynağı da aynı
+ * (BADGE_STATUS ve SUPPORT_STATUS bu dört anahtarda aynı Türkçe metni verir).
  */
-const STATUS_TONE: Record<SupportStatus, { variant: BadgeProps['variant']; icon: typeof Clock }> = {
-  open: { variant: 'warning', icon: Clock },
-  info_requested: { variant: 'warning', icon: Mail },
-  approved: { variant: 'success', icon: CheckCircle2 },
-  rejected: { variant: 'danger', icon: Ban },
-};
-
 export function SupportStatusBadge({ status }: { status: SupportStatus }) {
-  const tone = STATUS_TONE[status] ?? { variant: 'neutral' as const, icon: Clock };
-  const Icon = tone.icon;
-  return (
-    <Badge variant={tone.variant}>
-      <Icon />
-      {supportStatusLabel(status)}
-    </Badge>
-  );
+  return <StatusBadge status={status} />;
 }
 
 export function WarrantyBadge({ within }: { within: boolean }) {

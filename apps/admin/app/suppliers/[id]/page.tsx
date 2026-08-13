@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatStrip } from '../../../components/ui/stat-tile';
-import { Badge } from '../../../components/ui/badge';
+import { Badge, SupplyStatusBadge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
 import {
@@ -55,21 +55,6 @@ function formatCost(cents: number, currency: string): string {
 
 // Yüksek geri-çekilme oranı işareti (tedarikçi kalite sinyali).
 const RECALL_THRESHOLD = 0.1;
-
-/**
- * Parti durumu → rozet. Paylaşılan StatusBadge parti statülerini (recalled/voided)
- * bilmediği için yerel eşleme.
- */
-const BATCH_STATUS: Record<string, { variant: 'success' | 'warning' | 'danger'; label: string }> = {
-  active: { variant: 'success', label: 'aktif' },
-  recalled: { variant: 'danger', label: 'geri çekildi' },
-  voided: { variant: 'warning', label: 'geçersiz' },
-};
-
-function BatchStatusBadge({ status }: { status: string }) {
-  const meta = BATCH_STATUS[status] ?? { variant: 'warning' as const, label: supplyStatusLabel(status) };
-  return <Badge variant={meta.variant}>{meta.label}</Badge>;
-}
 
 export default async function SupplierScorecardPage({
   params,
@@ -215,7 +200,7 @@ export default async function SupplierScorecardPage({
                   <TableRow key={b.id}>
                     <TableCell className="font-medium text-foreground">{b.label}</TableCell>
                     <TableCell>
-                      <BatchStatusBadge status={b.status} />
+                      <SupplyStatusBadge status={b.status} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-foreground">
                       {b.qtyReceived}

@@ -17,8 +17,8 @@ import type { ReviewRow } from '../app/review/queries';
 import { fmtDateTime } from '../lib/utils';
 import { rejectAction, releaseAction, type ActionState } from '../app/review/actions';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-import { Label, Textarea } from './ui/input';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -132,24 +132,24 @@ const baseColumns: ColumnDef<ReviewRow>[] = [
  *  support-table ile tutarlı: kompakt MoreHorizontal (icon-sm) dropdown. */
 function ReviewRowActions({
   row,
-  onReject,
   onError,
   onResult,
 }: {
   row: ReviewRow;
-  onReject: (row: ReviewRow) => void;
   onError: (message: string) => void;
   onResult: (row: ReviewRow, state: ActionState) => void;
 }) {
   const [pending, startTransition] = React.useTransition();
+  const { confirm, dialog } = useConfirm();
 
-  const approve = () => {
-    if (
-      !window.confirm(
-        `${row.remoteOrderId} siparişi onaylansın mı?\n\nİnceleme kaldırılır ve teslimat başlar (uygun stok müşteriye atanır). Stok yetersizse sipariş kısmi/bekleyen olarak işlenir.`,
-      )
-    )
-      return;
+  const approve = async () => {
+    const ok = await confirm({
+      title: `${row.remoteOrderId} siparişi onaylansın mı?`,
+      description:
+        'İnceleme kaldırılır ve teslimat başlar: uygun stok müşteriye atanır, teslimat e-postası gider. Stok yetersizse sipariş kısmi/bekleyen olarak işlenir.',
+      confirmLabel: 'Onayla ve teslim et',
+    });
+    if (!ok) return;
     startTransition(async () => {
       const res = await releaseAction(row.id);
       // SONUÇ YUTULMAZ: satır listeden düştü diye teslim edildiği varsayılamaz — stok
@@ -159,7 +159,30 @@ function ReviewRowActions({
     });
   };
 
+  const reject = async () => {
+    const res0 = await confirm({
+      title: 'Sipariş reddedilsin mi?',
+      description: `${row.remoteOrderId} · ${row.customerEmail} — sipariş kapatılır, satırlar iptal işaretlenir ve müşteriye lisans GİTMEZ.`,
+      tone: 'danger',
+      confirmLabel: 'Reddet',
+      reason: {
+        label: 'Red gerekçesi',
+        placeholder: 'Neden reddedildiğini yazın…',
+        required: true,
+        hint: 'Gerekçe denetim kaydına yazılır.',
+      },
+    });
+    if (!res0) return;
+    startTransition(async () => {
+      const res = await rejectAction(row.id, res0.reason);
+      if (!res.ok) onError(res.error ?? 'Reddedilemedi');
+      else onResult(row, res);
+    });
+  };
+
   return (
+    <>
+    {dialog}
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
@@ -181,13 +204,13 @@ function ReviewRowActions({
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={approve} disabled={pending}>
+        <DropdownMenuItem onSelect={() => void approve()} disabled={pending}>
           <CheckCircle2 />
           {pending ? 'İşleniyor…' : 'Onayla'}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onSelect={() => onReject(row)}
+          onSelect={() => void reject()}
           disabled={pending}
           className="text-destructive focus:text-destructive"
         >
@@ -196,97 +219,7 @@ function ReviewRowActions({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-/** Red gerekçesi modalı. Native Dialog primitifi yok → basit overlay (support deseni). */
-function RejectDialog({
-  row,
-  onClose,
-  onError,
-  onResult,
-}: {
-  row: ReviewRow;
-  onClose: () => void;
-  onError: (message: string) => void;
-  onResult: (row: ReviewRow, state: ActionState) => void;
-}) {
-  const [reason, setReason] = React.useState('');
-  const [localError, setLocalError] = React.useState<string | null>(null);
-  const [pending, startTransition] = React.useTransition();
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-
-  React.useEffect(() => {
-    textareaRef.current?.focus();
-  }, []);
-
-  const submit = () => {
-    if (!reason.trim()) {
-      setLocalError('Sebep zorunlu');
-      return;
-    }
-    setLocalError(null);
-    startTransition(async () => {
-      const res = await rejectAction(row.id, reason);
-      if (res.ok) onResult(row, res);
-      else onError(res.error ?? 'Reddedilemedi');
-      onClose();
-    });
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Siparişi reddet"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-    >
-      <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Siparişi reddet</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {row.remoteOrderId} · {row.customerEmail}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onClose}
-            aria-label="Kapat"
-            className="-mr-1 -mt-1 shrink-0"
-          >
-            <X />
-          </Button>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="review-reject-reason">Red gerekçesi</Label>
-          <Textarea
-            id="review-reject-reason"
-            ref={textareaRef}
-            rows={4}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Neden reddedildiğini yazın… (sipariş kapatılır, müşteriye key gitmez)"
-          />
-          {localError && <p className="text-xs text-destructive">{localError}</p>}
-        </div>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>
-            Vazgeç
-          </Button>
-          <Button variant="danger" size="sm" onClick={submit} disabled={pending}>
-            <Ban />
-            {pending ? 'İşleniyor…' : 'Reddet'}
-          </Button>
-        </div>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -298,7 +231,6 @@ const RESULT_ICON = {
 } as const;
 
 export function ReviewTable({ items }: { items: ReviewRow[] }) {
-  const [rejectRow, setRejectRow] = React.useState<ReviewRow | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   /**
    * Son işlemin SONUCU. Onay/red sonrası satır listeden düşüyordu ve ekranda hiçbir iz
@@ -327,7 +259,6 @@ export function ReviewTable({ items }: { items: ReviewRow[] }) {
           <div className="flex justify-end">
             <ReviewRowActions
               row={row.original}
-              onReject={setRejectRow}
               onError={handleError}
               onResult={handleResult}
             />
@@ -411,14 +342,6 @@ export function ReviewTable({ items }: { items: ReviewRow[] }) {
         emptyLabel="İnceleme bekleyen sipariş yok."
       />
 
-      {rejectRow && (
-        <RejectDialog
-          row={rejectRow}
-          onClose={() => setRejectRow(null)}
-          onError={handleError}
-          onResult={handleResult}
-        />
-      )}
     </div>
   );
 }

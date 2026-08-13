@@ -16,6 +16,7 @@ import {
 } from './actions';
 import { Button } from '../../../components/ui/button';
 import { Badge, StatusBadge } from '../../../components/ui/badge';
+import { useConfirm } from '../../../components/ui/confirm';
 import { SupportThread } from '../../../components/support/support-thread';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 import { supportStatusLabel } from '../../../lib/labels';
@@ -61,6 +62,7 @@ function ReplacementRow({
   // Aksiyon bekleyen talepler açık başlar (operatör tıklamadan görsün); çözülmüşler kapalı.
   const [open, setOpen] = React.useState(isActionable(r.status));
   const announce = useAnnouncer();
+  const { confirm, dialog } = useConfirm();
 
   const run = (fn: () => Promise<MutationState>) => {
     setState(null);
@@ -73,24 +75,32 @@ function ReplacementRow({
     });
   };
 
-  const approve = () => {
-    if (
-      !window.confirm(
-        'Değişim onaylansın mı?\n\nMevcut atama geri alınır ve stoktan taze bir key atanır. Stok yoksa işlem yapılmaz.',
-      )
-    )
-      return;
+  const approve = async () => {
+    const ok = await confirm({
+      title: 'Değişim onaylansın mı?',
+      description:
+        'Mevcut atama geri alınır ve stoktan TAZE bir anahtar atanır. Stok yoksa işlem yapılmaz — eski anahtar yerinde kalır.',
+      confirmLabel: 'Onayla ve değiştir',
+    });
+    if (!ok) return;
     run(() => approveReplacementForOrderAction(r.id, orderId));
   };
 
-  const reject = () => {
-    const note = window.prompt('Red gerekçesi (müşteriye görünür):');
-    if (note === null) return;
-    if (!note.trim()) {
-      announce('Red gerekçesi zorunlu', { assertive: true });
-      return;
-    }
-    run(() => rejectReplacementForOrderAction(r.id, orderId, note));
+  const reject = async () => {
+    const res = await confirm({
+      title: 'Değişim talebi reddedilsin mi?',
+      description: 'Müşteriye red bildirimi gider; mevcut anahtar aynen kalır.',
+      tone: 'danger',
+      confirmLabel: 'Reddet',
+      reason: {
+        label: 'Red gerekçesi',
+        placeholder: 'ör. garanti süresi dolmuş',
+        required: true,
+        hint: 'Bu metin MÜŞTERİYE görünür.',
+      },
+    });
+    if (!res) return;
+    run(() => rejectReplacementForOrderAction(r.id, orderId, res.reason));
   };
 
   const created = new Date(r.createdAt).toLocaleString('tr-TR', {
@@ -100,6 +110,7 @@ function ReplacementRow({
 
   return (
     <li className={cn('p-3', isActionable(r.status) && 'bg-warning/5')}>
+      {dialog}
       <details className="group" open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
         <summary className="flex cursor-pointer list-none items-start gap-2">
           <ChevronRight
@@ -185,14 +196,14 @@ function ReplacementRow({
 
           {isActionable(r.status) && (
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" onClick={approve} disabled={pending}>
+              <Button type="button" size="sm" onClick={() => void approve()} disabled={pending}>
                 <CheckCircle2 aria-hidden /> {pending ? 'İşleniyor…' : 'Onayla (değiştir)'}
               </Button>
               <Button
                 type="button"
                 variant="danger-outline"
                 size="sm"
-                onClick={reject}
+                onClick={() => void reject()}
                 disabled={pending}
               >
                 <Ban aria-hidden /> Reddet

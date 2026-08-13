@@ -9,6 +9,7 @@ import { includesTr } from '../lib/utils';
 import { useAnnouncer } from './a11y/announcer';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Input } from './ui/input';
 import { Combobox } from './ui/combobox';
 import { Card } from './ui/card';
@@ -43,15 +44,16 @@ function RemoveMappingButton({ mappingId, productLabel }: { mappingId: string; p
   const announce = useAnnouncer();
   const [pending, start] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
 
-  const remove = () => {
-    if (
-      !window.confirm(
-        `"${productLabel}" eşlemesini kaldırmak istediğinize emin misiniz?\n\nBu mağaza ürününün yeni siparişleri artık panel ürünü çözemez (beklemede kalır). İstediğiniz zaman yeniden eşleyebilirsiniz.`,
-      )
-    ) {
-      return;
-    }
+  const remove = async () => {
+    const ok = await confirm({
+      title: 'Eşleme kaldırılsın mı?',
+      description: `“${productLabel}” eşlemesi silinir. Bu mağaza ürününün YENİ siparişleri artık panel ürününü çözemez ve beklemede kalır (yanlış ürün teslim edilmez). İstediğiniz zaman yeniden eşleyebilirsiniz.`,
+      tone: 'danger',
+      confirmLabel: 'Eşlemeyi kaldır',
+    });
+    if (!ok) return;
     setError(null);
     start(async () => {
       const res = await removeMappingWithResult(mappingId);
@@ -68,12 +70,13 @@ function RemoveMappingButton({ mappingId, productLabel }: { mappingId: string; p
 
   return (
     <div className="flex flex-col items-end gap-1">
+      {dialog}
       <Button
         type="button"
         size="sm"
         variant="ghost"
         disabled={pending}
-        onClick={remove}
+        onClick={() => void remove()}
         aria-label={`${productLabel} eşlemesini kaldır`}
       >
         <Trash2 /> {pending ? 'Kaldırılıyor…' : 'Kaldır'}

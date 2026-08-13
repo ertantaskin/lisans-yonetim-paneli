@@ -4,6 +4,7 @@ import { Check, Copy, KeyRound, TriangleAlert } from 'lucide-react';
 import { issueCodeForSite } from '../new/actions';
 import { Button } from '../../../components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
+import { useConfirm } from '../../../components/ui/confirm';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 
 /**
@@ -23,15 +24,17 @@ export function IssueConnectCode({ siteId, domain }: { siteId: string; domain: s
   const [error, setError] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
   const announce = useAnnouncer();
+  const { confirm, dialog } = useConfirm();
 
-  const issue = () => {
-    if (
-      !window.confirm(
-        `${domain} için yeni bağlan kodu üretilsin mi?\n\nSitenin kimlik bilgileri YENİDEN üretilir: daha önce verilmiş ve henüz kullanılmamış kodlar geçersiz olur. Mağaza, yeni kodla tekrar bağlanana kadar panele istek gönderemez.`,
-      )
-    ) {
-      return;
-    }
+  const issue = async () => {
+    const ok = await confirm({
+      title: `${domain} için yeni bağlan kodu üretilsin mi?`,
+      description:
+        'Sitenin kimlik bilgileri YENİDEN üretilir: daha önce verilmiş ve henüz kullanılmamış kodlar geçersiz olur. Mağaza, yeni kodla tekrar bağlanana kadar panele istek gönderemez.',
+      tone: 'danger',
+      confirmLabel: 'Yeni kod üret',
+    });
+    if (!ok) return;
     setError(null);
     setCode(null);
     setCopied(false);
@@ -62,8 +65,9 @@ export function IssueConnectCode({ siteId, domain }: { siteId: string; domain: s
 
   return (
     <div className="space-y-3">
+      {dialog}
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={issue} disabled={pending}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void issue()} disabled={pending}>
           <KeyRound />
           {pending ? 'Üretiliyor…' : 'Yeni Bağlan Kodu Üret'}
         </Button>

@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CheckCircle2, Send, Trash2, TriangleAlert } from 'lucide-react';
+import { toast } from 'sonner';
 import type { ProductRow, SiteRow } from '../../lib/api';
 import type { TemplateRow } from './queries';
 import {
@@ -15,6 +16,7 @@ import {
 } from './actions';
 import { Input, Label, Textarea } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
+import { useConfirm } from '../../components/ui/confirm';
 import { Combobox } from '../../components/ui/combobox';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Card } from '../../components/ui/card';
@@ -219,25 +221,37 @@ export function TemplateEditor({
 
 function DeleteButton({ id, onDeleted }: { id: string; onDeleted: () => void }) {
   const [pending, startTransition] = React.useTransition();
-  const del = () => {
-    if (!window.confirm('Bu şablon silinsin mi? Bu işlem geri alınamaz.')) return;
+  const { confirm, dialog } = useConfirm();
+  const del = async () => {
+    const ok = await confirm({
+      title: 'Bu şablon silinsin mi?',
+      description:
+        'Şablon kalıcı olarak silinir. Bu kapsamdaki (site/ürün) mailler bir üst kapsamın şablonuyla gönderilmeye başlar.',
+      tone: 'danger',
+      confirmLabel: 'Sil',
+    });
+    if (!ok) return;
     startTransition(async () => {
       const res = await deleteTemplateAction(id);
+      // Hata artık tarayıcının alert kutusunda değil, panelin toast'ında görünür.
       if (res.ok) onDeleted();
-      else window.alert(res.error ?? 'Silinemedi');
+      else toast.error(res.error ?? 'Silinemedi');
     });
   };
   return (
+    <>
+    {dialog}
     <Button
       type="button"
       variant="ghost"
-      onClick={del}
+      onClick={() => void del()}
       disabled={pending}
       className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
     >
       <Trash2 className="size-4" />
       {pending ? 'Siliniyor…' : 'Sil'}
     </Button>
+    </>
   );
 }
 

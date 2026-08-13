@@ -32,7 +32,9 @@ import {
   type ProductBatchOption,
 } from '../actions';
 import type { ProductRow } from '../../../lib/api';
+import { toast } from 'sonner';
 import { useAnnouncer } from '../../../components/a11y/announcer';
+import { useConfirm } from '../../../components/ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
 import { Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -264,6 +266,121 @@ function EntryMeter({
   );
 }
 
+/** Onay modalinde gösterilecek en fazla satır (gerisi "… ve N tane daha"). */
+const CONFIRM_PREVIEW_ROWS = 20;
+
+/** Gizli alan maskesi — onay listesinde parola omuz-üstünden okunmasın (§8 mask deseni). */
+const CONFIRM_MASK = '••••••';
+
+/**
+ * Onay modalinin gövdesi: "neyi onaylıyorum?" sorusunun cevabı.
+ *
+ * Kullanıcı geri bildirimi: *"eklenip eklenmediği tam anlaşılmıyor"*. Tek tıkla kaydeden
+ * bir form, hem geri alınamayan bir yazım yapar (lisans kaydı silinmez, yalnız geçersiz
+ * kılınır) hem de bekleyen siparişleri ANINDA teslim edip müşteriye mail attırabilir.
+ * Bu yüzden ikinci onay, girilecek kayıtların LİSTESİNİ de gösterir.
+ */
+function ImportConfirmDetails({
+  productLabel,
+  unitNoun,
+  count,
+  perKeyUses,
+  supplyLine,
+  supplyWarning,
+  duplicates,
+  blankLines,
+  wouldFill,
+  previews,
+}: {
+  productLabel: string;
+  unitNoun: string;
+  count: number;
+  perKeyUses: number;
+  supplyLine: string;
+  supplyWarning: boolean;
+  duplicates: number;
+  blankLines: number;
+  wouldFill: number;
+  previews: Array<{ line: number; text: string }>;
+}) {
+  const hidden = count - previews.length;
+  return (
+    <div className="space-y-3">
+      <dl className="space-y-1.5 rounded-md border border-border bg-muted/30 p-3 text-sm">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-muted-foreground">Ürün</dt>
+          <dd className="truncate text-right font-medium text-foreground">{productLabel}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-muted-foreground">Girilecek</dt>
+          <dd className="text-right font-semibold tabular-nums text-foreground">
+            {tr(count)} {unitNoun}
+            {perKeyUses > 1 && (
+              <span className="font-normal text-muted-foreground">
+                {' '}
+                = {tr(count * perKeyUses)} kullanım hakkı
+              </span>
+            )}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-muted-foreground">Tedarik</dt>
+          <dd className={cn('text-right', supplyWarning ? 'text-warning' : 'text-foreground')}>
+            {supplyLine}
+          </dd>
+        </div>
+      </dl>
+
+      {wouldFill > 0 && (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <AlertDescription>
+            Bu giriş <strong>{tr(wouldFill)} bekleyen birimi hemen teslim eder</strong> — müşteriye
+            teslimat e-postası gider ve mağazaya geri bildirilir. Teslim edilen anahtar geri
+            alınabilir ama müşteri onu görmüş olur.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {(duplicates > 0 || blankLines > 0) && (
+        <p className="text-xs text-muted-foreground">
+          {duplicates > 0 && (
+            <>
+              {tr(duplicates)} satır birbirinin aynısı — panel mükerrerleri atlar, sayı bu kadar
+              düşebilir.{' '}
+            </>
+          )}
+          {blankLines > 0 && <>{tr(blankLines)} boş satır atlandı.</>}
+        </p>
+      )}
+
+      <div className="space-y-1">
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Girilecek kayıtlar
+        </div>
+        <ul className="max-h-52 overflow-y-auto rounded-md border border-border">
+          {previews.map((p) => (
+            <li
+              key={p.line}
+              className="flex gap-2 border-b border-border/60 px-2.5 py-1 text-xs last:border-b-0"
+            >
+              <span className="w-8 shrink-0 text-right font-mono tabular-nums text-muted-foreground">
+                {p.line}
+              </span>
+              <span className="min-w-0 flex-1 truncate font-mono text-foreground" title={p.text}>
+                {p.text}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {hidden > 0 && (
+          <p className="text-xs text-muted-foreground">… ve {tr(hidden)} kayıt daha.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Stok Girişi iş tezgâhı (§12/§13).
  *
@@ -307,6 +424,15 @@ export function ImportWorkbench({
 }) {
   const router = useRouter();
   const announce = useAnnouncer();
+  const { confirm, dialog } = useConfirm();
+  const formRef = React.useRef<HTMLFormElement>(null);
+  /**
+   * Gerçek gönderim düğmesi GİZLİDİR: görünen "Onayla ve Dağıt" önce onay modalini açar,
+   * onaylanınca bu düğme submitter olarak kullanılır. Neden `requestSubmit(submitter)`:
+   * `name="dryRun" value="false"` çifti YALNIZ submitter üzerinden gövdeye girer — düz
+   * `form.submit()`/`requestSubmit()` bu alanı düşürür ve sunucu kuru çalıştırma sanırdı.
+   */
+  const realSubmitRef = React.useRef<HTMLButtonElement>(null);
 
   const [state, action, pending] = React.useActionState(importStockAction, importInitial);
   const [previewState, previewDispatch] = React.useActionState(previewStockAction, previewInitial);
@@ -555,6 +681,30 @@ export function ImportWorkbench({
         .join('\n'),
     );
 
+  /**
+   * Onay modalinde gösterilecek satırlar. Anahtar ürününde değerin kendisi yazılır
+   * (operatör zaten ekranda görüyor); hesap ürününde `secret` alanlar MASKELENİR —
+   * modal ekranın ortasında büyük durur, parola omuz-üstünden okunmamalı.
+   */
+  const itemPreviews = React.useMemo(
+    () =>
+      items.slice(0, CONFIRM_PREVIEW_ROWS).map((it, i) => {
+        const line = it.line ?? i + 1;
+        if (typeof it.payload === 'string') return { line, text: it.payload };
+        const payload = it.payload;
+        const text = columns
+          .map((c) => {
+            const raw = (payload[c.key] ?? '').trim();
+            if (!raw) return null;
+            return `${c.label}: ${c.secret ? CONFIRM_MASK : raw}`;
+          })
+          .filter(Boolean)
+          .join(' · ');
+        return { line, text: text || '(boş)' };
+      }),
+    [items, columns],
+  );
+
   // ── Doğrulama / engeller ───────────────────────────────────────────────────
   const costCents = unitCostLira.trim() ? liraToCents(unitCostLira) : null;
   const costInvalid = Boolean(unitCostLira.trim()) && costCents == null;
@@ -603,9 +753,9 @@ export function ImportWorkbench({
     const r = state.result;
     setResult(r);
     if (r.dryRun) {
-      announce(
-        `Kuru çalıştırma: ${r.wouldImport ?? 0} kabul edilecek, ${r.duplicates} mükerrer, ${r.rejected} reddedilecek.`,
-      );
+      const dryMsg = `Kuru çalıştırma: ${r.wouldImport ?? 0} kabul edilecek, ${r.duplicates} mükerrer, ${r.rejected} reddedilecek.`;
+      toast.message('Kuru çalıştırma bitti — hiçbir şey kaydedilmedi', { description: dryMsg });
+      announce(dryMsg);
       return;
     }
     // Gerçek giriş — formu temizle (ürün seçili kalır: aynı ürüne devam edilebilir).
@@ -641,10 +791,14 @@ export function ImportWorkbench({
     setBatchNotes('');
     setPreviewNonce((n) => n + 1);
     router.refresh();
-    announce(
+    const msg =
       `${r.imported} kayıt girildi, ${r.duplicates} mükerrer atlandı, ${r.rejected} reddedildi.` +
-        (r.autoCompleted > 0 ? ` ${r.autoCompleted} bekleyen sipariş tamamlandı.` : ''),
-    );
+      (r.autoCompleted > 0 ? ` ${r.autoCompleted} bekleyen sipariş tamamlandı.` : '');
+    // Toast + kalıcı sonuç paneli BİRLİKTE: form temizlendiği için ekranda "bir şey oldu mu?"
+    // sorusu kalmasın (kullanıcı geri bildirimi). imported=0 asla yeşil gösterilmez.
+    if (r.imported > 0) toast.success(`${r.imported} kayıt envantere girdi`, { description: msg });
+    else toast.warning('Hiçbir kayıt girilmedi', { description: msg });
+    announce(msg);
   }, [state, width, router, announce]);
 
   const onFile = async (file: File | null) => {
@@ -690,8 +844,53 @@ export function ImportWorkbench({
     return parts.length > 0 ? `Yeni parti: ${parts.join(' · ')}` : 'Yeni parti açılacak';
   };
 
+  /**
+   * İKİNCİ ONAY — "Onayla ve Dağıt" doğrudan kaydetmez, önce ne olacağını gösterir.
+   *
+   * Onaylanırsa GİZLİ submit düğmesi submitter olarak kullanılır (`name=dryRun value=false`
+   * çifti yalnız böyle gövdeye girer). `requestSubmit` yoksa (çok eski tarayıcı) düğmeye
+   * tıklanır — iki yol da aynı submitter'ı taşır.
+   */
+  const askThenSubmit = async () => {
+    if (blocked || pending) return;
+    const res = await confirm({
+      title: 'Stok girişini onaylıyor musunuz?',
+      description:
+        'Kayıtlar şifrelenerek envantere yazılır. Girilen lisans silinemez — yalnız geçersiz kılınabilir.',
+      confirmLabel: `Evet, ${tr(items.length)} ${isAccount ? 'hesabı' : 'anahtarı'} gir`,
+      cancelLabel: 'Vazgeç, düzenlemeye dön',
+      details: (
+        <ImportConfirmDetails
+          productLabel={selected ? `${selected.name} · ${selected.sku}` : '—'}
+          unitNoun={isAccount ? 'hesap' : 'anahtar'}
+          count={items.length}
+          perKeyUses={perKeyUses}
+          supplyLine={batchSummary()}
+          supplyWarning={batchMode === 'none'}
+          duplicates={duplicateCount}
+          blankLines={blankLines}
+          wouldFill={previewState.ok ? wouldFill : 0}
+          previews={itemPreviews}
+        />
+      ),
+    });
+    if (!res) return;
+    const form = formRef.current;
+    const submitter = realSubmitRef.current;
+    if (!form || !submitter) return;
+    if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter);
+    else submitter.click();
+  };
+
   return (
-    <form action={action} className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
+    <form
+      ref={formRef}
+      action={action}
+      className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]"
+    >
+      {dialog}
+      {/* Gerçek gönderim düğmesi — görünmez; onay modali tarafından submitter olarak kullanılır. */}
+      <button ref={realSubmitRef} type="submit" name="dryRun" value="false" className="hidden" />
       {/* Kayıtlar tek gizli alanla taşınır: hesap satırları API'ye NESNE olarak gider
           (JSON string'e çevrilmez) ve her kaydın EKRANDAKİ satır numarası birlikte gider. */}
       <input type="hidden" name="itemsJson" value={itemsJson} />
@@ -1394,8 +1593,8 @@ export function ImportWorkbench({
             )}
 
             <div className="flex flex-col gap-2">
-              {/* Gerçek giriş: name=dryRun value=false → sunucu commit eder. */}
-              <Button type="submit" name="dryRun" value="false" disabled={pending || blocked}>
+              {/* Gerçek giriş ÖNCE onay modalini açar (yukarıdaki gizli düğmeyle gönderilir). */}
+              <Button type="button" onClick={() => void askThenSubmit()} disabled={pending || blocked}>
                 <Upload />
                 {pending ? 'İşleniyor…' : 'Onayla ve Dağıt'}
               </Button>

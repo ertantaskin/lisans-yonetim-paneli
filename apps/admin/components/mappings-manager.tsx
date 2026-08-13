@@ -13,6 +13,7 @@ import {
 import type { CatalogRow, SiteRow } from '../lib/api';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Combobox } from './ui/combobox';
 import { Badge } from './ui/badge';
 import { Field } from './ui/field';
@@ -269,22 +270,25 @@ function RemoveButton({
 }) {
   const router = useRouter();
   const [pending, start] = React.useTransition();
+  const { confirm, dialog } = useConfirm();
   return (
     <form
-      action={(fd) => {
-        if (
-          !window.confirm(
-            `"${label}" eşlemesini kaldırmak istediğinize emin misiniz?\n\nBu mağaza ürününün yeni siparişleri artık bu ürünü çözemez (beklemede kalır). İstediğinizde yeniden eşleyebilirsiniz.`,
-          )
-        ) {
-          return;
-        }
+      // `action` içinden onay: modal cevabı beklenir, "hayır"da hiçbir istek gitmez.
+      action={async (fd) => {
+        const ok = await confirm({
+          title: 'Eşleme kaldırılsın mı?',
+          description: `“${label}” eşlemesi silinir. Bu mağaza ürününün YENİ siparişleri artık bu ürünü çözemez ve beklemede kalır (yanlış ürün teslim edilmez). İstediğinizde yeniden eşleyebilirsiniz.`,
+          tone: 'danger',
+          confirmLabel: 'Eşlemeyi kaldır',
+        });
+        if (!ok) return;
         start(async () => {
           await removeMappingAction(fd);
           router.refresh();
         });
       }}
     >
+      {dialog}
       <input type="hidden" name="mappingId" value={mappingId} />
       <input type="hidden" name="productId" value={productId} />
       <Button

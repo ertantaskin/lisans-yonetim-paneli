@@ -19,7 +19,7 @@ import type { BatchRow } from '../app/batches/queries';
 import { fmtDateTime, includesTr } from '../lib/utils';
 import { supplyStatusLabel } from '../lib/labels';
 import { bulkReplaceBatchAction, recallBatchAction } from '../app/batches/actions';
-import { Badge } from './ui/badge';
+import { Badge, SupplyStatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Label, Textarea } from './ui/input';
@@ -33,39 +33,6 @@ import {
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
-
-/**
- * Parti durumu → rozet (batch_status: active/recalled/voided).
- * METİN TEK KAYNAKTAN (`supplyStatusLabel`) gelir; burada yalnız renk + ikon eşlemesi kalır.
- * Eskiden etiketler bileşene sabit yazılmıştı ve sözlükle çelişiyordu (voided → burada
- * "iptal", ürün detayında "Geçersiz"; üstelik "İptal" sözlükte satın alma emrinin
- * `cancelled` durumunun karşılığı → aynı ekran ailesinde iki kavram aynı kelimeydi).
- */
-function BatchStatusBadge({ status }: { status: string }) {
-  if (status === 'active') {
-    return (
-      <Badge variant="success">
-        <CheckCircle2 /> {supplyStatusLabel('active')}
-      </Badge>
-    );
-  }
-  if (status === 'recalled') {
-    return (
-      <Badge variant="danger">
-        <ShieldX /> {supplyStatusLabel('recalled')}
-      </Badge>
-    );
-  }
-  if (status === 'voided') {
-    return (
-      <Badge variant="outline">
-        <Ban /> {supplyStatusLabel('voided')}
-      </Badge>
-    );
-  }
-  // Bilinmeyen durumda da sözlükten geç (yoksa ham değere düşer — regresyonsuz).
-  return <Badge variant="neutral">{supplyStatusLabel(status)}</Badge>;
-}
 
 const baseColumns: ColumnDef<BatchRow>[] = [
   {
@@ -114,7 +81,7 @@ const baseColumns: ColumnDef<BatchRow>[] = [
     header: 'Durum',
     cell: ({ row }) => (
       <span className="flex flex-wrap items-center gap-1.5">
-        <BatchStatusBadge status={row.original.status} />
+        <SupplyStatusBadge status={row.original.status} />
         {/*
           OTOMATİK PARTİ (§12): bu partiyi operatör elle açmadı — Stok Girişi ekranı, girilen
           anahtarlara maliyet/tedarikçi izi tutmak için türetti (aynı adımda teslim alınmış bir

@@ -20,7 +20,7 @@ import {
   type LicenseInventoryRow,
 } from '../../app/stock/license-actions';
 import { Alert, AlertDescription } from '../ui/alert';
-import { Badge } from '../ui/badge';
+import { Badge, StatusBadge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { EmptyState } from '../ui/page-header';
 import { SearchInput } from '../ui/search-input';
@@ -62,18 +62,11 @@ const SORT_OPTIONS = [
   { value: 'assigned_desc', label: 'Son teslim edilen' },
 ] as const;
 
-/** license_items durumu → rozet tonu (durum dili: stokta yeşil, ölü kayıt kırmızı). */
-const STATUS_VARIANT: Record<string, 'success' | 'neutral' | 'warning' | 'danger' | 'outline'> = {
-  available: 'success',
-  assigned: 'neutral',
-  suspended: 'warning',
-  replaced: 'neutral',
-  expired: 'warning',
-  quarantined: 'warning',
-  depleted: 'outline',
-  revoked: 'danger',
-  voided: 'danger',
-};
+// NOT: Bu dosyada yerel bir durum→ton sözlüğü VARDI ve ikonsuz düz `Badge` basıyordu →
+// aynı "Teslim edildi" durumu /orders'ta yeşil-ikonlu, burada gri-ikonsuz görünüyordu
+// (`quarantined` de burada amber, orada kırmızıydı). Artık panelin TEK rozet bileşeni
+// `StatusBadge` kullanılıyor: ton + ikon + Türkçe etiket tek kaynaktan (`ui/badge` +
+// `lib/labels`). Yeni bir durum eklenecekse oraya eklenir, buraya değil.
 
 /** Gizli alan maskesi — uzunluk/biçim sızdırmayan sabit gövde (§8 mask deseni). */
 const MASK = '••••••';
@@ -478,7 +471,7 @@ function StatusCell({ row }: { row: LicenseInventoryRow }) {
 
   return (
     <div className="flex flex-col items-start gap-1">
-      <Badge variant={STATUS_VARIANT[row.status] ?? 'neutral'}>{statusLabel(row.status)}</Badge>
+      <StatusBadge status={row.status} />
 
       {showExpiredFlag &&
         (SELLABLE_STATUS.has(row.status) ? (

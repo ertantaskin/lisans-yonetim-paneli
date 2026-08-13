@@ -7,6 +7,7 @@ import { MoreHorizontal, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import type { TemplateRow } from '../app/templates/queries';
 import { deleteTemplateAction } from '../app/templates/actions';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import {
   DropdownMenu,
@@ -34,9 +35,16 @@ function TemplateRowActions({
 }) {
   const router = useRouter();
   const [pending, startTransition] = React.useTransition();
+  const { confirm, dialog } = useConfirm();
 
-  const remove = () => {
-    if (!window.confirm('Bu şablon silinsin mi? Bu işlem geri alınamaz.')) return;
+  const remove = async () => {
+    const ok = await confirm({
+      title: 'Bu şablon silinsin mi?',
+      description: `“${scopeLabel(template)}” kapsamındaki şablon kalıcı olarak silinir; bu kapsamdaki mailler bir üst kapsamın şablonuyla gönderilmeye başlar.`,
+      tone: 'danger',
+      confirmLabel: 'Sil',
+    });
+    if (!ok) return;
     startTransition(async () => {
       const res = await deleteTemplateAction(template.id);
       if (res.ok) router.refresh();
@@ -45,6 +53,8 @@ function TemplateRowActions({
   };
 
   return (
+    <>
+    {dialog}
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon-sm" disabled={pending} aria-label="Aksiyonlar">
@@ -59,7 +69,7 @@ function TemplateRowActions({
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem
-          onSelect={remove}
+          onSelect={() => void remove()}
           disabled={pending}
           className="text-destructive focus:text-destructive"
         >
@@ -68,6 +78,7 @@ function TemplateRowActions({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }
 

@@ -27,6 +27,7 @@ import { checkLowStockAction } from '../app/notifications/actions';
 import { useLive } from './live/live-provider';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
@@ -310,6 +311,7 @@ export function NotificationsTable({
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [marking, startMarking] = React.useTransition();
+  const { confirm, dialog } = useConfirm();
 
   const rows = React.useMemo(() => notifications ?? [], [notifications]);
   const localUnread = React.useMemo(() => rows.filter((n) => !n.readAt).length, [rows]);
@@ -368,14 +370,14 @@ export function NotificationsTable({
     [refreshLive, router],
   );
 
-  const markAll = () => {
-    if (
-      !window.confirm(
-        'Tüm okunmamış bildirimler okundu işaretlensin mi? (Bu listede görünmeyen eski bildirimler de dahildir.)',
-      )
-    ) {
-      return;
-    }
+  const markAll = async () => {
+    const ok = await confirm({
+      title: 'Tümü okundu işaretlensin mi?',
+      description:
+        'Bu listede görünmeyen ESKİ bildirimler de dahil, tüm okunmamış bildirimler okundu sayılır. Geri alınamaz.',
+      confirmLabel: 'Tümünü okundu yap',
+    });
+    if (!ok) return;
     markRead();
   };
 
@@ -386,11 +388,12 @@ export function NotificationsTable({
 
   return (
     <div className="space-y-4">
+      {dialog}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           variant="outline"
           size="sm"
-          onClick={markAll}
+          onClick={() => void markAll()}
           disabled={marking || !hasUnread}
           title={
             hasUnread

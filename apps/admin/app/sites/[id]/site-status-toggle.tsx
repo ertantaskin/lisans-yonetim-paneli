@@ -3,6 +3,7 @@ import * as React from 'react';
 import { Ban, CircleCheck, TriangleAlert } from 'lucide-react';
 import { setSiteStatusAction } from '../actions';
 import { Button } from '../../../components/ui/button';
+import { useConfirm } from '../../../components/ui/confirm';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 
 /**
@@ -14,14 +15,27 @@ export function SiteStatusToggle({ siteId, status }: { siteId: string; status: s
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const announce = useAnnouncer();
+  const { confirm, dialog } = useConfirm();
   const suspended = status === 'suspended';
   const next = suspended ? 'active' : 'suspended';
 
-  const toggle = () => {
-    const msg = suspended
-      ? 'Site yeniden aktifleştirilsin mi? Yeni sipariş push kabulü tekrar açılır.'
-      : 'Site askıya alınsın mı? Askıdayken HMAC auth reddedilir — yeni sipariş push edilemez.';
-    if (!window.confirm(msg)) return;
+  const toggle = async () => {
+    const ok = await confirm(
+      suspended
+        ? {
+            title: 'Site yeniden aktifleştirilsin mi?',
+            description: 'Yeni sipariş push kabulü tekrar açılır.',
+            confirmLabel: 'Aktifleştir',
+          }
+        : {
+            title: 'Site askıya alınsın mı?',
+            description:
+              'Askıdayken HMAC kimlik doğrulaması reddedilir — mağaza yeni sipariş gönderemez. İşlem geri alınabilir.',
+            tone: 'danger',
+            confirmLabel: 'Askıya al',
+          },
+    );
+    if (!ok) return;
     setError(null);
     startTransition(async () => {
       const res = await setSiteStatusAction(siteId, next);
@@ -38,10 +52,11 @@ export function SiteStatusToggle({ siteId, status }: { siteId: string; status: s
 
   return (
     <div className="flex flex-col items-end gap-1.5">
+      {dialog}
       <Button
         variant={suspended ? 'default' : 'outline'}
         size="sm"
-        onClick={toggle}
+        onClick={() => void toggle()}
         disabled={pending}
       >
         {suspended ? <CircleCheck /> : <Ban />}

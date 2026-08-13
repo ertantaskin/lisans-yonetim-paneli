@@ -27,6 +27,7 @@ import { securityTypeLabel, severityLabel } from '../lib/labels';
 import { scanSecurityAction, anonymizeCustomerAction } from '../app/security/actions';
 import { Badge, type BadgeProps } from './ui/badge';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import { Input, Label } from './ui/input';
 import { DataTable } from './data-table/data-table';
@@ -235,8 +236,9 @@ function AnonymizeForm({
   const [email, setEmail] = React.useState('');
   const [localError, setLocalError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
+  const { confirm, dialog } = useConfirm();
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = email.trim();
     if (!trimmed) {
@@ -244,12 +246,14 @@ function AnonymizeForm({
       return;
     }
     setLocalError(null);
-    if (
-      !window.confirm(
-        `${trimmed} anonimleştirilsin mi?\n\nTEK YÖNLÜ işlem (KVKK): bu e-postanın kişisel verisi tüm siparişler ve değişim taleplerinde maskelenir, müşteri kaydı silinir. Sipariş/atama bütünlüğü korunur. Geri alınamaz ve denetim kaydına yazılır.`,
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: `${trimmed} anonimleştirilsin mi?`,
+      description:
+        'TEK YÖNLÜ işlem (KVKK): bu e-postanın kişisel verisi tüm siparişlerde ve değişim taleplerinde maskelenir, müşteri kaydı silinir. Sipariş/atama bütünlüğü korunur. GERİ ALINAMAZ ve denetim kaydına yazılır.',
+      tone: 'danger',
+      confirmLabel: 'Anonimleştir',
+    });
+    if (!ok) return;
     startTransition(async () => {
       const res = await anonymizeCustomerAction(trimmed);
       if (res.ok) {
@@ -263,6 +267,7 @@ function AnonymizeForm({
 
   return (
     <div className="rounded-xl border border-border bg-card p-5">
+      {dialog}
       <div className="mb-1 flex items-center gap-2">
         <UserX className="size-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold text-foreground">KVKK anonimleştirme</h2>
@@ -271,7 +276,7 @@ function AnonymizeForm({
         Verilen e-postanın kişisel verisi tüm kayıtlarda maskelenir (tek yönlü). Sipariş/atama
         bütünlüğü korunur; işlem denetim kaydına düşer.
       </p>
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
+      <form onSubmit={(e) => void submit(e)} className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="anon-email">Müşteri e-postası</Label>
           <Input

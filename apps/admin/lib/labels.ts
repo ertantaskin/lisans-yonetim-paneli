@@ -214,7 +214,13 @@ const BADGE_STATUS: Record<string, string> = {
   queued: 'Kuyrukta',
   failed: 'Başarısız',
   bounced: 'Geri döndü',
-  // Lisans kalemi
+  // Lisans kalemi (envanter/karantina listeleri) — bu satırlar EKLENMEDEN önce envanter
+  // tablosu kendi yerel sözlüğünü + ikonsuz düz `Badge`'ini kullanıyordu; aynı "Teslim
+  // edildi" durumu /orders'ta yeşil-ikonlu, /stock'ta gri-ikonsuz görünüyordu.
+  available: 'Stokta',
+  reserved: 'Rezerve',
+  assigned: 'Teslim edildi',
+  depleted: 'Tükendi',
   quarantined: 'Karantinada',
   voided: 'Geçersiz kılındı',
 };

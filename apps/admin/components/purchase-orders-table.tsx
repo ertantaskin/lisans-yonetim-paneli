@@ -4,29 +4,22 @@ import * as React from 'react';
 import { ArrowRight } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { isAutoReceipt } from '@lisans/shared';
+import { supplyStatusLabel } from '@/lib/labels';
 import type { PurchaseOrderRow } from '@/app/purchase-orders/queries';
-import { Badge, type BadgeProps } from './ui/badge';
+import { Badge, SupplyStatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
-/** PO durum → renk/etiket (§12). Sipariş durum dilinden ayrı, tedarik akışına özel. */
-const PO_STATUS: Record<string, { variant: NonNullable<BadgeProps['variant']>; label: string }> = {
-  draft: { variant: 'outline', label: 'taslak' },
-  ordered: { variant: 'neutral', label: 'sipariş verildi' },
-  partial: { variant: 'warning', label: 'kısmi teslim' },
-  received: { variant: 'success', label: 'teslim alındı' },
-  cancelled: { variant: 'danger', label: 'iptal' },
-};
-
+/**
+ * PO durum rozeti — panelin TEK tedarik rozetine (`SupplyStatusBadge`) devredilir.
+ * Burada yerel bir sözlük vardı: etiketleri ELLE küçük harf yazıyor (sözlüğü atlıyor),
+ * ikon basmıyor ve 'ordered'ı gri gösteriyordu (ürün detayında amber). Dışa açık ad
+ * korunur — çağrı yerleri (`/purchase-orders/[id]`) değişmeden çalışır.
+ */
 export function POStatusBadge({ status, className }: { status: string; className?: string }) {
-  const meta = PO_STATUS[status] ?? { variant: 'neutral' as const, label: status };
-  return (
-    <Badge variant={meta.variant} className={className}>
-      {meta.label}
-    </Badge>
-  );
+  return <SupplyStatusBadge status={status} className={className} />;
 }
 
 /** ISO tarihi kısa tr-TR biçimler. */
@@ -130,13 +123,11 @@ const facets: FacetConfig[] = [
   {
     columnId: 'status',
     title: 'Durum',
-    options: [
-      { label: 'Taslak', value: 'draft' },
-      { label: 'Sipariş verildi', value: 'ordered' },
-      { label: 'Kısmi teslim', value: 'partial' },
-      { label: 'Teslim alındı', value: 'received' },
-      { label: 'İptal', value: 'cancelled' },
-    ],
+    // Etiketler TEK KAYNAKTAN: elle yazıldığında rozetle ayrışıyordu ("Kısmi teslim" ↔ "Kısmi").
+    options: ['draft', 'ordered', 'partial', 'received', 'cancelled'].map((value) => ({
+      label: supplyStatusLabel(value),
+      value,
+    })),
   },
 ];
 

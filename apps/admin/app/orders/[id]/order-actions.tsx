@@ -11,6 +11,7 @@ import {
   type MutationState,
 } from './actions';
 import { Button } from '../../../components/ui/button';
+import { useConfirm } from '../../../components/ui/confirm';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 
 /** Mutasyon sonucunu ekran okuyucuya duyurur (WCAG 4.1.3): hata → assertive. */
@@ -81,14 +82,16 @@ export function AssignmentActions({
   const [pending, startTransition] = React.useTransition();
   const [state, setState] = React.useState<MutationState | null>(null);
   const announce = useAnnouncer();
+  const { confirm, dialog } = useConfirm();
 
-  const suspend = () => {
-    if (
-      !window.confirm(
-        'Atama askıya alınsın mı? Müşteri görünümünde "inceleme altında" olur (geri alınabilir).',
-      )
-    )
-      return;
+  const suspend = async () => {
+    const ok = await confirm({
+      title: 'Atama askıya alınsın mı?',
+      description:
+        'Müşteri görünümünde "inceleme altında" olur ve lisans geçici olarak kullanılamaz. Bu işlem geri alınabilir ("Askıdan Çıkar").',
+      confirmLabel: 'Askıya al',
+    });
+    if (!ok) return;
     setState(null);
     startTransition(async () => {
       const res = await suspendAction(assignmentId, orderId);
@@ -97,17 +100,26 @@ export function AssignmentActions({
     });
   };
 
-  const revoke = () => {
-    // Sebep prompt'u aynı zamanda onay görevi görür (Vazgeç → iptal). Replace ile tutarlı; sebep
-    // audit_log + fulfillment_events'e düşer (iade mi, dolandırıcılık mı, kusurlu key mi ayırt edilir).
-    const reason = window.prompt(
-      'İptal sebebi (ör. iade, dolandırıcılık, kusurlu key). Lisans karantinaya alınır ve müşteri görünümünden düşer — GERİ ALINAMAZ:',
-      'iade',
-    );
-    if (reason === null) return; // vazgeçildi
+  const revoke = async () => {
+    // Sebep zorunlu DEĞİL (boşsa "admin iptali" yazılır) ama modal onay görevi de görür.
+    // Sebep audit_log + fulfillment_events'e düşer → iade mi, dolandırıcılık mı, kusurlu key
+    // mi sonradan ayırt edilebilir.
+    const res0 = await confirm({
+      title: 'Lisans iptal edilsin mi?',
+      description:
+        'Lisans karantinaya alınır, müşteri görünümünden düşer ve satır iptal işaretlenir. GERİ ALINAMAZ.',
+      tone: 'danger',
+      confirmLabel: 'İptal et',
+      reason: {
+        label: 'İptal sebebi',
+        placeholder: 'ör. iade, dolandırıcılık, kusurlu key',
+        hint: 'Boş bırakılırsa "admin iptali" yazılır. Sebep denetim kaydına düşer.',
+      },
+    });
+    if (!res0) return;
     setState(null);
     startTransition(async () => {
-      const res = await revokeAction(assignmentId, orderId, reason.trim() || 'admin iptali');
+      const res = await revokeAction(assignmentId, orderId, res0.reason || 'admin iptali');
       setState(res);
       announceResult(announce, res);
     });
@@ -122,18 +134,23 @@ export function AssignmentActions({
     });
   };
 
-  const replace = () => {
-    const reason = window.prompt(
-      'Değişim sebebi (ör. kusurlu key). Eski key karantinaya alınır, aynı üründen TAZE key atanır. Stok yoksa değişim yapılmaz:',
-    );
-    if (reason === null) return; // iptal
-    if (!reason.trim()) {
-      announce('Değişim sebebi zorunlu', { assertive: true });
-      return;
-    }
+  const replace = async () => {
+    const res0 = await confirm({
+      title: 'Anahtar değiştirilsin mi?',
+      description:
+        'Eski anahtar karantinaya alınır ve aynı üründen TAZE bir anahtar atanır. Stok yoksa değişim yapılmaz (eski anahtar yerinde kalır).',
+      confirmLabel: 'Değiştir',
+      reason: {
+        label: 'Değişim sebebi',
+        placeholder: 'ör. kusurlu key, aktivasyon hatası',
+        required: true,
+        hint: 'Sebep zorunlu — değişim geçmişine ve denetim kaydına yazılır.',
+      },
+    });
+    if (!res0) return;
     setState(null);
     startTransition(async () => {
-      const res = await replaceAction(assignmentId, orderId, reason);
+      const res = await replaceAction(assignmentId, orderId, res0.reason);
       setState(res);
       announceResult(announce, res);
     });
@@ -141,20 +158,33 @@ export function AssignmentActions({
 
   return (
     <div className="flex flex-col items-end gap-1">
+      {dialog}
       <div className="flex flex-wrap items-center justify-end gap-1.5">
         {status === 'active' && (
           <>
-            <Button type="button" variant="outline" size="sm" onClick={suspend} disabled={pending}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void suspend()}
+              disabled={pending}
+            >
               <PauseCircle /> Askıya Al
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={replace} disabled={pending}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void replace()}
+              disabled={pending}
+            >
               <RefreshCw /> Değiştir
             </Button>
             <Button
               type="button"
               variant="danger-outline"
               size="sm"
-              onClick={revoke}
+              onClick={() => void revoke()}
               disabled={pending}
             >
               <Ban /> İptal
@@ -172,7 +202,7 @@ export function AssignmentActions({
               type="button"
               variant="danger-outline"
               size="sm"
-              onClick={revoke}
+              onClick={() => void revoke()}
               disabled={pending}
             >
               <Ban /> İptal

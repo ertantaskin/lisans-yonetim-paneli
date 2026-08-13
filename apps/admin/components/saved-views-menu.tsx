@@ -3,6 +3,7 @@ import * as React from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Bookmark, BookmarkPlus, Loader2, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +36,7 @@ export function SavedViewsMenu({ page }: { page: string }) {
   const [views, setViews] = React.useState<SavedView[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const { confirm, dialog } = useConfirm();
 
   // Mevcut URL query (leading '?' ile) — kaydedilecek/karşılaştırılacak durum.
   const currentQuery = searchParams.toString() ? `?${searchParams.toString()}` : '';
@@ -67,7 +69,21 @@ export function SavedViewsMenu({ page }: { page: string }) {
 
   // Mevcut durumu adlandırıp kaydet.
   const save = async () => {
-    const name = window.prompt('Görünüm adı')?.trim();
+    // Menü ÖNCE kapanır: modal, açık bir dropdown'ın içinden değil temiz bir zeminden açılsın.
+    setOpen(false);
+    const answer = await confirm({
+      title: 'Bu görünümü kaydet',
+      description:
+        'Ekrandaki süzgeç/sıralama durumu bu adla kaydedilir; menüden tek tıkla geri dönebilirsiniz.',
+      confirmLabel: 'Kaydet',
+      reason: {
+        label: 'Görünüm adı',
+        inputType: 'text',
+        required: true,
+        placeholder: 'ör. Bekleyen · Acme sitesi',
+      },
+    });
+    const name = answer?.reason.trim();
     if (!name) return;
     setBusy(true);
     try {
@@ -100,6 +116,8 @@ export function SavedViewsMenu({ page }: { page: string }) {
   };
 
   return (
+    <>
+    {dialog}
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm">
@@ -159,5 +177,6 @@ export function SavedViewsMenu({ page }: { page: string }) {
         </button>
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }

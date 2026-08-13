@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatStrip } from '../../../components/ui/stat-tile';
-import { Badge } from '../../../components/ui/badge';
+import { Badge, SupplyStatusBadge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
 import { EmptyState } from '../../../components/ui/page-header';
 import {
@@ -47,22 +47,6 @@ import { MappingsManager } from '../../../components/mappings-manager';
 import { LicenseItemsTable } from '../../../components/inventory/license-items-table';
 
 export const dynamic = 'force-dynamic';
-
-/** Parti/PO durumu → rozet varyantı (StatusBadge bu statüleri bilmez → yerel eşleme). */
-const STATUS_VARIANT: Record<string, 'neutral' | 'warning' | 'success' | 'danger' | 'outline'> = {
-  active: 'success',
-  received: 'success',
-  ordered: 'warning',
-  partial: 'warning',
-  draft: 'outline',
-  recalled: 'danger',
-  voided: 'danger',
-  cancelled: 'danger',
-};
-
-function StateBadge({ status }: { status: string }) {
-  return <Badge variant={STATUS_VARIANT[status] ?? 'neutral'}>{supplyStatusLabel(status)}</Badge>;
-}
 
 const dtFmt = (iso: string) =>
   new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' });
@@ -323,7 +307,7 @@ export default async function ProductDetailPage({
                           </span>
                         </TableCell>
                         <TableCell>
-                          <StateBadge status={b.status} />
+                          <SupplyStatusBadge status={b.status} />
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {b.qtyReceived}
@@ -396,7 +380,7 @@ export default async function ProductDetailPage({
                             {po.supplierName ?? 'Satın alma emri'}
                           </Link>
                           <span className="mt-1 block">
-                            <StateBadge status={po.status} />
+                            <SupplyStatusBadge status={po.status} />
                           </span>
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-muted-foreground">

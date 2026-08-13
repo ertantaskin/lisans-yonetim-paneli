@@ -9,6 +9,7 @@ import { siteTypeLabel } from '../lib/labels';
 import { rotateSecretAction, setSiteStatusAction } from '../app/sites/actions';
 import { Badge, StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
 import {
   DropdownMenu,
@@ -142,15 +143,17 @@ function SiteRowActions({
   onError: (message: string) => void;
 }) {
   const [pending, startTransition] = React.useTransition();
+  const { confirm, dialog } = useConfirm();
   const suspended = site.status === 'suspended';
 
-  const rotate = () => {
-    if (
-      !window.confirm(
-        `${site.domain} için HMAC secret yenilensin mi?\n\nEski secret 24 saat daha geçerli kalır (WP eklentisi kesintisiz yeni secret'a geçer). Yeni secret yalnız bir kez gösterilir.`,
-      )
-    )
-      return;
+  const rotate = async () => {
+    const ok = await confirm({
+      title: `${site.domain} için HMAC secret yenilensin mi?`,
+      description:
+        'Eski secret 24 saat daha geçerli kalır (eklenti kesintisiz yeni secret’a geçer). Yeni secret yalnız BİR KEZ gösterilir — kaydetmezseniz tekrar göremezsiniz.',
+      confirmLabel: 'Yenile',
+    });
+    if (!ok) return;
     startTransition(async () => {
       const res = await rotateSecretAction(site.id);
       if (res.ok && res.hmacSecret) onRotated({ domain: site.domain, hmacSecret: res.hmacSecret });
@@ -158,12 +161,24 @@ function SiteRowActions({
     });
   };
 
-  const toggleStatus = () => {
+  const toggleStatus = async () => {
     const next = suspended ? 'active' : 'suspended';
-    const msg = suspended
-      ? `${site.domain} yeniden aktifleştirilsin mi? Yeni sipariş push kabulü tekrar açılır.`
-      : `${site.domain} askıya alınsın mı?\n\nAskıdayken HMAC auth reddedilir — yeni sipariş push edilemez.`;
-    if (!window.confirm(msg)) return;
+    const ok = await confirm(
+      suspended
+        ? {
+            title: `${site.domain} yeniden aktifleştirilsin mi?`,
+            description: 'Yeni sipariş push kabulü tekrar açılır.',
+            confirmLabel: 'Aktifleştir',
+          }
+        : {
+            title: `${site.domain} askıya alınsın mı?`,
+            description:
+              'Askıdayken HMAC kimlik doğrulaması reddedilir — mağaza yeni sipariş gönderemez. İşlem geri alınabilir.',
+            tone: 'danger',
+            confirmLabel: 'Askıya al',
+          },
+    );
+    if (!ok) return;
     startTransition(async () => {
       const res = await setSiteStatusAction(site.id, next);
       if (!res.ok) onError(res.error ?? 'Durum değiştirilemedi');
@@ -171,6 +186,8 @@ function SiteRowActions({
   };
 
   return (
+    <>
+    {dialog}
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
@@ -184,16 +201,17 @@ function SiteRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={rotate} disabled={pending}>
+        <DropdownMenuItem onSelect={() => void rotate()} disabled={pending}>
           <KeyRound />
           {pending ? 'Yenileniyor…' : 'Secret Yenile'}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={toggleStatus} disabled={pending}>
+        <DropdownMenuItem onSelect={() => void toggleStatus()} disabled={pending}>
           {suspended ? <CircleCheck /> : <Ban />}
           {suspended ? 'Aktifleştir' : 'Askıya Al'}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+    </>
   );
 }
 

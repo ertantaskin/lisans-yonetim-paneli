@@ -15,7 +15,6 @@ import {
   ShieldAlert,
   Truck,
   X,
-  type LucideIcon,
 } from 'lucide-react';
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import type {
@@ -34,7 +33,7 @@ import {
   toTextList,
   type CsvColumn,
 } from '../lib/csv';
-import { Badge, type BadgeProps } from './ui/badge';
+import { StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
@@ -71,24 +70,16 @@ const statusText = (s?: string | null): string => (s ? licenseItemStatusLabel(s)
 /** Tedarikçisi olmayan kalemler için sanal süzgeç değeri (aşağıdaki nota bakın). */
 const NO_SUPPLIER = '__none__';
 
-type StatusTone = { variant: NonNullable<BadgeProps['variant']>; Icon: LucideIcon };
-
-const STATUS_TONE: Record<string, StatusTone> = {
-  quarantined: { variant: 'danger', Icon: ShieldAlert },
-  voided: { variant: 'warning', Icon: Ban },
-};
-
-const FALLBACK_TONE: StatusTone = { variant: 'neutral', Icon: ShieldAlert };
-
+/**
+ * Durum rozeti — panelin TEK rozet bileşenine (`StatusBadge`) devredilir.
+ *
+ * Burada yerel bir ton sözlüğü VARDI ve `voided`'ı AMBER basıyordu; aynı durum lisans
+ * envanterinde ve sipariş ekranlarında KIRMIZI görünüyordu (ölü kayıt). Tek kaynağa
+ * bağlanınca ton/ikon/etiket panel geneliyle aynı olur.
+ */
 function QuarantineStatus({ status }: { status?: string | null }) {
-  const meta: StatusTone = (status ? STATUS_TONE[status] : undefined) ?? FALLBACK_TONE;
-  const Icon = meta.Icon;
-  return (
-    <Badge variant={meta.variant}>
-      <Icon />
-      {statusText(status)}
-    </Badge>
-  );
+  if (!status) return <span className="text-muted-foreground">—</span>;
+  return <StatusBadge status={status} />;
 }
 
 /** Uzun anahtar/hesap değeri: tek satır + tam değer `title`'da + kopyala. */
@@ -960,7 +951,9 @@ export function QuarantineTable({
             value: counts.quarantined,
             tone: 'danger',
           },
-          { icon: Ban, label: statusText('voided'), value: counts.voided, tone: 'warning' },
+          // Ton rozetle AYNI: "Geçersiz kılındı" da ölü kayıttır (rozet kırmızı, sayaç
+          // amber olunca aynı satırda iki farklı ciddiyet okunuyordu).
+          { icon: Ban, label: statusText('voided'), value: counts.voided, tone: 'danger' },
           {
             icon: Truck,
             label: 'Tedarikçisi belli',

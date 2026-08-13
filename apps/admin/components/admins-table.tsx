@@ -5,6 +5,7 @@ import type { AdminUser } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { useConfirm } from './ui/confirm';
 import {
   Table,
   TableBody,
@@ -20,22 +21,50 @@ import {
 } from '@/app/admins/actions';
 
 export function AdminsTable({ admins }: { admins: AdminUser[] }) {
-  // Parola sıfırlama: küçük prompt (nadir admin işlemi) → server action.
-  const resetPassword = (id: string, name: string) => {
-    const pw = window.prompt(`${name} için yeni parola (en az 8 karakter):`);
-    if (pw == null) return;
-    if (pw.length < 8) {
-      window.alert('Parola en az 8 karakter olmalı.');
-      return;
-    }
+  const { confirm, dialog } = useConfirm();
+
+  /**
+   * Parola sıfırlama. Eskiden `window.prompt` idi: parola DÜZ METİN görünüyordu, kısa
+   * parola bir `alert()` ile reddediliyordu ve kutunun dili tarayıcıya aitti. Artık panelin
+   * kendi modali + MASKELİ alan; 8 karakter altındayken onay düğmesi kilitli kalır.
+   */
+  const resetPassword = async (id: string, name: string) => {
+    const res = await confirm({
+      title: `${name} için parola sıfırlansın mı?`,
+      description:
+        'Kullanıcının mevcut oturumları kapanır ve yeni parolayla giriş yapması gerekir. Parolayı ona güvenli bir kanalla iletin.',
+      confirmLabel: 'Parolayı değiştir',
+      reason: {
+        label: 'Yeni parola',
+        inputType: 'password',
+        required: true,
+        minLength: 8,
+        placeholder: 'en az 8 karakter',
+        hint: 'En az 8 karakter. Panel parolayı saklamaz, yalnız hash’ini tutar.',
+      },
+    });
+    if (!res) return;
     const fd = new FormData();
     fd.set('id', id);
-    fd.set('password', pw);
+    fd.set('password', res.reason);
     void resetAdminPasswordAction(fd);
   };
 
+  /** Silme onayı — form submit'i modal cevabına bağlanır. */
+  const confirmDelete = async (name: string) =>
+    Boolean(
+      await confirm({
+        title: `${name} silinsin mi?`,
+        description:
+          'Yönetici hesabı kaldırılır ve açık oturumları geçersizleşir. Bu işlem geri alınamaz.',
+        tone: 'danger',
+        confirmLabel: 'Sil',
+      }),
+    );
+
   return (
     <div className="overflow-hidden rounded-lg border border-border">
+      {dialog}
       <Table>
         <TableHeader>
           <TableRow className="bg-muted/40 hover:bg-muted/40">
@@ -95,14 +124,15 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
                       size="icon-sm"
                       title="Parola sıfırla"
                       aria-label="Parola sıfırla"
-                      onClick={() => resetPassword(a.id, a.name)}
+                      onClick={() => void resetPassword(a.id, a.name)}
                     >
                       <KeyRound />
                     </Button>
                     <form
-                      action={deleteAdminAction}
-                      onSubmit={(e) => {
-                        if (!window.confirm(`${a.name} silinsin mi?`)) e.preventDefault();
+                      // Modal cevabı beklenir: "hayır"da hiçbir istek gitmez.
+                      action={async (fd) => {
+                        if (!(await confirmDelete(a.name))) return;
+                        await deleteAdminAction(fd);
                       }}
                     >
                       <input type="hidden" name="id" value={a.id} />
