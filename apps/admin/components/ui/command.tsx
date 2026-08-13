@@ -67,15 +67,10 @@ export const CommandInput = React.forwardRef<
         ref={setRefs}
         value={current}
         onValueChange={setSearch}
-        onKeyDown={(event) => {
-          onKeyDown?.(event);
-          // Kutu DOLUYKEN Escape önce aramayı temizler; BOŞKEN dokunmayız →
-          // Radix popover'ı kapatmaya devam eder (beklenen davranış).
-          if (event.key === 'Escape' && current !== '') {
-            event.preventDefault();
-            setSearch('');
-          }
-        }}
+        // Escape BURADA ele alınmaz: bu kutu her zaman bir katmanın (popover/dialog)
+        // içinde yaşar ve orada Escape'in anlamı "katmanı kapat"tır. Temizlemek için
+        // sağdaki (×) düğmesi var; katman kapanınca arama zaten sıfırlanır.
+        onKeyDown={onKeyDown}
         className={cn(
           'h-9 min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50',
           className,

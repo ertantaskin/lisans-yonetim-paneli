@@ -152,20 +152,15 @@ export function Combobox({
             liste ezilmesin diye alt sınır, geniş ekranda satır uzamasın diye üst sınır var. */}
         <PopoverContent
           align="start"
-          onEscapeKeyDown={(event) => {
-            // Dolu arama kutusunda Escape ÖNCE aramayı temizler, popover açık kalır;
-            // boş kutuda Radix'in kendi davranışı (kapat) sürer. Radix Escape'i capture
-            // aşamasında dinlediği için engelleme BURADA olmalı.
-            //
-            // Temizlemeyi de BURADA yapıyoruz, CommandInput'un kendi onKeyDown'ına
-            // GÜVENMİYORUZ: o yalnız odak INPUT'tayken çalışır. Odak "temizle (×)"
-            // düğmesindeyken (Tab ile ulaşılabilir) arama hiç boşalmaz ve bu guard her
-            // Escape'i yutardı → popover yalnız dışarı tıklamayla kapanırdı.
-            if (search !== '') {
-              event.preventDefault();
-              setSearch('');
-            }
-          }}
+          // Escape'i BİLEREK yakalamıyoruz: popover içinde Escape'in yerleşik anlamı
+          // "kapat"tır (panelin tüm Radix katmanlarında böyle). Bir ara sürümde "dolu
+          // aramayı önce temizle, popover açık kalsın" denendi; guard'ın koşulu ile
+          // kutunun görünen değeri en ufak desenkron olduğunda Escape SONSUZA DEK
+          // yutuluyor ve popover yalnız dışarı tıklamayla kapanıyordu — kullanıcıyı
+          // kilitleyen bu sınıf hata, kazandırdığı küçük kolaylıktan daha pahalı.
+          // Arama zaten kapanışta sıfırlanıyor (setOpenState) ve kutunun kendi (×)
+          // düğmesi var. (Sayfa içi `SearchInput`'ta Escape TEMİZLER — orada kapatılacak
+          // bir katman yok; bağlam farklı, davranış bilinçli olarak farklı.)
           className="w-[var(--radix-popover-trigger-width)] min-w-[16rem] max-w-[min(28rem,90vw)] p-0"
         >
           <Command
