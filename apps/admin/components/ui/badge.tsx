@@ -2,6 +2,7 @@ import * as React from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 import {
   Archive,
+  Banknote,
   CalendarX2,
   CheckCircle2,
   Clock,
@@ -175,21 +176,30 @@ export function SupplyStatusBadge({ status, className }: { status: string; class
  * birleştirmek `SupplyStatusBadge`'i doğuran hatanın aynısını üretirdi.
  *
  * Ton kuralı yukarıdaki BEŞ HUE ile aynı — yeni renk EKLENMEZ:
- *   Taslak → outline (henüz iş değil) · Gönderildi → info (tamamlanmış eylem, karşı tarafta)
- *   Kapandı/İptal → neutral · Cevap bekleniyor → warning (kendiliğinden ilerler)
- *   Yenisi geldi/Bedeli iade → success (sağlıklı sonuç) · Reddedildi → danger (havuza döndü)
+ * Ton kuralı yukarıdaki BEŞ HUE ile aynı — YENİ RENK EKLENMEZ, ama her durum AYRI bir tonda
+ * olmalı (kullanıcı bulgusu: "rozetler ayırt edilemiyor"). Eskiden dört durumdan ÜÇÜ griydi ve
+ * `closed`/`canceled` BİREBİR aynı nötr rozetti (yalnız ikon farklıydı) → listede tarama imkânsız:
+ *   Taslak    → attention (mor): İŞ SENDE — indirilip gönderilmesi gereken fiş. Panelde mor
+ *               "insan kararı bekliyor" demektir (İncelemede/Askıda ile aynı anlam).
+ *   Gönderildi→ info (mavi): eylem tamam, top KARŞI TARAFTA.
+ *   Kapandı   → neutral (gri): kapanmış kayıt (nötrün tanımı).
+ *   İptal     → danger (kırmızı): fiş yanlış kesilmiş, kalemleri havuza dönmüş = ölü kayıt.
+ *               Panelin geri kalanıyla da tutarlı (SUPPLY_STATUS `canceled` zaten danger).
+ * Kalem yanıtları: Cevap bekleniyor → warning · Yenisi geldi / Bedeli iade → success ·
+ * Reddedildi → danger. AYNI TON İÇİNDE AYRIM İKONLA: "Yenisi geldi" (RefreshCw) ile "Bedeli
+ * iade edildi" (Banknote) eskiden aynı yeşil + AYNI ikondu → yalnız metinden ayırt ediliyordu.
  */
 const CLAIM_STATUS_META: Record<string, StatusMeta> = {
-  draft: { variant: 'outline', icon: Clock },
+  draft: { variant: 'attention', icon: Clock },
   sent: { variant: 'info', icon: PackageCheck },
   closed: { variant: 'neutral', icon: CheckCircle2 },
-  canceled: { variant: 'neutral', icon: Ban },
+  canceled: { variant: 'danger', icon: Ban },
 };
 
 const CLAIM_OUTCOME_META: Record<string, StatusMeta> = {
   pending: { variant: 'warning', icon: Clock },
-  replaced: { variant: 'success', icon: CheckCircle2 },
-  credited: { variant: 'success', icon: CheckCircle2 },
+  replaced: { variant: 'success', icon: RefreshCw },
+  credited: { variant: 'success', icon: Banknote },
   rejected: { variant: 'danger', icon: Ban },
 };
 
