@@ -82,10 +82,15 @@ export default async function CustomerDetailPage({
           </Link>
         </Button>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-          <div>
+          {/* min-w-0: flex öğesinin otomatik minimum boyutu kapatılmazsa dar ekranda küçülemez.
+              break-all: e-posta kırılmaz tek token; `break-words` (overflow-wrap) min-content
+              boyutunu ETKİLEMEZ, dolayısıyla taşmayı durdurmaz — word-break gerekir. */}
+          <div className="min-w-0">
             <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
               <Users className="size-5 shrink-0 text-muted-foreground" />
-              {data.email}
+              <span className="min-w-0 break-all" title={data.email}>
+                {data.email}
+              </span>
             </h1>
             {tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">

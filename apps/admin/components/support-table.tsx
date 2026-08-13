@@ -409,8 +409,14 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
+        {/*
+          flex-wrap: dar/dik ekranda 3 kapsam düğmesi tek satıra sığmadığında kutu SARSIN
+          (düğmeler ezilip etiketleri kırılmasın). Genişte etkisizdir — hepsi tek satıra sığar.
+          inline-flex → flex: bu div zaten üstteki `flex flex-wrap` kabın bir öğesi, yani
+          blok'a çevriliyor; used-value aynı. Yük taşıyan değişiklik flex-wrap.
+        */}
         <div
-          className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-card p-0.5"
+          className="flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-card p-0.5"
           role="group"
           aria-label="Kuyruk kapsamı"
         >
@@ -422,7 +428,10 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
               aria-pressed={scope === s.key}
               title={s.hint}
               className={cn(
-                'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                // whitespace-nowrap: sarma olduğunda TÜM düğme alt satıra insin, etiket
+                // kelime kelime kırılmasın ("Yanıt bekleyenler" tek satır kalır).
+                // Yer varken etkisiz; en geniş düğme ~146px, kap asla taşmaz.
+                'rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors',
                 'focus-visible:outline-none',
                 scope === s.key
                   ? 'bg-primary text-primary-foreground shadow-sm'

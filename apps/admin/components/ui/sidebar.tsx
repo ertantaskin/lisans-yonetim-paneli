@@ -102,7 +102,12 @@ export function SidebarProvider({
             ...style,
           } as React.CSSProperties
         }
-        className={cn('group/sidebar-wrapper flex min-h-svh w-full', className)}
+        // `overflow-x-clip` emniyet kemeri: SidebarInset'teki `min-w-0`dan sonra da bir torun
+        // sabit genişlikle taşarsa, taşma en fazla KIRPILIR — viewport'a kaydırma olarak YAYILMAZ.
+        // `overflow-hidden` DEĞİL, çünkü o bir kaydırma kabı oluşturur ve sticky SiteHeader'ı
+        // bozardı; `clip` kaydırma kabı yaratmaz. Bu kap transform/filter/contain taşımadığı için
+        // içerme bloğu da kurmaz → sidebar'ın `position:fixed` katmanı kırpılmaz.
+        className={cn('group/sidebar-wrapper flex min-h-svh w-full overflow-x-clip', className)}
         {...props}
       >
         {children}
@@ -238,7 +243,13 @@ export function SidebarRail({ className, ...props }: React.ComponentProps<'butto
 export function SidebarInset({ className, ...props }: React.ComponentProps<'main'>) {
   return (
     <main
-      className={cn('relative flex min-h-svh flex-1 flex-col bg-background', className)}
+      // `min-w-0` ŞART — panelin "sayfa gövdesi asla yatay kaymaz" sözleşmesinin kilit halkası.
+      // SidebarProvider (yukarıda) `flex w-full` bir SATIR; bu eleman onun flex çocuğu, yani
+      // varsayılan `min-width:auto` ile otomatik minimumu İÇERİĞİNİN min-content genişliği olur
+      // → geniş bir torun (tablo sarmalayıcısı, sarmayan araç çubuğu) kabı viewport'un ötesine
+      // iter ve taşma SAYFAYA yayılır. app-shell'deki `main` zaten `min-w-0` taşıyor ama koruma
+      // bir seviye DERİNDE kaldığı için zincir burada kopuyordu (ölçüldü: 810px'te scrollWidth 856).
+      className={cn('relative flex min-h-svh min-w-0 flex-1 flex-col bg-background', className)}
       {...props}
     />
   );

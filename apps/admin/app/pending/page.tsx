@@ -218,7 +218,10 @@ export default async function DashboardPage() {
           <div
             className={cn(
               'mb-6 grid gap-3 sm:grid-cols-2',
-              showMappingWork ? 'lg:grid-cols-5' : 'lg:grid-cols-4',
+              // Beşli kırılım xl'e ertelendi: lg (1024px) kabuğunda içerik yalnız ~720px;
+              // StatTile'ın sabit iç payı 80px olduğu için 5 sütunda etikete ~54px kalıyordu.
+              // Dörtlü dal lg'de ölçülerek temiz çıktı — gereksiz daraltmak yer israfı olur.
+              showMappingWork ? 'lg:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-4',
             )}
           >
             {/* Teslimatı fiilen durduran tek arıza — varsa şeridin BAŞINDA durur. */}

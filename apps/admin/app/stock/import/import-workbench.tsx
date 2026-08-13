@@ -904,11 +904,15 @@ export function ImportWorkbench({
     else submitter.click();
   };
 
+  // Sağ özet rayı lg'de 18rem, xl'de 21rem: lg (1024px) devreye girdiğinde kabuk zaten
+  // ~304px (sidebar + padding) tüketiyor; 21rem sabit ray sol ÇALIŞMA kolonunu 364px'e
+  // düşürüyordu (asıl iş — ürün/tedarik/yapıştırma — o kolonda). 18rem → 412px;
+  // 1280px ve üzerinde mevcut 21rem görünümü aynen korunur. loading.tsx aynada tutulmalı.
   return (
     <form
       ref={formRef}
       action={action}
-      className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]"
+      className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-[minmax(0,1fr)_21rem]"
     >
       {dialog}
       {/* Gerçek gönderim düğmesi — görünmez; onay modali tarafından submitter olarak kullanılır. */}
@@ -1264,7 +1268,12 @@ export function ImportWorkbench({
                     }
                     hint="Alım tarihinden üretilir (yıl-ay-gün-harf); harf aynı gün içindeki ikinci girişi ayırır. Aynı ürüne aynı etiket ikinci kez girilirse uyarılırsınız."
                   >
-                    <div className="flex items-center gap-1.5">
+                    {/* flex-wrap + min-w-0 ŞART: native <input> ana eksende flex öğesiyken
+                        min-width:auto (= içsel tercih genişliği, ~205px) alır ve ALTINA İNMEZ;
+                        yanındaki buton da whitespace-nowrap. Bu satır FieldRow'un
+                        minmax(0,1fr) sütununda yaşadığı için sütun büyümez → kap dışına taşardı.
+                        wrap dar sütunda butonu alt satıra indirir, min-w-0 input'un daralmasına izin verir. */}
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <Input
                         id="si-label"
                         name="batchLabel"
@@ -1275,7 +1284,7 @@ export function ImportWorkbench({
                           setBatchLabel(e.target.value);
                         }}
                         placeholder={autoLabel || '2026-08-13-A'}
-                        className="max-w-[13rem]"
+                        className="min-w-0 max-w-[13rem]"
                         aria-invalid={labelMissing || undefined}
                       />
                       {labelTouched && autoLabel && (

@@ -23,7 +23,15 @@ export const TabsList = React.forwardRef<
     <TabsPrimitive.List
       ref={ref}
       className={cn(
-        'inline-flex h-9 w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-muted/40 p-1 sm:w-auto',
+        // KAYDIRMA DEĞİL, SARMA (quarantine-nav'da aynı kusur için doğrulanan desen):
+        // `overflow-x-auto` yatay çubuğu SABİT 36px'lik barın İÇİNE çiziyordu (globals.css
+        // `::-webkit-scrollbar { height: 9px }`) → sekme etiketlerinden ~10px çalıyordu.
+        // Kaydırmayı gizlemek (`[scrollbar-width:none]`) çözüm değildi: görsel ipucu tamamen
+        // kaybolur, operatör sağda sekme olduğunu anlayamazdı. Dar ekranda sekmeler alt satıra
+        // sarar; `sm:w-auto` sayesinde geniş ekranda görünüm birebir aynı (tek satır) kalır.
+        // `h-9` → `min-h-9`: 28px'lik tetik 26px'lik içerik kutusuna sığmıyordu (kalıcı 1px
+        // dikey taşma + her genişlikte beliren dikey çubuk artefaktı) — ancak böyle kapanır.
+        'inline-flex min-h-9 w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1 sm:w-auto',
         className,
       )}
       {...props}
@@ -41,12 +49,14 @@ export const TabsTrigger = React.forwardRef<
       className={cn(
         'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium text-muted-foreground transition-colors',
         'hover:text-foreground',
-        // TEK İSTİSNA (globals.css'teki "bileşen kendi halkasını eklemez" kuralına):
-        // TabsList `overflow-x-auto` taşıyor ve CSS Overflow 3 gereği overflow-y de `auto`ya
-        // hesaplanıyor → global outline (2px kalınlık + 2px offset = elemanın 4px DIŞI)
-        // kırpılıyor; ölçüldü: sekme ile liste arasında yalnız 3px var, üst/alt 1px kesiliyor.
-        // `ring-inset` eleman İÇİNE çizildiği için kırpılmaz. Tam opaklık (6.54:1 açık /
-        // 4.18:1 koyu) — soluk /60 varyantı 3:1 eşiğinin altındaydı.
+        // globals.css'teki "bileşen kendi halkasını eklemez" kuralına İSTİSNA.
+        // GEREKÇE ARTIK GEÇERSİZ: bu istisna TabsList'in `overflow-x-auto` taşıması yüzünden
+        // konmuştu (overflow-y de `auto`ya hesaplanıyor → elemanın 4px DIŞINA çizilen global
+        // outline üst/altta 1px kırpılıyordu). TabsList artık kaydırmıyor, SARIYOR (yukarı bak)
+        // → kap kırpmıyor, global outline eksiksiz görünüyor. Halkanın kaldırılması odak
+        // göstergesi sözleşmesine (globals.css TEK KAYNAK) dokunduğu için AYRI bir değişiklik
+        // olarak ele alınmalı; burada davranış bilinçli olarak korundu.
+        // Tam opaklık (6.54:1 açık / 4.18:1 koyu) — soluk /60 varyantı 3:1 eşiğinin altındaydı.
         'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
         'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm',
         '[&_svg]:size-4 [&_svg]:shrink-0',

@@ -74,18 +74,26 @@ export default async function ReleasesPage() {
 
       <Alert>
         <Info />
-        <AlertTitle>Nasıl çalışır?</AlertTitle>
-        <AlertDescription>
-          Yayınlanan sürümü müşteri siteleri kendi güncelleyicisiyle panelden çeker (WordPress →
-          Güncellemeler; önbellek nedeniyle 12 saate kadar gecikebilir, "Tekrar denetle" anında
-          tazeler). <strong>Kaynaktan yayınla</strong> bir istek kaydeder; VPS host'undaki runner
-          depodaki (push edilmiş) eklenti kodundan paketi üretip yayınlar — panel konteynerine
-          Docker/git yazma yetkisi verilmez.
-        </AlertDescription>
+        {/* Alert kökü satır yönünde flex; sarmalayıcı olmadan başlık ve açıklama yan yana iki
+            sütuna düşer ve min-width:auto ile küçülmez (ör. "güncelleyicisiyle" kabı şişirir).
+            İkon doğrudan çocuk KALMALI — [&>svg] seçicileri ona bağlı. */}
+        <div className="min-w-0 flex-1">
+          <AlertTitle>Nasıl çalışır?</AlertTitle>
+          <AlertDescription>
+            Yayınlanan sürümü müşteri siteleri kendi güncelleyicisiyle panelden çeker (WordPress →
+            Güncellemeler; önbellek nedeniyle 12 saate kadar gecikebilir, "Tekrar denetle" anında
+            tazeler). <strong>Kaynaktan yayınla</strong> bir istek kaydeder; VPS host'undaki runner
+            depodaki (push edilmiş) eklenti kodundan paketi üretip yayınlar — panel konteynerine
+            Docker/git yazma yetkisi verilmez.
+          </AlertDescription>
+        </div>
       </Alert>
 
+      {/* min-w-0: grid çocuğu varsayılan olarak içerik-tabanlı minimum alır; içindeki
+          (nowrap kolonlu) tablo kartı ve grid'i viewport'tan geniş yapar. min-w-0 ile kaydırma
+          Table primitifinin İŞARETLENMİŞ overflow-x-auto kabına devreder. */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle icon={Rocket}>Kaynaktan yayınla</CardTitle>
           </CardHeader>
@@ -101,16 +109,19 @@ export default async function ReleasesPage() {
             ) : (
               <Alert>
                 <Lock />
-                <AlertTitle>Yetki gerekli</AlertTitle>
-                <AlertDescription>
-                  Sürüm yayınlamayı yalnız "owner" rolündeki yöneticiler tetikleyebilir.
-                </AlertDescription>
+                {/* min-w-0 flex-1 sarmalayıcı: başlık/açıklama tekrar dikey yığılır (yerleşik desen). */}
+                <div className="min-w-0 flex-1">
+                  <AlertTitle>Yetki gerekli</AlertTitle>
+                  <AlertDescription>
+                    Sürüm yayınlamayı yalnız "owner" rolündeki yöneticiler tetikleyebilir.
+                  </AlertDescription>
+                </div>
               </Alert>
             )}
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
             <CardTitle icon={ListChecks}>Yayın işleri</CardTitle>
           </CardHeader>
@@ -294,10 +305,13 @@ export default async function ReleasesPage() {
           ) : (
             <Alert>
               <Lock />
-              <AlertTitle>Yetki gerekli</AlertTitle>
-              <AlertDescription>
-                Elle paket yüklemeyi yalnız "owner" rolündeki yöneticiler yapabilir.
-              </AlertDescription>
+              {/* min-w-0 flex-1 sarmalayıcı: başlık/açıklama tekrar dikey yığılır (yerleşik desen). */}
+              <div className="min-w-0 flex-1">
+                <AlertTitle>Yetki gerekli</AlertTitle>
+                <AlertDescription>
+                  Elle paket yüklemeyi yalnız "owner" rolündeki yöneticiler yapabilir.
+                </AlertDescription>
+              </div>
             </Alert>
           )}
         </CardContent>

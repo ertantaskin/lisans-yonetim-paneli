@@ -81,13 +81,18 @@ export default async function DeploymentsPage() {
 
       <Alert>
         <Info />
-        <AlertTitle>Nasıl çalışır?</AlertTitle>
-        <AlertDescription>
-          "Prod'a dağıt" bir <strong>dağıtım isteği kaydeder</strong>; VPS host'undaki runner
-          (cron) bunu görüp <code className="rounded bg-muted px-1 py-0.5 text-xs">deploy.sh</code>{' '}
-          ile git pull + build + sağlık kontrolü + gerekirse otomatik geri alma yapar ve sonucu
-          buraya yazar. Güvenlik gereği panel konteynerine Docker erişimi verilmez.
-        </AlertDescription>
+        {/* Alert kökü satır yönünde flex; sarmalayıcı olmadan başlık ve açıklama yan yana iki
+            sütun olur ve min-width:auto ile küçülmez. İkon doğrudan çocuk KALMALI ([&>svg]). */}
+        <div className="min-w-0 flex-1">
+          <AlertTitle>Nasıl çalışır?</AlertTitle>
+          <AlertDescription>
+            "Prod'a dağıt" bir <strong>dağıtım isteği kaydeder</strong>; VPS host'undaki runner
+            (cron) bunu görüp{' '}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">deploy.sh</code> ile git pull +
+            build + sağlık kontrolü + gerekirse otomatik geri alma yapar ve sonucu buraya yazar.
+            Güvenlik gereği panel konteynerine Docker erişimi verilmez.
+          </AlertDescription>
+        </div>
       </Alert>
 
       {stalled !== undefined && (
@@ -155,10 +160,13 @@ export default async function DeploymentsPage() {
             ) : (
               <Alert>
                 <Lock />
-                <AlertTitle>Yetki gerekli</AlertTitle>
-                <AlertDescription>
-                  Prod'a dağıtımı yalnız "owner" rolündeki yöneticiler tetikleyebilir.
-                </AlertDescription>
+                {/* min-w-0 flex-1 sarmalayıcı: başlık/açıklama tekrar dikey yığılır (yerleşik desen). */}
+                <div className="min-w-0 flex-1">
+                  <AlertTitle>Yetki gerekli</AlertTitle>
+                  <AlertDescription>
+                    Prod'a dağıtımı yalnız "owner" rolündeki yöneticiler tetikleyebilir.
+                  </AlertDescription>
+                </div>
               </Alert>
             )}
           </CardContent>

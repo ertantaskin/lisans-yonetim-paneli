@@ -107,7 +107,12 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               <Globe className="size-5" />
             </span>
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{site.domain}</h1>
+              {/* break-all ŞART: domain kırılma fırsatı olmayan tek kelimedir (nokta UAX14'te
+                  sarma noktası üretmez) ve text-2xl'de hızla taşar. break-words TEK BAŞINA
+                  işe yaramıyor (min-content boyutunu küçültmez); ölçüldü: 43px taşma → 0. */}
+              <h1 className="break-all text-2xl font-semibold tracking-tight text-foreground">
+                {site.domain}
+              </h1>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <Badge variant="outline">{siteTypeLabel(site.type)}</Badge>
                 <StatusBadge status={site.status} />
@@ -200,7 +205,10 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
           <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Domain</dt>
-              <dd className="font-medium text-foreground">{site.domain}</dd>
+              {/* min-w-0 + break-words birlikte GEREKLİ: sm altında satır flex olduğu için
+                  dd'nin min-width:auto tabanı tüm domaini genişletir (break-words tek
+                  başına min-content'i küçültmez); sm:block'ta min-w-0 zararsız no-op. */}
+              <dd className="min-w-0 break-words font-medium text-foreground">{site.domain}</dd>
             </div>
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Tip</dt>
@@ -208,7 +216,10 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
             </div>
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Gönderen E-posta</dt>
-              <dd className="font-medium text-foreground">{site.senderEmail ?? '—'}</dd>
+              {/* Domain satırıyla aynı gerekçe: uzun e-posta kırılmasız tek dizedir. */}
+              <dd className="min-w-0 break-words font-medium text-foreground">
+                {site.senderEmail ?? '—'}
+              </dd>
             </div>
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Günlük Satış Kotası</dt>

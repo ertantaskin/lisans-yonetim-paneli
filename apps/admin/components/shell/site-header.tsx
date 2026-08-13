@@ -111,8 +111,13 @@ export function SiteHeader() {
         <NotificationBell />
 
         {/* Operatör çakışma uyarısı (§14) — aynı sayfada başka admin varsa görünür.
-            Metni uzun olduğundan dar ekranda gizlenir (üst bar taşmasın). */}
-        <div className="hidden h-8 items-center md:flex">
+            Metni uzun olduğundan dar ekranda gizlenir (üst bar taşmasın).
+            `lg` (md DEĞİL): rozet ~190px ('N kişi daha bu sayfada') ve md=768px tam da üst barın
+            en sıkışık olduğu genişlik — orada açık sidebar (256px) düşülünce header içerik kutusu
+            rozetli gereksinimin altına iniyordu. lg'de yuva 1024−256=768px, kutu 736px, gereksinim
+            ~655px ⇒ ~80px pay kalır. Bilgi kaybı yok: aynı içerik rozetin `title` ipucunda ve
+            /security ekranında da var (LiveStatus'un `hidden sm:inline-flex` deseniyle tutarlı). */}
+        <div className="hidden h-8 items-center lg:flex">
           <PresenceIndicator />
         </div>
 

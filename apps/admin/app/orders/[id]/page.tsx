@@ -683,7 +683,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               id="destek"
               className={openReplacements > 0 ? 'scroll-mt-4 border-warning/50' : 'scroll-mt-4'}
             >
-              <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
+              {/* flex-wrap: sağdaki buton whitespace-nowrap taşıdığı için daralamaz; sarma
+                  izni olmadan satırın min-content'i başlık+buton toplamı olur ve dar sağ
+                  rayda kartı taşırırdı. Sarınca buton başlığın altına iner, metin kesilmez. */}
+              <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 gap-y-1 space-y-0 pb-3">
                 <CardTitle icon={LifeBuoy} className="text-sm">
                   Destek Talepleri
                   {openReplacements > 0 && (
@@ -708,7 +711,10 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           )}
 
           <Card>
-            <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-3">
+            {/* flex-wrap: "Maili Yeniden Gönder" butonu whitespace-nowrap ile ~165px'in altına
+                inmiyor ve sarmalayıcısı (items-end) daralmıyordu → dar sağ rayda kart taşıyordu.
+                Sarınca satırın min-content'i en geniş çocuk kadar olur, metin kesilmez. */}
+            <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 gap-y-1 space-y-0 pb-3">
               <CardTitle icon={Mail} className="text-sm">
                 Teslimat Mailleri
               </CardTitle>
