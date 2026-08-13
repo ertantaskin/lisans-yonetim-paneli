@@ -38,11 +38,13 @@ export default async function ClaimDetailPage({ params }: { params: Promise<{ id
   return (
     <div className="space-y-6">
       <div className="space-y-3">
+        {/* Geri linki FİŞ LİSTESİNE döner (havuza değil): operatör bu sayfaya oradan gelir ve
+            breadcrumb'daki "Değişim Fişleri" ara segmentiyle aynı yeri göstermesi gerekir. */}
         <Link
-          href="/quarantine"
+          href="/quarantine/claims"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
         >
-          <ArrowLeft className="size-4" aria-hidden /> Kusurlu Stok
+          <ArrowLeft className="size-4" aria-hidden /> Değişim Fişleri
         </Link>
 
         <div className="flex items-start gap-3">

@@ -1,9 +1,8 @@
 import { ShieldOff } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
-import { QuarantineTable } from '../../components/quarantine-table';
-import { QuarantineTabs } from '../../components/claims/quarantine-tabs';
-import { ClaimsList, PendingClaimsPanel } from '../../components/claims/claims-panel';
+import { QuarantineNav } from '../../components/claims/quarantine-nav';
+import { PendingClaimsPanel } from '../../components/claims/claims-panel';
 import {
   fetchQuarantine,
   hasQuarantineServerFilters,
@@ -11,24 +10,26 @@ import {
   QUARANTINE_LIMIT,
 } from './queries';
 import { fetchClaims, fetchSuppliersLite } from './claims-queries';
+import { itemCount } from '../../lib/labels';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * KUSURLU STOK (§2/§3/§12) — kusur havuzu + tedarikçiye değişim fişleri.
+ * KUSURLU STOK › BİLDİRİLECEKLER (§2/§3/§12) — kusur havuzu, yani İŞ LİSTESİ.
  *
  * ADLANDIRMA: ekran eskiden "Kusurlu Anahtarlar" idi. Panel yalnız lisans anahtarı satmıyor
  * (hesap, kod/hediye çeki, süreli hesap…) — kullanıcı geri bildirimi üzerine ad ve tüm sayaç
  * metinleri ürün tipine duyarlı hale getirildi (`lib/labels.itemCount`): liste tek tipse
  * "3 hesap", karışıksa nötr "3 kalem".
  *
- * ÜÇ SEKME: her sekmenin TEK işi var (bkz. `quarantine-tabs.tsx`). Eskiden "Bekleyenler"
- * sekmesinin içinde hem havuz hem de tüm ölü kalemleri gösteren defter vardı; sekme "1" derken
- * tablo 16 satır gösteriyordu ve operatör aradaki farkı anlayamıyordu.
+ * ÜÇ SEKME → ÜÇ ROTA: bu ekran eskiden tek sayfada `Tabs` ile üç görünüm taşıyordu. Gerekçeler
+ * `components/claims/quarantine-nav.tsx` jsdoc'unda (kırık breadcrumb → `/quarantine/claims`
+ * 404, her açılışta üç sorgu, havuzun defterin JS süzgeci olması). Bu sayfa artık YALNIZ havuzu
+ * çeker: `claimed=none` SUNUCU süzgeci → defterin 5000'lik penceresine bağımlı değil.
  *
- * Durum · tarih aralığı · arama SUNUCU süzgecidir ve URL'de taşınır (`?status=&range=&from=&to=&q=`);
- * araç çubuğu "Tüm Kayıtlar" sekmesindedir. Süzgeç etkinken havuz da daralır → "Bildirilecekler"
- * sekmesi bunu açıkça söyler (sessiz eksik liste YOK).
+ * SÜZGEÇ: durum/tarih/arama araç çubuğu "Tüm Kayıtlar" bölümündedir. Bu sayfa yine de aynı URL
+ * parametrelerini OKUR (dışarıdan gelen derin bağlantı — ör. `?status=voided` — çalışsın diye);
+ * etkinse havuzun daraldığı açıkça söylenir (sessiz eksik liste YOK).
  */
 export default async function QuarantinePage({
   searchParams,
@@ -36,52 +37,44 @@ export default async function QuarantinePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const filters = parseQuarantineFilters(await searchParams);
-  // Üç bağımsız okuma → tek turda paralel (sayfa üç kaynağı da göstermeden açılmıyor zaten).
   const [{ rows, error, truncated }, claims, suppliers] = await Promise.all([
-    fetchQuarantine(filters),
+    // Havuz = "henüz hiçbir açık fişte olmayan" kusurlu kalemler. Yüklem SUNUCUDA (`claimed=none`).
+    fetchQuarantine({ ...filters, claimed: 'none' }),
+    // Fiş listesi YALNIZ "son kesilen fiş: KOD · tarih" damgası için (kullanıcı isteğiydi:
+    // "gün sonunda son raporun tarihini göreyim"). API'de tek-satır ucu yok; liste zaten
+    // `createdAt desc` sıralı ve snapshot taşımaz (hafif) — yalnız `rows[0]` okunur.
     fetchClaims(),
+    // Fiş kesme Sheet'inin tedarikçi seçicisi.
     fetchSuppliersLite(),
   ]);
 
-  // "Bildirilecekler" = henüz bildirilmemiş. Yüklem SUNUCUDAKİ `claimed=none` süzgeciyle
-  // BİREBİR aynı: fişte açık kaydı yoksa bekliyordur (reddedilen kalem havuza döndüğü için
-  // yine `claimId` boş gelir — bilinçli, tek tanım).
-  const pendingRows = rows.filter((r) => !r.claimId);
   const serverFiltered = hasQuarantineServerFilters(filters);
+  const kinds = rows.map((r) => r.productKind);
 
   return (
     <div>
       <PageHeader
         icon={ShieldOff}
         title="Kusurlu Stok"
-        description="Arızalı bildirilen, değiştirilen veya geçersiz kılınan lisans/hesap kalemleri. Bu kalemler müşteriye TEKRAR TESLİM EDİLMEZ; tedarikçiye değişim fişiyle bildirilir."
+        description={
+          error
+            ? 'Arızalı bildirilen, değiştirilen veya geçersiz kılınan kalemlerin tedarikçiye bildirilmeyi bekleyen havuzu.'
+            : `Tedarikçiye bildirilmeyi bekleyen ${itemCount(rows.length, kinds)}. Bu kalemler müşteriye TEKRAR TESLİM EDİLMEZ; değişim fişiyle tedarikçiye bildirilir.`
+        }
       />
+      <QuarantineNav />
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
         </Card>
       ) : (
-        <QuarantineTabs
-          pendingCount={pendingRows.length}
-          claimCount={claims.rows.length}
-          ledgerCount={rows.length}
-          pending={
-            <PendingClaimsPanel
-              rows={pendingRows}
-              suppliers={suppliers}
-              lastClaim={claims.rows[0] ?? null}
-              serverFiltered={serverFiltered}
-            />
-          }
-          claims={<ClaimsList rows={claims.rows} error={claims.error} />}
-          ledger={
-            <QuarantineTable
-              rows={rows}
-              truncated={truncated}
-              limit={QUARANTINE_LIMIT}
-              filters={filters}
-            />
-          }
+        <PendingClaimsPanel
+          rows={rows}
+          suppliers={suppliers}
+          lastClaim={claims.rows[0] ?? null}
+          serverFiltered={serverFiltered}
+          truncated={truncated}
+          limit={QUARANTINE_LIMIT}
         />
       )}
     </div>

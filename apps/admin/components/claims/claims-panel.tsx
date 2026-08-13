@@ -130,12 +130,22 @@ export function PendingClaimsPanel({
   suppliers,
   lastClaim,
   serverFiltered = false,
+  truncated = false,
+  limit,
 }: {
   rows: QuarantineItem[];
   suppliers: Array<{ id: string; name: string }>;
   lastClaim: ClaimRow | null;
-  /** "Tüm Kayıtlar" sekmesindeki sunucu süzgeci etkinse bu liste de daralmıştır — söylenir. */
+  /** URL'de bir sunucu süzgeci taşınıyorsa (derin bağlantı) bu liste de daralmıştır — söylenir. */
   serverFiltered?: boolean;
+  /**
+   * Havuz sorgusu sunucu penceresine dayandı mı. Havuz artık defterin JS süzgeci DEĞİL
+   * (`claimed=none` sunucuda uygulanır) ama kendi penceresi de sınırlı → kırpılma burada da
+   * GÖRÜNÜR olmalı; eskiden uyarı yalnız defter sekmesindeydi ve havuz sessizce eksiliyordu.
+   */
+  truncated?: boolean;
+  /** Sunucu üst sınırı (uyarı metninde yazılır). İstemci `queries.ts`'ten değer alamaz (server-only). */
+  limit?: number;
 }) {
   const [open, setOpen] = React.useState(false);
   const [preset, setPreset] = React.useState<string>('');
@@ -152,14 +162,28 @@ export function PendingClaimsPanel({
     setOpen(true);
   };
 
+  // Dikey boşluk BURADA: bileşen eskiden `TabsContent className="space-y-4"` içinde render
+  // ediliyordu ve aralıkları ondan alıyordu. Sekmeler ayrı rotalara bölününce o sarmalayıcı
+  // kalktı → panel kendi boşluğunu taşır (aksi hâlde uyarı/kart bitişik yapışırdı).
   return (
-    <>
+    <div className="space-y-4">
       <HowItWorks steps={CLAIM_FLOW_STEPS} />
+
+      {truncated && (
+        <Alert variant="warning">
+          <AlertDescription>
+            Havuz sunucu üst sınırına{limit ? ` (${limit.toLocaleString('tr-TR')} kalem)` : ''}{' '}
+            dayandı — bildirilmeyi bekleyen bazı (daha eski) kalemler aşağıdaki gruplarda
+            GÖRÜNMÜYOR olabilir. Fiş kesildiğinde adaylar sunucuda kilit altında TAZEDEN okunur,
+            yani fiş eksik kesilmez; eksik olan yalnız bu ekrandaki önizlemedir.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {serverFiltered && (
         <Alert variant="warning">
           <AlertDescription>
-            “Tüm Kayıtlar” sekmesinde bir sunucu süzgeci etkin — aşağıdaki havuz da yalnız o
+            Bağlantıdan gelen bir süzgeç etkin (durum / tarih / arama) — aşağıdaki havuz yalnız o
             süzgece uyan kalemleri kapsıyor.{' '}
             <Link href="/quarantine" className="font-medium underline underline-offset-4">
               Süzgeci temizle
@@ -245,7 +269,7 @@ export function PendingClaimsPanel({
         suppliers={suppliers}
         presetSupplierId={preset}
       />
-    </>
+    </div>
   );
 }
 
@@ -259,7 +283,7 @@ export function PendingClaimsPanel({
 function BatchDisclosure({ group }: { group: BatchGroup }) {
   const kinds = group.rows.map((r) => r.productKind);
   // `<details>` kapalıyken de çocukları DOM'a girer → yüzlerce kalemli partide sayfa ağırlaşır.
-  // İlk 50 satır gösterilir, kalanı sayıyla belirtilir (tam liste "Tüm Kayıtlar" sekmesinde).
+  // İlk 50 satır gösterilir, kalanı sayıyla belirtilir (tam liste "Tüm Kayıtlar" bölümünde).
   const shown = group.rows.slice(0, BATCH_ROW_CAP);
   const hidden = group.rows.length - shown.length;
   return (
@@ -315,7 +339,14 @@ function BatchDisclosure({ group }: { group: BatchGroup }) {
         ))}
         {hidden > 0 && (
           <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
-            …ve {hidden.toLocaleString('tr-TR')} kalem daha — tamamı “Tüm Kayıtlar” sekmesinde.
+            …ve {hidden.toLocaleString('tr-TR')} kalem daha — tamamı{' '}
+            <Link
+              href="/quarantine/records"
+              className="font-medium underline underline-offset-4 hover:text-foreground"
+            >
+              Tüm Kayıtlar
+            </Link>{' '}
+            bölümünde.
           </li>
         )}
       </ul>
@@ -597,7 +628,7 @@ function CreateClaimSheet({
   );
 }
 
-/** Fiş geçmişi — "Değişim Fişleri" sekmesi. */
+/** Fiş geçmişi — `/quarantine/claims` bölümünün gövdesi. */
 export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | null }) {
   if (error) {
     return (
@@ -611,8 +642,14 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
       <EmptyState
         icon={FileText}
         title="Henüz değişim fişi kesilmedi."
-        description="“Bildirilecekler” sekmesinden bir tedarikçi seçip fiş oluşturduğunuzda kesilen fişler burada listelenir; her fişin içinde tedarikçinin kalem kalem yanıtını işlersiniz."
-      />
+        description="“Bildirilecekler” bölümünden bir tedarikçi seçip fiş oluşturduğunuzda kesilen fişler burada listelenir; her fişin içinde tedarikçinin kalem kalem yanıtını işlersiniz."
+      >
+        <Button asChild variant="outline" size="sm">
+          <Link href="/quarantine">
+            <Inbox /> Bildirilecekler bölümüne git
+          </Link>
+        </Button>
+      </EmptyState>
     );
   }
   return (

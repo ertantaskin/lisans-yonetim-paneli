@@ -18,7 +18,7 @@ set -uo pipefail
 BASE="${1:-http://127.0.0.1:3006}"
 
 ROUTES=(
-  dashboard pending review orders stock stock/import mappings quarantine sites
+  dashboard pending review orders stock stock/import mappings quarantine quarantine/claims quarantine/records sites
   suppliers purchase-orders batches support customers reports ai notifications
   ops security admins templates releases deployments settings guide products
 )

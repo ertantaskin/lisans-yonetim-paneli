@@ -149,8 +149,21 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
     try {
       const res = await updateClaimAction({ id: claim.id, status });
       if (res.ok) {
-        toast.success('Fiş güncellendi.');
-        router.refresh();
+        if (status === 'sent') {
+          // "Gönderdim" işaretlemek bu fişteki işin BİTTİĞİ andır (sırada tedarikçinin yanıtı
+          // var, o da günler sonra gelir) → operatör fiş listesine döner (kullanıcı isteği).
+          toast.success(`${claim.code} “tedarikçiye gönderildi” olarak kaydedildi.`);
+          router.push('/quarantine/claims');
+        } else {
+          // Kapatma/iptalde SAYFADA KALINIR: kapalı fişte de kalem yanıtı girilebilir, iptal
+          // edilende ise operatör kalemlerin havuza döndüğünü aynı ekranda görür.
+          toast.success(
+            status === 'closed'
+              ? 'Fiş kapatıldı.'
+              : 'Fiş iptal edildi — kalemleri bildirilecekler havuzuna döndü.',
+          );
+          router.refresh();
+        }
       } else {
         toast.error(res.error);
       }

@@ -45,6 +45,13 @@ export type QuarantineStatusFilter = '' | 'quarantined' | 'voided';
 /** Tarih aralığı ön ayarı — YALNIZ arayüz durumu (hangi düğme aktif); süzme `from`/`to` ile yapılır. */
 export type QuarantineRange = '' | '7' | '30' | '90' | 'custom';
 
+/**
+ * Bildirim durumu süzgeci — `GET /v1/admin/quarantine?claimed=`.
+ * 'none' = açık fişte kaydı olmayan (= BİLDİRİLECEKLER havuzu), 'open' = fişte yanıt bekleyen,
+ * 'any' = süzme yok (API'de de `undefined`'a düşer).
+ */
+export type QuarantineClaimedFilter = 'none' | 'open' | 'any';
+
 /** Sunucuya giden (ve ekranda gösterilen) doğrulanmış süzgeç kümesi. */
 export interface QuarantineFilterState {
   status: QuarantineStatusFilter;
@@ -55,6 +62,15 @@ export interface QuarantineFilterState {
   to: string;
   /** Ürün adı/SKU, müşteri e-postası, sipariş no, parti etiketi, tedarikçi adı (sunucuda ILIKE). */
   search: string;
+  /**
+   * SAYFA-İÇİ SABİT — URL'den OKUNMAZ (`parseQuarantineFilters` bunu ASLA doldurmaz).
+   *
+   * "Bildirilecekler" sayfası `'none'` geçer, "Tüm Kayıtlar" hiç geçmez. Havuz eskiden defterin
+   * JS süzgeciydi (`rows.filter(r => !r.claimId)`) → defter 5000'lik sunucu tavanına dayandığında
+   * havuz da SESSİZCE eksiliyordu. Artık aynı yüklem SUNUCUDA uygulanır (API `claimed` süzgeci):
+   * havuz kendi penceresini alır ve kendi `truncated` uyarısını taşır.
+   */
+  claimed?: QuarantineClaimedFilter;
 }
 
 export const EMPTY_QUARANTINE_FILTERS: QuarantineFilterState = {
@@ -95,7 +111,13 @@ export function parseQuarantineFilters(
   };
 }
 
-/** Herhangi bir SUNUCU süzgeci etkin mi (yerel facet'ler sayılmaz). */
+/**
+ * Herhangi bir SUNUCU süzgeci etkin mi (yerel facet'ler sayılmaz).
+ *
+ * `claimed` BİLEREK sayılmaz: o operatörün seçtiği bir süzgeç değil, bulunduğu bölümün tanımıdır
+ * ("Bildirilecekler" zaten `claimed=none` demektir) — saysaydık havuz sayfası her açılışta
+ * "bir süzgeç etkin" uyarısı gösterirdi.
+ */
 export function hasQuarantineServerFilters(f: QuarantineFilterState): boolean {
   return Boolean(f.status || f.from || f.to || f.search);
 }
@@ -135,6 +157,9 @@ export async function fetchQuarantine(
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
   if (filters.search) params.set('search', filters.search);
+  // 'any' = süzme yok → hiç gönderilmez (API'de de `undefined`'a düşüyor; parametresiz çağrı
+  // eski davranışı korur).
+  if (filters.claimed && filters.claimed !== 'any') params.set('claimed', filters.claimed);
 
   try {
     const raw = await apiGet<QuarantineResponse>(`/v1/admin/quarantine?${params.toString()}`);

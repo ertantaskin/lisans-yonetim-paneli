@@ -644,7 +644,12 @@ export function QuarantineTable({
       if (merged.to) params.set('to', merged.to);
       if (merged.search) params.set('q', merged.search);
       const qs = params.toString();
-      startTransition(() => router.push(qs ? `/quarantine?${qs}` : '/quarantine'));
+      // Sunucu süzgeçleri "Tüm Kayıtlar" ROTASINDA yaşar (bu tablo yalnız orada render edilir).
+      // Eskiden `/quarantine`e push ediliyordu; üç bölüm ayrı rota olunca o adres havuzdur ve
+      // süzgeç uygulanınca operatör başka bir ekrana atlamış olurdu.
+      startTransition(() =>
+        router.push(qs ? `/quarantine/records?${qs}` : '/quarantine/records'),
+      );
     },
     [filters, router, q, range],
   );
@@ -854,9 +859,13 @@ export function QuarantineTable({
 
       <HelpNote title="Bu liste ne gösteriyor, süzgeçler nasıl çalışıyor?">
         <p>
-          Bu sekme <strong>değişmez bir defterdir</strong>: arızalı bildirilen, değiştirilen veya
+          Bu bölüm <strong>değişmez bir defterdir</strong>: arızalı bildirilen, değiştirilen veya
           geçersiz kılınan TÜM kalemler — bildirilmiş olsun olmasın — burada durur. İş listesi
-          değildir; yapılacak işler <strong>“Bildirilecekler”</strong> sekmesindedir.
+          değildir; yapılacak işler{' '}
+          <Link href="/quarantine" className="font-medium underline underline-offset-4">
+            “Bildirilecekler”
+          </Link>{' '}
+          bölümündedir.
         </p>
         <p>
           <strong>Arama kutusu iki iş yapar:</strong> yazdıkça yüklenen listeyi anında süzer

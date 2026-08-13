@@ -289,7 +289,10 @@ export async function bulkAdjustLicenseItemsAction(input: {
       await getActor(),
     );
     revalidateInventory(productId);
+    // Kusurlu stok ÜÇ AYRI ROTA: '/quarantine' revalidate'i alt rotaları KAPSAMAZ → yeni
+    // geçersiz kılınan kalem hem havuzda hem defterde görünmeli.
     revalidatePath('/quarantine');
+    revalidatePath('/quarantine/records');
     return {
       ok: true,
       affected: Number(res?.affected ?? 0),
@@ -332,7 +335,9 @@ export async function replaceDeliveredLicenseAction(input: {
       await getActor(),
     );
     revalidateInventory(input?.productId);
+    // Değiştirilen (ölü) anahtar havuza ve deftere düşer — ikisi ayrı rota (bkz. yukarıdaki not).
     revalidatePath('/quarantine');
+    revalidatePath('/quarantine/records');
     revalidatePath('/batches');
     // Parti detayı dinamik segment → sayfa şablonuyla tazelenir (sayaçlar güncellensin).
     revalidatePath('/batches/[id]', 'page');

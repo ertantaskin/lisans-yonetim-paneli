@@ -16,9 +16,19 @@ import type { QuarantineItem } from './queries';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Fiş oluşturma/güncelleme sonrası tazelenen ekranlar. */
+/**
+ * Fiş oluşturma/güncelleme sonrası tazelenen ekranlar.
+ *
+ * ÜÇÜ DE AYRI ROTA: `revalidatePath('/quarantine')` yalnız O sayfayı tazeler, alt rotaları
+ * KAPSAMAZ → havuz (`/quarantine`), fiş listesi (`/quarantine/claims`) ve defter
+ * (`/quarantine/records`) tek tek yazılmalı. Üçü de aynı kayıtları farklı yüzlerden gösterir:
+ * fiş kesilince kalem havuzdan düşer, listeye yeni fiş girer, defterdeki satırın bildirim
+ * durumu değişir.
+ */
 function revalidateClaims(claimId?: string): void {
   revalidatePath('/quarantine');
+  revalidatePath('/quarantine/claims');
+  revalidatePath('/quarantine/records');
   revalidatePath('/quarantine/claims/[id]', 'page');
   revalidatePath('/suppliers/[id]', 'page');
   if (claimId) revalidatePath(`/quarantine/claims/${claimId}`);

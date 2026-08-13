@@ -64,6 +64,9 @@ export const NAV: NavSection[] = [
       // güvenlik olaylarıyla değil → "Sistem" yerine Envanter altında (kullanıcı geri bildirimi).
       // AD: "Kusurlu Anahtarlar" DEĞİL — ekran hesap/kod kalemlerini de taşır (kullanıcı
       // geri bildirimi: "sadece anahtar değil, hesap/varyasyon da olabilir").
+      // MENÜ HEDEFİ = İŞ LİSTESİ: '/quarantine' artık yalnız "Bildirilecekler" havuzudur;
+      // fiş takibi '/quarantine/claims', değişmez defter '/quarantine/records' (üç ayrı rota,
+      // sayfa içi alt navigasyonla gezilir). Menüden gelen operatör doğrudan yapılacak işi görür.
       { label: 'Kusurlu Stok', href: '/quarantine', icon: ShieldOff },
       { label: 'Kanallar / Siteler', href: '/sites', icon: Globe },
     ],

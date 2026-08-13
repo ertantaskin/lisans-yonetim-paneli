@@ -424,11 +424,13 @@ export default async function ProductDetailPage({
               <CardDescription>
                 Geçmiş manuel düzeltme kayıtları — kimin yaptığı ve stokun gerçekten değişip
                 değişmediği ile birlikte. Geçersiz kılınan kalemler{' '}
+                {/* DEFTERE gider (havuza değil): burada kastedilen "geçersiz kılınmış TÜM
+                    kalemleri gör", bildirilmeyi bekleyen iş listesi değil. */}
                 <Link
-                  href="/quarantine?status=voided"
+                  href="/quarantine/records?status=voided"
                   className="text-foreground underline underline-offset-4"
                 >
-                  Kusurlu Stok
+                  Kusurlu Stok kayıtları
                 </Link>{' '}
                 ekranında listelenir.
               </CardDescription>

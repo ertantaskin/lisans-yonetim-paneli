@@ -34,8 +34,10 @@ const LABELS: Record<string, string> = {
   // için '/products/[id]' sayfasında ara segment olarak çıkar → etiketsiz kalırsa ham
   // İngilizce "products" görünürdü. Link'i app/products/page.tsx /stock'a yönlendirir.
   products: 'Ürünler',
-  // '/quarantine/claims/[id]' ara segmenti — etiketsiz kalırsa ham İngilizce "claims" çıkar.
+  // '/quarantine/claims[/id]' segmenti — etiketsiz kalırsa ham İngilizce "claims" çıkar.
   claims: 'Değişim Fişleri',
+  // '/quarantine/records' (kusurlu stok defteri) — aynı gerekçe: ham "records" görünürdü.
+  records: 'Tüm Kayıtlar',
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

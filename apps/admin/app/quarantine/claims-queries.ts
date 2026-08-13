@@ -63,9 +63,19 @@ export interface ClaimItemRow {
   resolvedAt: string | null;
 }
 
+/**
+ * Backend fiş listesi üst sınırı (`supplier-claims.service`: sabit `LIMIT 500`, `truncated`
+ * bayrağı DÖNDÜRMEZ). API'yi değiştirmek bu işin kapsamı dışında — dürüstlük için tavana
+ * DAYANILDIĞI istemcide tespit edilip ekranda söylenir (sessiz kırpma YOK; panelin kuralı).
+ * Yanlış-pozitif riski: tam 500 fiş varsa uyarı boşuna çıkar — eksik liste göstermekten iyidir.
+ */
+export const CLAIM_LIST_LIMIT = 500;
+
 export interface ClaimsData {
   rows: ClaimRow[];
   error: string | null;
+  /** Satır sayısı sunucu tavanına dayandı → daha eski fişler listede olmayabilir. */
+  truncated: boolean;
 }
 
 /** Fiş listesi (en yeni önce). Hata ekranı çökertmez — banner olarak gösterilir. */
@@ -73,9 +83,10 @@ export async function fetchClaims(): Promise<ClaimsData> {
   try {
     const raw = await apiGet<ClaimRow[] | { rows?: unknown }>('/v1/admin/supplier-claims');
     const list = Array.isArray(raw) ? raw : Array.isArray(raw?.rows) ? raw.rows : [];
-    return { rows: list as ClaimRow[], error: null };
+    const rows = list as ClaimRow[];
+    return { rows, error: null, truncated: rows.length >= CLAIM_LIST_LIMIT };
   } catch (e) {
-    return { rows: [], error: e instanceof Error ? e.message : 'Bağlantı hatası' };
+    return { rows: [], error: e instanceof Error ? e.message : 'Bağlantı hatası', truncated: false };
   }
 }
 

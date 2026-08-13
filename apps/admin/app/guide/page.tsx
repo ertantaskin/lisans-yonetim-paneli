@@ -230,10 +230,11 @@ export default function GuidePage() {
           ön-seçili olarak açar. Ayrıntı için bir sonraki bölüme bakın.
         </p>
         <Tip>
-          Geçersiz kılınan (void) ve değiştirilen ölü kalemler silinmez;{' '}
-          <R href="/quarantine">Kusurlu Stok</R> ekranında sebebi ve kaynak siparişiyle
-          birlikte durur. Oradan tedarikçiye <strong>değişim fişi</strong> kesip süreci takip
-          edebilirsiniz — bkz. aşağıdaki bölüm.
+          Geçersiz kılınan (void) ve değiştirilen ölü kalemler silinmez; Kusurlu Stok ekranının{' '}
+          <R href="/quarantine/records">Tüm Kayıtlar</R> bölümünde sebebi ve kaynak siparişiyle
+          birlikte durur. Tedarikçiye bildirilmeyi bekleyenler ise{' '}
+          <R href="/quarantine">Bildirilecekler</R> bölümündedir; oradan <strong>değişim fişi</strong>{' '}
+          kesip süreci takip edebilirsiniz — bkz. aşağıdaki bölüm.
         </Tip>
         <Tip>
           <strong>Terim:</strong> panelde tek bir stok satırına <strong>kalem</strong> denir. Ürün
@@ -444,21 +445,25 @@ export default function GuidePage() {
         <p className="font-medium text-foreground">Kusurlu stok → tedarikçiye değişim fişi:</p>
         <p>
           <R href="/quarantine">Kusurlu Stok</R> ekranı bozuk çıkan kalemleri tedarikçiye{' '}
-          <strong>toplu bildirmenin</strong> yoludur ve <strong>üç sekmeden</strong> oluşur:
+          <strong>toplu bildirmenin</strong> yoludur ve <strong>üç bölümden</strong> oluşur (her
+          biri ayrı bir sayfa; ekranın üstündeki bölüm çubuğundan geçilir, yer imlenebilir):
         </p>
         <Bullets>
           <li>
-            <strong>Bildirilecekler</strong> — henüz hiçbir fişe girmemiş kusur havuzu, tedarikçi
-            ve parti kırılımıyla (parti satırını açarsanız içindeki kalemleri görürsünüz). Bu
-            sekme <em>iş listesidir</em>.
+            <strong><R href="/quarantine">Bildirilecekler</R></strong> — henüz hiçbir fişe girmemiş
+            kusur havuzu, tedarikçi ve parti kırılımıyla (parti satırını açarsanız içindeki
+            kalemleri görürsünüz). Bu bölüm <em>iş listesidir</em> ve sol menüdeki “Kusurlu Stok”
+            doğrudan buraya gelir.
           </li>
           <li>
-            <strong>Değişim Fişleri</strong> — kesilmiş fişler, durumları ve tedarikçi yanıtları.
+            <strong><R href="/quarantine/claims">Değişim Fişleri</R></strong> — kesilmiş fişler,
+            durumları ve tedarikçi yanıtları.
           </li>
           <li>
-            <strong>Tüm Kayıtlar</strong> — bildirilmiş olsun olmasın TÜM ölü kalemlerin değişmez
-            defteri; süzgeç ve dışa aktarma buradadır. Her satır kendi{' '}
-            <strong>bildirim durumunu</strong> gösterir (Bildirilmedi / Fişte / Yanıtlandı).
+            <strong><R href="/quarantine/records">Tüm Kayıtlar</R></strong> — bildirilmiş olsun
+            olmasın TÜM ölü kalemlerin değişmez defteri; süzgeç ve dışa aktarma buradadır. Her
+            satır kendi <strong>bildirim durumunu</strong> gösterir (Bildirilmedi / Fişte /
+            Yanıtlandı).
           </li>
         </Bullets>
         <p>
@@ -502,7 +507,9 @@ export default function GuidePage() {
         <Tip>
           Stokun <strong>gerçekten</strong> düşmesi için &quot;Stoktan düşülecek lisans&quot; alanında ilgili
           kalemi seçmelisiniz; boş bırakırsanız kayıt yalnız deftere yazılır, stok değişmez (ekran bunu
-          satır satır belirtir). Düşülen kalemler <R href="/quarantine">Kusurlu Stok</R> ekranında görünür.
+          satır satır belirtir). Düşülen kalemler Kusurlu Stok ekranının{' '}
+          <R href="/quarantine/records">Tüm Kayıtlar</R> bölümünde görünür (tedarikçiye
+          bildirilmemişse <R href="/quarantine">Bildirilecekler</R> havuzunda da).
         </Tip>
       </Section>
 
