@@ -466,13 +466,23 @@ export class SupplyOpsService {
       }
 
       // ── Yıkıcı + kalem seçili: TEK UPDATE ile tüm seçim ──
-      // `= ANY(...)` tek turda kilitler; `status='available'` şartı yarışta kapılmış kalemi
-      // kendiliğinden eler (RETURNING yalnız gerçekten değişenleri döndürür → atlananlar
-      // fark alınarak bulunur, ayrı bir ön SELECT'e ve TOCTOU penceresine gerek yok).
+      // Tek turda kilitler; `status='available'` şartı yarışta kapılmış kalemi kendiliğinden
+      // eler (RETURNING yalnız gerçekten değişenleri döndürür → atlananlar fark alınarak
+      // bulunur, ayrı bir ön SELECT'e ve TOCTOU penceresine gerek yok).
+      //
+      // DİKKAT — `= ANY(${ids}::uuid[])` KULLANMAYIN: drizzle'ın `sql` şablonunda JS dizisi
+      // bu şekilde geçirilince BOZUK SQL üretiliyor (Postgres 42846 "cannot cast").
+      // Bu tuzak projede daha önce KVKK anonymize yolunda yaşandı ve orada JOIN'e çevrilmişti;
+      // burada tek tek parametreli `IN (...)` listesi kuruluyor (her id ayrı parametre →
+      // enjeksiyon yok, plan önbelleği id sayısına göre değişir ama liste ≤500).
+      const idList = sql.join(
+        ids.map((v) => sql`${v}::uuid`),
+        sql`, `,
+      );
       const updated = await rawRows<{ id: string; max_uses: number; use_count: number }>(tx, sql`
         UPDATE license_items
         SET status = 'voided'
-        WHERE id = ANY(${ids}::uuid[])
+        WHERE id IN (${idList})
           AND product_id = ${input.productId}
           AND status = 'available'
         RETURNING id, max_uses, use_count;
