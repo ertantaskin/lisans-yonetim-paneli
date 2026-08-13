@@ -102,7 +102,7 @@ describe('parti sayaçları — kovalar DURUMDAN değil ATAMADAN türer', () => 
 
   it('CANLI ataması olan anahtar müşterilerde sayılır; iade edilmiş (karantina) olan sayılmaz', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
-    const site = await createSite(db, { tag });
+    const site = await createSite(db, crypto, { tag });
     const ids = await insertLicenseItems(db, crypto, { productId: product.id, count: 4, tag });
     const batchId = await createBatch(product.id, 'canli-atama');
     await attach(batchId, ids);
@@ -157,7 +157,7 @@ describe('parti sayaçları — kovalar DURUMDAN değil ATAMADAN türer', () => 
       usageMode: 'multi',
       maxUses: 500,
     });
-    const site = await createSite(db, { tag });
+    const site = await createSite(db, crypto, { tag });
     const ids = await insertLicenseItems(db, crypto, {
       productId: product.id,
       count: 1,

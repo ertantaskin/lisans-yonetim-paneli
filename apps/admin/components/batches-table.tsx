@@ -586,9 +586,14 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
           <div className="min-w-0 flex-1">
             <AlertTitle>Toplu değiştirme tamamlandı — {bulkNotice.label}</AlertTitle>
             <AlertDescription>
-              {bulkNotice.replaced}/{bulkNotice.total} satılmış birim yenisiyle değiştirildi.
+              Müşterilerdeki {bulkNotice.total} anahtarın {bulkNotice.replaced} tanesi yenisiyle
+              değiştirildi.
               {bulkNotice.skippedNoStock > 0 && (
-                <> Stok yetmediği için {bulkNotice.skippedNoStock} birim atlandı.</>
+                <>
+                  {' '}
+                  {bulkNotice.skippedNoStock} anahtar için uygun stok yoktu — eski anahtarları
+                  KORUNDU (müşteri boşta kalmadı), stok girince tekrar deneyin.
+                </>
               )}
             </AlertDescription>
           </div>

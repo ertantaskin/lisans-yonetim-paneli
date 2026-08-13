@@ -22,7 +22,7 @@ export default async function BatchesPage() {
       <PageHeader
         icon={PackageCheck}
         title="Partiler"
-        description="Bir partide gelen anahtarların tedarikçi/tarih izi: satılmamış-satılmış adet ve geri çekme (recall). Parti, Stok Girişi'nde tedarikçi + alım tarihi girildiğinde (satır 'Otomatik' rozetli olur) ya da bir satın alma emri teslim alındığında oluşur."
+        description="Bir partide gelen anahtarların tedarikçi/tarih izi. Sayaçlar üç ayrı soruyu yanıtlar: kaç anahtar hâlâ STOKTA (geri çekme bunları iptal eder), kaçı MÜŞTERİLERDE (çalışmaya devam eder, tek tek karar verirsiniz), kaçı DÜŞMÜŞ (iptal/karantina/iade/değiştirilmiş). Parti, Stok Girişi'nde tedarikçi + alım tarihi girildiğinde (satır 'Otomatik' rozetli olur) ya da bir satın alma emri teslim alındığında oluşur."
       >
         <Button asChild variant="outline">
           <Link href="/stock/import">

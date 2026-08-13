@@ -168,6 +168,10 @@ function ReplaceDeliveredButton({
   const [busy, setBusy] = React.useState(false);
   const d = row.delivered!;
   const isMulti = row.usageMode === 'multi';
+  // API `replaceAssignment` YALNIZ aktif atamayı kabul eder (askıdakini 400 ile reddeder —
+  // askıyı operatör bilerek koymuştur, değişim onu sessizce geri açardı). Düğmeyi burada da
+  // kapat: tıklanıp hata veren bir düğme, hiç sunulmayandan daha kötüdür.
+  const isSuspended = d.assignmentStatus === 'suspended';
 
   const run = async () => {
     const res = await confirm({
@@ -178,9 +182,7 @@ function ReplaceDeliveredButton({
       details: [
         `Sipariş ${d.remoteOrderId} · ${d.customerEmail}`,
         `Ürün: ${row.productName}`,
-        d.assignmentStatus === 'suspended'
-          ? 'Bu atama ASKIDA — değişimden sonra müşteri yeni anahtarla tekrar aktif olur.'
-          : 'Müşteri değişimden hemen sonra yeni anahtarı görür.',
+        'Müşteri değişimden hemen sonra yeni anahtarı görür.',
       ],
       tone: 'danger',
       confirmLabel: 'Değiştir',
@@ -215,10 +217,12 @@ function ReplaceDeliveredButton({
     }
   };
 
-  if (isMulti) {
-    const why =
-      'Çok kullanımlı (MAK) anahtar otomatik değiştirilemez — aynı paylaşımlı anahtar yeniden' +
-      ' atanırdı. Siparişten elle işleyin.';
+  if (isMulti || isSuspended) {
+    const why = isSuspended
+      ? 'Bu atama askıya alınmış. Değişim yalnız AKTİF atamada yapılır — önce siparişten' +
+        ' "Geri aç" deyin, sonra değiştirin. (Askıyı sessizce kaldırmamak için bilinçli.)'
+      : 'Çok kullanımlı (MAK) anahtar otomatik değiştirilemez — aynı paylaşımlı anahtar yeniden' +
+        ' atanırdı. Siparişten elle işleyin.';
     return (
       <Tooltip>
         <TooltipTrigger asChild>

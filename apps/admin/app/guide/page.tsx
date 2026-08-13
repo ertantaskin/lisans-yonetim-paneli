@@ -430,7 +430,7 @@ export default function GuidePage() {
         <Bullets>
           <li><strong><R href="/suppliers">Tedarikçiler</R>:</strong> tedarikçi kartı + karne (teslim performansı, geri-çekilme oranı, para birimi başına maliyet).</li>
           <li><strong><R href="/purchase-orders">Satın Alma</R>:</strong> açık/kapalı emirler ve teslim alma. &quot;Otomatik&quot; rozetli emirlerde teslim alma adımı yoktur (mal zaten girilmiştir).</li>
-          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi anahtar hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall) → o partinin satılmamış anahtarları geçersiz olur; satılanlar için toplu değiştirme sihirbazı vardır.</li>
+          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi anahtar hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> anahtarlar geçersiz kılınır. <strong>Müşterilerdeki anahtarlara DOKUNULMAZ</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yeni anahtarla değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır (askıya alınmış atamalar buna dahil değildir, onlar elle işlenir).</li>
         </Bullets>
         <Tip>
           Partisiz (hızlı) giriş yaparsanız o anahtarlar hiçbir partiye bağlanmaz: maliyet raporunda
