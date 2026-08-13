@@ -62,7 +62,7 @@ export const CLAIM_FLOW_STEPS = [
   },
   {
     title: 'Yanıtı işlersiniz',
-    text: 'Raporu .txt/.csv indirip tedarikçiye gönderin, “Gönderildi” işaretleyin. Yanıt geldikçe kalemleri işaretleyin; tedarikçi kabul etmezse kalem bu havuza geri döner.',
+    text: 'Raporu .txt/.csv indirip tedarikçiye KENDİNİZ gönderin (panel göndermez), sonra “Tedarikçiye gönderdim” deyin. Yanıt geldikçe kalemleri işaretleyin; tedarikçi kabul etmezse kalem bu havuza geri döner.',
   },
 ];
 
@@ -649,7 +649,7 @@ export function ClaimsList({ rows, error }: { rows: ClaimRow[]; error: string | 
                 {/* Durumun ANLAMI: operatör "sırada ne var" için fişi açmak zorunda kalmasın. */}
                 <p className="text-xs text-muted-foreground/80">
                   {claimStatusHint(c.status)} · Oluşturma {fmtDateTime(c.createdAt)}
-                  {c.sentAt ? ` · Gönderildi ${fmtDateTime(c.sentAt)}` : ''}
+                  {c.sentAt ? ` · Tedarikçiye gönderildi ${fmtDateTime(c.sentAt)}` : ''}
                   {c.closedAt ? ` · Kapandı ${fmtDateTime(c.closedAt)}` : ''}
                 </p>
               </div>

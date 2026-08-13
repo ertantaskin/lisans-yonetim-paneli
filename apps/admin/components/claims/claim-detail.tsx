@@ -59,7 +59,10 @@ function nextStepsFor(status: string) {
     return [
       { title: 'Raporu indirin', text: 'Aşağıdaki “Metin (.txt)” veya “Excel (.csv)” düğmesiyle listeyi alın.' },
       { title: 'Tedarikçiye gönderin', text: 'Dosyayı kendi kanalınızdan (mail/panel/WhatsApp) iletin — panel göndermez.' },
-      { title: '“Gönderildi” işaretleyin', text: 'İşaretledikten sonra kalem kalem yanıt girebilirsiniz; fiş artık iptal edilemez.' },
+      {
+        title: '“Tedarikçiye gönderdim” deyin',
+        text: 'Panel dosyayı GÖNDERMEZ — bu düğme sizin yaptığınız gönderimi kaydeder. Kaydettikten sonra kalem kalem yanıt girebilirsiniz; fiş artık iptal edilemez.',
+      },
     ];
   }
   if (status === 'sent') {
@@ -110,10 +113,10 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
     const copy =
       status === 'sent'
         ? {
-            title: 'Fiş gönderildi olarak işaretlensin mi?',
+            title: 'Fiş tedarikçiye gönderildi olarak kaydedilsin mi?',
             description:
-              'Dosyayı tedarikçiye ilettiyseniz bunu işaretleyin. Sonrasında fiş iptal edilemez, yalnız kapatılabilir; kalem yanıtlarını da bundan sonra girebilirsiniz.',
-            confirmLabel: 'Gönderildi',
+              'Panel dosyayı göndermez — raporu tedarikçiye KENDİNİZ ilettiyseniz bunu kaydedin. Sonrasında fiş iptal edilemez, yalnız kapatılabilir; kalem yanıtlarını da bundan sonra girebilirsiniz.',
+            confirmLabel: 'Gönderdim',
             tone: 'default' as const,
           }
         : status === 'closed'
@@ -215,7 +218,7 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
         {claim.status === 'draft' && (
           <>
             <Button size="sm" onClick={() => void setStatus('sent')} disabled={busy}>
-              <Send /> Gönderildi olarak işaretle
+              <Send /> Tedarikçiye gönderdim
             </Button>
             <Button
               variant="danger-outline"
@@ -260,7 +263,7 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
             sonradan değişse bile rapor değişmez.{' '}
             {canMarkOutcome
               ? 'Tedarikçinin yanıtını satırları seçip girin; kabul edilmeyenler bildirilecekler havuzuna geri döner.'
-              : 'Yanıt girebilmek için önce fişi “Gönderildi” olarak işaretleyin.'}
+              : 'Yanıt girebilmek için önce “Tedarikçiye gönderdim” deyin.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

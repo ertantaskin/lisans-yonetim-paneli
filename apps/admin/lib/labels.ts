@@ -240,7 +240,7 @@ export const supportStatusLabel = (s: string) => lookup(SUPPORT_STATUS, s);
  */
 const CLAIM_STATUS: Record<string, string> = {
   draft: 'Taslak',
-  sent: 'Gönderildi',
+  sent: 'Tedarikçiye gönderildi',
   closed: 'Kapandı',
   canceled: 'İptal edildi',
 };
@@ -273,8 +273,8 @@ export const claimOutcomeHint = (s: string) => lookup(CLAIM_OUTCOME_HINT, s);
 /** Fiş durumunun operatör için ANLAMI (bir sonraki adımı söyler). */
 const CLAIM_STATUS_HINT: Record<string, string> = {
   draft: 'Hazırlandı, henüz tedarikçiye iletilmedi. Raporu indirip gönderin.',
-  sent: 'Tedarikçiye iletildi. Yanıt geldikçe kalemleri işaretleyin.',
-  closed: 'Süreç kapandı.',
+  sent: 'Rapor tedarikçiye iletildi (siz gönderdiniz, panel göndermez). Yanıt geldikçe kalemleri işaretleyin.',
+  closed: 'Tedarikçiyle süreç kapandı; fiş tedarikçi karnesine işlendi.',
   canceled: 'Fiş iptal edildi; kalemleri havuza döndü.',
 };
 export const claimStatusHint = (s: string) => lookup(CLAIM_STATUS_HINT, s);
@@ -328,7 +328,7 @@ const BADGE_STATUS: Record<string, string> = {
   approved: 'Onaylandı',
   rejected: 'Reddedildi',
   // Mail kaydı
-  sent: 'Gönderildi',
+  sent: 'Tedarikçiye gönderildi',
   delivered: 'İletildi',
   queued: 'Kuyrukta',
   failed: 'Başarısız',

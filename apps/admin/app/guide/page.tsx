@@ -465,7 +465,7 @@ export default function GuidePage() {
           Akış: <strong>“Fiş oluştur”</strong> deyip tedarikçi ve tarih aralığı seçtiğinizde o
           pencerede biriken tüm kusurlular otomatik gelir (istemediğinizi çıkarırsınız) ve{' '}
           <code>DEG-YYYYAAGG-NN</code> numaralı bir fiş kesilir. Fişi <strong>.txt veya .csv</strong>{' '}
-          olarak indirip tedarikçiye gönderin, sonra “Gönderildi” işaretleyin — yanıt ancak bundan
+          olarak indirip tedarikçiye gönderin (panel göndermez), sonra “Tedarikçiye gönderdim” deyin — yanıt ancak bundan
           sonra girilebilir. Tedarikçi cevap verdikçe kalemleri <em>Yenisi geldi / Bedeli iade
           edildi / Tedarikçi kabul etmedi</em> olarak işaretlersiniz.{' '}
           <strong>Kabul edilmeyen kalem bildirilecekler havuzuna GERİ DÖNER</strong> ve yeniden
