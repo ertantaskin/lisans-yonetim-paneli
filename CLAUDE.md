@@ -36,9 +36,11 @@ cmdk + sonner + next-themes; hepsi ücretsiz/MIT. Framework: **Next.js 15 (sunuc
 korunur (şablon Vite olsa da güvenlik gereği). Palet: **standart shadcn nötr oklch** —
 `--background/--foreground/--card/--primary/--secondary/--muted/--accent/--border/--ring`
 + `--sidebar-*` + `--chart-1..6`; nötr primary (açıkta koyu, koyuda açık), renk YOK
-(monokrom). Semantik uzantı (durum dili, renkli tutulur): `--success` (emerald),
-`--warning` (amber), `--destructive` (rose) — açık temada AA (≥4.5:1) sağlayacak koyulukta,
-koyu temada daha açık. Tema: `.dark` class (next-themes `attribute=class`). **Tek kaynak:**
+(monokrom). Semantik uzantı (durum dili, renkli tutulur) — **BEŞ hue** (kullanıcı kararı, eskiden
+üçtü): `--success` (emerald: elimde/sağlıklı), **`--info` (mavi: teslim edildi/tamamlandı)**,
+`--warning` (amber: bekliyor), **`--attention` (mor: insan kararı — İncelemede/Askıda)**,
+`--destructive` (rose: ölü/engelli) — açık temada AA (≥4.5:1) sağlayacak koyulukta, koyu temada
+daha açık. Rozet = soluk tint (%13-16) + saç teli `ring-inset` (%28-30). Tema: `.dark` class (next-themes `attribute=class`). **Tek kaynak:**
 `apps/admin/app/globals.css`. Kabuk: resmi shadcn **sidebar block** deseni
 (`ui/sidebar.tsx` — SidebarProvider/Sidebar/SidebarInset/SidebarTrigger, cookie kalıcılık,
 Ctrl/⌘+B, icon-collapse, mobil sheet) + `app-sidebar` + `site-header` (breadcrumb).
@@ -1277,6 +1279,42 @@ tie-break rastgele `uuid v4` → blok içi sıra keyfi.
   prod /health 200 v1.0.0, migration tracking 32, api ERROR 0. **DERS:** "sıra" şikâyetinde tek bir
   sorguyu düzeltmek yetmez — aynı veriyi gösteren TÜM yüzeyleri (panel/mail/müşteri/mağaza) ve
   SEÇİM yolunu (atama) birlikte gözden geçir; LIMIT'li her ORDER BY'ın tie-break'i olmalı.
+
+**DURUM RENGİ SİSTEMİ 3→5 HUE + /products 404 + TARAMA (commit 79daa30→6ffdafa, CANLI prod+dev,
+migration 0032):** Kullanıcı "teslim edildi rozetlerinin özel rengi olmalı, hafif soluk renklerle,
+ilgili tüm yerlerde; /products boş 404; başka eksik ne var" dedi.
+- **Kök neden ÖLÇÜLDÜ:** `available/assigned/fulfilled/active/approved/sent` HEPSİ aynı emerald'dı →
+  `/stock`'ta "Stokta" ile "Teslim edildi" bir bakışta ayrılmıyordu. Yeni token `--info` (mavi) +
+  `--attention` (mor); açık+koyu tema + `@theme inline` **base + `-foreground` çiftleri** (base
+  atlanırsa Tailwind v4 `bg-*` utility'sini HİÇ üretmez). Kontrast **hesaplandı** (oklch→sRGB→WCAG,
+  %14 tint zemini üzerinde): info 5.29 / attention 5.67 (açık), 6.13 / 5.86 (koyu) — AA üstü, sRGB içi.
+  **TON KURALI (badge.tsx, tek kaynak):** success=elimde sağlıklı kaynak · info=tamamlandı/müşteride ·
+  warning=bekliyor (kendiliğinden ilerler) · attention=insan kararı (İncelemede/Askıda) · danger=ölü/
+  engelli · neutral=kapanmış. `expired` beklenen bir sondur → alarm değil, nötr. Rozet: soluk tint +
+  saç teli `ring-inset`. **Alert `info` artık GERÇEKTEN mavi** (rozetle aynı hue); sessiz gri kutu
+  `muted` adını aldı — aynı adın iki farklı rengi olması tasarım sistemi hatasıydı.
+- **Tutarlılık:** ad-hoc küçük harfli rozetler cümle düzenine (Aktif/Pasif/En yeni/Eşlenmemiş/Garanti
+  içi/risk bandı/dağıtım durumları); `pasif` bir tabloda danger diğerinde outline'dı → nötr; katalog
+  "Eşlenmemiş" warning→outline (katalogda eşlenmemiş olmak eksik DEĞİL — alarm tasarımı); /orders
+  kırpma bandı info→warning (ikonu zaten uyarıydı); dağıtım `Çalışıyor` → mavi (kuyruktaki amber
+  `Bekliyor`dan ayrılır).
+- **/products 404:** `/products/[id]` breadcrumb'ı `/products`'a link basıyordu, `page.tsx` yoktu →
+  404 + ham İngilizce "products". Ürün listesi `/stock`'ta yaşıyor; **İKİNCİ liste EKLENMEDİ** →
+  **middleware'de** `/products`→`/stock` 307 + breadcrumb "Ürünler". **TUZAK (yine görüldü):** sayfa
+  içi `redirect()` YETMEZ — async root layout stream'e başladığı için Next meta-refresh gövdesi
+  üretir (dev'de ölçüldü: 200 + boş kabuk); kök yol için de aynı sebeple middleware kullanılıyor.
+- **Taramada bulunan gerçek eksikler:** **[perf, migration 0032]** `license_items.product_id` üzerinde
+  KOŞULSUZ index yoktu (mevcut ikisi de `WHERE status='available'` KISMİ index'i) → "bu ürünün TÜM
+  kalemleri" tam tablo taramasıydı; yeni `(product_id, created_at, seq)` sıralamayı da karşılar
+  (koddaki "product_id index'e oturur" yorumu YANLIŞTI). **[ops]** dağıtım kuyruğunda takılı `pending`:
+  zombi temizliği `claimNext`'in İÇİNDE, yani runner'ın kendisi ölünce hiç çalışmıyordu → istek sonsuza
+  dek pending, guard 409, **panelden bir daha dağıtım yapılamıyordu**; temizlik `request()` yoluna da
+  kondu (30dk) + `/deployments`'ta 3dk sonra nedeni söyleyen uyarı bandı.
+- **Doğrulama:** typecheck 4/4 + check-use-server (21/68) · admin production build · **dev'de 26 rotanın
+  tamamı 200, hata sınırı 0** · tarayıcıda ÖLÇÜLDÜ: "Stokta" `oklch(0.696 0.17 162.48)` vs "Teslim
+  edildi" `oklch(0.74 0.12 250)` (koyu) ve `oklch(0.48 0.13 250)` (açık) · `/products` 307→`/stock`,
+  `/products/<id>` etkilenmedi · prod deploy (rollback'li) → `/health` 200 v1.0.0, migration tracking 33,
+  `license_items_product_created_idx` canlı. migration 0000-0032.
 
 ## Geliştirme
 

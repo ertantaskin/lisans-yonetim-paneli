@@ -14,6 +14,62 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Durum rengi sistemi: 3 hue → 5 hue (migration 0032)
+
+Kullanıcı: *"Teslim edildi rozetlerinin özel renkleri olmalı ve hafif soluk renklerle belli
+edilmeli, ilgili tüm yerlerde. `/products` boş 404 görünüyor. Sistemde başka eksik veya sorun ne var?"*
+
+**Sorun ölçüldü.** `available` (Stokta), `assigned`/`fulfilled` (Teslim edildi), `active`,
+`approved`, `sent` — hepsi **aynı emerald** tonundaydı. Yani envanterde hangi anahtarın hâlâ
+satılabilir olduğu, hangisinin müşteriye gittiği bir bakışta anlaşılmıyordu.
+
+**Palet.** İki yeni token: `--info` (mavi — tamamlanmış iş) ve `--attention` (mor — insan kararı
+bekleyen). Kontrast tahmin edilmedi, **hesaplandı** (oklch → sRGB → WCAG, rozetin kendi %14 tint'li
+zemini üzerinde): açık temada 5.29 / 5.67, koyu temada 6.13 / 5.86 — hepsi AA üstü ve sRGB gamut'u
+içinde. Ton kuralı artık şu:
+
+| Ton | Renk | Anlamı | Örnek |
+|---|---|---|---|
+| success | emerald | elimde, satılabilir | Stokta · Aktif · Teslim alındı |
+| info | mavi | tamamlandı, müşteride | **Teslim edildi** · Gönderildi · Onaylandı |
+| warning | amber | bekliyor, kendiliğinden ilerler | Bekliyor · Kısmi · Rezerve |
+| attention | mor | insan kararı bekliyor, hata değil | İncelemede · Askıda |
+| danger | rose | ölü / hatalı / engelli | Geri alındı · Geçersiz · Eşlenmemiş |
+| neutral | gri | kapanmış, eylem yok | Değiştirildi · İptal · Süresi doldu |
+
+Rozetler soluk tint + saç teli halka (`ring-inset`) aldı: tint'i koyulaştırmadan pill'i tabloda
+okunur kılar. `Alert` bileşeninin `info` varyantı artık gerçekten mavi (rozetle aynı hue); eski
+sessiz gri kutu `muted` adını aldı — aynı adın iki farklı renk üretmesi tasarım sistemi hatasıydı.
+
+**Tutarlılık.** Ad-hoc küçük harfli rozetler cümle düzenine geçti (Aktif/Pasif/En yeni/Eşlenmemiş/
+Garanti içi/risk bandı/dağıtım durumları). `pasif` bir tabloda kırmızı, diğerinde çerçeveliydi →
+nötr. Katalogdaki "Eşlenmemiş" uyarı sarısından çerçeveliye indi (katalogda eşlenmemiş olmak bir
+eksik değildir — mağaza lisans taşımayan ürün de satar). `/orders` kırpma bandı bilgi→uyarı oldu
+(ikonu zaten uyarıydı).
+
+### `/products` 404'ü kapatıldı
+
+`/products/[id]` sayfasının breadcrumb'ı `/products`'a link basıyordu ama o adreste sayfa yoktu →
+404, üstelik etiket ham İngilizce "products". Ürün listesi `/stock` altında yaşıyor; **ikinci bir
+liste eklenmedi** (aynı veriyi iki adreste göstermek hangisinin doğru olduğu belirsiz iki ekran
+üretir) — `/products` artık `/stock`'a yönlenir.
+
+Yönlendirme **middleware'de**: sayfa içindeki `redirect()` tek başına yetmiyor, çünkü async root
+layout stream'e başladığı için Next gerçek 307 yerine meta-refresh gövdesi üretiyor (dev'de
+ölçüldü: 200 + boş kabuk). Kök yol için de aynı sebeple middleware kullanılıyordu.
+
+### Taramada bulunan eksikler
+
+- **Performans (migration 0032).** `license_items.product_id` üzerinde koşulsuz index yoktu —
+  mevcut iki index de `WHERE status = 'available'` kısmi index'iydi. "Bu ürünün tüm kalemleri"
+  (ürün detayı, envanter, stok girişi önizlemesi) tam tablo taramasıydı. Yeni
+  `(product_id, created_at, seq)` index'i sıralamayı da karşılıyor. Koddaki "product_id index'e
+  oturur" yorumu yanlıştı, düzeltildi.
+- **Operasyon.** Dağıtım kuyruğunda takılı kalan `pending` istek: zombi temizliği `claimNext`'in
+  içindeydi, yani tıkanmanın sebebi runner'ın kendisi olduğunda hiç çalışmıyordu → istek sonsuza
+  dek bekliyor, guard 409 veriyor ve **panelden bir daha dağıtım yapılamıyordu**. Temizlik istek
+  yoluna da kondu (30 dk) ve `/deployments` 3 dakikadan sonra nedeni söyleyen bir uyarı gösteriyor.
+
 ### Lisans listesi: içe aktarma sırası korunur (migration 0030 + 0031)
 
 Kullanıcı: *"Windows 11 Pro ürününe bugün sıralı bir stok eklemiştim ama lisans anahtarı
