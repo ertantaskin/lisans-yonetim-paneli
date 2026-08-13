@@ -27,7 +27,7 @@ export default async function SuppliersPage() {
 
       {/* Oluşturma formu VARSAYILAN KAPALI: tedarikçi eklemek seyrek bir iş, form sürekli
           açık durunca listeyi aşağı itiyordu (kullanıcı geri bildirimi). */}
-      <CollapsiblePanel title="Yeni Tedarikçi" icon={Plus}>
+      <CollapsiblePanel title="Yeni Tedarikçi" icon={<Plus />}>
         <CreateSupplierForm />
       </CollapsiblePanel>
 

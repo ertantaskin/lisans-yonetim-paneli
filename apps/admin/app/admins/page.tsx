@@ -46,7 +46,7 @@ export default async function AdminsPage() {
 
       {/* Varsayılan KAPALI (bkz. /suppliers): admin eklemek seyrek bir iş, form sürekli
           açık durunca yönetici listesini aşağı itiyordu. */}
-      <CollapsiblePanel title="Yeni Admin" icon={UserPlus} className="max-w-3xl">
+      <CollapsiblePanel title="Yeni Admin" icon={<UserPlus />} className="max-w-3xl">
         <CreateAdminForm />
       </CollapsiblePanel>
 

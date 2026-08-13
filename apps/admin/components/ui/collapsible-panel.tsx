@@ -1,6 +1,6 @@
 'use client';
 import * as React from 'react';
-import { ChevronDown, Plus, X, type LucideIcon } from 'lucide-react';
+import { ChevronDown, Plus, X } from 'lucide-react';
 import { Button } from './button';
 import { Card, CardContent } from './card';
 import { cn } from '../../lib/utils';
@@ -18,7 +18,7 @@ import { cn } from '../../lib/utils';
  */
 export function CollapsiblePanel({
   title,
-  icon: Icon = Plus,
+  icon,
   openLabel,
   closeLabel = 'Kapat',
   description,
@@ -27,7 +27,15 @@ export function CollapsiblePanel({
   children,
 }: {
   title: string;
-  icon?: LucideIcon;
+  /**
+   * İkon ELEMENT olarak alınır (`icon={<Plus />}`), bileşen olarak DEĞİL.
+   *
+   * NEDEN: bu bir istemci bileşeni; çağıranlar sunucu bileşeni (app dizinindeki sayfalar). Bir lucide
+   * BİLEŞENİ (fonksiyon) sunucudan istemciye prop olarak geçirilemez — React "Functions cannot
+   * be passed directly to Client Components" ile ÇALIŞMA ANINDA patlar (typecheck ve build
+   * yakalamaz; sahada `/suppliers` bu yüzden hata sınırına düştü). Element serileştirilebilir.
+   */
+  icon?: React.ReactNode;
   /** Kapalıyken düğmenin metni (varsayılan: başlığın kendisi). */
   openLabel?: string;
   closeLabel?: string;
@@ -43,7 +51,7 @@ export function CollapsiblePanel({
     return (
       <div className={cn('mb-5', className)}>
         <Button variant="outline" onClick={() => setOpen(true)} aria-expanded={false} aria-controls={bodyId}>
-          <Icon aria-hidden /> {openLabel ?? title}
+          {icon ?? <Plus aria-hidden />} {openLabel ?? title}
         </Button>
         {description && <p className="mt-1.5 text-xs text-muted-foreground">{description}</p>}
       </div>
@@ -56,7 +64,8 @@ export function CollapsiblePanel({
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Icon className="size-4 text-muted-foreground" aria-hidden /> {title}
+              <span className="text-muted-foreground [&_svg]:size-4">{icon ?? <Plus aria-hidden />}</span>{" "}
+              {title}
             </h2>
             {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
           </div>
