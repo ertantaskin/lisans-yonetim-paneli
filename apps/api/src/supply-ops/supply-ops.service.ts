@@ -32,6 +32,15 @@ export interface RecallResult {
    * hatasının kaynağıydı: okuyanı "durumdan türet" sanısına itiyordu.)
    */
   soldNeedingReplacement: number;
+  /**
+   * Müşterinin elinde duran TOPLAM adet — aktif + ASKIYA ALINMIŞ atamalar.
+   * `listBatches.customerCount` ve parti detayındaki "Müşterilerdeki lisanslar" listesiyle
+   * AYNI kümedir. Ayrı durmasının sebebi: geri çekme sonrası bandı "müşterilerde N anahtar
+   * var" derken, üstündeki onay modali ve alttaki liste ile FARKLI bir sayı göstermemeli;
+   * `soldNeedingReplacement` ise yalnız OTOMATİK değiştirilebilenleri sayar (askıdakiler
+   * elle işlenir).
+   */
+  customerHeld: number;
 }
 
 export type AdjustmentAction = 'void' | 'damage' | 'correct' | 'recall';
@@ -183,19 +192,29 @@ export class SupplyOpsService {
           li.batch_id,
           count(*) AS total_c,
           count(*) FILTER (WHERE li.status = 'available') AS unsold_c,
-          count(*) FILTER (WHERE EXISTS (
-            SELECT 1 FROM assignments a
-            WHERE a.license_item_id = li.id AND a.status IN ('active', 'suspended')
-          )) AS customer_c,
-          count(*) FILTER (WHERE EXISTS (
-            SELECT 1 FROM assignments a
-            WHERE a.license_item_id = li.id AND a.status = 'active'
-          )) AS replaceable_c,
-          count(*) FILTER (WHERE li.status <> 'available' AND NOT EXISTS (
-            SELECT 1 FROM assignments a
-            WHERE a.license_item_id = li.id AND a.status IN ('active', 'suspended')
-          )) AS dead_c
+          count(*) FILTER (WHERE ag.has_live) AS customer_c,
+          -- bulkReplaceBatch'in ADAY kümesiyle BİREBİR: aktif atama + available OLMAYAN kalem
+          -- + tek-kullanımlık ürün. Üçü de o sorguda var (aşağıdaki candidates + 'multi' elemesi);
+          -- burada eksik bırakılırsa MAK partisinde "Toplu Değiştir" menüsü açılır ve işlem
+          -- "0/1 değiştirildi" der — yani bu turda düzeltilen hatanın MAK'taki tekrarı olurdu.
+          count(*) FILTER (
+            WHERE ag.has_active AND li.status <> 'available' AND p.usage_mode <> 'multi'
+          ) AS replaceable_c,
+          count(*) FILTER (WHERE li.status <> 'available' AND NOT ag.has_live) AS dead_c
         FROM license_items li
+        JOIN products p ON p.id = li.product_id
+        -- Kalem başına TEK atama taraması: üç ayrı korele EXISTS satır başına 3 index
+        -- probe'u demekti (agregat FILTER içindeki sublink semi-join'e çevrilemez).
+        -- LATERAL + bool_or ile aynı bilgi tek geçişte çıkar. coalesce ŞART: atama yoksa
+        -- bool_or NULL döner, NOT NULL de NULL'dur → atamasız (ör. geçersiz kılınmış)
+        -- kalemler dead_c'ye HİÇ girmezdi.
+        LEFT JOIN LATERAL (
+          SELECT
+            coalesce(bool_or(a.status = 'active'), false) AS has_active,
+            coalesce(bool_or(a.status IN ('active', 'suspended')), false) AS has_live
+          FROM assignments a
+          WHERE a.license_item_id = li.id
+        ) ag ON true
         WHERE li.batch_id IS NOT NULL
           -- Tek parti isteniyorsa süzgeç ALT SORGUYA da iner: aksi halde /batches/[id]
           -- her açılışta TÜM license_items'ı gruplayıp sonra tek satırı seçerdi.
@@ -261,15 +280,21 @@ export class SupplyOpsService {
       // Satılmış + hâlâ CANLI (aktif atamalı) kalemler — elle değiştirme gerektirenler.
       // (status<>'available' KULLANMA: aynı tx'te 'voided'e çekilenler + terminal statüler —
       // quarantined/revoked/replaced/expired — yanlış sayılır. Aktif atama = sold+canlı, audit bulgusu.)
-      const soldRows = await rawRows<{ c: number }>(tx, sql`
-        SELECT count(*)::int AS c FROM license_items li
-        WHERE li.batch_id = ${batchId}
-          AND EXISTS (
+      const soldRows = await rawRows<{ active_c: number; live_c: number }>(tx, sql`
+        SELECT
+          count(*) FILTER (WHERE EXISTS (
             SELECT 1 FROM assignments a
             WHERE a.license_item_id = li.id AND a.status = 'active'
-          );
+          ))::int AS active_c,
+          count(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM assignments a
+            WHERE a.license_item_id = li.id AND a.status IN ('active', 'suspended')
+          ))::int AS live_c
+        FROM license_items li
+        WHERE li.batch_id = ${batchId};
       `);
-      const soldNeedingReplacement = Number(soldRows[0]?.c ?? 0);
+      const soldNeedingReplacement = Number(soldRows[0]?.active_c ?? 0);
+      const customerHeld = Number(soldRows[0]?.live_c ?? 0);
 
       // Her void edilen lisans için sebepli stok düzeltmesi (§12 — sebepsiz değişiklik yok).
       // qty = kalan kapasite (tek-kullanım→1, multi/MAK→max_uses-use_count) → CostsService.wastage
@@ -294,10 +319,10 @@ export class SupplyOpsService {
         actor,
         targetType: 'batch',
         targetId: batchId,
-        meta: { voided: voided.length, soldNeedingReplacement, reason },
+        meta: { voided: voided.length, soldNeedingReplacement, customerHeld, reason },
       });
 
-      return { voided: voided.length, soldNeedingReplacement };
+      return { voided: voided.length, soldNeedingReplacement, customerHeld };
     });
   }
 

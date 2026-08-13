@@ -123,6 +123,8 @@ export function LicenseItemsTable({
   productId,
   batchId,
   lockedHolder,
+  refreshKey,
+  onMutated,
   payloadSchema,
   showProductColumn = false,
   className,
@@ -136,6 +138,16 @@ export function LicenseItemsTable({
    * zaten kapsamı söylüyordur (ör. parti detayındaki "Müşterilerdeki lisanslar" kartı).
    */
   lockedHolder?: 'customer';
+  /**
+   * KARDEŞ TABLO TAZELEME. Aynı sayfada bu tablodan İKİ tane olabilir (parti detayı:
+   * "Müşterilerdeki lisanslar" + "Bu partideki lisanslar") ve aynı kalem ikisinde de
+   * listelenir. Biri üzerinden değişim/geçersiz kılma yapılınca DİĞERİ bayat kalıyordu →
+   * bayat satırdan ikinci tık API'den 400 alıyordu (veri güvenli, ama kafa karıştırıcı).
+   * Ebeveyn paylaşılan bir sayaç tutar: her mutasyonda `onMutated` ile artırır, artan
+   * `refreshKey` HER İKİ tabloyu birden yeniden çeker.
+   */
+  refreshKey?: number;
+  onMutated?: () => void;
   /**
    * Hesap ürününün alan şeması — YALNIZ tek ürüne daraltılmış listede anlamlı
    * (ürün detayı). Global listede satırlar farklı ürünlerden gelir → gönderilmez.
@@ -216,9 +228,18 @@ export function LicenseItemsTable({
     return () => {
       cancelled = true;
     };
-  }, [productId, batchId, status, holder, term, page, pageSize, sort, reloadKey]);
+  }, [productId, batchId, status, holder, term, page, pageSize, sort, reloadKey, refreshKey]);
 
+  /** Yalnız BU tabloyu tazeler (süzgeç/sayfa değişimi, "Yenile" düğmesi). */
   const reload = React.useCallback(() => setReloadKey((k) => k + 1), []);
+  /**
+   * VERİYİ DEĞİŞTİREN işlemden sonra: kendini tazele + ebeveyni haberdar et (kardeş tablo
+   * da tazelensin). `onMutated` verilmemişse davranış aynen eskisi gibi kalır.
+   */
+  const reloadAfterMutation = React.useCallback(() => {
+    reload();
+    onMutated?.();
+  }, [reload, onMutated]);
 
   const total = data?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / (data?.pageSize ?? pageSize)));
@@ -347,12 +368,13 @@ export function LicenseItemsTable({
         setBulkNote(msg);
         announce(msg);
         setSelected(new Set());
-        reload();
+        // Toplu düşme de veriyi DEĞİŞTİRİR → kardeş tablo da tazelenmeli.
+        reloadAfterMutation();
       } finally {
         setBulkBusy(false);
       }
     },
-    [selectedVisible, rowById, confirm, announce, reload],
+    [selectedVisible, rowById, confirm, announce, reloadAfterMutation],
   );
 
   return (
@@ -635,7 +657,7 @@ export function LicenseItemsTable({
                     <LicenseItemActions
                       row={row}
                       payloadSchema={productId ? payloadSchema : undefined}
-                      onDone={reload}
+                      onDone={reloadAfterMutation}
                     />
                   </TableCell>
                 </TableRow>

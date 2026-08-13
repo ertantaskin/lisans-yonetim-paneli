@@ -12,6 +12,8 @@ export interface ActionState {
 export interface RecallResult extends ActionState {
   voided?: number;
   soldNeedingReplacement?: number;
+  /** Aktif + ASKIDA — parti detayındaki "Müşterilerdeki lisanslar" listesiyle aynı küme. */
+  customerHeld?: number;
 }
 
 /**
@@ -23,7 +25,11 @@ export async function recallBatchAction(id: string, reason: string): Promise<Rec
   if (!id) return { ok: false, error: 'Parti id zorunlu' };
   if (!reason.trim()) return { ok: false, error: 'Sebep zorunlu' };
   try {
-    const res = await apiPost<{ voided: number; soldNeedingReplacement: number }>(
+    const res = await apiPost<{
+      voided: number;
+      soldNeedingReplacement: number;
+      customerHeld?: number;
+    }>(
       `/v1/admin/batches/${id}/recall`,
       { reason: reason.trim() },
       await getActor(),
@@ -33,6 +39,7 @@ export async function recallBatchAction(id: string, reason: string): Promise<Rec
       ok: true,
       voided: res.voided,
       soldNeedingReplacement: res.soldNeedingReplacement,
+      customerHeld: res.customerHeld,
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Geri çekilemedi' };

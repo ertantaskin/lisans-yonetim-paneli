@@ -191,6 +191,11 @@ describe('parti sayaçları — kovalar DURUMDAN değil ATAMADAN türer', () => 
     expect(b.totalCount).toBe(1);
     expect(b.unsoldCount).toBe(1);
     expect(b.customerCount).toBe(1);
+    // MAK OTOMATİK DEĞİŞTİRİLEMEZ (bulkReplaceBatch onu `skippedUnsupported` sayar) → sayaç
+    // 0 olmalı, aksi halde "Toplu Değiştir" menüsü açılır ve işlem 0/1 döner: kullanıcının
+    // bildirdiği hatanın MAK'taki birebir tekrarı. (Aynı sebeple `li.status <> 'available'`
+    // koşulu da yüklemde: kısmen satılmış MAK anahtarı hâlâ 'available'dır.)
+    expect(b.replaceableCount).toBe(0);
     // Ekranlar "toplam = stokta + müşteride + düşmüş" ARİTMETİĞİ KURMAMALI — bu satır sebebi.
     expect(b.unsoldCount + b.customerCount + b.deadCount).toBeGreaterThan(b.totalCount);
   });

@@ -13,11 +13,10 @@ import {
 } from 'lucide-react';
 import { apiGet } from '../../../lib/api';
 import { Button } from '../../../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { SupplyStatusBadge } from '../../../components/ui/badge';
 import { StatStrip } from '../../../components/ui/stat-tile';
-import { LicenseItemsTable } from '../../../components/inventory/license-items-table';
 import { BatchRecallButton } from '../../../components/batch-recall-button';
+import { BatchLicensePanels } from './batch-license-panels';
 import type { BatchRow } from '../queries';
 
 export const dynamic = 'force-dynamic';
@@ -184,45 +183,16 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
         )}
       </div>
 
-      {/* ── Müşterilerdeki anahtarlar (değişim karar listesi) ──
-          NEDEN AYRI KART: geri çekme YALNIZ stoğu geçersiz kılar; teslim edilmiş anahtarlara
-          dokunmaz çünkü bir kısmı çalışıyor olabilir. Operatörün ihtiyacı "hangileri hâlâ
-          müşterilerde" listesini görüp SATIR SATIR karar vermek — bu kart o iş listesidir ve
-          bir anahtar değiştirildikçe kendiliğinden kısalır (eski atama artık canlı değildir). */}
-      {batch.customerCount > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle icon={Users}>Müşterilerdeki lisanslar</CardTitle>
-            <CardDescription>
-              Bu partiden çıkmış ve <strong>şu anda müşterilerin elinde olan</strong>{' '}
-              {batch.customerCount} anahtar. {recalled ? 'Parti geri çekildi ama b' : 'B'}
-              unlar çalışmaya devam ediyor ve müşteri görmeye devam ediyor — otomatik
-              iptal edilmezler. Sorunlu olanı satırdaki{' '}
-              <strong>“Yeni anahtarla değiştir”</strong> ile yenileyin: müşteriye başka bir
-              partiden taze anahtar atanır, eski anahtar karantinaya gider ve bu listeden düşer.
-              Uygun stok yoksa işlem yapılmaz, müşteri boşta kalmaz.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <LicenseItemsTable batchId={batch.id} lockedHolder="customer" />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Partinin lisansları ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle icon={KeyRound}>Bu partideki lisanslar</CardTitle>
-          <CardDescription>
-            Yalnız <strong>{batch.label}</strong> partisinden gelen kalemler — teslim edilenler,
-            geçersiz kılınanlar ve karantinadakiler dahil. Bozuk anahtarları satırları
-            işaretleyip topluca stoktan düşebilirsiniz.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LicenseItemsTable batchId={batch.id} />
-        </CardContent>
-      </Card>
+      {/* ── Lisans tabloları ──
+          İKİSİ BİR ARADA ve ORTAK TAZELEME sinyaliyle: aynı kalem her iki listede de
+          görünebildiği için (canlı atamalı anahtar) birinden yapılan değişim diğerini
+          bayat bırakıyordu. Ayrıntı: `batch-license-panels.tsx`. */}
+      <BatchLicensePanels
+        batchId={batch.id}
+        batchLabel={batch.label}
+        customerCount={batch.customerCount}
+        recalled={recalled}
+      />
     </div>
   );
 }

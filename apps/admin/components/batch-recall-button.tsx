@@ -65,11 +65,18 @@ export function BatchRecallButton({
     try {
       const out = await recallBatchAction(batchId, res.reason);
       if (out.ok) {
+        // SAYI HİZASI: band, onay modali ve alttaki "Müşterilerdeki lisanslar" listesi AYNI
+        // kümeyi (aktif + askıda) saymalı. Eskiden band `soldNeedingReplacement` (yalnız
+        // AKTİF) kullanıyordu → askıda ataması olan partide modal "2 anahtar" der, band
+        // "1 anahtar" derdi ve işaret ettiği liste 2 satır gösterirdi.
+        const held = out.customerHeld ?? out.soldNeedingReplacement ?? 0;
+        const auto = out.soldNeedingReplacement ?? 0;
         setNote(
           `Stoktaki ${out.voided ?? 0} anahtar geçersiz kılındı.` +
-            ((out.soldNeedingReplacement ?? 0) > 0
-              ? ` Müşterilerdeki ${out.soldNeedingReplacement} anahtar çalışmaya devam ediyor —` +
-                ' aşağıdaki listeden tek tek inceleyip gerekeni değiştirin.'
+            (held > 0
+              ? ` Müşterilerdeki ${held} anahtar çalışmaya devam ediyor` +
+                (held > auto ? ` (${held - auto} tanesi askıda)` : '') +
+                ' — aşağıdaki listeden tek tek inceleyip gerekeni değiştirin.'
               : ''),
         );
         router.refresh();
