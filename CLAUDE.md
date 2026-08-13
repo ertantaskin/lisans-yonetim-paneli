@@ -1375,3 +1375,61 @@ Yarış testi (gerçek PG ister): `pnpm --filter @lisans/api test:race`. Lokal N
 önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
 DB dışa kapalıdır; lokalde host'tan PG/Redis'e erişmek için `docker-compose.override.yml`
 (gitignore'da) 127.0.0.1'e port açar — yarış testi bunu kullanır.
+
+**PARTİ SAYAÇLARI + GERİ ÇEKME SONRASI TAKİP + TEK ODAK GÖSTERGESİ (commit 2952a04→a6747e6, CANLI prod+dev,
+migration YOK):** Kullanıcı geri çekme onayında "Satılmış 6 birim müşterilerde — bunlar için değişim gerekir"
+gördü ama 6 birim satılmamıştı (bir kısmı ELLE geçersiz kılınmıştı); ayrıca "geri çekilen anahtar gösterilmeye
+devam edecek mi? manuel kontrolümden geçip değiştirebilmem gerek" diye sordu ve inputlardaki odak tasarımını
+bildirdi. 4 lensli keşif + 3 lensli çekişmeli doğrulama (kendi değişikliklerimi çürüt) ile yapıldı.
+- **[SAYAÇ — bildirilen hata]** `listBatches` sayacı `status <> 'available'` idi → voided/quarantined/
+  replaced/revoked/expired HEPSİ "satılmış" kovasına düşüyordu. Aynı serviste `recallBatch` ÇOKTAN doğru
+  yüklemi (`EXISTS aktif atama`) kullanıyordu ve kodda gerekçesi yazılıydı; iki tanım aynı ekranda
+  çelişiyordu. `canBulkReplace` de bu yanlış sayaca bağlıydı → değiştirilecek hiçbir şey yokken "Toplu
+  Değiştir" açılıyor, tıklanınca 0/0 dönüyordu. Artık tek `LEFT JOIN` + `count(*) FILTER` +
+  `LEFT JOIN LATERAL bool_or` ile BEŞ sayaç: `totalCount` · `unsoldCount` (status='available' — recall'ın
+  VOID edeceği küme, DEĞİŞMEDİ) · `customerCount` (atama active|suspended — gerçekten müşteride) ·
+  `replaceableCount` (**bulkReplaceBatch aday kümesiyle BİREBİR**: aktif atama + `status<>'available'` +
+  `usage_mode<>'multi'`) · `deadCount`. `onlyId` süzgeci alt sorguya da iner. **MAK NOTU:** kovalar
+  TOPLANMAZ (kısmen satılmış MAK anahtarı hem stokta hem müşterilerde sayılır) → `totalCount` ayrı
+  sorulur, ekranlar "toplam = stokta + müşteride + düşmüş" ARİTMETİĞİ KURMAZ. `RecallResult` jsdoc'u
+  "available olmayan" diye YALAN söylüyordu (SQL hiçbir zaman öyle değildi) — kök nedenin kaynağı buydu.
+- **[TAKİP — kullanıcı sorusunun cevabı]** `getDeliveries` YALNIZ `assignments.status='active'` süzer,
+  parti durumuna BAKMAZ → geri çekilen partinin teslim edilmiş anahtarı müşteride **çalışmaya devam eder**.
+  Doğrusu da budur (bir kısmı sağlam olabilir; otomatik iptal müşteriyi lisanssız bırakırdı — §15 "insan
+  onaylar"). Yeni **"kim tutuyor" ekseni**: `GET /v1/admin/license-items?holder=customer`
+  (`EXISTS assignments IN (active,suspended)`) — durum süzgecinden AYRI olmak ZORUNDA, çünkü MAK anahtarı
+  kısmen satılmışken hâlâ `status='available'` görünür. Envanter satırında teslim edilmiş kalem artık
+  devre dışı iki düğme yerine **"Yeni anahtarla değiştir"** gösterir (mevcut
+  `POST /v1/admin/assignments/:id/replace` — iş kuralı TEKRARLANMADI); MAK ve **askıdaki** atamada düğme
+  sebebiyle kapalı (API askıdakini 400'ler; askıyı operatör bilerek koymuştur). Parti detayında
+  **"Müşterilerdeki lisanslar"** kartı (kilitli kapsam) — iş listesi değişim yapıldıkça kendiliğinden kısalır.
+  İki tablo `batch-license-panels.tsx` istemci sarmalayıcısında paylaşılan `refreshKey` ile birlikte tazelenir.
+- **[ODAK — ölçüm naif düzeltmeyi çürüttü]** `globals.css`'teki `:focus-visible { outline: 2px solid
+  var(--ring) }` kuralı **@layer DIŞINDA**; Tailwind v4 TÜM utility'leri `@layer utilities`'e koyar ve CSS
+  Cascade L5'te katman sırası specificity'den ÖNCE gelir → bu kural her `outline-none`'ı yener. **Tarayıcıda
+  CSSOM ile ÖLÇÜLDÜ** (`.outline-none` → "utilities", global kural → katmansız). Sonuç: kenarlık + soluk hale
+  + boşluk + outline = 3-4 bant üst üste. **Naif düzeltme (kuralı `@layer base`'e taşı) bir a11y REGRESYONU
+  olurdu:** hesaplandı (oklch→sRGB→WCAG) `ring-ring/40` 1.85:1 · `ring-ring/60` 2.68:1 · `ring-sidebar-ring`
+  2.48:1 — üçü de 3:1 eşiğinin ALTINDA; outline ise 6.54 açık / 4.18 koyu. Bu yüzden TERS yön seçildi:
+  **halkalar kaldırıldı, outline TEK gösterge bırakıldı** (sidebar odak kontrastı 2.48→6.26, yani eşik-altı
+  bir durum DÜZELDİ). Hata durumu artık halka değil `aria-[invalid=true]:[--ring:var(--destructive)]` ile
+  outline rengini ezerek verilir. TEK istisna `ring-inset` (kırpılan konteynerler: live-feed satırları ve
+  `overflow-x-auto` taşıyan TabsList — ölçüldü, orada outline üst/altta 1px kırpılıyor).
+- **[ONAY MODALİ]** `confirm({details})` DİZİ geçirildiğinde React ayraçsız BİTİŞİK metin basıyordu
+  ("…geri alınamaz).Satılmış 6 birim…") ve metin düğümleri `space-y-3` (`> * + *`) seçicisine girmediği için
+  alttaki alanla boşluk da kalmıyordu → dizi artık madde listesi, tekil içerik sarmalayıcı kutu (iki çağıran).
+- **Çekişmeli doğrulama 5 gerçek bulgu** çıkardı, hepsi deploy ÖNCESİ kapatıldı (askıda-çıkmaz-sokak ·
+  MAK'ta sayaç uyumsuzluğu = bildirilen hatanın tekrarı · korele EXISTS perf → LATERAL+`coalesce(bool_or)`
+  [coalesce ŞART: `NOT NULL` de NULL'dur, atamasız kalemler `dead_c`'ye girmezdi] · band↔modal sayı
+  uyumsuzluğu → `customerHeld` · iki tablo bayat kalması).
+- **Doğrulama:** typecheck 4/4 + check-use-server (21/70) · admin build · api birim 72/72 · **VPS izole test
+  DB entegrasyon 192/192** (+4 yeni `batch-counters` testi — bu sayaçların HİÇ testi yoktu, hatanın yaşama
+  sebebi tam olarak buydu) · **dev canlı E2E:** kullanıcının ekran görüntüsündeki partide eski sayaç
+  "6 satılmış" derken gerçekte müşteride **3** anahtar vardı; satırdan değişim yapıldı → müşteride 3→**2**,
+  düşmüş 12→**13**, taze anahtar **BAŞKA partiden** geldi (o partide stok 1→0), eski anahtar karantinada ·
+  prod deploy (rollback'li) → `/health` 200 v1.0.0.
+- **KENDİ HATALARIM:** dev'de yanlış aracı (`deploy.sh` — prod içindir, dev'in `dev-stack.sh`'i var)
+  çalıştırıp ayrı bir compose projesi yarattım (temizlendi, **prod etkilenmedi**) · regex düzenlemesi
+  `reloadAfterMutation` içindeki `reload()`'u kendisiyle değiştirip sonsuz özyineleme üretti (okuyarak
+  yakalandı) · `sql` şablonu içinde backtick kullanıp template'i erken kapattım · yeni testte
+  `createSite(db, crypto, opts)` imzasını yanlış çağırdım (izole DB'de 2 test düştü).
