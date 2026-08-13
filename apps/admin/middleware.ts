@@ -18,6 +18,19 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // `/products` → `/stock`: ürün listesi "Stok & Ürünler" altında yaşar; bu adres yalnız
+  // `/products/[id]`nin ebeveyni olduğu için var ve breadcrumb ona link basıyordu (404).
+  // AYNI SEBEPLE middleware'de: `app/products/page.tsx` içindeki `redirect()` yukarıdaki
+  // kök-yol notundaki tuzağa düşüyor (async root layout stream'e başladığı için Next
+  // gerçek 307 yerine meta-refresh gövdesi üretiyor — DOĞRULANDI: dev'de 200 + kabuk).
+  // Sondaki eğik çizgi de kapsanır; `/products/<id>` ETKİLENMEZ (tam eşleşme).
+  if (pathname === '/products' || pathname === '/products/') {
+    const url = req.nextUrl.clone();
+    url.pathname = '/stock';
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
+
   if (!authEnabled()) {
     // Fail-closed opt-in (denetim P1): REQUIRE_AUTH set edilmişse ve SESSION_SECRET yoksa panel
     // AÇIK bırakılmasın — istekleri 503 ile reddet. Prod'da yanlışlıkla "auth kapalı" deploy'u
