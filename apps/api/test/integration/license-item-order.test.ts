@@ -42,9 +42,12 @@ const autocompleteQueueFake = { add: async () => ({ id: 'fake' }) } as never;
 const KEYS_A = Array.from({ length: 8 }, (_, i) => `SIRA-A-${String(i + 1).padStart(2, '0')}`);
 const KEYS_B = Array.from({ length: 3 }, (_, i) => `SIRA-B-${String(i + 1).padStart(2, '0')}`);
 
-/** Listeleme satırlarından düz anahtar metnini çıkarır (owner görünümü → maskesiz). */
-function plainKeys(rows: Array<{ payload?: string | null; masked?: string | null }>): string[] {
-  return rows.map((r) => r.payload ?? r.masked ?? '');
+/**
+ * Listeleme satırlarından düz anahtar metnini çıkarır. Alan adı `value`
+ * (`LicenseInventoryRow.value`) — owner görünümünde (reveal=true) maskesiz gelir.
+ */
+function plainKeys(rows: Array<{ value: string | null }>): string[] {
+  return rows.map((r) => r.value ?? '');
 }
 
 describe('license_items.seq — içe aktarma sırası listede ve teslimatta korunur', () => {
