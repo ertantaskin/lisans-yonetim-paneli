@@ -107,25 +107,7 @@ export function hasQuarantineServerFilters(f: QuarantineFilterState): boolean {
  * backend'e düşer) tüm alanlar opsiyoneldir; yalnız `licenseItemId` (React anahtarı) zorunlu
  * kabul edilir. Ekran her alanı `?? null` ile okur → eski API'ye karşı da ÇÖKMEZ.
  */
-export type QuarantineItem = Partial<QuarantineRow> & {
-  licenseItemId: string;
-  /** Ürün kimliği (süzgeç) + SKU (tedarikçi bildirimi). */
-  productId?: string | null;
-  sku?: string | null;
-  /** Tedarik izi: parti → satın alma emri → tedarikçi. */
-  batchId?: string | null;
-  batchCode?: string | null;
-  supplierId?: string | null;
-  supplierName?: string | null;
-  /** Stok giriş (import) tarihi — karantina tarihinden AYRI kavram. */
-  createdAt?: string | null;
-  /** `sourceOrderId`/`sourceRemoteOrderId` ile aynı değerin yeni adları. */
-  orderId?: string | null;
-  remoteOrderId?: string | null;
-  siteDomain?: string | null;
-  /** Mağaza panelindeki kaynak sipariş — salt link (yoksa null). */
-  storeAdminUrl?: string | null;
-};
+export type QuarantineItem = Partial<QuarantineRow> & { licenseItemId: string };
 
 export interface QuarantineData {
   rows: QuarantineItem[];

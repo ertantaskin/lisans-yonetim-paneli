@@ -178,6 +178,38 @@ const SUPPORT_STATUS: Record<string, string> = {
 };
 export const supportStatusLabel = (s: string) => lookup(SUPPORT_STATUS, s);
 
+// ── Tedarikçi değişim fişi (§12) ─────────────────────────────────────────────
+/**
+ * Fişin yaşam döngüsü. "Fiş" bilinçli bir kelime: operatör bunu gün sonunda kesip
+ * tedarikçiye gönderiyor (Z raporu benzetmesi). "Talep"/"RMA" denmedi — panelin geri
+ * kalanı `replacement_requests`'e (MÜŞTERİ talebi) "talep" diyor, iki yön karışırdı.
+ */
+const CLAIM_STATUS: Record<string, string> = {
+  draft: 'Taslak',
+  sent: 'Gönderildi',
+  closed: 'Kapandı',
+  canceled: 'İptal edildi',
+};
+export const claimStatusLabel = (s: string) => lookup(CLAIM_STATUS, s);
+
+/** Fişteki TEK anahtarın tedarikçi yanıtı. */
+const CLAIM_OUTCOME: Record<string, string> = {
+  pending: 'Cevap bekleniyor',
+  replaced: 'Yenisi geldi',
+  credited: 'Bedeli iade edildi',
+  rejected: 'Reddedildi',
+};
+export const claimOutcomeLabel = (s: string) => lookup(CLAIM_OUTCOME, s);
+
+/** Kusurun KAYNAĞI — tedarikçiye giden raporda gerekçe ayrımı. */
+const DEFECT_KIND: Record<string, string> = {
+  customer_return: 'Müşteri iadesi',
+  recall: 'Parti geri çekme',
+  damage: 'Hasarlı',
+  manual_void: 'Elle geçersiz kılındı',
+};
+export const defectKindLabel = (s: string) => lookup(DEFECT_KIND, s);
+
 const MESSAGE_AUTHOR: Record<string, string> = {
   admin: 'Yönetici',
   customer: 'Müşteri',

@@ -352,19 +352,51 @@ export interface OrderDetail {
   }>;
 }
 
-/** GET /v1/admin/quarantine satırı — ölü/geçersiz anahtar (payload maskeli, salt-okunur). */
+/**
+ * GET /v1/admin/quarantine satırı — ölü/geçersiz anahtar (salt-okunur; düz metin YALNIZ owner'a).
+ *
+ * Bu tip BAYATTI: backend 11 alan daha döndürüyordu (tedarik izi, mağaza linki, alan adı
+ * simetrisi) ama burada yoktu; `app/quarantine/queries.ts` bunu `Partial<QuarantineRow> & {…}`
+ * ile yamıyordu ve yan etki olarak TÜM alanlar opsiyonel oluyordu — yani tip güvenliği fiilen
+ * yoktu. Gerçek yanıtla hizalandı (`admin-orders.service.listQuarantine`).
+ */
 export interface QuarantineRow {
   licenseItemId: string;
+  productId: string;
   productName: string;
+  sku: string;
   productKind: string;
   status: string;
   keyPreview: string;
+  /** Tedarik izi: parti → satın alma emri → tedarikçi. */
+  batchId: string | null;
+  batchCode: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  /** Stok GİRİŞ tarihi — karantina tarihinden AYRI kavram. */
+  createdAt: string | null;
   sourceOrderId: string | null;
   sourceRemoteOrderId: string | null;
+  /** `source*` alanlarının yeni adları (aynı değer; eskiler geriye dönük korunur). */
+  orderId: string | null;
+  remoteOrderId: string | null;
+  siteDomain: string | null;
+  /** Mağaza panelindeki kaynak sipariş — SALT LİNK (panel mağazaya bağlanmaz). */
+  storeAdminUrl: string | null;
   customerEmail: string | null;
   reason: string | null;
   replacedByAssignmentId: string | null;
   quarantinedAt: string | null;
+  /**
+   * Tedarikçiye bildirim durumu (§12 değişim fişi). `claimId` boşsa kalem HAVUZDA bekliyor.
+   * Reddedilen kalem havuza döndüğü için yine boş görünür — bu bilinçli.
+   */
+  claimId: string | null;
+  claimCode: string | null;
+  claimStatus: string | null;
+  claimOutcome: string | null;
+  /** Kusurun kaynağı: customer_return | recall | damage | manual_void. */
+  defectKind: string | null;
 }
 
 /** POST /v1/admin/assignments/:id/reveal yanıtı (loglu). */

@@ -18,7 +18,12 @@ import {
   Unlink,
   type LucideIcon,
 } from 'lucide-react';
-import { badgeStatusLabel, supplyStatusLabel } from '../../lib/labels';
+import {
+  badgeStatusLabel,
+  claimOutcomeLabel,
+  claimStatusLabel,
+  supplyStatusLabel,
+} from '../../lib/labels';
 import { cn } from '../../lib/utils';
 
 /**
@@ -157,6 +162,55 @@ export function SupplyStatusBadge({ status, className }: { status: string; class
     <Badge variant={meta.variant} className={className}>
       <Icon />
       {supplyStatusLabel(status)}
+    </Badge>
+  );
+}
+
+// ── Tedarikçi değişim fişi (§12) ─────────────────────────────────────────────
+/**
+ * NEDEN YİNE AYRI BİLEŞEN: fiş sözlüğü mevcut rozet anahtarlarıyla ÇAKIŞIYOR ve aynı
+ * anahtar farklı ŞEY demek — `pending` sipariş dilinde "Bekliyor", fişte "Cevap bekleniyor";
+ * `replaced` sipariş dilinde "Değiştirildi" (ölü anahtar), fişte "Yenisi geldi" (İYİ haber);
+ * `rejected` destek dilinde müşteri talebinin reddi, fişte TEDARİKÇİNİN reddi. Tek haritada
+ * birleştirmek `SupplyStatusBadge`'i doğuran hatanın aynısını üretirdi.
+ *
+ * Ton kuralı yukarıdaki BEŞ HUE ile aynı — yeni renk EKLENMEZ:
+ *   Taslak → outline (henüz iş değil) · Gönderildi → info (tamamlanmış eylem, karşı tarafta)
+ *   Kapandı/İptal → neutral · Cevap bekleniyor → warning (kendiliğinden ilerler)
+ *   Yenisi geldi/Bedeli iade → success (sağlıklı sonuç) · Reddedildi → danger (havuza döndü)
+ */
+const CLAIM_STATUS_META: Record<string, StatusMeta> = {
+  draft: { variant: 'outline', icon: Clock },
+  sent: { variant: 'info', icon: PackageCheck },
+  closed: { variant: 'neutral', icon: CheckCircle2 },
+  canceled: { variant: 'neutral', icon: Ban },
+};
+
+const CLAIM_OUTCOME_META: Record<string, StatusMeta> = {
+  pending: { variant: 'warning', icon: Clock },
+  replaced: { variant: 'success', icon: CheckCircle2 },
+  credited: { variant: 'success', icon: CheckCircle2 },
+  rejected: { variant: 'danger', icon: Ban },
+};
+
+export function ClaimStatusBadge({ status, className }: { status: string; className?: string }) {
+  const meta = CLAIM_STATUS_META[status] ?? { variant: 'neutral' as const, icon: Clock };
+  const Icon = meta.icon;
+  return (
+    <Badge variant={meta.variant} className={className}>
+      <Icon />
+      {claimStatusLabel(status)}
+    </Badge>
+  );
+}
+
+export function ClaimOutcomeBadge({ outcome, className }: { outcome: string; className?: string }) {
+  const meta = CLAIM_OUTCOME_META[outcome] ?? { variant: 'neutral' as const, icon: Clock };
+  const Icon = meta.icon;
+  return (
+    <Badge variant={meta.variant} className={className}>
+      <Icon />
+      {claimOutcomeLabel(outcome)}
     </Badge>
   );
 }
