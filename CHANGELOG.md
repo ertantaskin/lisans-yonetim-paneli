@@ -14,6 +14,82 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Proje geneli denetim: 17 doğrulanmış bulgu (migration 0035)
+
+Kullanıcı: *"Projeyi baştan sona incele, denetle — güvenlik, performans veya UI/UX ile ilgili
+sorunlar varsa ilgili ajanlarına görev dağılımı yapıp iyileştirmeler yap. Kullanım rehberi ve
+menüdeki tüm sayfaları test araçlarınla kontrol et."*
+
+5 boyutlu (güvenlik · correctness · performans · UI/UX · WP+docs+ops), her bulgusu ikinci bir
+ajanla çürütülmeye çalışılan denetim → **17 CONFIRMED** (0 yüksek, 2 orta, 15 düşük).
+Düzeltmeler 3 paralel işçi + merkezî sipariş/şema işiyle yapıldı.
+
+#### Düzeltildi — correctness
+
+- **[ORTA] Tek atamayı iptal etmek, aynı satırdaki DİĞER geçerli lisansları müşteriden
+  gizliyordu.** Per-atama "İptal" satırı koşulsuz `canceled` yapıyordu; müşteri görünümü iptal
+  satırlarını elediği için qty=3'lük bir satırda tek anahtar iptal edilince müşteri **elinde hâlâ
+  çalışan 2 anahtar dururken 0 lisans** görüyordu (veritabanında `active`). Düzeltme iki yönlü
+  olmak zorundaydı — tek yönlüsü bu projenin en sık tekrarlayan hatasını (H1 bedava lisans)
+  doğururdu: kardeş atama kaldıysa satır **terminal yapılmaz**, ama adet geri alınan birim kadar
+  **düşürülür** (`teslim == adet` ⇒ partial-auto taze anahtarla doldurmaz); kardeş kalmadıysa
+  eski davranış (terminal). Kalıntı risk sessiz bırakılmadı: mağazada karşılığı olmayan bir panel
+  iptalinden sonra mağaza siparişi yeniden gönderirse adet geri yükselir — bu artık sipariş zaman
+  çizelgesine açık cümleyle yazılıyor. +3 regresyon testi.
+- **bulkStatus** (WP'nin yokladığı teslim/toplam) iptal satırları paydaya katıyordu → müşterinin
+  My Account'ta gördüğü ilerlemeyle çelişiyordu; `getDeliveries` ile aynı yükleme hizalandı.
+
+#### Düzeltildi — güvenlik
+
+- **Tedarikçi fişi detayı** `keySnapshot`'ı rol-farkında maskelemiyordu: owner'ın kestiği bir
+  fişi owner-olmayan admin **düz metin** görüyordu (A1/M1 kararının fişte kırılması). Artık
+  `@AdminRole` + `canRevealPlaintext`; reveal audit yalnız gerçekten düz metin döndüğünde.
+- **readonly-sql denylist** (§15, AI varsayılan KAPALI) konfig görünümlerini kapsamıyordu →
+  `pg_settings`/`pg_stat_activity`/`pg_config`/`pg_hba_file_rules`/`pg_file_settings` eklendi
+  (savunma derinliği; otoriter katman superuser-olmayan DB rolü).
+
+#### Düzeltildi — performans (migration 0035, additive)
+
+- **`assignment_history` tablosunda HİÇ index yoktu** — sipariş detayı, değişim geçmişi ve
+  karantina her açılışta tam tablo tarıyordu; `assignments(created_at)` de indexsizdi (satış hızı
+  raporları seq-scan). Üç index eklendi.
+- **listQuarantine**: fiş bilgisi için satır başına 4 korele alt-sorgu → tek join (kısmi unique
+  index fan-out'u engelliyor). **detailVelocity**: 30 günlük budama (sonuç birebir aynı).
+- **/batches** tüm envanteri satır satır tarıyordu → `picked` CTE + LIMIT 500;
+  **/customers** LIMIT 2000. **İkisi de sessiz kırpmaz**: `truncated` ile ekranda söylenir
+  (stok girişindeki parti seçicisi dahil) — geçmişte konan sessiz LIMIT "o müşteri yok"
+  dedirttiği için kaldırılmıştı.
+
+#### Düzeltildi — UI/UX ve erişilebilirlik
+
+- **[ORTA] Beş arama noktası Türkçe'de sessizce boş sonuç veriyordu**: /notifications,
+  /purchase-orders, /review, başarısız işler ve **Ctrl+K komut paleti** projenin `includesTr`
+  standardı yerine ham `toLowerCase()` kullanıyordu ("inceleme" yazınca "İnceleme Kuyruğu"
+  bulunamıyordu).
+- Aynı dağıtım işi **/releases ile /deployments'ta farklı renk ve harf düzenindeydi** → durum
+  sözlüğü tek kaynağa alındı (`deployStatusMeta`).
+- Fiş oluşturma sheet'inde etiketsiz alanlar (`htmlFor`/`id`/`ariaLabel`); ürün düzenleme
+  formundaki hata mesajına `role="alert"`.
+- Kullanıcı bildirimi: fiş oluşturma sheet'i kenardan taşıyor ve kaydırılamıyordu (gövde dolgusu
+  + `overflow-y-auto` eksikti); "Bildirilecekler" havuzunda **karantinaya alınış tarihi** yoktu.
+
+#### Düzeltildi — WP eklentisi ve belgeler
+
+- Güncelleyici, paket URL'ini güvenlik kapısında reddettiğinde **sessizce** güncelleme
+  sunmuyordu → görünür yönetici uyarısı (reddedilen host + beklenen host). Güvenlik kontrolü
+  gevşetilmedi. (Bu projede aynı ders `is_secure_panel_url` kesintisinde alınmıştı.)
+- Eski marka kalıntıları temizlendi: `jl_` API anahtarı öneki, `jl_wh_` webhook nonce
+  transient'i ve `jl-` HTML id'leri → `wpt_`/`wpt-`. `readme.txt` changelog'una eksik
+  1.0.1 / 1.0.2 / 1.0.3 girdileri.
+
+#### Doğrulama
+
+typecheck 4/4 + check-use-server (22 dosya / 74 export) · admin production build · VPS izole test
+DB: **entegrasyon 205/205 + yarış 3/3** · yerel birim 72/72 · dev'de **26 rota + 6 detay sayfası
+200, hata sınırına düşen yok** · prod `/health` 200 v1.0.0 (db+redis), migration tracking 36,
+üç yeni index canlı, api ERROR 0.
+
+
 ### Durum rengi sistemi: 3 hue → 5 hue (migration 0032)
 
 Kullanıcı: *"Teslim edildi rozetlerinin özel renkleri olmalı ve hafif soluk renklerle belli

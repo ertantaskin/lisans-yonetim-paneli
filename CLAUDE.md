@@ -1495,6 +1495,59 @@ raporu alıp indirebilmeliyim; süreç kapsamlı, temiz, karışık olmadan iler
   tedarikçi bilinmez → fiş kesilemez · tedarikçiden gelen **yeni anahtarların** fişe bağlanması kapsam
   dışı (kullanıcı "tam kapanış"ı seçmedi) · fiş panelden GÖNDERİLMEZ, dosya indirilir.
 
+**PROJE GENELİ DENETİM → 17 BULGU (commit 1a1df51, CANLI prod+dev, migration 0035):** Kullanıcı iki
+somut kusur bildirdi (fiş oluşturma Sheet'i bozuk · havuzda karantina tarihi yok) ve *"projeyi baştan sona
+incele, denetle — güvenlik/performans/UI-UX; ajanlarına görev dağılımı yap; kullanım rehberi ve menüdeki tüm
+sayfaları test araçlarınla kontrol et"* dedi. İki kusur önce düzeltildi (f76d63f: SheetContent `overflow-y-auto`
++ gövde `p-4 pt-0` — diğer TÜM sheet'lerin deseni atlanmıştı; havuz kalem satırına "karantina: …" damgası),
+sonra 5 lensli çekişmeli-doğrulamalı denetim (10 ajan, bul→çürüt) koşuldu → **17 CONFIRMED** (0 yüksek ·
+2 orta · 15 düşük). 3 paralel ayrık-dosya işçi + merkezî orders/şema işi.
+- **[ORTA/correctness] Tek atama iptali kardeş lisansları müşteriden GİZLİYORDU.** `revokeAssignment`
+  (`markLineCanceled=true`) satırı KOŞULSUZ `canceled` yapıyordu; `getDeliveries` iptal satırını elediği için
+  qty=3'lük satırda tek anahtar iptal edilince müşteri **elinde HÂLÂ 'active' 2 anahtar dururken 0 lisans**
+  görüyordu (admin detayında görünüyorlar → sessiz, alarmsız tutarsızlık). Düzeltme İKİ YÖNLÜ olmak zorundaydı
+  (tek yönlüsü H1 bedava-lisansı doğururdu): kardeş atama kaldıysa satır **terminal YAPILMAZ** ama `qty` geri
+  alınan birim kadar **DÜŞER** (`fulfilled == qty` ⇒ partial-auto/"Kalanları Ata" taze anahtarla DOLDURMAZ);
+  kardeş kalmadıysa eski davranış (`canceled=true`, qty korunur). **Kalıntı risk SESSİZ BIRAKILMADI:** mağazada
+  karşılığı olmayan panel-içi iptalden sonra re-push `reconcileOrder` ile qty'yi geri yükseltip taze anahtar
+  teslim edebilir → `fulfillment_events`'e açık cümleyle yazılır. +3 regresyon testi. NOT: `markLineCanceled=true`
+  diğer iki çağıranı (revokeOrderForSite tam iade · releaseHeld stray temizliği) satırı ZATEN ayrıca canceled
+  yapıyor → davranışları değişmedi.
+- **[ORTA/ui-ux]** BEŞ arama noktası `includesTr` standardını atlıyordu (ham `toLowerCase()` → Türkçe İ/I'da
+  SESSİZ boş sonuç): /notifications · /purchase-orders · /review · başarısız işler · **Ctrl+K komut paleti**
+  ("inceleme" → "İnceleme Kuyruğu" bulunamıyordu).
+- **[güvenlik]** Tedarikçi fişi detayı `keySnapshot`'ı rol-farkında maskelemiyordu → **owner'ın kestiği fişi
+  owner-olmayan admin DÜZ METİN** görüyordu (A1/M1 kararının fişte kırılması); `@AdminRole` + `canRevealPlaintext`
+  + reveal audit yalnız gerçekten düz metin dönerken. readonly-sql denylist'ine konfig GÖRÜNÜMLERİ
+  (`pg_settings`/`pg_stat_activity`/`pg_config`/`pg_hba_file_rules`/`pg_file_settings` — fonksiyon karşılıkları
+  zaten reddediliyordu, görünümler açıktı).
+- **[perf, migration 0035 additive]** `assignment_history` tablosunda **HİÇ index yoktu** (sipariş detayı +
+  değişim geçmişi + listQuarantine tam-tablo taraması) + `assignments(created_at)` indexsizdi (velocity
+  raporları seq-scan) → 3 index. listQuarantine'in 4 korele alt-sorgusu → tek join (kısmi unique index
+  fan-out'u engelliyor). `/batches` TÜM envanteri satır-satır tarıyordu → `picked` CTE + LIMIT 500;
+  `/customers` LIMIT 2000. **İKİSİ DE `truncated` ile DÜRÜSTÇE raporlanır** (parti seçicisi dahil) — geçmişte
+  sessiz LIMIT "o müşteri yok" dedirttiği için kaldırılmıştı, aynı hataya düşülmedi. detailVelocity 30g budaması.
+- **[correctness]** `bulkStatus` (WP durum yoklaması) iptal satırları paydaya katıyordu → FILTER ile
+  `getDeliveries`'e hizalandı (WP ilerlemesi ile My Account çelişmiyor).
+- **[a11y/ui-ux]** fiş sheet'i etiketsiz alanlar (htmlFor/id/ariaLabel) · product-edit hata `role="alert"` ·
+  dağıtım durumu /releases↔/deployments'ta farklı renk+harf düzenindeydi → `labels.ts` tek kaynak
+  (`deployStatusMeta`; yeni hue EKLENMEDİ).
+- **[wp/docs]** Güncelleyici paket-URL'ini reddedince **SESSİZCE** güncelleme sunmuyordu → görünür yönetici
+  uyarısı (reddedilen host + beklenen host; güvenlik kontrolü GEVŞETİLMEDİ — `is_secure_panel_url` kesintisinin
+  dersi). Eski marka kalıntıları `jl_`/`jl-` → `wpt_`/`wpt-` (API anahtarı öneki [yalnız YENİ anahtarlar; hash
+  ile karşılaştırıldığı için mevcutlar etkilenmez], webhook nonce transient'i, HTML id'leri). readme.txt
+  changelog'una 1.0.1/1.0.2/1.0.3 girdileri.
+- **KENDİ YAKALADIĞIM İŞÇİ HATASI:** API işçisi `sql` şablonunun İÇİNDE backtick kullanıp template'i erken
+  kapatmıştı (typecheck TS1005) — bu tuzak bu projede daha önce de yaşandı. Ayrıca işçi `/batches` zarfını
+  `{rows,truncated}` yapmıştı; admin okuyucuları `items` bekliyor → **sessizce BOŞ liste** olurdu, zarf
+  `{items,truncated}`'a çevrildi (dev'de 8 satır render ettiği ölçüldü).
+- **Doğrulama:** typecheck 4/4 + check-use-server (22 dosya / 74 export) · admin production build · VPS izole
+  test DB **entegrasyon 205/205 + yarış 3/3** · yerel birim **72/72** (VPS'te 2 dosya `@lisans/shared` derlenmemiş
+  diye çöktü — yerel kontrol denemesi env sorunu olduğunu kanıtladı, kod regresyonu DEĞİL) · **dev: 26 rota +
+  6 detay sayfası 200, hata sınırına düşen YOK** (`scripts/smoke-routes.sh` gövdede error.tsx imzası arar) ·
+  prod deploy (rollback'li) → `/health` **200 v1.0.0** (db+redis), migration tracking **36**, üç yeni index
+  CANLI, api ERROR 0. migration 0000-0035.
+
 **KUSURLU STOK İŞ İSTASYONU — üç sekme, tek süzgeç, kapsayıcı terimler (commit fd9d063→44d233d,
 CANLI prod+dev, migration 0034):** Kullanıcı: *"sadece anahtar değil, birden fazla ürün varyasyonu
 vs olabilir, hesap vs gibi — ilerleyen süreçte daha kapsamlı terimler anlaşılabilir hale getir;
