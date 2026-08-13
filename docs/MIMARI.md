@@ -309,7 +309,7 @@ her ekranda aynı desen.
 **satnaing/shadcn-admin** (shadcn-admin.netlify.app). Tailwind v4 (CSS-first; `tailwind.config.js`
 YOK — token'lar `@theme`/`@theme inline`'da) + klasik **shadcn/ui deseni (kod sahipliği) +
 Radix UI** primitifleri (Base UI DEĞİL — 2026 indigo/Base UI kararı bırakıldı) + TanStack
-Table + Recharts + Inter + JetBrains Mono / tabular-nums + lucide + cmdk (Ctrl+K) +
+Table + Recharts + Geist + Geist Mono / tabular-nums + lucide + cmdk (Ctrl+K) +
 sonner (toast) + next-themes (`attribute=class`, `.dark`). Framework: **Next.js 15
 (sunucu-taraflı)** korunur — şablon Vite/TanStack Router olsa da veri çekimi sunucuda
 (ADMIN_TOKEN tarayıcıya sızmaz, HMAC/site-scope) kalması güvenlik gereği. Açık + koyu

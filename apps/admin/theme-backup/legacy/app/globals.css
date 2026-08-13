@@ -19,9 +19,7 @@
 
 /* ── 1) Standart shadcn token'ları — açık tema ─────────────────────────────── */
 :root {
-  /* 8px — shadcnspace referansından ÖLÇÜLDÜ (`--radius: 8px`; kart `rounded-xl` = 12px,
-     düğme/alan `rounded-lg` = 8px). Eski değer 0.625rem (10px) idi. */
-  --radius: 0.5rem;
+  --radius: 0.625rem;
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -186,9 +184,9 @@
   --radius-xl: calc(var(--radius) + 4px);
 
   --font-sans:
-    var(--font-geist), 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    var(--font-inter), 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono:
-    var(--font-geist-mono), 'Geist Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+    var(--font-jbmono), 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
 }
 
 /* ── 3) Taban stiller ──────────────────────────────────────────────────────── */
@@ -201,7 +199,7 @@
   body {
     background-color: var(--background);
     color: var(--foreground);
-    font-family: var(--font-sans, 'Geist', system-ui, sans-serif);
+    font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
     /* Yoğun tabloda hizalı rakam (§17 tabular-nums). */
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;

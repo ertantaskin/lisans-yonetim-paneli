@@ -1,6 +1,6 @@
 {
   "name": "lisans-panel",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Lisans Yönetim Paneli — merkezi lisans dağıtım paneli (monorepo)",
   "packageManager": "pnpm@9.15.9",

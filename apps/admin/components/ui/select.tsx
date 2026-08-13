@@ -15,7 +15,7 @@ export const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      'flex h-8 items-center justify-between gap-1 rounded-md border border-border bg-background px-2.5 text-sm shadow-sm outline-none',
+      'flex h-8 items-center justify-between gap-1 rounded-lg border border-border bg-background px-2.5 text-sm shadow-xs outline-none',
       'disabled:cursor-not-allowed disabled:opacity-50 [&>span]:truncate',
       className,
     )}
@@ -38,7 +38,7 @@ export const SelectContent = React.forwardRef<
       ref={ref}
       position={position}
       className={cn(
-        'relative z-50 max-h-72 min-w-32 overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md',
+        'relative z-50 max-h-72 min-w-32 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md',
         // Durum-kapılı giriş/çıkış — shadcn'in standart eşleşmesi (gerekçe: dropdown-menu.tsx).
         'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
         'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',

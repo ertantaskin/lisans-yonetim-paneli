@@ -17,7 +17,7 @@ export const DropdownMenuContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        'z-50 min-w-[11rem] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground p-1 shadow-lg',
+        'z-50 min-w-[11rem] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground p-1 shadow-lg',
         // Giriş VE çıkış, ikisi de DURUM-KAPILI (shadcn'in standart eşleşmesi). Önceden yalnız
         // koşulsuz `animate-in ...` vardı: kapanışta `animation-name` 'enter' olarak kalıyordu,
         // oysa Radix'in `Presence`'ı çıkışta adın DEĞİŞMESİNİ bekler (o ada ait `animationend`

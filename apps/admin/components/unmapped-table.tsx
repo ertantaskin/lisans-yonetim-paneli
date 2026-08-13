@@ -47,7 +47,7 @@ export function UnmappedTable({ rows, products }: { rows: UnmappedRow[]; product
         {rows.length} eşlenmemiş mağaza ürünü — her biri gerçek bir siparişte geldi ama panelde bir
         ürüne bağlı değil.
       </p>
-      <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
         <Table>
           <TableHeader>
             <TableRow>

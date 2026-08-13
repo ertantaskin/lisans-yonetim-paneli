@@ -55,14 +55,7 @@ export function SiteHeader() {
   const segments = pathname.split('/').filter(Boolean);
 
   return (
-    // inset kabuk: içerik kartı md+'ta 8px boşlukla yüzer → sticky başlık viewport'un
-    // 0'ına DEĞİL, kartın üst kenarına (top-2 = 8px) çakılmalı; aksi halde kaydırırken
-    // kartın dışına 8px taşar. Zemin OPAK (eski yarı saydam + blur, yuvarlak kart kenarında
-    // altındaki sayfa zeminini sızdırıyordu).
-    // `md:rounded-t-xl` KOŞULSUZ: başlığın üstünde bir bant varsa (auth-kapalı uyarısı) köşe
-    // kesiği kartın KENDİ zeminini açar — başlıkla aynı renk olduğu için görünmez; bant
-    // kaydırılıp gidince de kartın üst köşesi doğru yuvarlak kalır.
-    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:top-2 md:rounded-t-xl md:px-4">
+    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background/85 px-3 backdrop-blur-md md:px-4">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-1 h-5" />
 
@@ -105,11 +98,9 @@ export function SiteHeader() {
           onClick={() => window.dispatchEvent(new Event('open-command'))}
           aria-label="Ara"
           title="Ara (Ctrl+K)"
-          // Referans deseni: gerçek bir arama ALANI gibi görünür (h-9, rounded-lg, shadow-xs,
-          // solda ikon). Dar ekranda yine yalnız ikon — üst bardaki diğer öğeleri ezmesin.
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground sm:w-56 sm:justify-start sm:gap-2 sm:px-3 sm:text-sm"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-52 sm:justify-start sm:gap-2 sm:px-2.5 sm:text-xs"
         >
-          <Search className="size-4 shrink-0" />
+          <Search className="size-4 shrink-0 sm:size-3.5" />
           <span className="hidden flex-1 text-left sm:inline">Ara…</span>
           <kbd className="hidden h-5 items-center rounded border border-border px-1.5 font-sans text-[10px] font-medium leading-none text-muted-foreground sm:inline-flex">
             Ctrl K

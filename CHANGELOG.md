@@ -14,6 +14,52 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+## [1.1.0] - 2026-08-14
+
+### Admin arayüzü: shadcnspace tasarım diline uyarlandı (migration YOK)
+
+Panel görsel dili, kullanıcının paylaştığı **shadcnspace** panolarına (`dashboard.shadcnspace.com`
+— analytics + ecommerce) göre yeniden düzenlendi. Referans tarayıcıda **ölçülerek** çıkarıldı
+(tahmin değil): CSSOM'dan token'lar, hesaplanmış stiller ve yerleşim kutuları okundu. Palet
+**değişmedi** — ölçüm, referansın da standart shadcn nötr oklch paletini kullandığını gösterdi;
+değişen tipografi, yarıçap ölçeği, kabuk düzeni ve yoğunluk.
+
+#### Değişti — tasarım sistemi
+
+- **Tipografi: Inter / JetBrains Mono → Geist / Geist Mono.** `next/font/google` üzerinden
+  (eskisi de öyleydi) → **yeni bağımlılık yok**. `latin-ext` alt kümesi şart: Geist'in `latin`
+  setinde ş/ğ/İ/ı/ç yok, eksik olsaydı Türkçe metin yedek fonta düşerdi.
+- **`--radius` 0.625rem → 0.5rem** (kart `rounded-xl` = 12px, düğme/alan `rounded-lg` = 8px).
+- **Kabuk `variant="inset"`:** sayfa zemini `bg-sidebar`, içerik `m-2 ml-0 rounded-xl outline
+  shadow-sm` ile yüzen bir kart; kenar menü kenarlıksız ve zeminle aynı düzlemde.
+- **Kenar menü:** aktif öğe artık **dolu pill** (`bg-primary`/`primary-foreground`; eskiden soluk
+  `bg-sidebar-accent`), hover `bg-primary/5 text-primary` + `translate-x-1` kayma (ikon modunda ve
+  `motion-reduce` tercihinde kapalı), grup etiketi 12px/600 uppercase.
+- **Tablo:** başlık `h-11`, 14px/600, **koyu** metin (uppercase 11px muted kalktı); hücre `px-4 py-3`.
+- **Gölge dili `shadow-sm` → `shadow-xs`** (referansla birebir: `0 1px 2px rgb(0 0 0/.05)`);
+  kart iç boşluğu 24px, kart başlığı 16px, açıklama 14px; **yalnız-ikon düğme = daire**;
+  select/combobox/popover/dropdown/command yarıçapları form diliyle hizalandı; StatTile etiketi
+  normal cümle düzeninde 14px muted.
+
+#### Bilinçli sapmalar (referans kopyalanmadı)
+
+- **Sticky başlık korundu.** Referansın `main`'i `overflow:hidden` olduğu için sticky başlıkları
+  fiilen çalışmıyor (ölçüldü: 600px kaydırınca başlık −592'ye gitti). Bizde `overflow-x-clip` +
+  `sticky top-2` + `rounded-t-xl` ile başlık gerçekten sabit kalır.
+- **`--ring` 0.48'de bırakıldı** (referans: 0.708). Odak göstergesi bu panelde tek kaynaklı bir
+  outline'dır; referans değeri kontrastı 6.54:1'den ~2.5:1'e düşürür, belgelenmiş a11y kararını
+  bozardı.
+- **Hücre dolgusu `py-3`** (referans `py-6`): 8-12 kolonlu operasyon tablolarında satır başına
+  ~95px ekranı kullanılamaz kılardı.
+- **5 hue'lu semantik durum dili** (`success/info/warning/attention/destructive`) korundu.
+
+#### Eklendi
+
+- `apps/admin/theme-backup/` — eski temanın (Inter + klasik kabuk) **birebir yedeği** (16 dosya),
+  `README.md` ve tek komutluk `restore.sh`. Klasör `tsconfig.json` `exclude` ve
+  `check-use-server.js` `SKIP_DIRS` içinde: build'e ve taramaya girmez (girseydi göreli
+  import'lar typecheck'i kırardı).
+
 ### Re-doğrulama: 16 bulgu — kendi H1 regresyonum dahil (migration 0036, eklenti v1.0.4)
 
 Yukarıdaki denetim partisinin düzeltmeleri, bu kez onları **çürütmeye çalışan** 5 lensli bir

@@ -136,7 +136,7 @@ export function Combobox({
             aria-required={required}
             disabled={disabled}
             className={cn(
-              'flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-3 text-sm text-foreground shadow-sm outline-none transition-colors',
+              'flex h-9 w-full items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-sm text-foreground shadow-xs outline-none transition-colors',
               'focus-visible:border-ring',
               'disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-ring',
               className,

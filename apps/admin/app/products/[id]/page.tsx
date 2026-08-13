@@ -115,7 +115,7 @@ export default async function ProductDetailPage({
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <span
-              className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground shadow-sm sm:flex"
+              className="hidden size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-foreground shadow-xs sm:flex"
               aria-hidden
             >
               <Package className="size-5" />

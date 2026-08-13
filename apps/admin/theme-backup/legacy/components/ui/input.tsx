@@ -16,8 +16,7 @@ import { cn } from '../../lib/utils';
  *   `--ring` değişkenini ezerek elde edilir — halka eklenerek değil.
  */
 export const controlBase = cn(
-  // `rounded-lg` + `shadow-xs`: referansta form alanı yarıçapı 8px, gölge `0 1px 2px /5%`.
-  'w-full rounded-lg border border-border bg-background text-sm text-foreground shadow-xs',
+  'w-full rounded-md border border-border bg-background text-sm text-foreground shadow-sm',
   'transition-[color,box-shadow,border-color] placeholder:text-muted-foreground',
   'selection:bg-primary selection:text-primary-foreground dark:[color-scheme:dark]',
   'focus-visible:border-ring',

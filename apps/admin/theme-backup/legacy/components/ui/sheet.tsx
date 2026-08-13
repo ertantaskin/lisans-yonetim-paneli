@@ -69,8 +69,7 @@ export function SheetHeader({ className, ...props }: React.HTMLAttributes<HTMLDi
 }
 
 export function SheetTitle({ className, ...props }: React.ComponentPropsWithoutRef<typeof SheetPrimitive.Title>) {
-  // 16px: Card/Dialog başlıklarıyla aynı seviye (referansın panel başlığı ölçüsü).
-  return <SheetPrimitive.Title className={cn('text-base font-semibold text-foreground', className)} {...props} />;
+  return <SheetPrimitive.Title className={cn('text-sm font-semibold text-foreground', className)} {...props} />;
 }
 
 export function SheetDescription({

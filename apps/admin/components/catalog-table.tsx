@@ -201,7 +201,7 @@ export function CatalogTable({
             />
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-sm">
+          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs">
             <Table>
               <TableHeader>
                 <TableRow>

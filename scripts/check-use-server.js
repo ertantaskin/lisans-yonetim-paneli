@@ -37,8 +37,19 @@ const SCAN_DIRS = (TARGET_DIRS.length ? TARGET_DIRS : ['apps/admin']).map((d) =>
   path.resolve(REPO_ROOT, d),
 );
 
-/** Taranmayacak klasörler (üretilmiş/harici kod). */
-const SKIP_DIRS = new Set(['node_modules', '.next', '.turbo', 'dist', 'build', 'out', 'coverage']);
+/** Taranmayacak klasörler (üretilmiş/harici/arşiv kod). */
+// `theme-backup`: eski temanın birebir kopyası (build'e girmez, tsconfig'de de excluded) —
+// taranırsa aynı export'lar iki kez raporlanır ve sayaç yanıltıcı olur.
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.next',
+  '.turbo',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  'theme-backup',
+]);
 const EXTS = new Set(['.ts', '.tsx', '.mts', '.cts']);
 
 /** Yol karşılaştırmalarını platformdan bağımsız yapar (Windows ters bölü). */

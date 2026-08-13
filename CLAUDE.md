@@ -27,9 +27,39 @@ Canlı görsel kopya: https://claude.ai/code/artifact/4adb7a2c-ba7d-4379-b0ee-2f
 iadede hak otomatik dönmez). Tipler: key, hesap, süreli hesap (`validity_days`,
 teslimle başlar), kod/hediye çeki, stoksuz/ön sipariş (`stockless`, `release_at`).
 
-## Görsel kimlik (kesinleşti — satnaing/shadcn-admin nötr dili; Base UI + 2026 indigo BIRAKILDI)
+## Görsel kimlik
 
-Referans: **satnaing/shadcn-admin** (shadcn-admin.netlify.app) birebir. Stack: klasik
+> **GÜNCEL REFERANS (2026-08-14): shadcnspace** — `dashboard.shadcnspace.com` (analytics +
+> ecommerce panoları) tarayıcıda ÖLÇÜLEREK uyarlandı. Aşağıdaki satnaing/shadcn-admin bölümü
+> **paletin ve token mimarisinin** kaynağı olarak GEÇERLİ (ikisi de standart shadcn nötr oklch
+> paletini kullanıyor — ölçüldü, değerler birebir aynı); DEĞİŞEN kısımlar:
+> **font Inter/JetBrains Mono → Geist / Geist Mono** (`next/font/google`, `latin-ext` ŞART —
+> `latin` alt kümesinde ş/ğ/İ/ı/ç yok) · **`--radius` 0.625rem → 0.5rem** (kart `rounded-xl`
+> 12px, düğme/alan `rounded-lg` 8px) · **kabuk `variant="inset"`** (sayfa zemini `bg-sidebar`,
+> içerik `m-2 ml-0 rounded-xl outline shadow-sm` ile YÜZEN kart; başlık `sticky top-2` +
+> `rounded-t-xl`) · **sidebar aktif öğe DOLU pill** (`bg-primary text-primary-foreground`;
+> eskiden soluk `bg-sidebar-accent`), hover `bg-primary/5 text-primary` + `translate-x-1`
+> (ikon modunda ve `motion-reduce`'ta kapalı) · **grup etiketi 12px/600 uppercase muted** ·
+> **tablo başlığı `h-11 text-sm font-semibold` KOYU, büyük harf YOK** (hücre `px-4 py-3` —
+> referansın `py-6`'sı 8-12 kolonlu operasyon tablolarında kullanılamazdı, bilinçli sapma) ·
+> **gölge dili `shadow-sm` → `shadow-xs`** (referansla birebir: `0 1px 2px rgb(0 0 0/.05)`) ·
+> **yalnız-ikon düğme = DAİRE** · kart `px-6`, başlık 16px, açıklama 14px · StatTile etiketi
+> normal cümle düzeninde 14px muted (eskiden 11px BÜYÜK HARF).
+>
+> **BİLİNÇLİ SAPMALAR (referansı KOPYALAMADIK):** (1) referansın `main`'i `overflow:hidden`
+> olduğu için **sticky başlıkları çalışmıyor** (ölçüldü: 600px kaydırınca başlık −592'ye gitti)
+> → bizde `overflow-x-clip` + `sticky top-2` ile başlık GERÇEKTEN sabit; (2) `--ring` referansta
+> açık temada oklch(0.708) — bizde 0.48 KALIYOR, çünkü odak göstergesi TEK kaynak bu outline'dır
+> ve 0.708 kontrastı 6.54:1'den ~2.5:1'e düşürürdü (belgelenmiş a11y kararı, §17); (3) 5 hue'lu
+> semantik durum dili (`success/info/warning/attention/destructive`) KORUNDU — referansta yok
+> ama panelin durum dili buna bağlı.
+>
+> **ESKİ TEMA YEDEĞİ:** `apps/admin/theme-backup/legacy/` (16 dosya birebir) +
+> `theme-backup/README.md` + `bash apps/admin/theme-backup/restore.sh` ile tek komutta geri
+> yüklenir. Klasör `tsconfig.json` `exclude` ve `check-use-server.js` `SKIP_DIRS` içinde —
+> build'e/taramaya GİRMEZ (girseydi göreli import'lar typecheck'i kırardı).
+
+Referans (palet + token mimarisi): **satnaing/shadcn-admin** (shadcn-admin.netlify.app). Stack: klasik
 **shadcn/ui deseni + Radix UI** (Base UI değil) + Tailwind v4 (CSS-first, `tailwind.config.js`
 YOK — token'lar `@theme`/`@theme inline` içinde) + TanStack Table + Recharts + lucide +
 cmdk + sonner + next-themes; hepsi ücretsiz/MIT. Framework: **Next.js 15 (sunucu-taraflı)**

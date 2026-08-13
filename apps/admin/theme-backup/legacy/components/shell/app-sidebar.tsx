@@ -37,9 +37,7 @@ export function AppSidebar({ user }: { user?: { name: string; email: string; rol
   const canSee = (item: { ownerOnly?: boolean }) => !item.ownerOnly || !user || user.role === 'owner';
 
   return (
-    // variant="inset": sayfa zemini sidebar rengine döner, içerik yüzen bir karta oturur
-    // (shadcnspace kabuğu). Kenar menü kenarlıksız ve zeminle aynı düzlemde kalır.
-    <Sidebar collapsible="icon" variant="inset">
+    <Sidebar collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>

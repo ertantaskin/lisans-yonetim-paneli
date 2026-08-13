@@ -34,10 +34,7 @@ export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTa
   return (
     <th
       className={cn(
-        // Referans (ölçüldü): `h-11 text-sm font-semibold` + KOYU metin (muted DEĞİL) ve
-        // büyük-harf YOK. Başlık satırı böylece bir "etiket şeridi" değil, tablonun ilk
-        // satırı gibi okunur — shadcnspace'in tipografik imzası.
-        'h-11 px-4 text-left align-middle text-sm font-semibold text-foreground',
+        'h-10 px-3 text-left align-middle text-[11px] font-semibold uppercase tracking-wide text-muted-foreground',
         '[&:has([role=checkbox])]:pr-0',
         className,
       )}
@@ -47,8 +44,5 @@ export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTa
 }
 
 export function TableCell({ className, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
-  // Referansta hücre dolgusu 24px'e kadar çıkıyor; burada 12px'te tutuldu — bu panelin
-  // tabloları 8-12 kolonlu operasyon tabloları, satır başına 95px ekranı kullanılamaz kılardı.
-  // Yatay dolgu başlıkla hizalı (px-4).
-  return <td className={cn('px-4 py-3 align-middle text-foreground/90', className)} {...props} />;
+  return <td className={cn('px-3 py-2.5 align-middle text-foreground/90', className)} {...props} />;
 }

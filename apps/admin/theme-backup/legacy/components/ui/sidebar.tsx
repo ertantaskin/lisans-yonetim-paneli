@@ -107,13 +107,7 @@ export function SidebarProvider({
         // `overflow-hidden` DEĞİL, çünkü o bir kaydırma kabı oluşturur ve sticky SiteHeader'ı
         // bozardı; `clip` kaydırma kabı yaratmaz. Bu kap transform/filter/contain taşımadığı için
         // içerme bloğu da kurmaz → sidebar'ın `position:fixed` katmanı kırpılmaz.
-        // `has-data-[variant=inset]:bg-sidebar`: inset düzeninde SAYFA zemini sidebar rengine
-        // döner; içerik `SidebarInset` içinde yüzen beyaz bir karta oturur (shadcnspace deseni —
-        // referansta ölçüldü: wrapper `has-data-[variant=inset]:bg-sidebar`, main `m-2 rounded-xl`).
-        className={cn(
-          'group/sidebar-wrapper flex min-h-svh w-full overflow-x-clip has-data-[variant=inset]:bg-sidebar',
-          className,
-        )}
+        className={cn('group/sidebar-wrapper flex min-h-svh w-full overflow-x-clip', className)}
         {...props}
       >
         {children}
@@ -195,14 +189,7 @@ export function Sidebar({
       >
         <div
           data-sidebar="sidebar"
-          className={cn(
-            'flex h-full w-full flex-col bg-sidebar border-sidebar-border',
-            // inset'te kenarlık YOK: sayfa zemini zaten sidebar rengi ve içerik kartı 8px
-            // boşlukla ayrılıyor — bir de çizgi çekmek sahte bir sınır üretirdi.
-            variant === 'inset'
-              ? ''
-              : 'group-data-[side=left]:border-r group-data-[side=right]:border-l',
-          )}
+          className="flex h-full w-full flex-col bg-sidebar group-data-[side=left]:border-r group-data-[side=right]:border-l border-sidebar-border"
         >
           {children}
         </div>
@@ -262,30 +249,18 @@ export function SidebarInset({ className, ...props }: React.ComponentProps<'main
       // → geniş bir torun (tablo sarmalayıcısı, sarmayan araç çubuğu) kabı viewport'un ötesine
       // iter ve taşma SAYFAYA yayılır. app-shell'deki `main` zaten `min-w-0` taşıyor ama koruma
       // bir seviye DERİNDE kaldığı için zincir burada kopuyordu (ölçüldü: 810px'te scrollWidth 856).
-      className={cn(
-        'relative flex min-h-svh min-w-0 flex-1 flex-col bg-background',
-        // ── inset (yüzen kart) düzeni ────────────────────────────────────────────
-        // `peer-*`: kardeş <Sidebar> kökü `peer` sınıfını taşır, data-variant oradan okunur.
-        // Yalnız md+: mobilde sidebar tamamen gizli, kenar boşluğu ekran genişliğini yer.
-        // min-h: m-2 dikeyde 16px (=1rem) yer kaplar → çıkarılmazsa her sayfada 16px'lik
-        // sahte dikey kaydırma çubuğu oluşur.
-        'md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0',
-        'md:peer-data-[variant=inset]:min-h-[calc(100svh-1rem)]',
-        'md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm',
-        'md:peer-data-[variant=inset]:outline md:peer-data-[variant=inset]:outline-border',
-        className,
-      )}
+      className={cn('relative flex min-h-svh min-w-0 flex-1 flex-col bg-background', className)}
       {...props}
     />
   );
 }
 
 export function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-sidebar="header" className={cn('flex flex-col gap-2 p-3', className)} {...props} />;
+  return <div data-sidebar="header" className={cn('flex flex-col gap-2 p-2', className)} {...props} />;
 }
 
 export function SidebarFooter({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-sidebar="footer" className={cn('flex flex-col gap-2 p-3', className)} {...props} />;
+  return <div data-sidebar="footer" className={cn('flex flex-col gap-2 p-2', className)} {...props} />;
 }
 
 export function SidebarContent({ className, ...props }: React.ComponentProps<'div'>) {
@@ -317,9 +292,7 @@ export function SidebarGroupLabel({
     <Comp
       data-sidebar="group-label"
       className={cn(
-        // shadcnspace referansı: `px-3 text-xs uppercase font-semibold text-muted-foreground`
-        // (ölçüldü: 12px/600/uppercase). Eskiden 11px + `tracking-wide` idi.
-        'flex h-8 shrink-0 items-center rounded-md px-3 text-xs font-semibold uppercase text-muted-foreground transition-[margin,opacity] duration-200 ease-linear',
+        'flex h-8 shrink-0 items-center rounded-md px-2 text-[11px] font-semibold uppercase tracking-wide text-sidebar-foreground/60 transition-[margin,opacity] duration-200 ease-linear',
         'group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0',
         className,
       )}
@@ -341,21 +314,13 @@ export function SidebarMenuItem({ className, ...props }: React.ComponentProps<'l
 }
 
 const sidebarMenuButtonVariants = cva(
-  // shadcnspace deseni (referanstan ölçüldü):
-  //   öğe   → `flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium`
-  //   hover → `hover:bg-primary/5 hover:text-primary` + `hover:translate-x-1` (kayma)
-  //   aktif → `bg-primary text-background` (DOLU pill; eskiden soluk `bg-sidebar-accent` idi)
-  // Kayma yalnız genişken: ikon modunda 40px kutuda 4px kayma ikonu kırpardı.
-  // `motion-reduce:` — hareket azaltma tercihinde kayma yok (WCAG 2.3.3).
-  'peer/menu-button flex w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-medium outline-none transition-[width,height,padding,transform,background-color,color] duration-200 ease-in-out disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 hover:translate-x-1 group-data-[collapsible=icon]:hover:translate-x-0 motion-reduce:hover:translate-x-0 data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:font-medium data-[active=true]:hover:bg-primary data-[active=true]:hover:text-primary-foreground group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:hover:translate-x-0 [&>span:last-child]:truncate [&>svg]:size-4.5 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2.5 overflow-hidden rounded-md p-2 text-left text-sm outline-none transition-[width,height,padding] disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:font-medium data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-2 [&>span:last-child]:truncate [&>svg]:size-4.5 [&>svg]:shrink-0',
   {
     variants: {
       variant: {
-        // Hover TEK KAYNAK burada: cva'da varyant sınıfları tabandan SONRA gelir ve
-        // tailwind-merge'de son yazan kazanır → tabana da hover yazılsaydı bu ezerdi.
-        default: 'hover:bg-primary/5 hover:text-primary',
+        default: 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
         outline:
-          'bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-primary/5 hover:text-primary',
+          'bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
       },
       size: {
         default: 'h-9',

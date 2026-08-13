@@ -23,7 +23,7 @@ export function PageHeader({
       <div className="flex items-start gap-3">
         {Icon && (
           <span
-            className="hidden size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-card text-foreground shadow-xs sm:flex"
+            className="hidden size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-foreground shadow-sm sm:flex"
             aria-hidden
           >
             <Icon className="size-5" />
@@ -31,9 +31,7 @@ export function PageHeader({
         )}
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-          {description && (
-            <p className="mt-1.5 max-w-2xl text-sm text-muted-foreground">{description}</p>
-          )}
+          {description && <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>}
         </div>
       </div>
       {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}

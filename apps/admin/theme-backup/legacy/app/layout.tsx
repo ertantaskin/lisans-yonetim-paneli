@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Inter, JetBrains_Mono } from 'next/font/google';
 import { Toaster } from 'sonner';
 import { ThemeProvider } from '../components/theme';
 import { TooltipProvider } from '../components/ui/tooltip';
@@ -8,22 +8,8 @@ import { AppShell } from '../components/shell/app-shell';
 import { authEnabled, verifySession, SESSION_COOKIE } from '../lib/auth';
 import './globals.css';
 
-// Tipografi: Geist / Geist Mono (shadcnspace referansının gövde fontu — ölçüldü:
-// `body { font-family: Geist }`, 16px taban / bileşenlerde 14px).
-// `next/font/google` kullanılıyor (eskiden Inter da öyleydi) → yeni bağımlılık YOK,
-// build-time indirme + self-host davranışı birebir aynı.
-// NOT: Türkçe için `latin-ext` ŞART — Geist'in `latin` alt kümesinde ş/ğ/İ/ı/ç yok;
-// eksik olsaydı tarayıcı o harflerde yedek fonta düşer ve metin "zıplardı".
-const geistSans = Geist({
-  subsets: ['latin', 'latin-ext'],
-  variable: '--font-geist',
-  display: 'swap',
-});
-const geistMono = Geist_Mono({
-  subsets: ['latin', 'latin-ext'],
-  variable: '--font-geist-mono',
-  display: 'swap',
-});
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter', display: 'swap' });
+const mono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-jbmono', display: 'swap' });
 
 export const metadata: Metadata = {
   title: 'Lisans Paneli — Tedarik & Yönetim',
@@ -43,11 +29,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   // Arayüz Türkçe-öncelikli (§17).
   return (
-    <html
-      lang="tr"
-      suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable}`}
-    >
+    <html lang="tr" suppressHydrationWarning className={`${inter.variable} ${mono.variable}`}>
       <body>
         <ThemeProvider>
           <TooltipProvider delayDuration={200}>
