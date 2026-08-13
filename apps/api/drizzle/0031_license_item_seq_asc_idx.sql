@@ -1,0 +1,1 @@
+CREATE INDEX "license_items_created_asc_idx" ON "license_items" USING btree ("created_at","seq");

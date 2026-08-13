@@ -118,6 +118,9 @@ export class SearchService {
       FROM license_items li
       JOIN products p ON p.id = li.product_id
       WHERE li.payload_suffix_hash = ${suffixHash}
+      -- ORDER BY yoktu: LIMIT 10 ile birlikte hangi 10 kaydın döneceği KEYFİYDİ.
+      -- En yeni giren anahtar önce (operatör genelde son girdiğini arar).
+      ORDER BY li.seq DESC
       LIMIT 10;
     `);
 

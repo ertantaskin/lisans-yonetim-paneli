@@ -56,9 +56,15 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   })),
 ];
 
+/**
+ * Sıralama seçenekleri. "En yeni giriş üstte" = giriş BLOKLARI en yeniden eskiye,
+ * blok İÇİNDE operatörün yapıştırdığı sıra korunur (sunucu: `created_at DESC, seq ASC`).
+ * Etiketler bunu açıkça söyler — eskiden yalnız "En yeni" yazıyordu ve aynı içe aktarmanın
+ * satırları rastgele sırada geldiği için operatör listesini tanıyamıyordu.
+ */
 const SORT_OPTIONS = [
-  { value: 'created_desc', label: 'En yeni' },
-  { value: 'created_asc', label: 'En eski' },
+  { value: 'created_desc', label: 'En yeni giriş üstte' },
+  { value: 'created_asc', label: 'En eski giriş üstte' },
   { value: 'assigned_desc', label: 'Son teslim edilen' },
 ] as const;
 

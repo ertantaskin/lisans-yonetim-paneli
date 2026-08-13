@@ -148,7 +148,13 @@ export class OrdersService {
               eq(products.onExpiry, 'keep'),
             ),
           ),
-        ),
+        )
+        // SIRA: müşteri anahtarları STOĞA GİRİŞ sırasında görsün. ORDER BY hiç yoktu →
+        // Postgres satırları planın uygun gördüğü sırada döndürüyordu; birden çok anahtarlı
+        // siparişte My Account listesi her yenilemede farklı sıralanabiliyordu. `seq`
+        // (ekleme sırası) hem burada hem mailde hem admin detayında AYNI yönde kullanılır →
+        // müşteri, mail ve operatör aynı listeyi görür.
+        .orderBy(licenseItems.seq),
       // (2) Mail durumu (#32): siparişin EN GÜNCEL email_log satırının status'u (sent|failed|
       // queued|sending|…). WP "Sorun mu var?" ipucu için — PAYLOAD/KEY sızmaz, yalnız durum. Yoksa null.
       this.latestMailStatus(order.id),

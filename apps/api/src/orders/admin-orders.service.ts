@@ -639,7 +639,11 @@ export class AdminOrdersService {
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .innerJoin(products, eq(orderLines.productId, products.id))
-        .where(eq(assignments.orderId, orderId)),
+        .where(eq(assignments.orderId, orderId))
+        // SIRA: stoğa giriş sırası (`seq`). ORDER BY yoktu → sipariş detayındaki anahtar
+        // listesi müşterinin mailindeki/My Account'taki sırayla tutmayabiliyordu; artık
+        // üç yüzey de aynı yönü kullanır (getDeliveries + mail.processor + burası).
+        .orderBy(licenseItems.seq),
 
       this.db
         .select()
@@ -2073,7 +2077,10 @@ export class AdminOrdersService {
       .where(and(...conditions))
       // voided (recall) item'ların assignedAt'i NULL → stok giriş tarihine (created_at) düş;
       // aksi halde tüm recall kategorisi listenin sonunda kalıp pencereden düşerdi.
-      .orderBy(sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt}) DESC`)
+      // TIE-BREAK (seq) ŞART: bu ORDER BY bir LIMIT ile birlikte çalışıyor. Eşit damgalı
+      // satırlarda hangilerinin pencereye gireceği tie-break olmadan KEYFİ olur — aynı
+      // süzgeç iki koşuda farklı kayıt kümesi döndürebilir (kırpma uyarısı da yanıltır).
+      .orderBy(sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt}) DESC, ${licenseItems.seq} DESC`)
       .limit(fetchLimit);
 
     // audit_log fallback (detail() reasonRows deseni): düz-revoke (değişim değil) sebebi

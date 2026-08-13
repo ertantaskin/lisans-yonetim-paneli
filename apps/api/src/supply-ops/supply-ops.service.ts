@@ -260,7 +260,9 @@ export class SupplyOpsService {
       WHERE li.batch_id = ${batchId}
         AND li.status <> 'available'
         AND a.status = 'active'
-      ORDER BY a.created_at ASC;
+      -- tie-break: aynı siparişin atamaları tek tx'te oluşur → created_at eşit;
+      -- li.seq olmadan değiştirme sırası (ve kısmi başarısızlıkta kimin değiştiği) keyfi.
+      ORDER BY a.created_at ASC, li.seq ASC;
     `);
 
     let replaced = 0;

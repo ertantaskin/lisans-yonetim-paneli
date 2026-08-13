@@ -150,7 +150,11 @@ export class MailProcessor extends WorkerHost {
               eq(products.onExpiry, 'keep'),
             ),
           ),
-        );
+        )
+        // SIRA: mail gövdesindeki anahtarlar da stoğa giriş sırasında (getDeliveries ile
+        // AYNI yön). ORDER BY yoktu → müşteriye giden mailde sıra rastgeleydi ve panelde
+        // görünen sırayla tutmuyordu.
+        .orderBy(licenseItems.seq);
 
       // Aktif atama yoksa (ör. tümü revoke edildikten sonra resend) BOŞ mail gönderme.
       if (rows.length === 0) {

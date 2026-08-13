@@ -1,5 +1,14 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigserial,
+  index,
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { licenseItemStatusEnum } from './enums';
 import { products } from './products';
 
@@ -45,6 +54,25 @@ export const licenseItems = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .default(sql`now()`),
+
+    /**
+     * EKLEME SIRASI — monoton artan (sequence). Listelemede `created_at`'in tie-break'i.
+     *
+     * NEDEN GEREKLİ: bir içe aktarmanın TÜM satırları tek transaction'da yazılır, bu yüzden
+     * `now()` (transaction başlangıcı) hepsinde AYNIDIR — dev'de ölçüldü: 15 satırlık giriş
+     * tek damga. Eski tie-break `id DESC` idi ve `id` rastgele UUID v4 → operatörün girdiği
+     * liste ekranda KARIŞIK görünüyordu. `seq` ekleme sırasını taşır; sıralama
+     * `created_at DESC, seq ASC` olunca "en yeni giriş üstte, blok içinde yapıştırılan sıra"
+     * elde edilir.
+     *
+     * FIFO: atama sorgusu da (`assignment/assign.ts`) bu kolonla tie-break yapar → aynı
+     * partide önce girilen anahtar önce teslim edilir (eskiden rastgeleydi).
+     *
+     * GEÇMİŞ SATIRLAR: kolon eklenirken değerler tablonun FİZİKSEL sırasına göre dolar; bu
+     * genelde ekleme sırasına yakındır ama GARANTİ DEĞİLDİR (UPDATE görmüş satırlar yer
+     * değiştirmiş olabilir). Kolon eklendikten SONRAKİ girişlerde sıra kesindir.
+     */
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
   },
   (t) => [
     // Mükerrer key imkânsız.
@@ -62,8 +90,17 @@ export const licenseItems = pgTable(
     // Son 5 hane araması.
     index('license_items_suffix_idx').on(t.payloadSuffixHash),
     // Envanter ekranı sıcak yolları (0025 — elle yazılmıştı, şemaya taşındı ki `db:generate`
-    // bir daha drift üretmesin). id tiebreak: sayfalar arasında satır yer değiştirmesin.
-    index('license_items_created_idx').on(t.createdAt.desc(), t.id.desc()),
+    // bir daha drift üretmesin). Tie-break artık `seq` (ekleme sırası): sayfalar arasında
+    // satır yer değiştirmez VE aynı içe aktarmadaki satırlar operatörün girdiği sırada kalır
+    // (eski `id DESC` tie-break'i sayfalamayı sabitliyordu ama sırayı RASTGELE yapıyordu).
+    index('license_items_created_idx').on(t.createdAt.desc(), t.seq.asc()),
+    // "En eski giriş üstte" (`created_asc`) için AYRI index — ŞART.
+    // `(created_at DESC, seq ASC)` btree'sini GERİYE taramak `(created_at ASC, seq DESC)`
+    // verir; istediğimiz `(created_at ASC, seq ASC)` DEĞİL. Yönler ayna olmadığı için tek
+    // index iki sıralamayı karşılayamaz. Bu index olmadan "En eski" seçeneği index desteğini
+    // KAYBEDERDİ (eski `(created_at DESC, id DESC)` geriye taramayla karşılıyordu) — büyük
+    // tabloda tam sıralama demek. Maliyeti düşük: iki dar kolon.
+    index('license_items_created_asc_idx').on(t.createdAt.asc(), t.seq.asc()),
     index('license_items_status_created_idx').on(t.status, t.createdAt.desc()),
     index('license_items_assigned_idx').on(sql`${t.assignedAt} DESC NULLS LAST`),
     index('license_items_batch_idx').on(t.batchId),

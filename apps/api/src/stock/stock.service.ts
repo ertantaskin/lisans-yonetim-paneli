@@ -1241,12 +1241,26 @@ export class StockService {
     //  · MULTI/MAK kapasite düşümü artık `assigned_at = COALESCE(assigned_at, now())` yazıyor
     //    (assign.ts, consumeMultiUseCapacity) → MAK kalemleri de sıralamada doğru yerde çıkar.
     //    Damga İLK teslimi gösterir; sonraki kapasite düşümleri onu kaydırmaz.
+    // TIE-BREAK = `li.seq` (ekleme sırası), `li.id` DEĞİL.
+    // Bir içe aktarmanın tüm satırları TEK transaction'da yazılır → `created_at` hepsinde
+    // AYNI (ölçüldü: 15 satırlık giriş tek damga). Eski tie-break rastgele UUID olduğu için
+    // operatörün yapıştırdığı liste ekranda KARIŞIK görünüyordu.
+    //
+    // Yön BİLİNÇLİ olarak karışık: blok (created_at) DESC ama blok İÇİ seq ASC → "en yeni
+    // giriş en üstte, o girişin içinde benim verdiğim sıra". `seq DESC` deseydik operatörün
+    // listesi baş aşağı görünürdü.
+    //
+    // `NULLS LAST` AÇIKÇA yazılır: PostgreSQL'de `DESC`in varsayılanı NULLS FIRST'tür, ama
+    // index `(created_at DESC NULLS LAST, seq)` olarak yaratılır (drizzle `.desc()` böyle
+    // üretir). Pathkey karşılaştırması nulls yönünü de içerdiği için yazmazsak planlayıcı
+    // sıralamayı index'ten KARŞILAMAZ ve tam sort'a düşer. `created_at` NOT NULL olduğu için
+    // sonuç kümesi birebir aynıdır — bu yalnız planlayıcıyla anlaşma.
     const orderBy =
       params.sort === 'created_asc'
-        ? sql`li.created_at ASC, li.id ASC`
+        ? sql`li.created_at ASC, li.seq ASC`
         : params.sort === 'assigned_desc'
-          ? sql`li.assigned_at DESC NULLS LAST, li.created_at DESC, li.id DESC`
-          : sql`li.created_at DESC, li.id DESC`;
+          ? sql`li.assigned_at DESC NULLS LAST, li.created_at DESC NULLS LAST, li.seq ASC`
+          : sql`li.created_at DESC NULLS LAST, li.seq ASC`;
 
     // ── Sayfa + toplam: TEK sorgu ──
     // Eskiden rows ve count(*) AYRI iki sorguydu; ikisi de aynı süzgeçle license_items'ı

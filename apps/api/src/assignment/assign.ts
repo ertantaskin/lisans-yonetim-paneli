@@ -43,6 +43,11 @@ export function notExpiredCond(alias = 'license_items'): SQL {
  *
  * - FOR UPDATE SKIP LOCKED: eşzamanlı siparişler farklı satır kilitler; aynı satır
  *   iki kez seçilemez, deadlock yok. Çifte atama İMKÂNSIZ.
+ * - Sıra: FEFO (önce ölecek) → sonra FIFO (`created_at`) → tie-break `seq` (ekleme sırası).
+ *   `seq` ŞART: bir içe aktarmanın tüm satırları tek transaction'da yazıldığı için
+ *   `created_at` hepsinde AYNIDIR; onsuz aynı partiden hangi anahtarın gideceği RASTGELE
+ *   olurdu. Artık "önce yapıştırılan önce teslim edilir". Yalnız EŞİTLİĞİ çözer — hangi
+ *   satırların uygun olduğunu değiştirmez, SKIP LOCKED davranışına dokunmaz.
  * - Kısmi teslimatta istenen adetten az dönebilir (stok yetersiz) — çağıran taraf
  *   ürün politikasına göre (§5) kalanı pending bırakır.
  *
@@ -59,7 +64,7 @@ export async function assignAvailableSingleUse(
       SELECT id FROM license_items
       WHERE product_id = ${productId} AND status = 'available'
         AND ${notExpiredCond()}
-      ORDER BY expires_at ASC NULLS LAST, created_at
+      ORDER BY expires_at ASC NULLS LAST, created_at, seq
       LIMIT ${qty}
       FOR UPDATE SKIP LOCKED
     )
@@ -147,7 +152,7 @@ export async function consumeMultiUseCapacity(
         AND status = 'available'
         AND use_count + ${units} <= max_uses
         AND ${notExpiredCond()}
-      ORDER BY expires_at ASC NULLS LAST, created_at
+      ORDER BY expires_at ASC NULLS LAST, created_at, seq
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
