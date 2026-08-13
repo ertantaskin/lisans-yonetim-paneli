@@ -99,7 +99,7 @@ export default async function PurchaseOrderDetailPage({
         ]}
       />
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 [&>*]:min-w-0 lg:grid-cols-2">
         {/* Teslim al */}
         <Card>
           <CardHeader>

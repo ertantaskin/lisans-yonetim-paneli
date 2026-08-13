@@ -96,7 +96,7 @@ export function MappingsManager({
   return (
     <div className="space-y-4 text-sm">
       <form action={action} className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2">
           <Field label="Site" htmlFor="map-site" hint="Önce mağazayı seçin (yazarak arayın).">
             <Combobox
               id="map-site"

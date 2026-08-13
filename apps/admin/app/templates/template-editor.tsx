@@ -76,7 +76,7 @@ export function TemplateEditor({
   }, [subject, body]);
 
   return (
-    <div className="grid gap-5 lg:grid-cols-2">
+    <div className="grid gap-5 [&>*]:min-w-0 lg:grid-cols-2">
       {/* Sol: editör */}
       <Card className="p-5">
         <form action={action} className="space-y-4 text-sm">
@@ -105,7 +105,7 @@ export function TemplateEditor({
             />
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="te-product">Ürün (opsiyonel)</Label>
               <Combobox

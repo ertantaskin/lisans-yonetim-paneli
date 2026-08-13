@@ -101,7 +101,7 @@ export function ReportsView({ data }: { data: ReportsOverview }) {
   return (
     <div className="space-y-6">
       {/* Özet kartları */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="Toplam Sipariş"
           value={fmtNum(orders.total)}
@@ -177,7 +177,7 @@ export function ReportsView({ data }: { data: ReportsOverview }) {
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 [&>*]:min-w-0 lg:grid-cols-2">
         {/* Teslimat dağılımı */}
         <Card>
           <CardHeader>

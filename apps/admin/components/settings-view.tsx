@@ -40,7 +40,7 @@ export function SettingsView({ data }: { data: SystemStatus }) {
   return (
     <div className="space-y-6">
       {/* Özet kartlar */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="Oturum kapısı"
           value={authEnabled ? 'Açık' : 'Kapalı'}

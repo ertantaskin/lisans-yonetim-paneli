@@ -18,7 +18,7 @@ export function CreateAdminForm() {
   }, [state]);
 
   return (
-    <form ref={formRef} action={action} className="grid gap-3 sm:grid-cols-2">
+    <form ref={formRef} action={action} className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2">
       <div className="space-y-1.5">
         <Label htmlFor="a-name">Ad</Label>
         <Input id="a-name" name="name" required placeholder="Ad Soyad" autoComplete="off" />

@@ -14,6 +14,71 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Admin arayüzü: uyum denetimi — 43 doğrulanmış bulgu düzeltildi (migration YOK)
+
+1.1.0 ile gelen tema uyarlaması, kullanıcı geri bildirimi üzerine ("referanslardan çok alakasız,
+UI/UX sorunları var; masaüstü ve mobil detaylıca") **gerçek ekranlar üzerinde ölçülerek** denetlendi.
+
+#### Önce: iki kendi hatam
+
+- **Referansı hiç GÖRMEMİŞTİM.** Tarayıcı paneli kare üretmediği için 1.1.0'da yalnız token
+  seviyesinde (font/yarıçap/gölge) uyarlama yapılmış, sayfa kompozisyonu karşılaştırılmamıştı.
+  Bu turda ekran görüntüsü alındı. Oluşan "referansın kenar menüsü koyu" izlenimi ise
+  görüntünün içine **kalibrasyon şeridi** (siyah / orta gri / beyaz) basılarak **çürütüldü**:
+  beyaz bant menü zeminiyle ayırt edilemiyordu → referansın menüsü açık temada gerçekten açık,
+  uygulanan palet doğruymuş. (Ders: düşük çözünürlüklü görüntüden renk yargısı verme; ölç.)
+- **Dev ortamı güncellenmemişti** — 1.1.0 yalnız prod'a dağıtılmıştı, dev eski temadaydı.
+
+#### Ölçülen kusurlar (dev'de gerçek veriyle)
+
+- **Tablo başlık dili çelişiyordu:** sıralanabilir kolon `12px/500/BÜYÜK HARF/muted`, düz kolon
+  `14px/600/koyu` — aynı başlık satırında iki tipografi (15 dosya / 48 çağrı).
+- **Mobilde hücreler eziliyordu:** /stock 375px'te kap 341px, tablo 862px, hücre 4 satıra sarıyor,
+  satır yüksekliği 85px. **Kök neden:** `width:100%` + `table-layout:auto` bir tablonun kullanılan
+  genişliği `max(kap, MIN-CONTENT)`; hücre sarabildiği için min-content "kolonun en uzun kelimesi"ne
+  iniyor → tablo daima kaba sığıyor ve `overflow-x-auto` **hiç tetiklenmiyor**.
+- **Sipariş detayı mobilde sessizce kırpılıyordu:** ızgara 343px iken çocuğu 380px; sayfa
+  `overflow-x-clip` emniyeti yüzünden kaymadığı için taşan 21px **görünmez ve erişilemez** oluyor,
+  "İptal" düğmesi (sağ kenarı 383px) tıklanamıyordu.
+
+#### Denetim
+
+6 lensli çekişmeli-doğrulamalı workflow (54 ajan; kabuk · tablo · form · kart · mobil · tema):
+**48 bulgu incelendi → 43 doğrulandı** (10 yüksek · 26 orta · 7 düşük), 5 çürütüldü. Düzeltmeler
+4 ayrık-dosya işçisine + çekirdek primitifler tek elde toplandı.
+
+#### Düzeltildi — çekirdek (tüm paneli etkiler)
+
+- `ui/table.tsx`: `th`/`td` → `whitespace-nowrap` (yatay kaydırma artık gerçekten çalışıyor);
+  uzun serbest metin taşıyan 4 hücreye `whitespace-normal` muafiyeti. Ölü
+  `[&:has([role=checkbox])]:pr-0` kuralı silindi — bu panelde seçim kutusu **native**
+  `<input type="checkbox">` ve native input `role` **özniteliği taşımaz**, seçici hiç eşleşmiyordu.
+- `data-table/*`: başlık tipografisi `TableHead`'e bağlandı, `h-10` ezmesi kaldırıldı, tablo yüzeyi
+  kart sözleşmesine alındı (`rounded-xl bg-card shadow-xs`), **kolon görünürlüğü menüsü mobilde
+  açıldı** (geniş tabloların dar ekrandaki tek kaçış yoluydu ve tam orada kapalıydı).
+- `ui/sidebar.tsx`: ikon modunda **dikey kaydırma açıldı** (25 menü öğesi ikon modunda ~1170px yer
+  kaplıyor; kısa ekranda alttaki 5-6 öğe kırpılıp erişilemiyordu). `SidebarInset` `<main>` → `<div>`
+  (iç içe iki `main` landmark'ı vardı).
+- **Mobil:** sheet menüde bağlantıya dokununca kapanma + `aria-current="page"`; Dialog `vh` → `svh`
+  (mobil tarayıcı çubuğu açıkken onay düğmeleri ekran dışında kalıyordu); kapat düğmesi 16 → 32px
+  daire; Popover `max-w` + kaydırma; sipariş detayı ızgara çocuğuna `min-w-0`.
+- **Odak göstergesi tek-kaynak kuralı:** "içeriğe atla" ve `TabsList` halkaları kaldırıldı,
+  `live-feed` halkası eşik-altı `/60`'tan tam opaklığa çekildi.
+- **Form dili:** `Select` ve `Combobox` artık `controlBase` tek kaynağını kullanıyor (h-8/h-9 karışıklığı bitti).
+
+#### Düzeltildi — ekran katmanı
+
+- Ad-hoc kart div'leri → `Card`; elle kurulmuş iki modal → `Dialog` primitifi; süzgeç çipleri tek
+  bileşene; kontrol yükseklikleri tek rejime.
+- Ham enum sızıntıları `lib/labels.ts`'e (`adminRoleLabel` eklendi); elle uyarı kutuları → `Alert`.
+- `canceled` tonu `danger` → `neutral` (aynı durum bir ekranda gri, diğerinde kırmızıydı).
+- Ctrl+K paleti **gerçek modal** oldu (odak tuzağı, `aria-modal`, kapanışta odak iadesi Radix'ten) —
+  kısayol, arama ve gezinme davranışı değişmedi.
+- Dokunma hedefleri: satır seçim kutusu 16 → 44px, satır içi ikon düğmeleri 24 → 32px; mobilde
+  DataTable araması tam genişlik.
+
+Salt **sunum**: backend sözleşmesi, form `name=`, API alan adları ve iş mantığı değişmedi.
+
 ## [1.1.0] - 2026-08-14
 
 ### Admin arayüzü: shadcnspace tasarım diline uyarlandı (migration YOK)

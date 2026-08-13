@@ -92,7 +92,7 @@ export default async function ReleasesPage() {
       {/* min-w-0: grid çocuğu varsayılan olarak içerik-tabanlı minimum alır; içindeki
           (nowrap kolonlu) tablo kartı ve grid'i viewport'tan geniş yapar. min-w-0 ile kaydırma
           Table primitifinin İŞARETLENMİŞ overflow-x-auto kabına devreder. */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 [&>*]:min-w-0 lg:grid-cols-2">
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle icon={Rocket}>Kaynaktan yayınla</CardTitle>

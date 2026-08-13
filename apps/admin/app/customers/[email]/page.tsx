@@ -144,7 +144,7 @@ export default async function CustomerDetailPage({
         </CardContent>
       </Card>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 [&>*]:min-w-0 md:grid-cols-2">
         {/* Siparişler */}
         <Card>
           <CardHeader>

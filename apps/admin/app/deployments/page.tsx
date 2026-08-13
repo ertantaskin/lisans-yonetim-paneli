@@ -118,7 +118,7 @@ export default async function DeploymentsPage() {
         </Alert>
       )}
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 [&>*]:min-w-0 md:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle icon={Activity}>Sistem durumu</CardTitle>

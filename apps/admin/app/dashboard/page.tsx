@@ -204,7 +204,7 @@ export default async function DashboardOverviewPage() {
 
       {/* Ana akış: solda siparişler, sağda destek talepleri.
           Kartlar arası boşluk sözleşme gereği 24px (gap-6) — 16px'te iki kart sıkışık duruyordu. */}
-      <div className="grid items-start gap-6 lg:grid-cols-2">
+      <div className="grid items-start gap-6 [&>*]:min-w-0 lg:grid-cols-2">
         <LiveOrdersCard initialOrders={snapshot?.orders ?? null} />
         <LiveSupportCard initialSupports={snapshot?.supports ?? null} />
       </div>

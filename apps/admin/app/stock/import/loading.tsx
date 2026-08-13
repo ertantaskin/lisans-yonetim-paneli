@@ -9,7 +9,7 @@ export default function Loading() {
         <Skeleton className="h-4 w-[32rem] max-w-full" />
       </div>
       {/* Izgara import-workbench ile AYNADA tutulur (yoksa iskelet→içerik geçişinde zıplama olur). */}
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-[minmax(0,1fr)_21rem]">
+      <div className="grid gap-5 [&>*]:min-w-0 lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="space-y-4">
           <Skeleton className="h-40 w-full rounded-xl" />
           <Skeleton className="h-20 w-full rounded-xl" />

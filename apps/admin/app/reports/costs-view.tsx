@@ -384,7 +384,7 @@ export function CostsView() {
           bağlanamayan kayıtları taşır (parasal değeri daima 0); deliveredCogs ile aynı biçimde
           değer kartı olarak ÇİZİLMEZ — bunun yerine aşağıdaki "kapsanamayan" uyarısında raporlanır.
           Boş currency etiketi StatTile'da boş parantez ("()") olarak sızmasın diye elenir. */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4">
         {data.valuation
           .filter((v) => v.currency !== '')
           .map((v) => (
@@ -425,7 +425,7 @@ export function CostsView() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             {deliveredCogs.some((d) => d.currency !== '') && (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4">
                 {deliveredCogs
                   .filter((d) => d.currency !== '')
                   .map((d) => (

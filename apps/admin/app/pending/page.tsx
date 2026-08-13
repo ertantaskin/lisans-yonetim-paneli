@@ -217,7 +217,7 @@ export default async function DashboardPage() {
         <>
           <div
             className={cn(
-              'mb-6 grid gap-3 sm:grid-cols-2',
+              'mb-6 grid gap-3 [&>*]:min-w-0 sm:grid-cols-2',
               // Beşli kırılım xl'e ertelendi: lg (1024px) kabuğunda içerik yalnız ~720px;
               // StatTile'ın sabit iç payı 80px olduğu için 5 sütunda etikete ~54px kalıyordu.
               // Dörtlü dal lg'de ölçülerek temiz çıktı — gereksiz daraltmak yer israfı olur.

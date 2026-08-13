@@ -427,7 +427,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       )}
 
       {/* ── İki kolon: sol (geniş) ürünler+lisanslar; sağ (dar) destek + referans ── */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 [&>*]:min-w-0 lg:grid-cols-3">
         {/* SOL (geniş) — ana çalışma alanı */}
         {/* `min-w-0` ŞART: grid çocuğunun varsayılan `min-width:auto` değeri, otomatik
             minimumunu İÇERİĞİNİN min-content genişliği yapar. Ölçüldü (375px): ızgara 343px
@@ -693,8 +693,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           )}
         </div>
 
-        {/* SAĞ (dar) rail — destek + teslimat mailleri + zaman çizelgesi */}
-        <div className="space-y-4">
+        {/* SAĞ (dar) rail — destek + teslimat mailleri + zaman çizelgesi.
+            `min-w-0` burada da ŞART: mobilde ızgara TEK kolona düşer ve iki çocuk AYNI rayı
+            paylaşır → rayın taban genişliği çocukların minimum katkılarının EN BÜYÜĞÜdür.
+            Yalnız sol sütuna vermek yetmedi (ölçüldü: sağ rayın min-content'i 380px olduğu için
+            ray 380px kalıyor, 343px'lik kaba taşıyor ve sayfa `overflow-x-clip` yüzünden
+            kaymadığından taşan kısım SESSİZCE kırpılıyordu — "İptal" düğmesi erişilemiyordu). */}
+        <div className="min-w-0 space-y-4">
           {replacements.length > 0 && (
             <Card
               id="destek"
