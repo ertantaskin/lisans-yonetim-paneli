@@ -1495,6 +1495,59 @@ raporu alıp indirebilmeliyim; süreç kapsamlı, temiz, karışık olmadan iler
   tedarikçi bilinmez → fiş kesilemez · tedarikçiden gelen **yeni anahtarların** fişe bağlanması kapsam
   dışı (kullanıcı "tam kapanış"ı seçmedi) · fiş panelden GÖNDERİLMEZ, dosya indirilir.
 
+**RE-DOĞRULAMA → 16 BULGU (commit 929e313→c4f9d51, CANLI prod+dev, migration 0036, eklenti v1.0.4):**
+Bir önceki denetim partisinin (1a1df51) düzeltmelerini ÇÜRÜTMEYE çalışan 5 lensli workflow (27 ajan;
+revoke-ölçek · liste-limit · karantina-join+fiş-maskesi · admin-UI · WP) → **16 CONFIRMED / 6 çürütüldü**.
+En ağır bulgu KENDİ düzeltmemdi — [[denetim-regresyon-dersleri]] bir kez daha doğrulandı.
+- **[ORTA — KENDİ REGRESYONUM] `qty`'ye iki anlam yüklemek H1'i yeniden açtı.** Per-atama iptalinde
+  satırı terminal yapmayıp `qty` düşürmüştüm. Ama `reconcileOrder`'ın iade koruması TEK yükleme
+  dayanıyor (`if (line.canceled) continue`); satır terminal olmayınca mağaza re-push'u
+  (`woocommerce_saved_order_items` → `resync_items` → `POST /v1/orders`) qty'yi MAĞAZA adedine geri
+  yükseltiyor, partial-auto iptal edilen birime TAZE anahtar teslim ediyordu (bedava lisans + envanterden
+  kalem yanması). TERS YÖN: iptal sebebi gerçek iade değil "kusurlu anahtar" ise qty düşüşü müşterinin
+  ÖDEDİĞİ hakkı sessizce kısıyor ve satırı 'fulfilled' işaretliyordu ("Kalanları Ata" da doldurmaz).
+  **KÖK NEDEN:** `qty` hem MAĞAZA GERÇEĞİ hem DOLDURMA HEDEFİ anlamını taşıyordu.
+  **DÜZELTME (migration 0036, additive):** `order_lines.canceled_units` defteri + yeni
+  `orders/fill-target.ts` (`fillTarget`/`remainingUnits`/`lineStatusFor`). `qty` mağazadan gelir ve
+  DOKUNULMAZ; iptaller ayrı kolonda birikir; hedef TEK noktada `qty − canceled_units` → completeLine,
+  all-or-nothing kapısı, satır durumu, "neden bekliyor" tanısı, getDeliveries ilerlemesi ve bulkStatus
+  hepsi oradan okur. Mağaza adedi DÜŞERSE defter aynı miktarda azaltılır (aynı iptal iki kez sayılmaz);
+  adedi ARTIP defter doluysa GÖRÜNÜR `order_edited` olayı yazılır. **DERS:** bir kolona ikinci bir
+  anlam yüklemek yerine AYRI defter aç; "hedef" gibi türetilmiş bir kavramın TEK tanımı olsun.
+- **[düşük]** `liveSiblings` satırın `canceled` durumuna bakmıyordu → `revokeOrderForSite` (önce tüm
+  satırları cancel eder, sonra atamaları tek tek geri alır) her çağrıda "kardeş var" görüp defteri
+  şişiriyor + yanıltıcı olay yazıyordu; artık zaten terminal satırda deftere dokunulmaz.
+- **[ORTA/güvenlik]** `supplier_claim_items.key_snapshot` readonly-sql denylist'inde YOKTU → fiş
+  maskesi AI NL→SQL yolundan TAMAMEN atlatılabiliyordu (AI varsayılan KAPALI; savunma derinliği).
+  Kolon + `supplier_claim_items`/`supplier_claims` tabloları denylist'e + regresyon testi.
+- **[düşük ×5 admin]** `includesTr` ASCII büyük 'I'da SESSİZ boş sonuç veriyordu (tr-TR katlamasında
+  'I'→'ı'; "ai" araması "AI Operasyon"u bulamıyordu) — kusur ZATEN vardı, önceki parti onu 5 yeni yere
+  yaydı → MERKEZÎ iki-geçişli katlama (~15 çağıran birden onarıldı) · parti seçicisi artık sunucu-taraflı
+  `?productId=` süzgeci kullanıyor (global 500'lük pencere + istemci süzgeci geçerli partiyi "yok"
+  gösterebiliyordu) · kırpma bayrağı hata/temizleme yollarında bayat kalıyordu · iptal onay modali
+  artık GERÇEKLEŞEN davranışı anlatıyor (kardeş varsa "diğer N lisans geçerli kalır") · maskeli fiş
+  raporu SESSİZCE indiriliyordu (tedarikçiye `••••••1234` listesi) → `masked` bayrağı + uyarı bandı.
+- **[düşük]** `truncated` TAM sınırda yanlış pozitifti (tam 500 parti / 2.000 müşteride "liste eksik")
+  → projenin mevcut deseni: "tavan+1 çek, JS'te kırp" · hesap tipli fiş kaleminde maske sır OLMAYAN
+  alanları da siliyordu → `listQuarantine(reveal=false)` ile aynı alan-farkında davranış (payload_schema'dan
+  label→secret haritası, `maskAccountFields` paylaşılır).
+- **[düşük ×5 WP → v1.0.4]** Önceki partide EKLEDİĞİM "paket reddedildi" uyarısı Docker/aynı-sunucu
+  kurulumunda KALICI, kapatılamaz kırmızı banda dönüşüyordu: `is_valid_package_url` hâlâ dar kuralı
+  (http yalnız localhost) kullanırken 1.0.3 `is_secure_panel_url`'ü genişletmişti → iki kapı TEK tanıma
+  bağlandı (`is_secure_panel_url($download)`; host eşitliği şartı AYNEN korundu + şema http/https'e
+  daraltıldı) · multisite bayrak kapsamı (`*_site_transient` + `network_admin_notices`) · `substr` çok
+  baytlı karakteri bölünce `esc_html` mesajı BOŞALTIYORDU → `mb_substr` + görünür kırpma · panel
+  erişilemezken bayrak bayat kalıyordu → silme yerine `stale_since` damgası + yumuşak metin.
+- **KENDİ HATAM (3. kez):** `sql` şablonunun İÇİNDE backtick — bu kez işçinin yorumunda; typecheck
+  yakaladı (TS1005). Ayrıca ilk denetim partisinde PHP-lint HİÇ koşulmamıştı (işçinin makinesinde PHP
+  yok) → bu turda VPS'te throwaway `php:8.2-cli-alpine` ile koşuldu: **12/12 temiz**.
+- **Doğrulama:** typecheck 4/4 + check-use-server (22 dosya / 74 export) · admin production build ·
+  VPS izole test DB **entegrasyon 210/210 + yarış 3/3** (+ yeni "re-push adedi geri yükseltse bile iptal
+  edilen birim TAZE anahtarla DOLMAZ" regresyon testi — doğrulayıcı bu yolun testsiz olduğunu işaretlemişti) ·
+  PHP-lint 12/12 · prod deploy (rollback'li) → `/health` **200 v1.0.0**, migration tracking **37**,
+  `order_lines.canceled_units` CANLI (default 0, NOT NULL), api ERROR 0 · dev stack güncel ·
+  **eklenti v1.0.4 panele yayınlandı** (HTTP 201, 102.001 bayt, HEAD ile birebir). migration 0000-0036.
+
 **PROJE GENELİ DENETİM → 17 BULGU (commit 1a1df51, CANLI prod+dev, migration 0035):** Kullanıcı iki
 somut kusur bildirdi (fiş oluşturma Sheet'i bozuk · havuzda karantina tarihi yok) ve *"projeyi baştan sona
 incele, denetle — güvenlik/performans/UI-UX; ajanlarına görev dağılımı yap; kullanım rehberi ve menüdeki tüm
