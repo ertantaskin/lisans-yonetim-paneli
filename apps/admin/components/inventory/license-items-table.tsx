@@ -61,6 +61,17 @@ const STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
 ];
 
 /**
+ * "Kim tutuyor" ekseni — envanter DURUMUNDAN ayrıdır. Çok kullanımlı (MAK) bir anahtar
+ * 500 hakkının 3'ü satılmışken hâlâ `status='available'` görünür, yani "müşterilerde mi?"
+ * sorusu durum süzgeciyle cevaplanamaz. Geri çekilmiş bir partide "hangi anahtarlar hâlâ
+ * müşterilerin elinde, hangisini değiştirmeliyim" sorusunun tek doğru süzgeci budur.
+ */
+const HOLDER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: '', label: 'Tümü' },
+  { value: 'customer', label: 'Müşterilerde' },
+];
+
+/**
  * Sıralama seçenekleri. "En yeni giriş üstte" = giriş BLOKLARI en yeniden eskiye,
  * blok İÇİNDE operatörün yapıştırdığı sıra korunur (sunucu: `created_at DESC, seq ASC`).
  * Etiketler bunu açıkça söyler — eskiden yalnız "En yeni" yazıyordu ve aynı içe aktarmanın
@@ -111,6 +122,7 @@ function stockExpiry(row: LicenseInventoryRow): { expired: boolean; expiresAt: s
 export function LicenseItemsTable({
   productId,
   batchId,
+  lockedHolder,
   payloadSchema,
   showProductColumn = false,
   className,
@@ -119,6 +131,11 @@ export function LicenseItemsTable({
   productId?: string;
   /** Verilirse yalnız bu PARTİYE ait kalemler listelenir (parti detayı). */
   batchId?: string;
+  /**
+   * Verilirse tablo bu kapsama KİLİTLENİR ve süzgeç kontrolü gösterilmez — kartın başlığı
+   * zaten kapsamı söylüyordur (ör. parti detayındaki "Müşterilerdeki lisanslar" kartı).
+   */
+  lockedHolder?: 'customer';
   /**
    * Hesap ürününün alan şeması — YALNIZ tek ürüne daraltılmış listede anlamlı
    * (ürün detayı). Global listede satırlar farklı ürünlerden gelir → gönderilmez.
@@ -131,6 +148,7 @@ export function LicenseItemsTable({
   const [search, setSearch] = React.useState('');
   const [term, setTerm] = React.useState('');
   const [status, setStatus] = React.useState('');
+  const [holder, setHolder] = React.useState<string>(lockedHolder ?? '');
   const [sort, setSort] = React.useState<string>('created_desc');
   const [pageSize, setPageSize] = React.useState<number>(PAGE_SIZES[0]);
   const [page, setPage] = React.useState(1);
@@ -162,7 +180,7 @@ export function LicenseItemsTable({
   // Süzgeç/sıralama/sayfa boyutu değişince ilk sayfaya dön (aksi halde boş sayfada kalınır).
   React.useEffect(() => {
     setPage(1);
-  }, [term, status, sort, pageSize]);
+  }, [term, status, holder, sort, pageSize]);
 
   // Yarışan yanıtlar: yalnız EN SON isteğin sonucu ekrana yazılır (eski yanıt üzerine binmez).
   const reqId = React.useRef(0);
@@ -170,7 +188,16 @@ export function LicenseItemsTable({
     const id = ++reqId.current;
     let cancelled = false;
     setLoading(true);
-    fetchLicenseItemsAction({ productId, batchId, status, search: term, page, pageSize, sort })
+    fetchLicenseItemsAction({
+      productId,
+      batchId,
+      status,
+      holder: holder || undefined,
+      search: term,
+      page,
+      pageSize,
+      sort,
+    })
       .then((res) => {
         if (cancelled || id !== reqId.current) return;
         if (res.ok && res.page) {
@@ -189,7 +216,7 @@ export function LicenseItemsTable({
     return () => {
       cancelled = true;
     };
-  }, [productId, batchId, status, term, page, pageSize, sort, reloadKey]);
+  }, [productId, batchId, status, holder, term, page, pageSize, sort, reloadKey]);
 
   const reload = React.useCallback(() => setReloadKey((k) => k + 1), []);
 
@@ -352,6 +379,18 @@ export function LicenseItemsTable({
           onChange={setStatus}
           options={STATUS_OPTIONS}
         />
+        {/* Kapsam kontrolü yalnız KİLİTLİ DEĞİLKEN gösterilir: kilitli kullanımda
+            (parti detayındaki "Müşterilerdeki lisanslar" kartı) kapsamı başlık söyler,
+            operatörün onu kazara değiştirip listeyi anlamsızlaştırması istenmez. */}
+        {!lockedHolder && (
+          <ToolbarSelect
+            id={`${uid}-holder`}
+            label="Kim tutuyor"
+            value={holder}
+            onChange={setHolder}
+            options={HOLDER_OPTIONS}
+          />
+        )}
         <ToolbarSelect
           id={`${uid}-sort`}
           label="Sıralama"
@@ -483,18 +522,25 @@ export function LicenseItemsTable({
                   <EmptyState
                     icon={KeyRound}
                     title={
-                      term || status
-                        ? 'Bu süzgeçlerle kayıt bulunamadı.'
-                        : productId
-                          ? 'Bu ürüne henüz lisans girilmemiş.'
-                          : 'Henüz lisans yok.'
+                      // Kilitli kapsamda boş liste bir SONUÇTUR, süzgeç hatası değil:
+                      // "bu partiden müşterilerde anahtar kalmadı" demektir (hepsi
+                      // değiştirilmiş ya da hiç teslim edilmemiş) — öyle de yazar.
+                      lockedHolder === 'customer' && !term && !status
+                        ? 'Bu partiden müşterilerde anahtar kalmadı.'
+                        : term || status || holder
+                          ? 'Bu süzgeçlerle kayıt bulunamadı.'
+                          : productId
+                            ? 'Bu ürüne henüz lisans girilmemiş.'
+                            : 'Henüz lisans yok.'
                     }
                     description={
-                      term || status
-                        ? 'Aramayı veya durum süzgecini değiştirip tekrar deneyin.'
-                        : productId
-                          ? 'Yukarıdaki “Key / Stok İçe Aktar” bölümünden bu ürüne lisans ekleyebilirsiniz.'
-                          : 'Bir ürünün detay sayfasındaki “Key / Stok İçe Aktar” bölümünden lisans ekleyebilirsiniz.'
+                      lockedHolder === 'customer' && !term && !status
+                        ? 'Değiştirilecek bir şey yok: bu partinin anahtarlarından hiçbiri şu an bir müşterinin elinde değil.'
+                        : term || status || holder
+                          ? 'Aramayı veya süzgeçleri değiştirip tekrar deneyin.'
+                          : productId
+                            ? 'Yukarıdaki “Key / Stok İçe Aktar” bölümünden bu ürüne lisans ekleyebilirsiniz.'
+                            : 'Bir ürünün detay sayfasındaki “Key / Stok İçe Aktar” bölümünden lisans ekleyebilirsiniz.'
                     }
                   />
                 </TableCell>
@@ -852,7 +898,7 @@ function DeliveryCell({ row }: { row: LicenseInventoryRow }) {
             href={d.storeAdminUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="inline-flex items-center gap-1 rounded-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
             title={`${siteTypeLabel(d.siteType) || 'Mağaza'} panelinde aç`}
             aria-label={`Siparişi ${d.siteDomain} mağaza panelinde yeni sekmede aç`}
           >

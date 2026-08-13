@@ -280,6 +280,14 @@ export interface LicenseInventoryPage {
 export interface ListLicenseItemsParams {
   productId?: string;
   status?: string;
+  /**
+   * `'customer'` → yalnız CANLI ataması olan kalemler (assignment.status ∈ active|suspended),
+   * yani "şu anda müşterinin elinde olanlar". `status` süzgecinden AYRI bir eksendir: MAK
+   * anahtarı kısmen satılmışken hâlâ `status='available'` görünür, o yüzden "müşterilerde mi?"
+   * sorusu kalemin durumundan okunamaz. Parti geri çekildikten sonra "hangi anahtarlar hâlâ
+   * müşterilerde, hangilerini değiştirmem gerek" sorusunun cevabı bu süzgeçtir.
+   */
+  holder?: 'customer';
   search?: string;
   siteId?: string;
   batchId?: string;
@@ -1187,6 +1195,15 @@ export class StockService {
                      OR (li.status = 'available' AND NOT ${notExpiredCond('li')}))`
               : sql`li.status = ${status}::license_item_status`,
       );
+    }
+    // "Müşterilerde" süzgeci: kalemin CANLI (active|suspended) bir ataması var mı?
+    // 'suspended' de canlıdır — askı geri alınabilir, anahtar hâlâ o siparişe bağlıdır
+    // (H1 dersi: askıdaki atamayı "ölü" saymak bedava lisans üretiyordu).
+    if (params.holder === 'customer') {
+      conds.push(sql`EXISTS (
+        SELECT 1 FROM assignments a4
+        WHERE a4.license_item_id = li.id AND a4.status IN ('active', 'suspended')
+      )`);
     }
     // Site süzgeci: lisansın HERHANGİ bir ataması bu siteye aitse listede kalır (lateral
     // gösterimi de aynı siteye daraltılır → "site X'e teslim edilenler" tutarlı okunur).

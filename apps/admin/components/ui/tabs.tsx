@@ -40,7 +40,7 @@ export const TabsTrigger = React.forwardRef<
       ref={ref}
       className={cn(
         'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium text-muted-foreground transition-colors',
-        'hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        'hover:text-foreground',
         'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm',
         '[&_svg]:size-4 [&_svg]:shrink-0',
         className,

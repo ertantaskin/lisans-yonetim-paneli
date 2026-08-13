@@ -178,8 +178,9 @@ function BatchModeSegment({
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(m.value)}
             className={cn(
-              'flex-1 rounded-[0.3rem] px-3 py-1.5 text-xs font-medium outline-none transition-colors',
-              'focus-visible:ring-2 focus-visible:ring-ring/60',
+              // Odak göstergesi global `:focus-visible` outline'ıdır (globals.css) — buraya
+              // ayrıca halka eklemek göstergeyi ikizler ve kontrastı düşürür.
+              'flex-1 rounded-[0.3rem] px-3 py-1.5 text-xs font-medium transition-colors',
               active
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -985,7 +986,7 @@ export function ImportWorkbench({
             disabled={!selected}
             aria-expanded={batchOpen && Boolean(selected)}
             aria-controls="si-supply"
-            className="flex w-full items-start gap-3 rounded-xl px-5 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
+            className="flex w-full items-start gap-3 rounded-xl px-5 py-4 text-left outline-none disabled:cursor-not-allowed"
           >
             {batchOpen ? (
               <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />

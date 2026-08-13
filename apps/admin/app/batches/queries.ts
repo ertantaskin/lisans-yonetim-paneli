@@ -3,9 +3,13 @@ import { apiGet } from '../../lib/api';
 
 /**
  * Parti satırı (GET /v1/admin/batches yanıtı).
- * supplierName + product (sku/name) API tarafında JOIN ile getirilir;
- * unsoldCount/soldCount RAW SQL license_items batch_id sayımıdır.
- * NOT: Alan adları W2 API kontratıyla hizalanmalı (orkestratöre not düşüldü).
+ * supplierName + product (sku/name) API tarafında JOIN ile getirilir.
+ *
+ * SAYAÇLAR (bkz. api/supply-ops.service.ts `listBatches`): kalemin envanter DURUMU ile
+ * müşteride olup olmadığı AYRI eksenlerdir. Eski tek `soldCount` (= status<>'available')
+ * elle geçersiz kılınmış/iade edilmiş/değiştirilmiş kalemleri de "satılmış" sayıyordu.
+ * MAK anahtarı kısmen satılmışken hâlâ 'available' olduğu için kovalar TOPLANMAZ —
+ * `totalCount` ayrı gelir, ekran "toplam = stokta + müşteride + düşmüş" DEMEMELİ.
  */
 export interface BatchRow {
   id: string;
@@ -18,10 +22,16 @@ export interface BatchRow {
   /** 'active' | 'recalled' | 'voided' */
   status: string;
   qtyReceived: number;
-  /** Satılmamış (license_items status='available') adet — recall'da void edilir. */
+  /** Partiye kayıtlı toplam lisans kalemi. */
+  totalCount: number;
+  /** status='available' — geri çekmenin GEÇERSİZ KILACAĞI küme. */
   unsoldCount: number;
-  /** Satılmış/atanmış adet — recall'da değişim gerektirir (uyarı). */
-  soldCount: number;
+  /** Canlı ataması olan (active|suspended) — gerçekten müşterinin elinde. */
+  customerCount: number;
+  /** Aktif atamalı — otomatik toplu değiştirmeye aday (askıdakiler elle işlenir). */
+  replaceableCount: number;
+  /** Ne stokta ne müşteride: geçersiz/karantina/iade/değiştirilmiş/süresi geçmiş. */
+  deadCount: number;
   receivedAt: string;
   notes: string | null;
   createdAt: string;

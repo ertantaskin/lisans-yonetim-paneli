@@ -335,7 +335,7 @@ export default async function DashboardPage() {
                   <Link
                     key={d.productId}
                     href={`/stock/import?product=${d.productId}`}
-                    className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60"
+                    className="flex items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs outline-none transition-colors hover:bg-accent focus-visible:bg-accent"
                     title={`${d.name} — ${d.orders} siparişte toplam ${d.missing} lisans eksik. Tıklayınca Stok Girişi bu ürünle açılır.`}
                   >
                     <span className="max-w-[16rem] truncate font-medium text-foreground">{d.name}</span>

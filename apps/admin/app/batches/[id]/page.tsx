@@ -9,6 +9,7 @@ import {
   Package,
   PackagePlus,
   Truck,
+  Users,
 } from 'lucide-react';
 import { apiGet } from '../../../lib/api';
 import { Button } from '../../../components/ui/button';
@@ -53,7 +54,11 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
     notFound();
   }
 
-  const total = batch.unsoldCount + batch.soldCount;
+  // KOVALAR TOPLANMAZ (MAK): çok kullanımlı bir anahtar kısmen satılmışken hem stokta hem
+  // müşterilerde sayılır. Bu yüzden "kayıtlı lisans" API'nin verdiği TOPLAM kalemdir,
+  // kovaların toplamı DEĞİL — aksi halde MAK'lı partide sayfa kendi kendisiyle çelişirdi.
+  const total = batch.totalCount;
+  const recalled = batch.status === 'recalled';
 
   return (
     <div className="space-y-6">
@@ -123,7 +128,7 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
                 batchId={batch.id}
                 label={batch.label}
                 unsold={batch.unsoldCount}
-                sold={batch.soldCount}
+                customer={batch.customerCount}
               />
             )}
           </div>
@@ -145,16 +150,23 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
             },
             {
               icon: Boxes,
-              label: 'Satılmamış',
+              label: 'Stokta',
               value: batch.unsoldCount,
               tone: batch.unsoldCount === 0 ? 'default' : 'success',
-              hint: 'hâlâ stokta',
+              hint: 'satılabilir, geri çekmede iptal olur',
+            },
+            {
+              icon: Users,
+              label: 'Müşterilerde',
+              value: batch.customerCount,
+              tone: recalled && batch.customerCount > 0 ? 'warning' : 'default',
+              hint: 'canlı atama — çalışmaya devam ediyor',
             },
             {
               icon: KeyRound,
-              label: 'Satılmış',
-              value: batch.soldCount,
-              hint: 'teslim edilmiş / ölü',
+              label: 'Düşmüş',
+              value: batch.deadCount,
+              hint: 'iptal / karantina / iade / değiştirilmiş',
             },
             {
               icon: Package,
@@ -171,6 +183,31 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
           </p>
         )}
       </div>
+
+      {/* ── Müşterilerdeki anahtarlar (değişim karar listesi) ──
+          NEDEN AYRI KART: geri çekme YALNIZ stoğu geçersiz kılar; teslim edilmiş anahtarlara
+          dokunmaz çünkü bir kısmı çalışıyor olabilir. Operatörün ihtiyacı "hangileri hâlâ
+          müşterilerde" listesini görüp SATIR SATIR karar vermek — bu kart o iş listesidir ve
+          bir anahtar değiştirildikçe kendiliğinden kısalır (eski atama artık canlı değildir). */}
+      {batch.customerCount > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle icon={Users}>Müşterilerdeki lisanslar</CardTitle>
+            <CardDescription>
+              Bu partiden çıkmış ve <strong>şu anda müşterilerin elinde olan</strong>{' '}
+              {batch.customerCount} anahtar. {recalled ? 'Parti geri çekildi ama b' : 'B'}
+              unlar çalışmaya devam ediyor ve müşteri görmeye devam ediyor — otomatik
+              iptal edilmezler. Sorunlu olanı satırdaki{' '}
+              <strong>“Yeni anahtarla değiştir”</strong> ile yenileyin: müşteriye başka bir
+              partiden taze anahtar atanır, eski anahtar karantinaya gider ve bu listeden düşer.
+              Uygun stok yoksa işlem yapılmaz, müşteri boşta kalmaz.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LicenseItemsTable batchId={batch.id} lockedHolder="customer" />
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Partinin lisansları ── */}
       <Card>

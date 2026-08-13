@@ -231,7 +231,25 @@
   background-color: color-mix(in oklch, var(--foreground) 32%, transparent);
 }
 
-/* Tutarlı klavye odak halkası (WCAG AA, §17) */
+/* ── Klavye odak göstergesi — PANELİN TEK KAYNAĞI (WCAG 1.4.11, §17) ──────────
+ *
+ * KATMANSIZ OLMASI BİLİNÇLİ: Tailwind v4 tüm utility'leri `@layer utilities` içine koyar ve
+ * CSS Cascade L5'te katman sırası specificity'den ÖNCE değerlendirilir → katmansız bir author
+ * kuralı her utility'yi yener. Yani bileşenlerdeki `outline-none` bu kuralı KAPATAMAZ.
+ * (Tarayıcıda CSSOM ile ölçüldü: `.outline-none` ve `.focus-visible\:ring-2` → "utilities",
+ * bu kural → katmansız.)
+ *
+ * SONUÇ — BİLEŞENLER KENDİ HALKASINI EKLEMEMELİ. Eklendiğinde iki gösterge üst üste biniyordu
+ * (kenarlık + soluk hale + boşluk + bu outline ≈ 7px eş-merkezli süsleme) ve ikinci gösterge
+ * kontrastı DÜŞÜRÜYORDU: ölçüldü (oklch→sRGB→WCAG) `ring-ring/40` = 1.85:1 açık / 1.59:1 koyu,
+ * `ring-ring/60` = 2.68:1 / 2.20:1, `ring-sidebar-ring` = 2.48:1 açık — üçü de 3:1 eşiğinin
+ * ALTINDA. Bu outline ise 6.54:1 açık / 4.18:1 koyu ile eşiği rahat geçiyor. Bu yüzden halkalar
+ * kaldırıldı, outline TEK gösterge olarak bırakıldı.
+ *
+ * Rengi bir alan için değiştirmek gerekirse (ör. doğrulama hatası) halka EKLEME — o elemanda
+ * `--ring` değişkenini ez: `aria-[invalid=true]:[--ring:var(--destructive)]`. Kural değeri
+ * elemanın hesaplanan `--ring`'inden okur, böylece tek kural tüm durumları taşır.
+ */
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

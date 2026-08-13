@@ -94,6 +94,8 @@ export interface LicenseListParams {
   siteId?: string;
   batchId?: string;
   status?: string;
+  /** 'customer' → yalnız canlı ataması olanlar (müşterinin elindekiler). */
+  holder?: string;
   search?: string;
   page?: number;
   pageSize?: number;
@@ -146,6 +148,10 @@ export async function fetchLicenseItemsAction(
   if (params.siteId && UUID_RE.test(params.siteId)) qs.set('siteId', params.siteId);
   if (params.batchId && UUID_RE.test(params.batchId)) qs.set('batchId', params.batchId);
   if (params.status && STATUSES.includes(params.status)) qs.set('status', params.status);
+  // "Kim tutuyor" ekseni — envanter DURUMUNDAN ayrıdır (MAK anahtarı kısmen satılmışken
+  // hâlâ 'available' görünür). Geri çekilmiş partide "hangileri hâlâ müşterilerde" sorusu
+  // yalnız bununla cevaplanır.
+  if (params.holder === 'customer') qs.set('holder', 'customer');
 
   const search = String(params.search ?? '').trim().slice(0, 120);
   if (search) qs.set('search', search);
@@ -292,5 +298,47 @@ export async function bulkAdjustLicenseItemsAction(input: {
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
+  }
+}
+
+/**
+ * TESLİM EDİLMİŞ bir anahtarı müşteride YENİSİYLE değiştir (§4 proaktif değişim).
+ *
+ * NEDEN ENVANTERDEN: bir tedarikçi partisi geri çekildiğinde stoktakiler geçersiz kılınır ama
+ * müşterilerdeki anahtarlara DOKUNULMAZ — bir kısmı çalışıyor olabilir. Operatörün ihtiyacı
+ * "hangileri hâlâ müşterilerde" listesini görüp SATIR SATIR karar vermek. Bugüne dek tek yol
+ * her anahtar için ilgili siparişi tek tek açmaktı; artık aynı işlem listeden yapılır.
+ *
+ * AYNI UÇ, YENİ YÜZEY: `POST /v1/admin/assignments/:id/replace` (sipariş detayındakiyle
+ * BİREBİR aynı) → stok ön-kontrolü, tek transaction (added=0 ⇒ rollback ⇒ eski anahtar CANLI
+ * kalır), eski anahtar karantinaya, soyağacı `assignment_history`'ye yazılır. Burada iş kuralı
+ * TEKRARLANMAZ; MAK/çok-kullanımlı ürün API'de 400 ile reddedilir ve mesaj aynen gösterilir.
+ */
+export async function replaceDeliveredLicenseAction(input: {
+  assignmentId: string;
+  reason: string;
+  productId?: string;
+  orderId?: string;
+}): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const assignmentId = String(input?.assignmentId ?? '').trim();
+  if (!UUID_RE.test(assignmentId)) return { ok: false, error: 'Geçersiz atama kaydı.' };
+  const reason = String(input?.reason ?? '').trim();
+  if (!reason) return { ok: false, error: 'Değişim sebebi zorunludur (denetim kaydına yazılır).' };
+
+  try {
+    await apiPost(
+      `/v1/admin/assignments/${assignmentId}/replace`,
+      { reason: reason.slice(0, 500) },
+      await getActor(),
+    );
+    revalidateInventory(input?.productId);
+    revalidatePath('/quarantine');
+    revalidatePath('/batches');
+    // Parti detayı dinamik segment → sayfa şablonuyla tazelenir (sayaçlar güncellensin).
+    revalidatePath('/batches/[id]', 'page');
+    if (input?.orderId && UUID_RE.test(input.orderId)) revalidatePath(`/orders/${input.orderId}`);
+    return { ok: true, message: 'Yeni anahtar atandı — eski anahtar karantinaya alındı.' };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Değişim başarısız.' };
   }
 }

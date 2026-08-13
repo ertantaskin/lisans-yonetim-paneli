@@ -19,12 +19,14 @@ export function BatchRecallButton({
   batchId,
   label,
   unsold,
-  sold,
+  customer,
 }: {
   batchId: string;
   label: string;
+  /** Stoktaki (available) adet — geri çekme BUNLARI geçersiz kılar. */
   unsold: number;
-  sold: number;
+  /** Müşterilerdeki (canlı atamalı) adet — geri çekme bunlara DOKUNMAZ. */
+  customer: number;
 }) {
   const router = useRouter();
   const { confirm, dialog } = useConfirm();
@@ -33,14 +35,16 @@ export function BatchRecallButton({
   const [error, setError] = React.useState<string | null>(null);
 
   const run = async () => {
-    const details = [`Satılmamış ${unsold} birim geçersiz kılınacak (geri alınamaz).`];
-    if (sold > 0) {
-      details.push(`Satılmış ${sold} birim müşterilerde — bunlar için değişim gerekir.`);
-    }
+    const details = [
+      `Stoktaki ${unsold} anahtar geçersiz kılınacak — bu geri alınamaz.`,
+      customer > 0
+        ? `Müşterilerdeki ${customer} anahtara DOKUNULMAZ: çalışmaya devam eder ve müşteri görmeye devam eder. Hangisini değiştireceğinize aşağıdaki "Müşterilerdeki lisanslar" listesinden tek tek karar verirsiniz.`
+        : 'Bu partiden müşteride duran anahtar yok.',
+    ];
     const res = await confirm({
       title: `${label} partisi geri çekilecek`,
       description:
-        'Parti "geri çekildi" olur ve stoktaki anahtarları geçersiz kılınır. Teslim edilmiş anahtarlar otomatik değişmez; onları "Toplu Değiştir" ile yenilersiniz.',
+        'Parti "geri çekildi" durumuna geçer. Geri çekme YALNIZ stoğu etkiler — teslim edilmiş anahtarlar kendiliğinden iptal olmaz, çünkü çalışıyor olabilirler.',
       details,
       tone: 'danger',
       confirmLabel: 'Geri Çek',
@@ -62,9 +66,10 @@ export function BatchRecallButton({
       const out = await recallBatchAction(batchId, res.reason);
       if (out.ok) {
         setNote(
-          `${out.voided ?? 0} anahtar geçersiz kılındı.` +
+          `Stoktaki ${out.voided ?? 0} anahtar geçersiz kılındı.` +
             ((out.soldNeedingReplacement ?? 0) > 0
-              ? ` ${out.soldNeedingReplacement} teslim edilmiş anahtar değişim bekliyor.`
+              ? ` Müşterilerdeki ${out.soldNeedingReplacement} anahtar çalışmaya devam ediyor —` +
+                ' aşağıdaki listeden tek tek inceleyip gerekeni değiştirin.'
               : ''),
         );
         router.refresh();

@@ -23,9 +23,14 @@ export interface BulkReplaceResult {
 
 /** Geri çekilmiş partinin özet sonucu. */
 export interface RecallResult {
-  /** Satılmamış (available) iken 'voided'e çekilen adet. */
+  /** Stokta (available) iken 'voided'e çekilen adet. */
   voided: number;
-  /** Satılmış (available olmayan) — elle değiştirme gerektiren adet. */
+  /**
+   * AKTİF ataması olan — yani hâlâ müşterinin elinde ÇALIŞAN ve elle karar verilmesi gereken
+   * adet. (Yorum eskiden "available olmayan" diyordu; SQL hiçbir zaman öyle DEĞİLDİ —
+   * `EXISTS assignments.status='active'`. Yanlış yorum, `listBatches`'teki eski `soldCount`
+   * hatasının kaynağıydı: okuyanı "durumdan türet" sanısına itiyordu.)
+   */
   soldNeedingReplacement: number;
 }
 
@@ -69,10 +74,16 @@ export interface BatchRow {
   productId: string;
   productSku: string;
   productName: string;
-  /** batch_id üzerinden satılmamış (available) adet. */
+  /** Partideki TOPLAM lisans kalemi (aşağıdaki kovaların toplamı DEĞİL — bkz. MAK notu). */
+  totalCount: number;
+  /** `status='available'` — geri çekmenin GEÇERSİZ KILACAĞI küme. */
   unsoldCount: number;
-  /** batch_id üzerinden satılmış (available olmayan) adet. */
-  soldCount: number;
+  /** CANLI ataması olan (müşteride duran) kalem: assignment.status ∈ (active, suspended). */
+  customerCount: number;
+  /** Otomatik toplu değiştirmeye ADAY olan (aktif atamalı) kalem — bulkReplaceBatch ile birebir. */
+  replaceableCount: number;
+  /** Ne stokta ne müşteride: geçersiz kılınmış / karantina / iade / değiştirilmiş / süresi geçmiş. */
+  deadCount: number;
 }
 
 /**
@@ -90,16 +101,31 @@ export class SupplyOpsService {
   ) {}
 
   /**
-   * Parti listesi — tedarikçi adı + ürün sku/ad JOIN; batch_id sayımı ile satılmamış
-   * (available) / satılmış (available olmayan) adet. RAW SQL (batches W1'in dosyası).
+   * Parti listesi — tedarikçi adı + ürün sku/ad JOIN + kalem sayaçları. RAW SQL (batches
+   * W1'in dosyası).
    *
-   * BİLİNÇLİ İSTİSNA (G1 — "available" hizalaması buraya UYGULANMAZ): aşağıdaki iki sayaç
-   * "atanabilir stok" DEĞİL, "satılmış mı" ikili ayrımıdır ve `recallBatch`'in geri çekmede
-   * VOID edeceği kümeyle eşleşmek zorundadır (recall, süresi geçmiş available kalemi de
-   * void eder — doğrusu budur). Buraya `notExpiredCond` eklenirse ekran "3 satılmamış" der,
-   * geri çekme 5 kalem void eder; ayrıca iki kova (available / <> available) tüm partiyi
-   * bölmeyi bırakır (süresi geçmiş kalemler hiçbir kovaya girmez). Atanabilir stok sayısı
-   * ürün ekranlarından (products.list / stock.availableCount) okunur.
+   * SAYAÇ TANIMI (kullanıcı bulgusu — eski `sold_count` YANILTICIYDI): sayaç
+   * `status <> 'available'` idi, yani ELLE geçersiz kılınmış / karantinaya alınmış / iade
+   * edilmiş / değiştirilmiş / süresi geçmiş kalemlerin HEPSİNİ "satılmış" sayıyordu. Ekran
+   * "Satılmış 6 birim müşterilerde — bunlar için değişim gerekir" derken müşteride tek bir
+   * anahtar bile olmayabiliyordu; `canBulkReplace` de bu sayaca baktığı için değiştirilecek
+   * hiçbir şey yokken "Toplu Değiştir" sunuluyordu. Artık kova, kalemin DURUMUNDAN değil
+   * ATAMASINDAN türer:
+   *   - `unsoldCount`     : status='available'  → geri çekmenin void edeceği küme (DEĞİŞMEDİ).
+   *   - `customerCount`   : canlı ataması var (active|suspended) → gerçekten müşteride.
+   *   - `replaceableCount`: aktif ataması var → bulkReplaceBatch'in aday kümesiyle BİREBİR
+   *                         (askıya alınmış atama otomatik değiştirilmez; elle işlenir).
+   *   - `deadCount`       : ne stokta ne müşteride (voided/quarantined/revoked/replaced/expired).
+   *
+   * BİLİNÇLİ İSTİSNA (G1 — "available" hizalaması buraya UYGULANMAZ): `unsoldCount`
+   * "atanabilir stok" DEĞİL, `recallBatch`'in VOID edeceği kümedir (recall, süresi geçmiş
+   * available kalemi de void eder — doğrusu budur). Buraya `notExpiredCond` eklenirse ekran
+   * "3 stokta" der, geri çekme 5 kalem void eder. Atanabilir stok ürün ekranlarından okunur.
+   *
+   * MAK NOTU (kovalar TOPLAMI vermez, bilerek): çok-kullanımlı bir anahtar 500 hakkının 3'ü
+   * satılmışken hâlâ `status='available'`dır → aynı kalem HEM `unsoldCount` HEM
+   * `customerCount` içinde görünür. Bu yüzden `totalCount` ayrı sorulur; ekranlar
+   * "toplam = stokta + müşteride + düşmüş" ARİTMETİĞİ KURMAMALI.
    */
   /**
    * TEK parti (detay ekranı). Liste sorgusunun aynısını `id` ile daraltır — sayaç ve alan
@@ -126,8 +152,11 @@ export class SupplyOpsService {
       product_id: string;
       product_sku: string;
       product_name: string;
+      total_count: number;
       unsold_count: number;
-      sold_count: number;
+      customer_count: number;
+      replaceable_count: number;
+      dead_count: number;
     }>(this.db, sql`
       SELECT
         b.id,
@@ -141,19 +170,38 @@ export class SupplyOpsService {
         b.product_id,
         p.sku AS product_sku,
         p.name AS product_name,
-        coalesce(unsold.c, 0)::int AS unsold_count,
-        coalesce(sold.c, 0)::int AS sold_count
+        coalesce(c.total_c, 0)::int      AS total_count,
+        coalesce(c.unsold_c, 0)::int     AS unsold_count,
+        coalesce(c.customer_c, 0)::int   AS customer_count,
+        coalesce(c.replaceable_c, 0)::int AS replaceable_count,
+        coalesce(c.dead_c, 0)::int       AS dead_count
       FROM batches b
       LEFT JOIN suppliers s ON s.id = b.supplier_id
       JOIN products p ON p.id = b.product_id
       LEFT JOIN (
-        SELECT batch_id, count(*) AS c FROM license_items
-        WHERE status = 'available' GROUP BY batch_id
-      ) unsold ON unsold.batch_id = b.id
-      LEFT JOIN (
-        SELECT batch_id, count(*) AS c FROM license_items
-        WHERE status <> 'available' GROUP BY batch_id
-      ) sold ON sold.batch_id = b.id
+        SELECT
+          li.batch_id,
+          count(*) AS total_c,
+          count(*) FILTER (WHERE li.status = 'available') AS unsold_c,
+          count(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM assignments a
+            WHERE a.license_item_id = li.id AND a.status IN ('active', 'suspended')
+          )) AS customer_c,
+          count(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM assignments a
+            WHERE a.license_item_id = li.id AND a.status = 'active'
+          )) AS replaceable_c,
+          count(*) FILTER (WHERE li.status <> 'available' AND NOT EXISTS (
+            SELECT 1 FROM assignments a
+            WHERE a.license_item_id = li.id AND a.status IN ('active', 'suspended')
+          )) AS dead_c
+        FROM license_items li
+        WHERE li.batch_id IS NOT NULL
+          -- Tek parti isteniyorsa süzgeç ALT SORGUYA da iner: aksi halde /batches/[id]
+          -- her açılışta TÜM license_items'ı gruplayıp sonra tek satırı seçerdi.
+          AND ${onlyId ? sql`li.batch_id = ${onlyId}` : sql`true`}
+        GROUP BY li.batch_id
+      ) c ON c.batch_id = b.id
       WHERE ${onlyId ? sql`b.id = ${onlyId}` : sql`true`}
       ORDER BY b.received_at DESC;
     `);
@@ -169,8 +217,11 @@ export class SupplyOpsService {
       productId: r.product_id,
       productSku: r.product_sku,
       productName: r.product_name,
+      totalCount: Number(r.total_count),
       unsoldCount: Number(r.unsold_count),
-      soldCount: Number(r.sold_count),
+      customerCount: Number(r.customer_count),
+      replaceableCount: Number(r.replaceable_count),
+      deadCount: Number(r.dead_count),
     }));
   }
 

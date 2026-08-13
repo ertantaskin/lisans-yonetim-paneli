@@ -85,7 +85,7 @@ export const CommandInput = React.forwardRef<
             inputRef.current?.focus();
           }}
           aria-label="Aramayı temizle"
-          className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
         >
           <X className="size-3.5" aria-hidden />
         </button>

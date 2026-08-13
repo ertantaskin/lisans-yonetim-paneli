@@ -1,7 +1,9 @@
 'use client';
 import * as React from 'react';
-import { Ban, Pencil, ShieldAlert, Trash2 } from 'lucide-react';
+import { Ban, Pencil, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import {
+  replaceDeliveredLicenseAction,
   updateLicenseItemAction,
   voidLicenseItemAction,
   type LicenseInventoryRow,
@@ -18,6 +20,7 @@ import {
   SheetTitle,
 } from '../ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import { useConfirm } from '../ui/confirm';
 import { licenseItemStatusLabel } from '../../lib/labels';
 import type { PayloadFieldDef } from '../../lib/api';
 
@@ -37,7 +40,8 @@ export function editability(row: LicenseInventoryRow): { editable: boolean; reas
     return {
       editable: false,
       reason:
-        "Teslim edilmiş lisans. Değiştirmek için siparişteki 'Değiştir' işlemini kullanın.",
+        'Bu anahtar müşteride. İçeriğini düzenlemek yerine "Yeni anahtarla değiştir" ile' +
+        ' taze bir anahtar atayın (eski anahtar karantinaya gider, denetim izi kalır).',
     };
   }
   if (row.status !== 'available') {
@@ -72,6 +76,13 @@ export function LicenseItemActions({
   const [editOpen, setEditOpen] = React.useState(false);
   const [voidOpen, setVoidOpen] = React.useState(false);
   const { editable, reason: lockReason } = editability(row);
+
+  // MÜŞTERİDEKİ ANAHTAR → tek anlamlı işlem "yenisiyle değiştir" (§4 proaktif değişim).
+  // Bu dal ÖNCE gelir: geri çekilmiş bir partide operatör satır satır karar verirken
+  // devre dışı iki düğme yerine yapılabilecek TEK işlemi görmeli.
+  if (row.delivered && LIVE_ASSIGNMENT.has(row.delivered.assignmentStatus)) {
+    return <ReplaceDeliveredButton row={row} onDone={onDone} />;
+  }
 
   if (!editable) {
     return (
@@ -128,6 +139,112 @@ export function LicenseItemActions({
         onDone={onDone}
       />
       <VoidLicenseSheet row={row} open={voidOpen} onOpenChange={setVoidOpen} onDone={onDone} />
+    </div>
+  );
+}
+
+/**
+ * "Yeni anahtarla değiştir" — MÜŞTERİDEKİ bir anahtar için tek satırlık proaktif değişim.
+ *
+ * NEDEN BURADA (kullanıcı ihtiyacı): tedarikçi partisi geri çekildiğinde stoktakiler geçersiz
+ * kılınır, müşterilerdekilere DOKUNULMAZ — bir kısmı çalışıyor olabilir. Operatör "hangileri
+ * hâlâ müşterilerde" listesini süzüp SATIR SATIR karar vermek ister. Eskiden bunun tek yolu
+ * her anahtar için ilgili siparişi ayrı ayrı açmaktı.
+ *
+ * İŞ KURALI BURADA DEĞİL: aksiyon mevcut `POST /v1/admin/assignments/:id/replace` ucunu
+ * çağırır (sipariş detayındaki düğmeyle AYNI uç) — stok ön-kontrolü, tek transaction
+ * (yeni anahtar açılamazsa rollback ⇒ eski anahtar CANLI kalır), eski anahtar karantinaya,
+ * soyağacı `assignment_history`'ye. MAK/çok-kullanımlı üründe API 400 döner; düğme burada
+ * da kapatılır (iki katman) çünkü aynı paylaşımlı anahtarı yeniden atamak anlamsızdır.
+ */
+function ReplaceDeliveredButton({
+  row,
+  onDone,
+}: {
+  row: LicenseInventoryRow;
+  onDone: () => void;
+}) {
+  const { confirm, dialog } = useConfirm();
+  const [busy, setBusy] = React.useState(false);
+  const d = row.delivered!;
+  const isMulti = row.usageMode === 'multi';
+
+  const run = async () => {
+    const res = await confirm({
+      title: 'Bu anahtar yenisiyle değiştirilsin mi?',
+      description:
+        'Müşteriye BAŞKA bir partiden taze anahtar atanır; şu anki anahtar karantinaya alınır' +
+        ' ve bir daha satılmaz. Uygun stok yoksa işlem yapılmaz — müşteri boşta kalmaz.',
+      details: [
+        `Sipariş ${d.remoteOrderId} · ${d.customerEmail}`,
+        `Ürün: ${row.productName}`,
+        d.assignmentStatus === 'suspended'
+          ? 'Bu atama ASKIDA — değişimden sonra müşteri yeni anahtarla tekrar aktif olur.'
+          : 'Müşteri değişimden hemen sonra yeni anahtarı görür.',
+      ],
+      tone: 'danger',
+      confirmLabel: 'Değiştir',
+      reason: {
+        label: 'Değişim sebebi',
+        placeholder: 'ör. geri çekilen partiden geldi, müşteri "geçersiz anahtar" bildirdi',
+        required: true,
+        minLength: 3,
+        inputType: 'textarea',
+        hint: 'Denetim kaydına ve değişim geçmişine yazılır.',
+      },
+    });
+    if (!res) return;
+
+    setBusy(true);
+    try {
+      const out = await replaceDeliveredLicenseAction({
+        assignmentId: d.assignmentId,
+        reason: res.reason,
+        productId: row.productId,
+        orderId: d.orderId,
+      });
+      if (out.ok) {
+        toast.success(out.message);
+        onDone();
+      } else {
+        // API'nin gerçek mesajı gösterilir ("stok yok" ile "şu an atanamadı" ayrımı dahil).
+        toast.error(out.error);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (isMulti) {
+    const why =
+      'Çok kullanımlı (MAK) anahtar otomatik değiştirilemez — aynı paylaşımlı anahtar yeniden' +
+      ' atanırdı. Siparişten elle işleyin.';
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
+            <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${why}`}>
+              <RefreshCw aria-hidden /> Değiştir
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64">{why}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => void run()}
+        disabled={busy}
+        aria-label={`${d.remoteOrderId} siparişindeki anahtarı yenisiyle değiştir`}
+      >
+        <RefreshCw aria-hidden /> {busy ? 'Değişiyor…' : 'Yeni anahtarla değiştir'}
+      </Button>
+      {dialog}
     </div>
   );
 }

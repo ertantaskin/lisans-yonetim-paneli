@@ -91,7 +91,7 @@ export function NotificationBell() {
               onClick={() => refresh()}
               aria-label="Canlı bağlantı kesildi, yeniden deneniyor — şimdi yeniden dene"
               title="Canlı bağlantı kesildi, yeniden deneniyor — şimdi yeniden dene"
-              className="inline-flex size-8 items-center justify-center rounded-md text-warning outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/60 sm:hidden"
+              className="inline-flex size-8 items-center justify-center rounded-md text-warning outline-none transition-colors hover:bg-accent sm:hidden"
             >
               <WifiOff className="size-4" />
             </button>

@@ -109,7 +109,7 @@ function AbuseBadge({ count }: { count: number }) {
       <TooltipTrigger asChild>
         <span
           tabIndex={0}
-          className="inline-flex rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="inline-flex rounded-full"
         >
           <Badge variant={count >= ABUSE_HIGH ? 'danger' : 'warning'}>
             <TriangleAlert /> 90 günde {count} talep
@@ -242,7 +242,7 @@ function buildColumns(onOpen: (id: string) => void): ColumnDef<ReplacementRow>[]
           type="button"
           onClick={() => onOpen(row.original.id)}
           title={row.original.reason}
-          className="block max-w-[22rem] truncate text-left text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+          className="block max-w-[22rem] truncate text-left text-foreground underline-offset-2 hover:underline"
         >
           {row.original.reason || '—'}
         </button>
@@ -423,7 +423,7 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
               title={s.hint}
               className={cn(
                 'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40',
+                'focus-visible:outline-none',
                 scope === s.key
                   ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',

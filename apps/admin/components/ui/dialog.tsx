@@ -53,7 +53,7 @@ export const DialogContent = React.forwardRef<
     >
       {children}
       {!hideClose && (
-        <DialogPrimitive.Close className="absolute right-3.5 top-3.5 rounded-sm text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <DialogPrimitive.Close className="absolute right-3.5 top-3.5 rounded-sm text-muted-foreground opacity-70 transition-opacity hover:opacity-100">
           <X className="size-4" />
           <span className="sr-only">Kapat</span>
         </DialogPrimitive.Close>

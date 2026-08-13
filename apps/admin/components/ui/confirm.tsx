@@ -60,7 +60,15 @@ export interface ConfirmOptions {
   title: string;
   /** Tek cümlelik açıklama — ne olacağını ve geri alınabilir mi olduğunu söyler. */
   description?: React.ReactNode;
-  /** Serbest içerik: liste, özet tablosu, uyarı bandı… ("neyi onaylıyorum?"). */
+  /**
+   * Serbest içerik: liste, özet tablosu, uyarı bandı… ("neyi onaylıyorum?").
+   *
+   * DİZİ geçirmek DESTEKLENİR ve madde listesi olarak basılır. Bu bilinçli: çağıranların
+   * çoğu `['şu olacak', 'bu olacak']` gibi cümleler biriktiriyor ve React bir diziyi
+   * ayraçsız BİTİŞİK metin düğümleri olarak bastığı için ekranda "…geri alınamaz).Satılmış
+   * 6 birim…" gibi birleşik cümle çıkıyordu; üstelik metin düğümleri `space-y-*`
+   * (`> * + *`) seçicisine girmediği için altındaki alanla arasında boşluk da kalmıyordu.
+   */
   details?: React.ReactNode;
   /** `danger` → kırmızı onay düğmesi + uyarı ikonu; odak İPTAL'de başlar. */
   tone?: 'default' | 'danger';
@@ -162,7 +170,17 @@ export function useConfirm() {
 
           {(opts.details || opts.reason) && (
             <div className="-mr-1 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 text-sm">
-              {opts.details}
+              {/* Dizi → madde listesi; tekil içerik → sarmalayıcı kutu. İkisi de ELEMENT
+                  döndürür; çıplak metin düğümü bırakılmaz, yoksa `space-y-3` atlanır. */}
+              {Array.isArray(opts.details) ? (
+                <ul className="list-disc space-y-1 pl-5 text-foreground/90 marker:text-muted-foreground">
+                  {opts.details.map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              ) : (
+                opts.details != null && <div className="text-foreground/90">{opts.details}</div>
+              )}
               {opts.reason && (
                 <div className="space-y-1.5">
                   <label

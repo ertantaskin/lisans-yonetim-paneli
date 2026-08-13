@@ -120,6 +120,12 @@ const ListLicenseItemsQuery = z.object({
   siteId: optionalUuid,
   batchId: optionalUuid,
   status: z.union([z.literal(''), z.enum(LICENSE_ITEM_STATUSES)]).optional(),
+  /**
+   * Kalemi KİM tutuyor? `status` kalemin envanter durumudur; bu ise ATAMA tarafıdır.
+   * İkisi ayrı olmak zorunda: MAK/çok-kullanımlı bir anahtar 500 hakkının 3'ü satılmışken
+   * hâlâ `status='available'`dır — "müşterilerde mi?" sorusu durumdan okunamaz.
+   */
+  holder: z.union([z.literal(''), z.enum(['customer'])]).optional(),
   search: z.string().max(120).optional(),
   page: optionalDigits,
   // Servis 25/50/100'e KIRPAR (en yakın izinli) — burada yalnız rakam olduğu doğrulanır.
@@ -199,6 +205,7 @@ export class StockController {
         siteId: query.siteId || undefined,
         batchId: query.batchId || undefined,
         status: query.status || undefined,
+        holder: query.holder || undefined,
         search: query.search || undefined,
         page: query.page ? Number(query.page) : undefined,
         pageSize: query.pageSize ? Number(query.pageSize) : undefined,

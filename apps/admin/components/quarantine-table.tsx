@@ -235,7 +235,7 @@ const columns: ColumnDef<QuarantineItem>[] = [
                 href={storeAdminUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 title="Mağaza panelinde aç"
                 aria-label="Siparişi mağaza panelinde aç (yeni sekme)"
               >
@@ -1040,7 +1040,7 @@ export function QuarantineTable({
                   type="button"
                   onClick={chip.remove}
                   aria-label={`${chip.label} süzgecini kaldır`}
-                  className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                 >
                   {chip.label}
                   <X className="size-3" aria-hidden />
@@ -1061,7 +1061,7 @@ export function QuarantineTable({
                 <button
                   type="button"
                   onClick={reset}
-                  className="rounded-sm text-foreground underline underline-offset-4 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  className="rounded-sm text-foreground underline underline-offset-4 hover:no-underline"
                 >
                   Yerel süzgeçleri temizle
                 </button>

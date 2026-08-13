@@ -94,7 +94,7 @@ export function SiteHeader() {
           onClick={() => window.dispatchEvent(new Event('open-command'))}
           aria-label="Ara"
           title="Ara (Ctrl+K)"
-          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 sm:w-52 sm:justify-start sm:gap-2 sm:px-2.5 sm:text-xs"
+          className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground sm:w-52 sm:justify-start sm:gap-2 sm:px-2.5 sm:text-xs"
         >
           <Search className="size-4 shrink-0 sm:size-3.5" />
           <span className="hidden flex-1 text-left sm:inline">Ara…</span>

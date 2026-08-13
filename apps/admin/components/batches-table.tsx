@@ -112,16 +112,27 @@ const baseColumns: ColumnDef<BatchRow>[] = [
   },
   {
     accessorKey: 'unsoldCount',
-    meta: { title: 'Satılmamış' },
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Satılmamış" />,
+    meta: { title: 'Stokta' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Stokta" />,
     cell: ({ row }) => <span className="tabular-nums">{row.original.unsoldCount}</span>,
   },
   {
-    accessorKey: 'soldCount',
-    meta: { title: 'Satılmış' },
-    header: ({ column }) => <DataTableColumnHeader column={column} title="Satılmış" />,
+    accessorKey: 'customerCount',
+    meta: { title: 'Müşterilerde' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Müşterilerde" />,
+    cell: ({ row }) => <span className="tabular-nums">{row.original.customerCount}</span>,
+  },
+  {
+    accessorKey: 'deadCount',
+    meta: { title: 'Düşmüş' },
+    header: ({ column }) => <DataTableColumnHeader column={column} title="Düşmüş" />,
     cell: ({ row }) => (
-      <span className="tabular-nums text-muted-foreground">{row.original.soldCount}</span>
+      <span
+        className="tabular-nums text-muted-foreground"
+        title="Geçersiz kılınmış, karantinaya alınmış, iade edilmiş, değiştirilmiş ya da süresi geçmiş kalemler."
+      >
+        {row.original.deadCount}
+      </span>
     ),
   },
   {
@@ -142,9 +153,15 @@ function isRecallable(status: string) {
   return status === 'active';
 }
 
-/** Geri çekilmiş partide satılmış kalem varsa toplu değiştirme sunulabilir (§13). */
+/**
+ * Toplu değiştirme YALNIZ geri çekilmiş partide ve GERÇEKTEN aday varsa sunulur (§13).
+ * `replaceableCount` = aktif atamalı kalem = API'deki `bulkReplaceBatch` aday kümesi.
+ * Eskiden `soldCount` (= status<>'available') bakılıyordu: elle geçersiz kılınmış bir
+ * partide değiştirilecek hiçbir şey yokken menüde "Toplu Değiştir" çıkıyor, tıklanınca
+ * "0/0 değiştirildi" dönüyordu.
+ */
 function canBulkReplace(batch: BatchRow) {
-  return batch.status === 'recalled' && batch.soldCount > 0;
+  return batch.status === 'recalled' && batch.replaceableCount > 0;
 }
 
 /** Yalnız aktif partiye yeni stok girilebilir (geri çekilmiş/iptal partiye ekleme anlamsız). */
@@ -233,7 +250,13 @@ function BatchRowActions({
 }
 
 /** Recall başarı bildirimi (bir kez). */
-type RecallNotice = { label: string; voided: number; soldNeedingReplacement: number };
+type RecallNotice = {
+  label: string;
+  /** Sonuç bandındaki "parti detayından tek tek karar ver" bağlantısı için. */
+  batchId: string;
+  voided: number;
+  soldNeedingReplacement: number;
+};
 
 /** Sebep-girişli recall modalı. Native Dialog primitifi yok → basit overlay (support-table deseni). */
 function RecallDialog({
@@ -267,6 +290,7 @@ function RecallDialog({
       if (res.ok) {
         onDone({
           label: batch.label,
+          batchId: batch.id,
           voided: res.voided ?? 0,
           soldNeedingReplacement: res.soldNeedingReplacement ?? 0,
         });
@@ -310,19 +334,23 @@ function RecallDialog({
           <TriangleAlert />
           <div className="min-w-0 flex-1">
             <AlertDescription>
-              Satılmamış {batch.unsoldCount} birim iptal edilecek (geri alınamaz).
-              {batch.soldCount > 0 && (
-                <> Satılmış {batch.soldCount} birim değişim gerektirir.</>
+              Stoktaki {batch.unsoldCount} anahtar geçersiz kılınacak (geri alınamaz).
+              {batch.customerCount > 0 && (
+                <>
+                  {' '}
+                  Müşterilerdeki {batch.customerCount} anahtara <strong>dokunulmaz</strong> —
+                  çalışmaya devam eder; hangisini değiştireceğinize tek tek karar verirsiniz.
+                </>
               )}{' '}
               {/* Geri alınamaz karar öncesi etkilenecek anahtarlara bakma yolu (yeni sekme —
                   modaldaki sebep metni kaybolmasın). */}
               <Link
-                href={`/products/${batch.productId}#lisans-envanteri`}
+                href={`/batches/${batch.id}`}
                 target="_blank"
                 rel="noreferrer"
                 className="underline underline-offset-4"
               >
-                Ürünün lisanslarını incele
+                Bu partinin lisanslarını incele
               </Link>
             </AlertDescription>
           </div>
@@ -424,8 +452,21 @@ function BulkReplaceDialog({
           <TriangleAlert />
           <div className="min-w-0 flex-1">
             <AlertDescription>
-              Bu partiye ait satılmış {batch.soldCount} birimin aktif atamaları iptal edilip
-              stoktan yenisiyle değiştirilecek. Stok yetmeyen kalemler atlanır (mevcut atama korunur).
+              Müşterilerdeki {batch.replaceableCount} anahtar geri alınıp yerine BAŞKA bir
+              partiden taze anahtar atanacak. Stok yetmeyen kalemler atlanır (mevcut anahtar
+              korunur — müşteri boşta kalmaz).
+              {batch.customerCount > batch.replaceableCount && (
+                <>
+                  {' '}
+                  Askıya alınmış {batch.customerCount - batch.replaceableCount} anahtar bu işleme
+                  DAHİL DEĞİL — askıyı bilerek siz koydunuz, elle işleyin.
+                </>
+              )}{' '}
+              Tek tek karar vermek isterseniz{' '}
+              <Link href={`/batches/${batch.id}`} className="underline underline-offset-4">
+                parti detayındaki listeyi
+              </Link>{' '}
+              kullanın.
             </AlertDescription>
           </div>
         </Alert>
@@ -511,9 +552,20 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
           <div className="min-w-0 flex-1">
             <AlertTitle>Parti geri çekildi — {notice.label}</AlertTitle>
             <AlertDescription>
-              Satılmamış {notice.voided} birim iptal edildi.
+              Stoktaki {notice.voided} anahtar geçersiz kılındı.
               {notice.soldNeedingReplacement > 0 && (
-                <> Satılmış {notice.soldNeedingReplacement} birim değişim/telafi gerektiriyor.</>
+                <>
+                  {' '}
+                  Müşterilerdeki {notice.soldNeedingReplacement} anahtar çalışmaya devam ediyor —
+                  hangisini değiştireceğinize{' '}
+                  <Link
+                    href={`/batches/${notice.batchId}`}
+                    className="underline underline-offset-4"
+                  >
+                    parti detayından
+                  </Link>{' '}
+                  tek tek karar verin.
+                </>
               )}
             </AlertDescription>
           </div>

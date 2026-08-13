@@ -8,15 +8,19 @@ import { cn } from '../../lib/utils';
  * Notlar:
  * - `dark:[color-scheme:dark]`: date/time/number gibi native kontrollerin tarayıcı-çizimli
  *   parçaları (takvim ikonu, sayı okları) koyu temada beyaz-üstüne-beyaz kalıyordu.
- * - `aria-invalid`: doğrulama hatasında kenarlık/halka kırmızıya döner (renk TEK sinyal değil —
- *   hata metni de gösterilir).
+ * - `aria-invalid`: doğrulama hatasında kenarlık VE odak outline'ı kırmızıya döner (renk TEK
+ *   sinyal değil — hata metni de gösterilir).
+ * - ODAK HALKASI YOK (bilinçli): odak göstergesi `globals.css`'teki katmansız `:focus-visible`
+ *   kuralıdır ve bileşen `outline-none`'ını zaten yener. Buraya bir `ring-*` eklemek göstergeyi
+ *   ikizler ve ölçülen kontrastı düşürür (`ring-ring/40` = 1.85:1, eşik 3:1). Kırmızı odak
+ *   `--ring` değişkenini ezerek elde edilir — halka eklenerek değil.
  */
 export const controlBase = cn(
-  'w-full rounded-md border border-border bg-background text-sm text-foreground shadow-sm outline-none',
+  'w-full rounded-md border border-border bg-background text-sm text-foreground shadow-sm',
   'transition-[color,box-shadow,border-color] placeholder:text-muted-foreground',
   'selection:bg-primary selection:text-primary-foreground dark:[color-scheme:dark]',
-  'focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
-  'aria-[invalid=true]:border-destructive aria-[invalid=true]:focus-visible:ring-destructive/30',
+  'focus-visible:border-ring',
+  'aria-[invalid=true]:border-destructive aria-[invalid=true]:[--ring:var(--destructive)]',
   'disabled:cursor-not-allowed disabled:bg-muted/40 disabled:opacity-60',
 );
 
@@ -65,12 +69,12 @@ export const selectClass = cn(controlBase, 'h-9 cursor-pointer px-3');
 
 /**
  * Native <input type="checkbox"> tek-kaynak stili. `accent-primary` koyu temada açık bir
- * dolgu + beyaz tik üretip kontrastı düşürüyordu; `accent-*` yerine tema değişkeni + görünür
- * odak halkası kullanılır (klavye ile gezinen operatör kutuyu kaybetmesin).
+ * dolgu + beyaz tik üretip kontrastı düşürüyordu; `accent-*` yerine tema değişkeni kullanılır.
+ * Odak göstergesi global `:focus-visible` outline'ıdır (bkz. `controlBase` notu) — burada
+ * DÖRT bant üst üste biniyordu: zemin-renkli offset halkası + soluk halka + boşluk + outline.
  */
 export const checkboxClass = cn(
   'size-4 shrink-0 cursor-pointer rounded border-border accent-[var(--color-primary)]',
   'dark:[color-scheme:dark]',
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background',
   'disabled:cursor-not-allowed disabled:opacity-50',
 );
