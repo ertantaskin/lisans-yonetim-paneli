@@ -1134,6 +1134,52 @@ siparişlerde 'Lisans bilgileriniz şu an görüntülenemiyor'" dedi.
   /health 200 v1.0.0, api+admin **healthy**. **Kalan (ops, kod değil):** otomatik+offsite yedek YOK
   (kritik — MASTER_KEY kopyası dahil) · dışarıdan izleme/alarm yok · firewall/fail2ban · kalıcı domain.
 
+**STOK GİRİŞİ YENİDEN TASARIMI — tek ekranda tedarik bilgisi (commit c202636, CANLI prod+dev, migration YOK):**
+Kullanıcı "Key/Stok hesap İçe Aktar karışık; eklerken hangi tarihin partisi, tedarikçiyi vs seçmek mantıklı
+değil mi" dedi. **ÖLÇÜLDÜ:** bu bilgiyi girmek **4 ekran/6 adım** sürüyordu (Tedarikçi → Satın Alma Emri →
+Teslim Al → Partiler → ürün detayı → yapıştır) ve **alım tarihi hiçbir formda girilemiyordu**
+(`batches.received_at = now()`); parti yalnız SEÇİLEBİLİYOR, oluşturulamıyordu (tek yol PO teslim almak).
+3 keşif + 3 tasarım ajanı → 7 ayrık-dosya işçi.
+- **Yeni `/stock/import`** (tek sayfa): Ürün · **Tedarik bilgisi (katlanır)** · Anahtarlar + canlı önizleme rayı.
+  Tedarikçi (listede yoksa **adıyla oluşturulur**) + **alım tarihi** + parti etiketi + birim maliyet (**LİRA**
+  girilir, canlı toplam; `unitCostCents` kuruş/lira karışıklığı gerçek risk) AYNI istekte gider → API **TEK
+  transaction**'da `received` PO + parti açar, maliyeti lisanslara snapshot'lar. Hesap ürünlerinde **sütunlu
+  tablo** varsayılan (Excel yapıştırma, ayraç otomatik, başlık atlanır), ham JSON "Gelişmiş" sekmesinde.
+  **.txt/.csv dosya** tarayıcıda okunur (~700 KB kapısı — Fastify bodyLimit 1 MiB, 10.000 satırdan ÖNCE çarpılır).
+  Sol menü + `/stock` + `/pending` + `/batches` derin bağlantıları; eski `import-stock-form.tsx` SİLİNDİ.
+- **Sözleşme:** `ImportBody.newBatch?` (`batchId` ile karşılıklı dışlayıcı) `{supplierId?|supplierName?, label,
+  receivedAt?, unitCostCents?, currency?, notes?}` — **adet alanı YOK**. `import(...)` 6. opsiyonel arg (pozisyonel
+  sıra korundu; `load/*.k6.js` ve mevcut testler kırılmadı). `resolveBatchForImport` artık `exec` alır (tx içinde
+  oluşturulan partiyi görebilsin + legacy yolda TOCTOU kapandı). `autoCompleteProduct` + BullMQ enqueue **tx DIŞINDA**
+  kaldı (tx'e alınsaydı SKIP LOCKED commit edilmemiş satırları görmez → `autoCompleted` hep 0; `exec` ile thread
+  edilseydi `deferEffects` yüzünden teslimat maili + webhook HİÇ gitmezdi; ayrıca havuz max:10 ile açlık).
+- **KARARLAR (3 ajan çelişti):** parti adedi = **gerçekten girilen kayıt** (beyan DEĞİL — mükerrerler önceki
+  partide sayıldı, tekrar saymak `bySupplier` harcamasını ÇİFT gösterirdi) · auto-PO **`ordered_at=NULL`**
+  (`avgLeadDays=avg(received_at−ordered_at)`; eşitlemek KPI'ı sıfıra çeker) · tedarikçisiz+maliyetli → **400** ·
+  hepsi mükerrer → **409 + tam rollback** (hayalet emir yok) · hepsi reddedildi → parti/PO yaratılmaz ·
+  `receivedAt` **[2000-01-01, now+24s]** (gelecek tarih `byMonth`'a kalıcı hayalet ay yazardı) · etiket çakışması
+  409 DEĞİL, `labelDuplicate` uyarısı · auto-PO/parti notunda **`AUTO_RECEIPT_NOTE_PREFIX='[oto-giris]'`** →
+  `/purchase-orders`'da "Otomatik" rozeti + o satırda "Teslim Al" zaten `remaining=0` ile kapalı.
+- **GÜVENLİK (Excel yapıştırmanın getirdiği):** `serializeAccountPayload` değerleri `trim()` ETMİYOR ve şema-dışı
+  sütunu SESSİZCE atıyordu → NBSP/akıllı tırnaklı parola olduğu gibi şifrelenip **müşteriye YANLIŞ gider** (panelde
+  maskeli, operatör göremez) + `payload_hash` farklılaşıp **dedupe düşer** (aynı hesap iki müşteriye). Yeni
+  `normalizeFieldValue` (NFC·BOM·NBSP·akıllı tırnak·sıfır-genişlik·trim) + bilinmeyen anahtar reddi (mesaj anahtar
+  ADINI taşır, **DEĞERİ ASLA**). Mevcut hash'ler etkilenmez (yalnız yeni yazımlar).
+- **Yol boyunca:** pino `redact` `req.body.payload` diyordu, import gövdesi `items[].payload` → **anahtarlar loga
+  sızabilirdi** (wildcard eklendi, runtime smoke) · import sonrası `/batches`+`/purchase-orders` revalidate
+  edilmiyordu · `previewStockAction` `getActor()` geçirmiyordu · PO `unitCostCents` üst sınırsızdı (int4 → 500) ·
+  `cleanupByTag` batches/PO/suppliers'a dokunmuyordu (yeni testler `afterAll`'da FK ihlaliyle patar, `costs`
+  testini kirletirdi) · kenar menü aktif öğesi düz prefix (en-uzun eşleşmeye çevrildi) · breadcrumb ham "import".
+- **Doğrulama:** typecheck 4/4 + check-use-server (21/68) · shared **34/34 mutasyonla kanıtlı** · api birim 72/72 ·
+  admin build (`/stock/import` 19 kB) · VPS izole test DB **entegrasyon 178/178 (+18) + yarış 3/3** · **dev E2E
+  gerçek veriyle:** kuru çalıştırma "3 kabul/1 mükerrer, parti OLUŞTURULMADI" → DB'de 0 yazım; gerçek giriş → PO
+  `received` qty **3** (beyan 4 değil) `ordered_at NULL` `received_at 12.08.2026`, parti 3 adet, 3 lisansta 1250
+  kuruş snapshot, **`byMonth` 2026-08 = 37,50 ₺**, valuation kapsanamayan **0**, "Otomatik" rozeti · prod deploy
+  (rollback'li) → `/health` 200 v1.0.0, 136 rota, boot hatası 0.
+  **NOT (tarayıcı paneli):** `loading.tsx`'i olan TÜM rotalar (dokunmadığım `/stock` dahil) bu panelin ilk
+  yüklemesinde iskelette takılı kalıyor — React akış tamamlama script'i (`$RC`) çalışmıyor. Sunucu tam HTML +
+  script gönderiyor; istemci gezinmesinde sayfa kusursuz açılıyor. Panel-tarayıcı sınırı, kod kusuru değil.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

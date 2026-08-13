@@ -14,6 +14,57 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Stok girişi yeniden tasarımı: tek ekranda tedarikçi + alım tarihi + maliyet (migration YOK)
+
+Kullanıcı: *"Key/Stok hesap İçe Aktar işlemleri biraz karışık geldi… eklerken seçmek mantıklı
+değil mi hangi tarihin partisi olduğunu, tedarikçiyi vs."*
+
+**Ölçülen durum:** "12 Ağustos'ta Acme'den aldım" bilgisini girmek **4 ekran / 6 adım** sürüyordu
+(Tedarikçi → Satın Alma Emri → Teslim Al → Partiler → ürün detayı → yapıştır) ve **alım tarihi
+hiçbir formda girilemiyordu** (`batches.received_at` sunucuda `now()` oluyordu). İçe aktarma formu
+partiyi yalnız *seçtiriyordu*; parti oluşturmanın tek yolu satın alma emri teslim almaktı. Üstelik
+form "Parti… normalde boş bırakın" diyordu, ama boş bırakılan girişlerin maliyeti raporlarda
+**kalıcı olarak** "kapsanamayan" kalıyordu (snapshot import anında yazılır, bir daha düzelmez).
+
+**Yeni `/stock/import` — tek sayfa:** solda Ürün · Tedarik bilgisi (katlanır, isteğe bağlı) ·
+Anahtarlar; sağda canlı önizleme rayı. Tedarikçi (listede yoksa adı yazılarak oluşturulur), **alım
+tarihi**, parti etiketi ve birim maliyet (**lira** girilir, canlı toplam gösterilir) anahtarlarla
+aynı istekte gider; API **tek transaction**'da `received` bir satın alma emri + partiyi açar ve
+maliyeti lisans kayıtlarına snapshot'lar. Hesap ürünlerinde **sütunlu tablo** varsayılan (Excel/
+Sheets'ten yapıştırma; sekme/`;`/`,` otomatik algılanır, başlık satırı atlanır), ham JSON
+"Gelişmiş" sekmesine taşındı. **.txt/.csv dosya yükleme** (tarayıcıda okunur, sır sunucu loguna
+düşmez). Sol menüye, `/stock` başlığına, `/pending` ve `/batches` derin bağlantılarına eklendi;
+eski tek giriş noktası (`/products/[id]` formu) bu ekrana yönlendiren kompakt bir karta indi.
+
+**Alınan üç karar (tasarım ajanları çelişti):**
+- **Parti adedi = gerçekten girilen kayıt sayısı**, operatörün beyanı değil. Mükerrer atlanan
+  anahtarlar zaten önceki bir partide sayılmıştır; bu partide tekrar saymak tedarikçi harcamasını
+  **çift** gösterirdi. Sonuç: formda adet alanı yok, sapma olursa sonuçta açıkça yazılır.
+- Otomatik emirde **`ordered_at = NULL`** — `avgLeadDays = avg(received_at − ordered_at)` olduğu
+  için eşitlemek her geçmişe dönük girişte 0 gün ekleyip tedarikçi KPI'ını sessizce sıfıra çekerdi.
+- **Tedarikçisiz + maliyetli giriş → 400.** Maliyeti sessizce düşürmek, giderdiğimiz hatanın kendisi.
+- Girilen anahtarların **tamamı mükerrerse → 409 + tam rollback** (0 adetli hayalet emir/boş parti yok).
+
+**Güvenlik — Excel yapıştırmanın getirdiği risk kapatıldı:** `serializeAccountPayload` değerleri
+`trim()` etmiyor ve şemada olmayan sütunu sessizce atıyordu. Sonuç: NBSP/akıllı tırnak taşıyan bir
+parola olduğu gibi şifrelenip **müşteriye yanlış gidiyor** (panelde maskeli olduğu için operatör
+göremiyor) ve `payload_hash` farklılaştığı için **dedupe devre dışı** kalıyordu (aynı hesap iki
+müşteriye). `normalizeFieldValue` (NFC · BOM · NBSP · akıllı tırnak · sıfır-genişlik · trim) +
+bilinmeyen anahtar reddi eklendi — ret mesajı anahtar **adını** taşır, **değerini asla**.
+
+**Yol boyunca kapatılan sessiz kusurlar:** pino `redact` listesi `req.body.payload` diyordu ama
+import gövdesi `items[].payload` — lisans anahtarları **loga sızabilirdi** · import sonrası
+`/batches` ve `/purchase-orders` revalidate edilmiyordu (bayat sayaç) · `previewStockAction`
+aktör geçirmiyordu · satın alma emri birim maliyetinde üst sınır yoktu (int4 taşması → 500) ·
+`cleanupByTag` batches/purchase_orders/suppliers'a dokunmuyordu (yeni testler `afterAll`'da FK
+ihlaliyle patlar, maliyet testini kirletirdi) · kenar menü aktif öğesi düz prefix eşleşmesi
+kullanıyordu (`/stock/import`'ta iki öğe birden aktif) · breadcrumb ham "import" basıyordu.
+
+Doğrulama: typecheck 4/4 + check-use-server · shared 34/34 (mutasyonla kanıtlandı) · api birim
+72/72 · **entegrasyon 178/178 (+18 yeni) + yarış 3/3** · dev'de gerçek veriyle uçtan uca (kuru
+çalıştırma hiçbir şey yazmadı; gerçek girişte emir `received`/adet 3/`ordered_at` NULL, parti
+12.08.2026, `byMonth` 2026-08 = 37,50 ₺, değerlemede kapsanamayan 0, "Otomatik" rozeti).
+
 ### UI/UX bağlam denetimi: çok siteli görünürlük + held sipariş körlüğü (36 bulgu, migration YOK)
 
 Kullanıcı: *"/pending'de hangi site olduğu belirtilmiyor, çok siteli yönetimde karışıklık;
