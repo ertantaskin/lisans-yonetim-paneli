@@ -1433,3 +1433,64 @@ bildirdi. 4 lensli keşif + 3 lensli çekişmeli doğrulama (kendi değişiklikl
   `reloadAfterMutation` içindeki `reload()`'u kendisiyle değiştirip sonsuz özyineleme üretti (okuyarak
   yakalandı) · `sql` şablonu içinde backtick kullanıp template'i erken kapattım · yeni testte
   `createSite(db, crypto, opts)` imzasını yanlış çağırdım (izole DB'de 2 test düştü).
+
+**TEDARİKÇİ DEĞİŞİM FİŞLERİ — kusurlu anahtarı bildir, süreci takip et (commit 84477ba→70022e9,
+CANLI prod+dev, migration 0033):** Kullanıcı: *"karantinada geçersiz kılınan lisansları liste halinde
+veriyorsun; partiden hatalı çıkanları tedarikçiye değişime gönderiyorum, gün sonunda/tarih bazlı Z
+raporu alıp indirebilmeliyim; süreç kapsamlı, temiz, karışık olmadan ilerlemeli — istasyon gibi."*
+3 keşif ajanı + kullanıcı kararları (fiş+kalem sonucu · karantina dönüşsün · Z raporu) ile yapıldı.
+- **DOĞRULANAN BOŞLUK:** "bu kusurlu anahtarı tedarikçiye bildirdim mi?" bilgisi şemadaki 28 tablonun
+  HİÇBİRİNDE yoktu (`reported`/`claim`/`rma`/`returned`/`sent` arandı). Tek bildirim yolu izi olmayan
+  bir tarayıcı indirmesiydi → aynı anahtar defalarca bildirilebiliyor, tedarikçinin yanıtı kayıt
+  dışı kalıyordu. Tedarikçi karnesinde de anahtar düzeyinde kusur oranı YOKTU (`recallRate` yalnız
+  "kaç parti geri çekildi" der).
+- **migration 0033** (additive, boş tablolar): `supplier_claims` + `supplier_claim_items`.
+  `license_item_id` **PLAIN uuid, FK YOK** (`stock_adjustments` deseni: kalem silinse bile fiş izi
+  kalır). Kalem alanları **SNAPSHOT** (parti/ürün/anahtar/sebep/kusur-kaynağı): aynı fiş bir ay sonra
+  da BİREBİR aynı dosyayı verir. **Çift bildirimi DB'de engelleyen tek satır:** kısmi unique index
+  `(license_item_id) WHERE outcome <> 'rejected'` — `rejected` bilerek dışarıda, tedarikçi reddederse
+  anahtar **HAVUZA GERİ DÖNER** ve yeniden bildirilebilir (kullanıcı kararı).
+- **ADAY SORGUSU YENİDEN YAZILMADI:** `listQuarantine`'e tek EXISTS + `?claimed=none|open|any`.
+  İkinci bir tanım yazmak, bu projede **"satılmış 6 birim" yanılgısını üreten hatanın aynısıydı**;
+  ekrandaki süzgeç yüklemi ile unique index yüklemi BİREBİR aynı tutuldu. Satıra `defectKind`
+  (`customer_return|recall|damage|manual_void`) türetildi — tedarikçi raporunda gerekçe ayrımı.
+- **Yeni modül `supplier-claims`** (6 uç): Z raporu önizleme · liste · detay · **fiş kes**
+  (GLOBAL `pg_advisory_xact_lock` + kilit altında adayları TAZEDEN oku + snapshot + `DEG-YYYYAAGG-NN`;
+  önizleme bayat olabilir) · durum geçişi (`draft→sent|canceled`, `sent→closed`; **iptal kalemleri
+  SİLER** → havuza döner, çünkü satırı bırakıp durum değiştirmek "reddedildi" demek olurdu ve
+  karnede sahte ret üretirdi) · kalem sonucu. `audit_action` PG enum'una **DOKUNULMADI** (mevcut
+  `adjust` + `meta.op`). Fiş içeriği **kesildiği andaki yetkiyle donar**: owner-olmayan admin fiş
+  keserse snapshot MASKELİ yazılır ve sonradan owner açsa da maskeli kalır (bilinçli).
+- **Tedarikçi karnesine KUSUR bloğu:** `wastage()` ile AYNI zincir (`coalesce(b.supplier_id,
+  po.supplier_id)`) → defect rate + bildirilmemiş kusur + açık fiş + ort. çözülme süresi
+  (`sent_at→closed_at`) + yenilenen/reddedilen.
+- **Admin:** `/quarantine` → **"Kusurlu Anahtarlar"** iş istasyonu, iki sekme (**Bekleyenler** ·
+  **Fişler**); sekme gövdeleri SUNUCUDA render edilip prop olarak geçer (`product-tabs` deseni —
+  1200 satırlık karantina tablosu yeniden YAZILMADI). Bekleyenler üstünde **tedarikçi→parti gruplu
+  panel** (partinin STOK GİRİŞ tarihiyle) + tek tık "Fiş oluştur" + başlıkta **"son fiş: KOD · tarih"**
+  (kullanıcının istediği "son rapor tarihi"). Fiş kesme Sheet'i (7/30/90/özel ön ayar — basıldığı ANDA
+  sabit tarihe çevrilir; adaylar otomatik, tek tek çıkarma). `/quarantine/claims/[id]`: özet şerit +
+  **.txt/.csv indirme** + durum düğmeleri + çoklu seçimle kalem sonucu. Rapor SNAPSHOT'tan üretilir ve
+  **KİŞİSEL VERİ İÇERMEZ** (KVKK — karantina "Tedarikçi bildirimi" varyantının kuralı).
+  **`ClaimStatusBadge`/`ClaimOutcomeBadge` AYRI bileşen:** fiş sözlüğü mevcut anahtarlarla çakışıyor ve
+  AYNI anahtar farklı şey demek (`replaced` sipariş dilinde ölü anahtar, fişte İYİ haber; `pending`
+  "Bekliyor" vs "Cevap bekleniyor") — tek haritada birleştirmek `SupplyStatusBadge`'i doğuran hatanın
+  aynısı olurdu. **Yeni hue EKLENMEDİ.**
+- **Yol boyunca:** bayat `QuarantineRow` tipi (11 alan eksikti; `Partial<>` yaması tip güvenliğini
+  fiilen kaldırmıştı) gerçek yanıtla hizalandı · `stock_adjustments.license_item_id`'ye **index**
+  (karantinanın iki sıcak sorgusu onu kullanıyordu, index YOKTU) · breadcrumb ham "claims" ·
+  bayat sayaç ipucu ("değişim talep edilebilir" → "parti/tedarikçi izi var").
+- **Doğrulama:** typecheck 4/4 + check-use-server (22/74) · admin build · **VPS izole test DB
+  entegrasyon 200/200** (+8 yeni fiş testi, regresyon yok) · **dev canlı E2E (gerçek 15 kusurlu
+  kalem):** fiş kes `DEG-20260813-01` (15 kalem) → havuz **0** → "Gönderildi" + tedarikçi referansı →
+  3 kalem reddet → havuz **3** (reddedilenler geri döndü) → özet "15 kalem · 12 bekliyor · 3 red" →
+  karne `defectRate 0.68 · unclaimed 3 · openClaims 1` · prod deploy (rollback'li) → `/health` 200
+  v1.0.0, iki tablo da canlı. migration 0000-0033.
+- **NOT (tarayıcı paneli):** Radix sekmeleri `mousedown`'da seçer; panelin programatik `.click()`'i
+  sekmeyi DEĞİŞTİRMEZ. Gerçek pointer dizisi (`pointerdown`+`mousedown`+…) gönderilince çalıştı —
+  panel sınırı, kod kusuru değil (kontrol denemesi yapıldı).
+- **Bilinen sınır (planda AÇIK):** MAK/çok-kullanımlı kusurlu anahtar hiç karantinaya giremediği için
+  fişe de giremez (`maxUses>1` dalı yalnız `use_count` düşürür — atama çekirdeği ayrı iş) · geri
+  çekilen partide **satılmış** kalemler "Toplu Değiştir" koşulmadan havuza düşmez · partisiz girişte
+  tedarikçi bilinmez → fiş kesilemez · tedarikçiden gelen **yeni anahtarların** fişe bağlanması kapsam
+  dışı (kullanıcı "tam kapanış"ı seçmedi) · fiş panelden GÖNDERİLMEZ, dosya indirilir.
