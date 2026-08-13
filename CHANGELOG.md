@@ -14,6 +14,43 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Stok girişi: gün-bazlı parti etiketi + canlı satır/lisans sayacı + sınır görünürlüğü (migration YOK)
+
+Kullanıcı: *"Parti etiketi gün vs de içerebilir ayırt etme konusunda. Ayrıca başka sorun var mı?
+Anahtar yapıştırma ekranında satır sınırı vs var mı, oraya maks da belirtilebilir. Veya
+yapıştırıldığında kaç ürün/lisans olduğunu hesaplayıp kenarda gösterebilir — yanlış giriş olmaması
+açısından."*
+
+**Parti etiketi artık günü de taşır:** `YYYY-MM-<HARF>` → **`YYYY-MM-DD-<HARF>`** (`2026-08-13-A`).
+Ay-bazlı etikette aynı ayın 3'ünde ve 27'sinde alınan iki parti yalnız `A`/`B` ile ayrışıyordu;
+etikete bakan operatör hangisinin hangi alım olduğunu parti detayına girmeden anlayamıyordu. Harf
+artık yalnız **aynı gün içindeki** ikinci/üçüncü girişi ayırır. Eski ay-bazlı etiketler farklı bir
+desendir: çakışmaz, harf dizisini kaydırmaz. 10 vakalık davranış testi + dev'de gerçek giriş
+(`2026-08-13-A` oluştu → aynı gün ikinci giriş `-B` önerdi) ile doğrulandı.
+
+**Girdi sayacı (`EntryMeter`)** — girdi alanının **hemen altında**, canlı: kaç kayıt gideceği, kaç boş
+satırın atlandığı, kaç satırın birbirinin aynısı olduğu, `N / 10.000 satır` ve `X KB / 700 KB`.
+%90'da uyarı rengine döner. Sınır ayrıca bölüm açıklamasında ve alan yardım metninde yazıyor —
+eskiden **yalnız aşıldığında** görünüyordu. Sağ raydaki özet uzun listede ekran dışında kalıyordu.
+
+**Yol boyunca bulunan üç gerçek kusur:**
+
+- **MAK/çok kullanımlıkta anahtar sayısı, birim talebiyle kıyaslanıyordu.** "Bu giriş N bekleyen
+  birimi otomatik tamamlar" olduğundan **az** görünüyordu: 1 anahtar × 500 kullanım = 500 birim.
+  Sayaç ve bekleyen-sipariş etkisi artık kapasite üzerinden ("3 anahtar = 1.500 kullanım hakkı");
+  özet rayına ayrı "Kullanım hakkı" satırı eklendi.
+- **Görünmez karakter denetimi yalnız hesap tablosundaydı.** Düz anahtar yapıştırmasında yoktu:
+  `trim()` yalnız uçları alır, anahtarın **ortasına** düşmüş sıfır-genişlik karakter (web/PDF
+  kopyası) sessizce şifrelenip müşteriye gider ("çalışmıyor") ve hash'i değiştirdiği için mükerrer
+  kontrolünü de kaçırır. Artık sayılır, uyarılır ve tek tıkla temizlenir (sessiz düzeltme yok).
+- **Hesap TABLO modunda yapıştırma satır tavanı yoktu.** Hücre başına bir `<input>` render edildiği
+  için binlerce satırlık Excel bloğu sekmeyi kilitleyebilirdi; gövde sınırı bunu önlemez (blokaj
+  ancak render'dan sonra görünür). Tavan **500 satır**; sessizce kırpılmaz — kaç satırın alınmadığı
+  ve kalanın "JSON (gelişmiş)" sekmesine gireceği açıkça yazılır, "Satır ekle" tavanda kapanır.
+- 1 KB altı boyut ham **bayt** olarak yazılır (`Math.ceil` boş formda bile "1 KB" gösteriyordu).
+
+`/guide`: sınırlar, otomatik etiket biçimi ve MAK kullanım hakkı örneği eklendi.
+
 ### Stok girişi UX cilası + panel geneli Türkçe arama düzeltmesi (migration YOK)
 
 Kullanıcı, yeni ekranı kullandıktan sonra ekran görüntüleriyle: *"düzen sıralama olarak biraz daha
@@ -33,7 +70,8 @@ filtre sonrası "N sonuç" şeridi (+ ekran okuyucu duyurusu) ve boş durumda `"
 
 **Stok girişi, tedarik bölümü:** üç dev radyo kartı (~200 px) kompakt bir segmente indi (34 px; ok
 tuşları/Home/End ile gezinilir), yalnız seçili modun açıklaması görünür. **Parti etiketi artık
-otomatik** — alım tarihinden `YYYY-MM-<HARF>`, harf o ürünün aynı ayındaki kullanılmayan ilk harf;
+otomatik** — alım tarihinden türetilir (bu sürümde ay-bazlıydı; yukarıdaki girdide **gün-bazlıya**
+çevrildi), harf o ürünün aynı dönemdeki kullanılmayan ilk harfi;
 operatör alana dokunana kadar tarihle güncellenir, dokununca donar ("Otomatik" geri-dönüş düğmesiyle).
 Alan artık boş/kırmızı-zorunlu başlamıyor. "Tedarikçi listede yok" onay kutusu alanın içine taşındı ve
 geçişte girilen değer artık kaybolmuyor. Alan sırası kim/ne zaman → ne kadar → kimlik/not; maliyet

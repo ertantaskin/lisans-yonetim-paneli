@@ -1180,6 +1180,39 @@ Teslim Al → Partiler → ürün detayı → yapıştır) ve **alım tarihi hi�
   yüklemesinde iskelette takılı kalıyor — React akış tamamlama script'i (`$RC`) çalışmıyor. Sunucu tam HTML +
   script gönderiyor; istemci gezinmesinde sayfa kusursuz açılıyor. Panel-tarayıcı sınırı, kod kusuru değil.
 
+**STOK GİRİŞİ CİLASI — 2 dalga (commit 76deee7 + 9f73221, CANLI prod+dev, migration YOK):** Kullanıcı yeni
+ekranı kullandıktan sonra ardışık geri bildirim verdi.
+- **Dalga 1 (76deee7)** — "düzen/sıralama kolaylaştırılabilir, parti etiketi tarihe göre otomatik oluşabilir,
+  search inputlardaki tasarım sorunlarını düzelt, başka sorun/bağlantı varsa hallet": **[GERÇEK KUSUR,
+  PANEL GENELİ] Combobox süzgeci düz `toLowerCase()` kullanıyordu; projedeki `includesTr` YOKSAYILMIŞTI** →
+  "ANAHTARI" yazan operatör "Anahtarı" kaydını BULAMIYORDU (hata yok, sessiz boş liste); /mappings ·
+  /customers · PO formu · stok girişi/düzeltme dahil TÜM comboboxlar. İki farklı arama görünümü hizalandı
+  (aynı ikon + (×) + `bg-muted/40` + "N sonuç" + `"X" için sonuç yok`). Tedarik bölümü: 3 dev radyo kartı
+  (~200px) → kompakt segment (34px, ok tuşları/roving tabindex); **parti etiketi otomatik**; "listede yok"
+  kutusu alanın İÇİNE (değer kaybolmuyor); maliyette para birimi öneki + canlı toplam. /guide + /batches +
+  /purchase-orders + /suppliers açıklamaları, `[oto-giris]` yerine "Otomatik" rozeti. **Çekişmeli doğrulama
+  5 bulgu:** en ciddisi KENDİ eklediğim Escape guard'ıydı — odak (×) düğmesindeyken popover'ı KİLİTLİYORDU
+  (yalnız dışarı tıklamayla kapanıyordu) → guard TAMAMEN kaldırıldı (popover içinde Escape her zaman kapatır;
+  sayfa içi `SearchInput`'ta temizlemeye devam). **DERS:** test edilemeyen zarif davranış yerine yanlış
+  gidemeyecek olanı seç (bu tarayıcı panelinde gerçek klavye olayları sayfaya ulaşmıyor).
+- **Dalga 2 (9f73221)** — "parti etiketi gün de içerebilir ayırt etme konusunda; yapıştırma ekranında satır
+  sınırı var mı, maks belirtilebilir; yapıştırılınca kaç ürün/lisans olduğunu kenarda göster": etiket
+  `YYYY-MM-<HARF>` → **`YYYY-MM-DD-<HARF>`** (harf artık yalnız AYNI GÜN içindeki 2./3. girişi ayırır; eski
+  ay-bazlı etiketler farklı desen, diziyi kaydırmaz) · yeni **`EntryMeter`** girdi alanının HEMEN ALTINDA
+  (kayıt · atlanan boş satır · mükerrer · `N/10.000 satır` · `X KB/700 KB`, %90'da uyarı; sınır eskiden
+  yalnız AŞILDIĞINDA görünüyordu). **3 gerçek kusur:** (1) MAK/çok kullanımlıkta anahtar sayısı BİRİM
+  talebiyle kıyaslanıyordu → "N bekleyen birimi tamamlar" olduğundan AZ görünüyordu (1 anahtar × 500 = 500
+  birim); sayaç + bekleyen etkisi kapasiteye çevrildi ("3 anahtar = 1.500 kullanım hakkı") · (2) görünmez
+  karakter denetimi yalnız hesap TABLOSUNDAYDI — düz anahtar yapıştırmasında YOKTU (`trim()` yalnız uçları
+  alır; anahtarın ORTASINDAKİ sıfır-genişlik karakter sessizce teslim edilir VE hash'i değiştirip mükerrer
+  kontrolünü kaçırır) → sayılır + tek tık temizlenir · (3) hesap TABLO modunda yapıştırma satır tavanı yoktu
+  (hücre başına bir `<input>` → binlerce satırlık Excel bloğu sekmeyi kilitler; gövde sınırı render'dan
+  SONRA görünür) → tavan **500 satır**, sessiz kırpma yok, kalan için JSON sekmesi önerilir. 1 KB altı ham
+  bayt. **Doğrulama:** typecheck 4/4 + check-use-server · admin build · `autoBatchLabel` 10/10 davranış
+  testi (derlenmiş `parse.js`) · **dev canlı E2E** (sayaç "5 anahtar · 1 boş · 1 mükerrer · 5/10.000",
+  sıfır-genişlik yakalandı→temizlendi, `2026-08-13-A` ön-dolu → tarih 04.11 → `2026-11-04-A`, gerçek giriş
+  partisi 13.08.2026 → aynı gün ikinci giriş `-B`; test verisi silindi) · prod /health 200 v1.0.0, ERROR 0.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
