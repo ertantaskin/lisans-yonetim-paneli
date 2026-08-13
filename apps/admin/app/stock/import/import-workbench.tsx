@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  Eraser,
   ExternalLink,
   Eye,
   FileUp,
@@ -46,8 +47,10 @@ import { AccountRowsEditor, emptyAccountRow, type AccountColumn } from './accoun
 import { MAX_IMPORT_BYTES, MAX_IMPORT_ITEMS, MAX_IMPORT_LABEL, formatBytes } from './limits';
 import {
   autoBatchLabel,
+  cleanHiddenChars,
   currencySymbol,
   formatMoney,
+  hasHiddenChars,
   liraToCents,
   splitLines,
   type ImportItemInput,
@@ -187,6 +190,80 @@ function BatchModeSegment({
   );
 }
 
+/** Sayıyı Türkçe binlik ayracıyla yazar (12.500). */
+function tr(n: number): string {
+  return n.toLocaleString('tr-TR');
+}
+
+/**
+ * Girdi sayacı — girdi alanının HEMEN ALTINDA duran canlı şerit.
+ *
+ * NEDEN: yapıştırma ekranında hiçbir yerde "kaç satır girdim / sınır ne" yazmıyordu.
+ * Sağ raydaki özet uzun listede ekranın dışında kalıyor, operatör 500 satır yapıştırıp
+ * gerçekte kaç kaydın gideceğini (boş satır/mükerrer düşülünce) göremiyordu. Sınır da
+ * yalnız AŞILDIĞINDA görünüyordu — önceden bilinmiyordu.
+ *
+ * MAK/çok kullanımlık üründe **anahtar ≠ lisans**: 3 anahtar × 500 kullanım = 1.500
+ * kullanım hakkı. İki sayı ayrı gösterilir, yoksa "3 girdim ama 1.500 talebi kapattı"
+ * sürprizi yaşanır.
+ */
+function EntryMeter({
+  items,
+  blankLines,
+  duplicates,
+  bytes,
+  perKeyUses,
+  unitNoun,
+}: {
+  items: number;
+  blankLines: number;
+  duplicates: number;
+  bytes: number;
+  /** Anahtar başına kullanım hakkı (tek kullanımlıkta 1). */
+  perKeyUses: number;
+  /** "kayıt" için ürün tipine göre ad ("anahtar" / "hesap"). */
+  unitNoun: string;
+}) {
+  const overItems = items > MAX_IMPORT_ITEMS;
+  const overBytes = bytes > MAX_IMPORT_BYTES;
+  // %90'dan sonra uyar: sınırı AŞTIKTAN sonra haber vermek, 9.000 satırı yapıştırmış
+  // operatöre çok geç kalır (bloklayıcı zaten var; bu erken uyarıdır).
+  const nearItems = !overItems && items > MAX_IMPORT_ITEMS * 0.9;
+  const nearBytes = !overBytes && bytes > MAX_IMPORT_BYTES * 0.9;
+
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs"
+      // Sayı her tuşta değişiyor: `polite` duyurucu her vuruşta konuşurdu.
+      aria-live="off"
+    >
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-sm font-semibold tabular-nums text-foreground">
+          {tr(items)} {unitNoun}
+        </span>
+        {perKeyUses > 1 && items > 0 && (
+          <span className="tabular-nums text-foreground">
+            = <strong>{tr(items * perKeyUses)}</strong> kullanım hakkı
+            <span className="text-muted-foreground"> ({perKeyUses}×)</span>
+          </span>
+        )}
+        {blankLines > 0 && <span className="text-muted-foreground">{tr(blankLines)} boş satır atlandı</span>}
+        {duplicates > 0 && (
+          <span className="text-warning">{tr(duplicates)} satır birbirinin aynısı</span>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 tabular-nums text-muted-foreground">
+        <span className={cn(overItems && 'font-medium text-destructive', nearItems && 'text-warning')}>
+          {tr(items)} / {tr(MAX_IMPORT_ITEMS)} satır
+        </span>
+        <span className={cn(overBytes && 'font-medium text-destructive', nearBytes && 'text-warning')}>
+          {formatBytes(bytes)} / {MAX_IMPORT_LABEL}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Stok Girişi iş tezgâhı (§12/§13).
  *
@@ -202,8 +279,8 @@ function BatchModeSegment({
  *   birlikte gönderilmeye devam eder (kapatınca sessizce veri kaybı olmaz).
  * - Parti modu **segment kontrolü**dür (üç açıklamalı kutu yerine yan yana üç düğme + yalnız
  *   seçili modun tek satırlık açıklaması) — asıl alanlar ekranın üstünde kalır.
- * - **Parti etiketi otomatiktir**: alım tarihinden `YYYY-MM-<HARF>` türetilir, harf o ürünün
- *   aynı aya ait mevcut partilerinden ilerler. Operatör alana dokunana kadar tarih/ürün
+ * - **Parti etiketi otomatiktir**: alım tarihinden `YYYY-MM-DD-<HARF>` türetilir, harf o ürünün
+ *   aynı GÜNE ait mevcut partilerinden ilerler. Operatör alana dokunana kadar tarih/ürün
  *   değişimini izler; dokununca donar ("Otomatik" düğmesiyle geri alınır). Alan artık boş ve
  *   kırmızı-zorunlu başlamaz.
  * - Birim maliyet **LİRA** olarak girilir; kuruşa dönüşüm tek yerde (`liraToCents`) yapılır.
@@ -336,7 +413,7 @@ export function ImportWorkbench({
   }, [productId]);
 
   // ── Parti etiketi önerisi ──────────────────────────────────────────────────
-  // Alım tarihinden `YYYY-MM-<HARF>` türetilir; harf o ÜRÜNÜN aynı aya ait mevcut
+  // Alım tarihinden `YYYY-MM-DD-<HARF>` türetilir; harf o ÜRÜNÜN aynı GÜNE ait mevcut
   // partilerinden ilerler (A → B → C…). Operatör alana dokunana kadar tarih/ürün
   // değişince öneri kendini günceller; dokunulduktan sonra DONAR (yazdığını ezmeyiz).
   // Tarih boşaltılırsa BUGÜNE düşülür: aksi halde `autoBatchLabel` '' döner, "Otomatik"
@@ -448,6 +525,36 @@ export function ImportWorkbench({
   const itemsJson = React.useMemo(() => JSON.stringify(items), [items]);
   const payloadBytes = React.useMemo(() => byteLength(itemsJson), [itemsJson]);
 
+  /**
+   * Anahtar başına kullanım hakkı. MAK/çok kullanımlıkta bir anahtar `maxUses` birim talebi
+   * karşılar → "kaç anahtar girdim" ile "kaç lisans oldu" AYRI sayılardır.
+   */
+  const perKeyUses =
+    selected?.usageMode === 'multi' ? Math.max(Math.floor(selected.maxUses ?? 1), 1) : 1;
+  /** Bu girişin stoğa ekleyeceği TOPLAM birim (tek kullanımlıkta = kayıt sayısı). */
+  const capacityUnits = items.length * perKeyUses;
+
+  /**
+   * Yapıştırılan anahtar satırlarında GÖRÜNMEZ karakter (NBSP, sıfır-genişlik, BOM).
+   *
+   * Hesap tablosunda bu kontrol vardı ama düz anahtar yapıştırmasında YOKTU. `trim()`
+   * yalnız UÇLARDAKİ boşluğu alır; anahtarın ORTASINA düşmüş bir sıfır-genişlik karakter
+   * (web sayfasından/PDF'ten kopyalamada olağan) sessizce şifrelenip müşteriye gider ve
+   * "anahtar çalışmıyor" olarak döner — üstelik hash farklılaştığı için mükerrer kontrolü
+   * de kaçırır. Temizlemeyiz (sessiz veri değişikliği yok), GÖSTERİRİZ + tek tık sunarız.
+   */
+  const hiddenKeyLines = React.useMemo(() => {
+    if (isAccount) return 0;
+    return splitLines(keys).filter((l) => l.trim() !== '' && hasHiddenChars(l.trim())).length;
+  }, [isAccount, keys]);
+
+  const cleanKeys = () =>
+    setKeys(
+      splitLines(keys)
+        .map((l) => cleanHiddenChars(l))
+        .join('\n'),
+    );
+
   // ── Doğrulama / engeller ───────────────────────────────────────────────────
   const costCents = unitCostLira.trim() ? liraToCents(unitCostLira) : null;
   const costInvalid = Boolean(unitCostLira.trim()) && costCents == null;
@@ -481,8 +588,12 @@ export function ImportWorkbench({
   const autoUnits = previewState.result?.autoUnits ?? 0;
   const manualUnits = previewState.result?.manualUnits ?? 0;
   const pendingUnits = previewState.result?.pendingUnits ?? 0;
-  const wouldFill = Math.min(items.length, autoUnits);
-  const remainingAfter = Math.max(items.length - autoUnits, 0);
+  // Karşılaştırma BİRİM üzerinden yapılır: bekleyen talep birimdir, MAK ürününde bir
+  // anahtar `maxUses` birim karşılar. Eskiden anahtar sayısı birimle kıyaslanıyordu →
+  // MAK ürününde etki OLDUĞUNDAN AZ görünüyordu (1 anahtar giren "1 birim tamamlanır"
+  // okuyor, gerçekte 500 birim kapanıyordu).
+  const wouldFill = Math.min(capacityUnits, autoUnits);
+  const remainingAfter = Math.max(capacityUnits - autoUnits, 0);
 
   const selectedBatch = batches.find((b) => b.id === batchId);
 
@@ -918,7 +1029,7 @@ export function ImportWorkbench({
                         ? 'Etiket boş — parti açılamaz. "Otomatik" ile geri getirebilirsiniz.'
                         : undefined
                     }
-                    hint="Alım tarihinden üretilir (yıl-ay-harf). Aynı ürüne aynı etiket ikinci kez girilirse uyarılırsınız."
+                    hint="Alım tarihinden üretilir (yıl-ay-gün-harf); harf aynı gün içindeki ikinci girişi ayırır. Aynı ürüne aynı etiket ikinci kez girilirse uyarılırsınız."
                   >
                     <div className="flex items-center gap-1.5">
                       <Input
@@ -930,8 +1041,8 @@ export function ImportWorkbench({
                           setLabelTouched(true);
                           setBatchLabel(e.target.value);
                         }}
-                        placeholder={autoLabel || '2026-08-A'}
-                        className="max-w-[11rem]"
+                        placeholder={autoLabel || '2026-08-13-A'}
+                        className="max-w-[13rem]"
                         aria-invalid={labelMissing || undefined}
                       />
                       {labelTouched && autoLabel && (
@@ -993,6 +1104,9 @@ export function ImportWorkbench({
                 : isAccount
                   ? 'Her satır bir hesap. Alanlar ürünün şemasından gelir.'
                   : 'Her satır bir anahtar. Boş satırlar atlanır, baştaki/sondaki boşluk kırpılır.'}
+              {selected
+                ? ` Tek seferde en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} satır (${MAX_IMPORT_LABEL}).`
+                : ''}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -1089,7 +1203,11 @@ export function ImportWorkbench({
             )}
 
             {!isAccount && keySource === 'paste' && (
-              <Field label="Anahtarlar" htmlFor="si-keys" hint="Her satıra bir anahtar.">
+              <Field
+                label="Anahtarlar"
+                htmlFor="si-keys"
+                hint={`Her satıra bir anahtar — en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} satır. Sayaç aşağıda canlı güncellenir.`}
+              >
                 <Textarea
                   id="si-keys"
                   rows={12}
@@ -1147,6 +1265,37 @@ export function ImportWorkbench({
                 )}
               </div>
             )}
+
+            {/* Canlı sayaç — girdi alanının HEMEN ALTINDA. Sağ raydaki özet uzun listede
+                ekran dışında kalıyordu; asıl kontrol yapıştırmanın yanında olmalı. */}
+            {selected && (
+              <EntryMeter
+                items={items.length}
+                blankLines={blankLines}
+                duplicates={duplicateCount}
+                bytes={payloadBytes}
+                perKeyUses={perKeyUses}
+                unitNoun={isAccount ? 'hesap' : 'anahtar'}
+              />
+            )}
+
+            {/* Düz anahtar yolunda görünmez karakter uyarısı (hesap tablosundaki ile aynı
+                disiplin): sessizce temizlemeyiz, gösterip tek tık sunarız. */}
+            {!isAccount && hiddenKeyLines > 0 && (
+              <div className="space-y-2 rounded-md border border-warning/40 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] p-2.5">
+                <p className="flex items-start gap-1.5 text-xs text-foreground">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+                  <span>
+                    <strong>{tr(hiddenKeyLines)} satırda</strong> görünmez karakter var (kırılmaz
+                    boşluk / sıfır-genişlik). Anahtarla birlikte teslim edilir, müşteride
+                    &quot;çalışmıyor&quot; olarak döner ve mükerrer kontrolünü de kaçırır.
+                  </span>
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={cleanKeys}>
+                  <Eraser /> Görünmez karakterleri temizle
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -1161,11 +1310,20 @@ export function ImportWorkbench({
           <CardContent className="space-y-3">
             <dl className="space-y-1.5 text-sm">
               <div className="flex items-baseline justify-between gap-3">
-                <dt className="text-muted-foreground">Girilecek kayıt</dt>
+                <dt className="text-muted-foreground">
+                  Girilecek {isAccount ? 'hesap' : 'anahtar'}
+                </dt>
                 <dd className="text-lg font-semibold tabular-nums text-foreground">
-                  {items.length}
+                  {tr(items.length)}
                 </dd>
               </div>
+              {perKeyUses > 1 && (
+                // MAK/çok kullanımlık: anahtar sayısı ile stoğa eklenen birim AYRI şeydir.
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Kullanım hakkı ({perKeyUses}×)</dt>
+                  <dd className="tabular-nums text-foreground">{tr(capacityUnits)}</dd>
+                </div>
+              )}
               <div className="flex items-baseline justify-between gap-3">
                 <dt className="text-muted-foreground">Mükerrer görünen</dt>
                 <dd
@@ -1209,9 +1367,9 @@ export function ImportWorkbench({
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {remainingAfter > 0
-                      ? `Kalan ${remainingAfter} kayıt stoğa eklenir. `
-                      : autoUnits > items.length
-                        ? `${autoUnits - items.length} birim talep açık kalır. `
+                      ? `Kalan ${tr(remainingAfter)} birim stokta kalır. `
+                      : autoUnits > capacityUnits
+                        ? `${tr(autoUnits - capacityUnits)} birim talep açık kalır. `
                         : ''}
                     {manualUnits > 0 && (
                       <>

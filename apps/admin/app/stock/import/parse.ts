@@ -263,12 +263,20 @@ export function batchLabelSuffix(index: number): string {
 }
 
 /**
- * Alım tarihinden parti etiketi türetir: `YYYY-MM-<HARF>` (ör. `2026-08-A`).
+ * Alım tarihinden parti etiketi türetir: `YYYY-MM-DD-<HARF>` (ör. `2026-08-13-A`).
  *
  * NEDEN: etiket eskiden ZORUNLU ve BOŞ başlıyordu — operatör her girişte elle bir ad
- * uydurmak zorundaydı ve alan kırmızı-zorunlu duruyordu. Harf, AYNI ÜRÜNÜN aynı aya ait
- * mevcut partilerinden ilerletilir (A, B, C…): `existingLabels` içinde kullanılmayan İLK
- * harf seçilir (boşluk varsa doldurulur, mükerrer üretilmez).
+ * uydurmak zorundaydı ve alan kırmızı-zorunlu duruyordu.
+ *
+ * NEDEN GÜN DE VAR: ilk sürüm yalnız ay kullanıyordu (`2026-08-A`) → aynı ayın 3'ünde ve
+ * 27'sinde alınan iki parti `A`/`B` diye ayrışıyordu ve etikete bakan operatör hangisinin
+ * hangi alıma ait olduğunu ANLAYAMIYORDU (tarihi görmek için parti detayına girmek
+ * gerekiyordu). Gün eklenince etiket kendi başına ayırt edici olur; harf yalnız AYNI GÜN
+ * içindeki ikinci/üçüncü girişi ayırmaya yarar (A, B, C…).
+ *
+ * Harf, AYNI ÜRÜNÜN aynı GÜNE ait mevcut partilerinden ilerletilir: `existingLabels`
+ * içinde kullanılmayan İLK harf seçilir (boşluk varsa doldurulur, mükerrer üretilmez).
+ * Eski ay-bazlı etiketler (`2026-08-A`) farklı bir desendir; çakışmaz, diziyi kaydırmaz.
  *
  * Liste EKSİK olabilir (yalnız AKTİF partiler çekilir; geri çekilmiş partiler görünmez) →
  * öneri kesin değildir; sunucu `labelDuplicate` ile yumuşak uyarı verir, engel değildir.
@@ -277,10 +285,10 @@ export function batchLabelSuffix(index: number): string {
  *   (çağıran mevcut değeri KORUR — sessizce boşaltmaz).
  */
 export function autoBatchLabel(receivedAt: string, existingLabels: readonly string[]): string {
-  const m = /^(\d{4})-(\d{2})/.exec((receivedAt || '').trim());
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec((receivedAt || '').trim());
   if (!m) return '';
-  const prefix = `${m[1]}-${m[2]}`;
-  // Yalnız "aynı ay + saf harf eki" biçimindeki etiketler sayılır; operatörün elle yazdığı
+  const prefix = `${m[1]}-${m[2]}-${m[3]}`;
+  // Yalnız "aynı gün + saf harf eki" biçimindeki etiketler sayılır; operatörün elle yazdığı
   // serbest adlar (ör. "kasım-toptan") diziyi kaydırmaz.
   const used = new Set<string>();
   const re = new RegExp(`^${prefix}-([A-Za-z]+)$`);

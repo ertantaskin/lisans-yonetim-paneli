@@ -291,7 +291,16 @@ export default function GuidePage() {
           işaretlenir: mal zaten girilmiştir, bu emir ikinci kez <em>&quot;Teslim Al&quot;</em> istemez.
           Tedarikçi alanına yeni bir ad yazarsanız aynı adlı kayıt varsa yeniden kullanılır, yoksa
           oluşturulur. Birim maliyeti <strong>lira</strong> olarak girin (ör. 12,50) — panel kuruşa kendisi çevirir.
+          Parti etiketi alım tarihinden otomatik gelir (<code>2026-08-13-A</code>); aynı gün ikinci bir
+          giriş yaparsanız harf ilerler (<code>-B</code>). Elle yazarsanız öneri donar,
+          &quot;Otomatik&quot; düğmesiyle geri dönersiniz.
         </Tip>
+        <p>
+          <strong>Sınırlar:</strong> tek seferde en çok <strong>10.000 satır</strong> (~700 KB)
+          girilebilir; girdi alanının altındaki sayaç kaç kayıt gideceğini, kaç boş satırın atlandığını
+          ve mükerrer görüneni canlı gösterir. Çok kullanımlık (MAK) üründe sayaç ayrıca{' '}
+          <strong>kullanım hakkını</strong> hesaplar: 3 anahtar × 500 kullanım = 1.500 birim.
+        </p>
       </Section>
 
       <Section

@@ -24,6 +24,17 @@ export const MAX_IMPORT_BYTES = 700 * 1024;
  */
 export const MAX_IMPORT_ITEMS = 10_000;
 
+/**
+ * Hesap (account) TABLO modunda ekranda tutulan en fazla satır.
+ *
+ * NEDEN AYRI VE ÇOK DAHA DÜŞÜK: tablo her hücre için bir `<input>` render eder. 10.000
+ * satırlık bir Excel bloğu 3 sütunla 30.000 kontrollü input demektir — sekme kilitlenir ve
+ * operatör verisini kaybeder. Gövde sınırı bunu ÖNLEMEZ (blokaj ancak render'dan SONRA
+ * görünür). Bu yüzden yapıştırma bu tavanda kırpılır ve kalanı için JSON (gelişmiş)
+ * sekmesi önerilir — orada girdi tek `<textarea>`dır, sınır yalnız `MAX_IMPORT_ITEMS`tir.
+ */
+export const MAX_TABLE_ROWS = 500;
+
 /** Bayt sayısını okunur KB/MB metnine çevirir (Türkçe ondalık ayracı). */
 export function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`;

@@ -91,7 +91,7 @@ const COST_NEEDS_SUPPLIER =
  */
 function buildNewBatchBody(formData: FormData): { body?: Record<string, unknown>; error?: string } {
   const label = String(formData.get('batchLabel') || '').trim();
-  if (!label) return { error: 'Yeni parti için etiket zorunlu (ör. 2026-08-A).' };
+  if (!label) return { error: 'Yeni parti için etiket zorunlu (ör. 2026-08-13-A).' };
 
   const supplierId = String(formData.get('supplierId') || '').trim();
   const supplierName = String(formData.get('supplierName') || '').trim();

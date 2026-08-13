@@ -13,6 +13,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { cn } from '../../../lib/utils';
+import { MAX_TABLE_ROWS } from './limits';
 import {
   cleanHiddenChars,
   delimiterLabel,
@@ -59,7 +60,8 @@ export function AccountRowsEditor({
   onRowsChange: (rows: string[][]) => void;
 }) {
   const width = Math.max(columns.length, 1);
-  const [pasteNote, setPasteNote] = React.useState<string | null>(null);
+  /** Son yapıştırmanın özeti; `warn` → satır kırpıldı (uyarı rengiyle gösterilir). */
+  const [pasteNote, setPasteNote] = React.useState<{ text: string; warn: boolean } | null>(null);
 
   const hiddenCount = React.useMemo(
     () => rows.reduce((n, row) => n + row.filter((v) => hasHiddenChars(v)).length, 0),
@@ -76,7 +78,12 @@ export function AccountRowsEditor({
     onRowsChange(next);
   };
 
-  const addRow = () => onRowsChange([...rows.map((r) => padRow(r, width)), emptyAccountRow(width)]);
+  const atCap = rows.length >= MAX_TABLE_ROWS;
+
+  const addRow = () => {
+    if (atCap) return;
+    onRowsChange([...rows.map((r) => padRow(r, width)), emptyAccountRow(width)]);
+  };
 
   const removeRow = (r: number) => {
     if (rows.length <= 1) {
@@ -100,8 +107,24 @@ export function AccountRowsEditor({
     const grid = parseGrid(text, columns);
     if (grid.rows.length === 0) return;
 
+    // Tavan: hücre başına bir kontrollü <input> render edildiği için binlerce satırlık bir
+    // blok sekmeyi kilitler ve operatörün panosundaki veri kaybolur. Sessizce kırpmayız —
+    // kaç satırın alındığını ve kalanı nereye gireceğini AÇIKÇA söyleriz.
+    const capacity = Math.max(MAX_TABLE_ROWS - r, 0);
+    const accepted = grid.rows.slice(0, capacity);
+    const dropped = grid.rows.length - accepted.length;
+    if (accepted.length === 0) {
+      setPasteNote({
+        warn: true,
+        text:
+          `Tablo en çok ${MAX_TABLE_ROWS} satır tutar ve dolu — yapıştırma alınmadı. ` +
+          'Daha büyük listeler için "JSON (gelişmiş)" sekmesini kullanın.',
+      });
+      return;
+    }
+
     const next = rows.map((row) => padRow(row, width));
-    grid.rows.forEach((parsedRow, i) => {
+    accepted.forEach((parsedRow, i) => {
       const target = r + i;
       while (next.length <= target) next.push(emptyAccountRow(width));
       parsedRow.forEach((value, j) => {
@@ -110,10 +133,16 @@ export function AccountRowsEditor({
       });
     });
     onRowsChange(next);
-    setPasteNote(
-      `${grid.rows.length} satır yapıştırıldı (ayraç: ${delimiterLabel(grid.delimiter)}` +
-        `${grid.headerSkipped ? ', başlık satırı atlandı' : ''}).`,
-    );
+    setPasteNote({
+      warn: dropped > 0,
+      text:
+        `${accepted.length} satır yapıştırıldı (ayraç: ${delimiterLabel(grid.delimiter)}` +
+        `${grid.headerSkipped ? ', başlık satırı atlandı' : ''}).` +
+        (dropped > 0
+          ? ` ${dropped} satır ALINMADI: tablo en çok ${MAX_TABLE_ROWS} satır gösterir — ` +
+            'kalanı için "JSON (gelişmiş)" sekmesini kullanın.'
+          : ''),
+    });
   };
 
   return (
@@ -194,7 +223,14 @@ export function AccountRowsEditor({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={addRow}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addRow}
+          disabled={atCap}
+          title={atCap ? `Tablo en çok ${MAX_TABLE_ROWS} satır tutar` : undefined}
+        >
           <Plus /> Satır ekle
         </Button>
         {hiddenCount > 0 && (
@@ -203,11 +239,18 @@ export function AccountRowsEditor({
           </Button>
         )}
         <span className="text-xs text-muted-foreground">
-          {filledRows} dolu satır · {rows.length} satır gösteriliyor
+          {filledRows} dolu satır ·{' '}
+          <span className={cn('tabular-nums', atCap && 'font-medium text-warning')}>
+            {rows.length} / {MAX_TABLE_ROWS} satır
+          </span>
         </span>
       </div>
 
-      {pasteNote && <p className="text-xs text-muted-foreground">{pasteNote}</p>}
+      {pasteNote && (
+        <p className={cn('text-xs', pasteNote.warn ? 'text-warning' : 'text-muted-foreground')}>
+          {pasteNote.text}
+        </p>
+      )}
       {hiddenCount > 0 && (
         <p className="flex items-start gap-1.5 text-xs text-warning">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
