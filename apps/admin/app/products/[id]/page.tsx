@@ -42,6 +42,7 @@ import {
 } from '../../../lib/labels';
 import { getProductDetail, type ProductDetail } from './queries';
 import { StockAdjustForm } from './stock-adjust-form';
+import { ProductTabs } from './product-tabs';
 import { ProductEditSheet } from '../../../components/product-edit-sheet';
 import { MappingsManager } from '../../../components/mappings-manager';
 import { LicenseItemsTable } from '../../../components/inventory/license-items-table';
@@ -152,7 +153,8 @@ export default async function ProductDetailPage({
         </div>
       </div>
 
-      {/* Stok durumu — tek satırlık ince özet şeridi (StatTile ızgarası yerine) */}
+      {/* Özet şeritleri yan yana — eskiden alt alta iki blok, ekranın yarısını yiyordu. */}
+      <div className="grid gap-4 lg:grid-cols-2">
       <div className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Boxes className="size-4 text-muted-foreground" aria-hidden /> Stok durumu
@@ -173,8 +175,6 @@ export default async function ProductDetailPage({
           ]}
         />
       </div>
-
-      {/* Satış & tükenme — ince özet şeridi */}
       <div className="space-y-2">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <TrendingDown className="size-4 text-muted-foreground" aria-hidden /> Satış & tükenme
@@ -200,42 +200,47 @@ export default async function ProductDetailPage({
           ]}
         />
       </div>
+      </div>
 
-      {/* ── İki kolon: sol (geniş) ana çalışma; sağ (dar) referans + geçmiş ── */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* SOL (geniş) — ana çalışma alanı: içe aktar + eşlemeler */}
-        <div className="space-y-4 lg:col-span-2">
-          {/*
-            Key/Stok girişi ARTIK BURADA DEĞİL: kendi ekranına (`/stock/import`) taşındı — o
-            ekran menüden de bulunabiliyor ve doğrulama/önizleme adımlarına yer açıyor. Burada
-            yalnız bağlamsal kısayol kalır: ürün (ve varsa parti) hedef ekranda ön-seçili gelir.
-          */}
-          <Card>
-            <CardHeader>
-              <CardTitle icon={Upload}>Stok Girişi</CardTitle>
-              <CardDescription>
-                Bu ürüne yeni anahtar/hesap eklemek <strong>Stok Girişi</strong> ekranında yapılır —
-                ürün ön-seçili açılır. İki yol vardır: <strong>hızlı giriş</strong> (yalnız anahtarlar;
-                maliyet/tedarikçi izi tutulmaz) veya <strong>tedarikli giriş</strong> (tedarikçi + alım
-                tarihi + birim maliyet → parti ve satın alma emri aynı adımda açılır). Girmeden önce
-                &quot;Önizle (kuru çalıştır)&quot; ile hiçbir şey kaydetmeden doğrulayabilirsiniz.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button asChild>
+      {/*
+        SEKMELER (kullanıcı geri bildirimi: "ürün detay sayfası çok karışık, hizalanmamış").
+        Eskiden YEDİ kart tek sayfada üst üste yığılıyordu ve iki kolona bölündüğü için sol/sağ
+        kartların yükseklikleri tutmuyordu. Aynı kaydın farklı yüzleri artık sekmelerde:
+        gelen operatör önce ne yapacağını seçiyor, tek seferde tek iş görüyor.
+        Varsayılan sekme "Envanter" — bu sayfaya en sık "anahtarlarım ne durumda" diye gelinir.
+      */}
+      <ProductTabs
+        inventory={
+          <div className="space-y-4">
+            {/* Stok girişi: kart değil ince eylem şeridi — hedef ekran ayrı, burada yalnız kısayol. */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+              <p className="text-sm text-muted-foreground">
+                Yeni anahtar/hesap eklemek <strong className="text-foreground">Stok Girişi</strong>{' '}
+                ekranında yapılır — bu ürün ön-seçili açılır.
+                {batchId ? ' Seçtiğiniz parti de taşınır.' : ''}
+              </p>
+              <Button asChild size="sm">
                 <Link href={importHref}>
                   <PackagePlus /> Bu ürüne stok gir
                 </Link>
               </Button>
-              {batchId && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Seçtiğiniz parti Stok Girişi ekranına taşınır.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Site eşlemeleri — bu ürünün eşlemeleri (mağaza → panel); katalogdan adıyla seç + aç-kapa + kaldır */}
+            </div>
+      <Card id="lisans-envanteri" className="scroll-mt-20">
+        <CardHeader>
+          <CardTitle icon={KeyRound}>Lisans Envanteri</CardTitle>
+          <CardDescription>
+            Bu ürüne ait tüm lisans/hesap kalemleri — arama, filtreleme, tek tek düzeltme ve
+            teslim edilmiş kalemlerin sipariş bağlantısı.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LicenseItemsTable productId={product.id} payloadSchema={product.payloadSchema} />
+        </CardContent>
+      </Card>
+          </div>
+        }
+        mappings={
+          <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle icon={Link2}>Site Eşlemeleri</CardTitle>
@@ -248,11 +253,10 @@ export default async function ProductDetailPage({
               <MappingsManager productId={product.id} sites={sites} mappings={data.mappings} />
             </CardContent>
           </Card>
-        </div>
-
-        {/* SAĞ (dar) rail — referans: partiler + satın alma emirleri + stok düzeltme (form + geçmişi) */}
-        <div className="space-y-4">
-          {/* Partiler */}
+          </div>
+        }
+        supply={
+          <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle icon={Package}>Partiler</CardTitle>
@@ -333,8 +337,6 @@ export default async function ProductDetailPage({
               )}
             </CardContent>
           </Card>
-
-          {/* Satın alma emirleri */}
           <Card>
             <CardHeader>
               <CardTitle icon={Truck}>Satın Alma Emirleri</CardTitle>
@@ -401,8 +403,10 @@ export default async function ProductDetailPage({
               )}
             </CardContent>
           </Card>
-
-          {/* Stok düzeltme ekle (manuel, sebepli — audit'e düşer) + hemen altında geçmişi */}
+          </div>
+        }
+        ledger={
+          <div className="grid gap-4 lg:grid-cols-2">
           <Card>
             <CardHeader>
               <CardTitle icon={Wrench}>Stok Düzeltme Ekle</CardTitle>
@@ -414,8 +418,6 @@ export default async function ProductDetailPage({
               <StockAdjustForm productId={product.id} />
             </CardContent>
           </Card>
-
-          {/* Stok düzeltmeleri (geçmiş — form ile eşli) */}
           <Card>
             <CardHeader>
               <CardTitle icon={ClipboardList}>Stok Düzeltmeleri</CardTitle>
@@ -493,24 +495,9 @@ export default async function ProductDetailPage({
               )}
             </CardContent>
           </Card>
-        </div>
-      </div>
-
-      {/* Lisans envanteri — TAM GENİŞLİK (kolon çok: lisans + durum + kapasite + teslimat).
-          Konum bilinçli: önce stok girilir/eşlenir (üstteki kartlar), sonra sonucu burada görülür. */}
-      {/* id: /batches satır menüsünden "ürünün lisans envanteri" derin bağlantısı buraya iner. */}
-      <Card id="lisans-envanteri" className="scroll-mt-20">
-        <CardHeader>
-          <CardTitle icon={KeyRound}>Lisans Envanteri</CardTitle>
-          <CardDescription>
-            Bu ürüne ait tüm lisans/hesap kalemleri — arama, filtreleme, tek tek düzeltme ve
-            teslim edilmiş kalemlerin sipariş bağlantısı.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LicenseItemsTable productId={product.id} payloadSchema={product.payloadSchema} />
-        </CardContent>
-      </Card>
+          </div>
+        }
+      />
     </div>
   );
 }

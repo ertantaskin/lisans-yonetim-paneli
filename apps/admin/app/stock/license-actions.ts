@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiRaw, apiSend } from '../../lib/api';
+import { apiPost, apiRaw, apiSend } from '../../lib/api';
 import { getActor } from '../../lib/session';
 
 /**
@@ -235,6 +235,61 @@ export async function updateLicenseItemAction(input: {
     await apiSend('PATCH', `/v1/admin/license-items/${id}`, body, await getActor());
     revalidateInventory(input?.productId);
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
+  }
+}
+
+/**
+ * TOPLU "geçersiz kıl / hasarlı" — envanter listesinden çoklu seçimle stoktan düşürme.
+ *
+ * NEDEN TOPLU (kullanıcı geri bildirimi): bozuk bir tedarikçi partisi geldiğinde anahtarları
+ * tek tek bir seçiciden bulmak operasyonel olarak imkânsızdı. Artık operatör listede süzer
+ * (parti / tedarikçi / arama), kutuları işaretler ve tek sebeple hepsini düşer.
+ *
+ * ÜRÜNE GÖRE GRUPLAMA ÇAĞIRANDA: `/v1/admin/stock-adjustments` ürün-kapsamlıdır (fire ve
+ * maliyet defteri ürün bazında tutulur). Genel `/stock` listesinde seçim farklı ürünlere
+ * yayılabildiği için istemci grupları ayırıp bu action'ı grup başına çağırır.
+ */
+export async function bulkAdjustLicenseItemsAction(input: {
+  productId: string;
+  licenseItemIds: string[];
+  action: 'void' | 'damage';
+  reason: string;
+}): Promise<
+  { ok: true; affected: number; skipped: number; qtyTotal: number } | { ok: false; error: string }
+> {
+  const productId = String(input?.productId ?? '').trim();
+  if (!UUID_RE.test(productId)) return { ok: false, error: 'Geçersiz ürün kaydı.' };
+
+  const action = input?.action;
+  if (action !== 'void' && action !== 'damage') return { ok: false, error: 'Geçersiz işlem türü.' };
+
+  const reason = String(input?.reason ?? '').trim();
+  if (!reason) return { ok: false, error: 'Sebep zorunludur (denetim kaydına yazılır).' };
+
+  // Benzersizleştir + doğrula. API üst sınırı 500; burada da kesilir ki sunucuya asla
+  // reddedilecek bir istek gitmesin (istemci sayfa boyutu en çok 100).
+  const ids = Array.from(new Set((input?.licenseItemIds ?? []).map((v) => String(v).trim()))).filter(
+    (v) => UUID_RE.test(v),
+  );
+  if (ids.length === 0) return { ok: false, error: 'Hiç lisans seçilmedi.' };
+  if (ids.length > 500) return { ok: false, error: 'Tek seferde en çok 500 lisans işlenebilir.' };
+
+  try {
+    const res = await apiPost<{ affected?: number; skipped?: number; qtyTotal?: number } | null>(
+      '/v1/admin/stock-adjustments',
+      { productId, licenseItemIds: ids, action, reason: reason.slice(0, 500) },
+      await getActor(),
+    );
+    revalidateInventory(productId);
+    revalidatePath('/quarantine');
+    return {
+      ok: true,
+      affected: Number(res?.affected ?? 0),
+      skipped: Number(res?.skipped ?? 0),
+      qtyTotal: Number(res?.qtyTotal ?? 0),
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
   }

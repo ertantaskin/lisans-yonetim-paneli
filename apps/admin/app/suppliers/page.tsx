@@ -1,5 +1,6 @@
 import { Truck, Plus } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { CollapsiblePanel } from '@/components/ui/collapsible-panel';
 import { Card, CardContent } from '@/components/ui/card';
 import { CreateSupplierForm } from '@/components/create-supplier-form';
 import { SuppliersTable } from '@/components/suppliers-table';
@@ -24,14 +25,11 @@ export default async function SuppliersPage() {
         description="Anahtarları aldığınız tedarikçiler — satın alma emirleri, partiler ve maliyet raporu buraya bağlanır. Tedarikçiyi burada elle ekleyebilir ya da Stok Girişi'nde adını yazarak oluşturabilirsiniz (aynı adlı kayıt varsa yeniden kullanılır, mükerrer açılmaz)."
       />
 
-      <Card className="mb-5 max-w-2xl">
-        <CardContent className="p-5">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Plus className="size-4 text-muted-foreground" /> Yeni Tedarikçi
-          </h2>
-          <CreateSupplierForm />
-        </CardContent>
-      </Card>
+      {/* Oluşturma formu VARSAYILAN KAPALI: tedarikçi eklemek seyrek bir iş, form sürekli
+          açık durunca listeyi aşağı itiyordu (kullanıcı geri bildirimi). */}
+      <CollapsiblePanel title="Yeni Tedarikçi" icon={Plus}>
+        <CreateSupplierForm />
+      </CollapsiblePanel>
 
       {error ? (
         <Card>

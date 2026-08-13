@@ -16,6 +16,7 @@ import {
   FileUp,
   Info,
   KeyRound,
+  Lock,
   Package,
   RotateCcw,
   Table2,
@@ -973,15 +974,18 @@ export function ImportWorkbench({
         </Card>
 
         {/* ── 2. Tedarik bilgisi (katlanır) ─────────────────────────────── */}
-        {/* Ürün seçili değilken SOLUK görünür ama KİLİTLİ DEĞİLDİR (operatör sırayı bozup
-            önce tedarik bilgisini doldurabilir; kilitlemek gereksiz bir duvar olurdu). */}
-        <Card className={cn(!selected && 'opacity-60')}>
+        {/* ADIM KİLİDİ (kullanıcı isteği): ürün seçilmeden 2. ve 3. adım AÇILMAZ. Önceki
+            tasarım yalnız soluklaştırıyordu ama tıklanabiliyordu; girdi biçimi (anahtar mı
+            hesap tablosu mu) ve parti/maliyet alanlarının anlamı ÜRÜNE bağlı olduğu için
+            sırayı bozmak yarım doldurulmuş, sonra sıfırlanan bir form üretiyordu. */}
+        <Card className={cn(!selected && 'opacity-60')} aria-disabled={!selected || undefined}>
           <button
             type="button"
-            onClick={() => setBatchOpen((v) => !v)}
-            aria-expanded={batchOpen}
+            onClick={() => selected && setBatchOpen((v) => !v)}
+            disabled={!selected}
+            aria-expanded={batchOpen && Boolean(selected)}
             aria-controls="si-supply"
-            className="flex w-full items-start gap-3 rounded-xl px-5 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            className="flex w-full items-start gap-3 rounded-xl px-5 py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed"
           >
             {batchOpen ? (
               <ChevronDown className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -1002,13 +1006,14 @@ export function ImportWorkbench({
                   batchMode === 'none' ? 'text-warning' : 'text-muted-foreground',
                 )}
               >
-                {batchSummary()}
+                {selected ? batchSummary() : 'Önce 1. adımda ürün seçin'}
               </span>
             </span>
           </button>
 
-          {/* DOM'dan kaldırılmaz — yalnız gizlenir: kapatınca alanlar gönderilmeye devam eder. */}
-          <div id="si-supply" className={cn('px-5 pb-5', !batchOpen && 'hidden')}>
+          {/* DOM'dan kaldırılmaz — yalnız gizlenir: kapatınca alanlar gönderilmeye devam eder.
+              Kilitliyken de gizli kalır (ürün yokken açılamaz). */}
+          <div id="si-supply" className={cn('px-5 pb-5', (!batchOpen || !selected) && 'hidden')}>
             <Separator className="mb-4" />
             {/* Segment + YALNIZ seçili modun tek satırlık açıklaması (üç açıklamayı birden
                 göstermek asıl alanları ekranın altına itiyordu). */}
@@ -1309,6 +1314,18 @@ export function ImportWorkbench({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            {/* ADIM KILIDI: urun secilmeden girdi alanlari KAPALI. fieldset[disabled]
+                icindeki HER kontrolu native olarak devre disi birakir (odak sirasindan da
+                cikarir) — tek tek disabled dagitmaktan daha guvenli, kacak kalmaz. */}
+            {!selected && (
+              <p className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+                <Lock className="size-4 shrink-0" aria-hidden />
+                Önce <strong className="font-medium text-foreground">1. adımda</strong> ürün
+                seçin — girdi biçimi (anahtar listesi mi hesap tablosu mu) ürün tipine göre
+                değişir.
+              </p>
+            )}
+            <fieldset disabled={!selected} className="min-w-0 space-y-3">
             {/* Sekme görünümü: tabs primitifi YOK → Button varyantı + koşullu render. */}
             <div className="flex flex-wrap gap-1.5" role="group" aria-label="Girdi biçimi">
               {isAccount ? (
@@ -1495,6 +1512,7 @@ export function ImportWorkbench({
                 </Button>
               </div>
             )}
+            </fieldset>
           </CardContent>
         </Card>
       </div>

@@ -2,6 +2,7 @@ import { ShieldAlert, ShieldCheck, UserPlus } from 'lucide-react';
 import { apiGet, type AdminUser } from '../../lib/api';
 import { isOwner } from '../../lib/session';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
+import { CollapsiblePanel } from '@/components/ui/collapsible-panel';
 import { Card, CardContent } from '../../components/ui/card';
 import { CreateAdminForm } from '../../components/create-admin-form';
 import { AdminsTable } from '../../components/admins-table';
@@ -43,14 +44,11 @@ export default async function AdminsPage() {
         description="Panele erişimi olan adminler. Kullanıcı adı veya e-posta + parola ile giriş yaparlar."
       />
 
-      <Card className="mb-5">
-        <CardContent className="p-5">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-            <UserPlus className="size-4 text-muted-foreground" /> Yeni Admin
-          </h2>
-          <CreateAdminForm />
-        </CardContent>
-      </Card>
+      {/* Varsayılan KAPALI (bkz. /suppliers): admin eklemek seyrek bir iş, form sürekli
+          açık durunca yönetici listesini aşağı itiyordu. */}
+      <CollapsiblePanel title="Yeni Admin" icon={UserPlus} className="max-w-3xl">
+        <CreateAdminForm />
+      </CollapsiblePanel>
 
       {error ? (
         <Card>

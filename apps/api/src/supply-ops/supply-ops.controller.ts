@@ -11,13 +11,26 @@ type RecallBody = z.infer<typeof RecallBody>;
 const BulkReplaceBody = z.object({ actor: z.string().min(1).optional() });
 type BulkReplaceBody = z.infer<typeof BulkReplaceBody>;
 
-const CreateAdjustmentBody = z.object({
-  productId: z.string().uuid(),
-  licenseItemId: z.string().uuid().optional(),
-  action: z.enum(['void', 'damage', 'correct', 'recall']),
-  qty: z.number().int().nonnegative().default(0),
-  reason: z.string().min(1),
-});
+const CreateAdjustmentBody = z
+  .object({
+    productId: z.string().uuid(),
+    /** Tekil kalem (eski istemciler + 'Düzeltme' defter kaydı). */
+    licenseItemId: z.string().uuid().optional(),
+    /**
+     * TOPLU kalem (yeni): bozuk bir parti geldiğinde operatör anahtarları tek tek seçmek
+     * zorunda kalmasın diye envanter listesinden çoklu seçim gönderir. `licenseItemId` ile
+     * BİRLİKTE gönderilemez (hangisinin geçerli olduğu belirsizleşir). Üst sınır 500:
+     * tek transaction'da kilitlenecek satır sayısını sınırlar.
+     */
+    licenseItemIds: z.array(z.string().uuid()).min(1).max(500).optional(),
+    action: z.enum(['void', 'damage', 'correct', 'recall']),
+    qty: z.number().int().nonnegative().default(0),
+    reason: z.string().min(1),
+  })
+  .refine((b) => !(b.licenseItemId && b.licenseItemIds), {
+    message: 'licenseItemId ve licenseItemIds birlikte gönderilemez',
+    path: ['licenseItemIds'],
+  });
 type CreateAdjustmentBody = z.infer<typeof CreateAdjustmentBody>;
 
 /**

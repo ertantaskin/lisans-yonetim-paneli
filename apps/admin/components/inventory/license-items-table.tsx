@@ -15,6 +15,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import {
+  bulkAdjustLicenseItemsAction,
   fetchLicenseItemsAction,
   type LicenseInventoryPage,
   type LicenseInventoryRow,
@@ -22,6 +23,9 @@ import {
 import { Alert, AlertDescription } from '../ui/alert';
 import { Badge, StatusBadge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Checkbox } from '../ui/checkbox';
+import { useConfirm } from '../ui/confirm';
+import { useAnnouncer } from '../a11y/announcer';
 import { EmptyState } from '../ui/page-header';
 import { SearchInput } from '../ui/search-input';
 import { Skeleton } from '../ui/skeleton';
@@ -133,6 +137,16 @@ export function LicenseItemsTable({
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
+  // ── TOPLU SEÇİM ──
+  // Yalnız STOKTAKİ (available) kalemler seçilebilir: "geçersiz kıl / hasarlı" satılabilir
+  // stoğu düşürme işlemidir; teslim edilmiş bir anahtarı buradan öldürmek müşterinin canlı
+  // lisansını sessizce bozardı (o akış sipariş detayındaki "Değiştir").
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = React.useState(false);
+  const [bulkNote, setBulkNote] = React.useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const announce = useAnnouncer();
+
   // Aynı sayfada birden çok envanter tablosu olabilir → etiket/kontrol id'leri benzersiz olmalı.
   const uid = React.useId().replace(/[^a-zA-Z0-9]/g, '');
 
@@ -187,7 +201,129 @@ export function LicenseItemsTable({
   const rows = data?.rows ?? [];
   const from = total === 0 ? 0 : (page - 1) * (data?.pageSize ?? pageSize) + 1;
   const to = total === 0 ? 0 : from + rows.length - 1;
-  const colCount = showProductColumn ? 8 : 7;
+  const colCount = (showProductColumn ? 8 : 7) + 1; // +1: seçim kolonu
+
+  // ── Seçim türevleri ──
+  const selectableIds = React.useMemo(
+    () => rows.filter((r) => r.status === 'available').map((r) => r.id),
+    [rows],
+  );
+  // Seçim SAYFA DEĞİŞİNCE korunur (operatör süzüp birden çok sayfadan toplayabilir) ama
+  // seçili bir kalem artık listede yoksa (iptal edildi/atandı) sayaç yanıltmasın diye
+  // toplu işlem yalnız GÖRÜNÜR satırların kimliklerini kullanır — id → satır eşlemesi lazım.
+  const rowById = React.useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows]);
+  const selectedVisible = React.useMemo(
+    () => [...selected].filter((id) => rowById.has(id)),
+    [selected, rowById],
+  );
+  const allVisibleSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  const someVisibleSelected = selectableIds.some((id) => selected.has(id));
+
+  const toggleRow = React.useCallback((id: string, on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAllVisible = React.useCallback(
+    (on: boolean) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const id of selectableIds) {
+          if (on) next.add(id);
+          else next.delete(id);
+        }
+        return next;
+      });
+    },
+    [selectableIds],
+  );
+
+  /**
+   * Toplu "geçersiz kıl / hasarlı". Seçim farklı ÜRÜNLERE yayılabilir (genel /stock listesi);
+   * `/v1/admin/stock-adjustments` ürün-kapsamlı olduğu için istemci ürüne göre gruplar ve
+   * grup başına bir istek atar. Sonuç TOPLANIR ve atlananlar dürüstçe raporlanır.
+   */
+  const runBulk = React.useCallback(
+    async (action: 'void' | 'damage') => {
+      const ids = selectedVisible.filter((id) => rowById.get(id)?.status === 'available');
+      if (ids.length === 0) return;
+
+      const label = action === 'void' ? 'Geçersiz kıl' : 'Hasarlı işaretle';
+      const preview = ids
+        .slice(0, 8)
+        .map((id) => {
+          const r = rowById.get(id)!;
+          const name = r.kind === 'account'
+            ? ((r.fields ?? []).find((f) => !f.secret)?.value ?? 'Hesap kaydı')
+            : (r.value ?? 'Anahtar');
+          return r.batchCode ? `${name} · ${r.batchCode}` : name;
+        });
+      if (ids.length > preview.length) preview.push(`… ve ${ids.length - preview.length} kayıt daha`);
+
+      const res = await confirm({
+        title: `${ids.length} lisans stoktan düşülecek`,
+        description:
+          'Bu kalemler "geçersiz" olur; bir daha teslim edilmezler ve Karantina ekranında sebebiyle listelenirler. İşlem geri alınamaz.',
+        details: preview,
+        tone: 'danger',
+        confirmLabel: label,
+        reason: {
+          label: 'Sebep',
+          placeholder: 'ör. tedarikçi partisi bozuk — anahtarlar etkinleşmiyor',
+          required: true,
+          minLength: 3,
+          inputType: 'textarea',
+          hint: 'Denetim kaydına ve Karantina listesine yazılır.',
+        },
+      });
+      if (!res) return;
+
+      setBulkBusy(true);
+      setBulkNote(null);
+      try {
+        // Ürüne göre grupla (tek ürünlü listede tek grup olur).
+        const groups = new Map<string, string[]>();
+        for (const id of ids) {
+          const pid = rowById.get(id)!.productId;
+          groups.set(pid, [...(groups.get(pid) ?? []), id]);
+        }
+        let affected = 0;
+        let skipped = 0;
+        const errors: string[] = [];
+        for (const [pid, groupIds] of groups) {
+          const out = await bulkAdjustLicenseItemsAction({
+            productId: pid,
+            licenseItemIds: groupIds,
+            action,
+            reason: res.reason,
+          });
+          if (out.ok) {
+            affected += out.affected;
+            skipped += out.skipped;
+          } else {
+            errors.push(out.error);
+          }
+        }
+        const msg = errors.length
+          ? `${affected} lisans düşüldü. Hata: ${errors[0]}`
+          : skipped > 0
+            ? `${affected} lisans stoktan düşüldü, ${skipped} tanesi atlandı (artık stokta değildi).`
+            : `${affected} lisans stoktan düşüldü.`;
+        setBulkNote(msg);
+        announce(msg);
+        setSelected(new Set());
+        reload();
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [selectedVisible, rowById, confirm, announce, reload],
+  );
 
   return (
     <div className={cn('space-y-3', className)}>
@@ -251,6 +387,53 @@ export function LicenseItemsTable({
         </Alert>
       )}
 
+      {bulkNote && (
+        <Alert variant="success">
+          <Check aria-hidden />
+          <AlertDescription>{bulkNote}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* ── Toplu aksiyon çubuğu ──
+          Yalnız seçim varken görünür. Bozuk bir tedarikçi partisini tek tek seçiciden
+          bulmak yerine listede süzüp (parti/tedarikçi/arama) topluca düşmenin yolu budur. */}
+      {selectedVisible.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+          <span className="text-sm font-medium text-foreground">
+            {selectedVisible.length} lisans seçildi
+          </span>
+          <span className="text-xs text-muted-foreground">
+            (yalnız stoktakiler seçilebilir — teslim edilmiş anahtar buradan düşülemez)
+          </span>
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSelected(new Set())}
+              disabled={bulkBusy}
+            >
+              Seçimi temizle
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void runBulk('damage')}
+              disabled={bulkBusy}
+            >
+              <ShieldAlert aria-hidden /> Hasarlı işaretle
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => void runBulk('void')}
+              disabled={bulkBusy}
+            >
+              <ShieldAlert aria-hidden /> Geçersiz kıl
+            </Button>
+          </span>
+        </div>
+      )}
+
       {/* ── Tablo ── */}
       <div
         className="rounded-lg border border-border"
@@ -259,6 +442,15 @@ export function LicenseItemsTable({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
+              <TableHead className="w-9">
+                <Checkbox
+                  checked={allVisibleSelected}
+                  indeterminate={!allVisibleSelected && someVisibleSelected}
+                  disabled={selectableIds.length === 0 || bulkBusy}
+                  onChange={(e) => toggleAllVisible(e.currentTarget.checked)}
+                  aria-label="Bu sayfadaki stoktaki lisansların tümünü seç"
+                />
+              </TableHead>
               {showProductColumn && <TableHead>Ürün</TableHead>}
               <TableHead>Lisans / Hesap</TableHead>
               <TableHead>Durum</TableHead>
@@ -306,7 +498,25 @@ export function LicenseItemsTable({
               </TableRow>
             ) : (
               rows.map((row) => (
-                <TableRow key={row.id} className={cn('align-top', loading && 'opacity-60')}>
+                <TableRow
+                  key={row.id}
+                  className={cn('align-top', loading && 'opacity-60')}
+                  data-state={selected.has(row.id) ? 'selected' : undefined}
+                >
+                  <TableCell className="w-9 pt-3.5">
+                    {/* Yalnız STOKTAKİ kalem seçilebilir; diğerlerinde kutu hiç basılmaz ki
+                        "neden tıklayamıyorum" sorusu doğmasın (disabled kutu da kafa karıştırır). */}
+                    {row.status === 'available' ? (
+                      <Checkbox
+                        checked={selected.has(row.id)}
+                        disabled={bulkBusy}
+                        onChange={(e) => toggleRow(row.id, e.currentTarget.checked)}
+                        aria-label="Bu lisansı seç"
+                      />
+                    ) : (
+                      <span className="sr-only">Seçilemez — stokta değil</span>
+                    )}
+                  </TableCell>
                   {showProductColumn && (
                     <TableCell className="max-w-48">
                       <Link
@@ -417,6 +627,9 @@ export function LicenseItemsTable({
           </Button>
         </div>
       </div>
+
+      {/* Onay modali (sebep zorunlu) — toplu geçersiz kılma buradan geçer. */}
+      {dialog}
     </div>
   );
 }

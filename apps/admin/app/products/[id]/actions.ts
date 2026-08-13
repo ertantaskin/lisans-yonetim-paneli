@@ -51,15 +51,16 @@ export async function createStockAdjustmentAction(
   if (!Number.isInteger(qty) || qty < 0) return { ok: false, error: 'Adet 0 veya pozitif tam sayı olmalı' };
 
   const licenseItemId = String(formData.get('licenseItemId') || '').trim();
-  // void/damage = "bu anahtarı stoktan düş" demektir; kalem seçilmezse backend YALNIZ defter
-  // kaydı yazar ve stok aynı kalır (bozuk anahtar satılmaya devam ederdi). Bu yüzden kalem
-  // seçimi ZORUNLU — genel/kalemsiz kayıt için 'correct' (düzeltme) kullanılır.
+  // void/damage = "bu anahtarı stoktan düş" demektir ve artık ENVANTER TABLOSUNDAN çoklu
+  // seçimle yapılır (bkz. bulkAdjustLicenseItemsAction). Bu form yalnız kalem-kapsamsız
+  // DEFTER kaydı yazar; kalem seçilmemiş yıkıcı istek gelirse stok sessizce değişmemiş
+  // olurdu → açık hata ver, operatörü doğru ekrana yönlendir.
   const destructive = action === 'void' || action === 'damage';
   if (destructive && !UUID_RE.test(licenseItemId)) {
     return {
       ok: false,
       error:
-        'Geçersiz kıl / Hasarlı için stoktan düşülecek lisansı seçin. Yalnız defter kaydı istiyorsanız işlem türünü “Düzeltme” yapın.',
+        'Geçersiz kıl / Hasarlı işlemi Envanter listesinden yapılır: satırları işaretleyip toplu aksiyonu kullanın. Bu form yalnız defter kaydı yazar.',
     };
   }
 
@@ -73,17 +74,22 @@ export async function createStockAdjustmentAction(
   if (licenseItemId) body.licenseItemId = licenseItemId;
 
   try {
-    // API oluşturulan stock_adjustments satırını döndürür: licenseItemId dolu ise gerçekten
-    // bir kalem 'voided' edilmiştir (fire adedi de kalemden türetilir → qty'yi ORADAN oku).
-    const row = await apiPost<{ licenseItemId?: string | null; qty?: number } | null>(
+    // API artık TOPLU sonuç döndürür: { rows, requested, affected, skipped, qtyTotal }.
+    // `affected` GERÇEKTEN stoktan düşen kalem sayısıdır — bu form için 0 olması normaldir.
+    const res = await apiPost<{ affected?: number; qtyTotal?: number } | null>(
       '/v1/admin/stock-adjustments',
       body,
       await getActor(),
     );
     revalidatePath(`/products/${productId}`);
     revalidatePath('/stock');
-    const affectedStock = destructive && Boolean(row?.licenseItemId ?? licenseItemId);
-    return { ok: true, saved: true, affectedStock, qty: Number(row?.qty ?? qty) };
+    const affected = Number(res?.affected ?? 0);
+    return {
+      ok: true,
+      saved: true,
+      affectedStock: affected > 0,
+      qty: affected > 0 ? Number(res?.qtyTotal ?? qty) : qty,
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Düzeltme kaydedilemedi' };
   }

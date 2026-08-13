@@ -34,9 +34,26 @@ export type AdjustmentAction = 'void' | 'damage' | 'correct' | 'recall';
 export interface CreateAdjustmentInput {
   productId: string;
   licenseItemId?: string | null;
+  /** Toplu kalem seçimi (envanter listesinden çoklu seçim). licenseItemId ile birlikte GELMEZ. */
+  licenseItemIds?: string[] | null;
   action: AdjustmentAction;
   qty: number;
   reason: string;
+}
+
+/**
+ * Toplu düzeltme sonucu. `affected` GERÇEKTEN stoktan düşen kalem sayısıdır; `skipped`
+ * istekte olup dokunulamayanlar (araya giren bir sipariş kalemi kapmış / zaten geçersiz /
+ * başka ürüne ait). İstemci ikisini de gösterir — "N kayıt eklendi" deyip sessizce 3 kalemi
+ * atlamak, bozuk anahtarın müşteriye gitmeye devam etmesi demektir.
+ */
+export interface AdjustmentResult {
+  rows: StockAdjustment[];
+  requested: number;
+  affected: number;
+  skipped: number;
+  /** Fire olarak deftere yazılan toplam birim (MAK'ta kalan kapasite toplanır). */
+  qtyTotal: number;
 }
 
 /** Parti listesi satırı (raw JOIN çıktısı → camelCase). */
@@ -381,11 +398,28 @@ export class SupplyOpsService {
   }
 
   /**
-   * Sebepli stok düzeltme (§12). licenseItemId verilip action 'void'/'damage' ise o
-   * lisans satırı 'voided'e çekilir (yalnız available iken). Her düzeltme sebep + aktör
-   * ile stock_adjustments'a ve audit_log'a yazılır. Tek transaction.
+   * Sebepli stok düzeltme (§12) — TEKİL ya da TOPLU.
+   *
+   * `action` 'void'/'damage' ise seçilen lisans satır(lar)ı 'voided'e çekilir (yalnız
+   * `available` iken). Kalem başına AYRI bir `stock_adjustments` satırı yazılır: karantina
+   * ekranı sebebi `license_item_id` üzerinden okur, tek toplu satır yazılsaydı iptal edilen
+   * anahtarların hiçbirinin sebebi görünmezdi. Hepsi TEK transaction'da.
+   *
+   * TOPLU YOLDA "hepsi ya da hiçbiri" DEĞİL: araya giren bir sipariş kalemlerden birini
+   * kapmışsa (artık 'assigned') o kalem atlanır, kalanlar iptal edilir ve sonuç `skipped`
+   * ile dürüstçe raporlanır. Tümü atlanırsa 400 — sessizce "başarılı" demek, bozuk
+   * anahtarların stokta kalmaya devam etmesi demekti.
    */
-  async createAdjustment(input: CreateAdjustmentInput, actor: string): Promise<StockAdjustment> {
+  async createAdjustment(input: CreateAdjustmentInput, actor: string): Promise<AdjustmentResult> {
+    const destructive = input.action === 'void' || input.action === 'damage';
+    // Tekil alan + toplu dizi tek listede birleşir (controller ikisini birlikte kabul etmez).
+    // Tekrarlı id gönderimi aynı kalemi iki kez saymasın diye benzersizleştirilir.
+    const ids = Array.from(
+      new Set(
+        (input.licenseItemIds ?? (input.licenseItemId ? [input.licenseItemId] : [])).filter(Boolean),
+      ),
+    );
+
     return this.db.transaction(async (tx) => {
       // Ürün var mı? (RAW SQL — mevcut products tablosu.)
       const prodRows = await rawRows<{ id: string }>(tx, sql`
@@ -395,59 +429,93 @@ export class SupplyOpsService {
         throw new NotFoundException('Ürün bulunamadı');
       }
 
-      // Lisans satırını iptal statüsüne çek (yalnız void/damage + item verildiyse).
-      // Kalem-kapsamlı yıkıcı düzeltmede fire miktarı FORM'dan DEĞİL, yok edilen kalemin
-      // KENDİSİNDEN türetilir (controller varsayılanı qty=0 → sıfır fire raporlanırdı). Diğer
-      // durumlarda (correct / kalem-kapsamsız) istekteki qty korunur.
-      let affectedItem = false;
-      let qtyToStore = input.qty;
-      if (input.licenseItemId && (input.action === 'void' || input.action === 'damage')) {
-        const upd = await rawRows<{ id: string; max_uses: number; use_count: number }>(tx, sql`
-          UPDATE license_items
-          SET status = 'voided'
-          WHERE id = ${input.licenseItemId}
-            AND product_id = ${input.productId}
-            AND status = 'available'
-          RETURNING id, max_uses, use_count;
-        `);
-        const item = upd[0];
-        if (!item) {
-          throw new BadRequestException(
-            'Lisans satırı bulunamadı ya da satılabilir (available) durumda değil',
-          );
-        }
-        affectedItem = true;
-        // Yok edilen gerçek birim(ler): tek-kullanım=1, multi/MAK=kalan kapasite. Defansif: <=0 ise 1.
-        const remaining = Number(item.max_uses) - Number(item.use_count);
-        qtyToStore = remaining > 0 ? remaining : 1;
+      // ── Kalem-kapsamsız (yalnız defter kaydı: 'correct'/'recall') ──
+      if (!destructive || ids.length === 0) {
+        const [row] = await tx
+          .insert(stockAdjustments)
+          .values({
+            productId: input.productId,
+            licenseItemId: ids[0] ?? null,
+            action: input.action,
+            qty: input.qty,
+            reason: input.reason,
+            actor,
+          })
+          .returning();
+        await tx.insert(auditLog).values({
+          action: 'adjust',
+          actor,
+          targetType: ids[0] ? 'license_item' : 'product',
+          targetId: ids[0] ?? input.productId,
+          meta: { action: input.action, qty: input.qty, reason: input.reason, affectedItem: false },
+        });
+        return { rows: [row!], requested: 0, affected: 0, skipped: 0, qtyTotal: input.qty };
       }
 
-      const [row] = await tx
-        .insert(stockAdjustments)
-        .values({
-          productId: input.productId,
-          licenseItemId: input.licenseItemId ?? null,
-          action: input.action,
-          qty: qtyToStore,
-          reason: input.reason,
+      // ── Yıkıcı + kalem seçili: TEK UPDATE ile tüm seçim ──
+      // `= ANY(...)` tek turda kilitler; `status='available'` şartı yarışta kapılmış kalemi
+      // kendiliğinden eler (RETURNING yalnız gerçekten değişenleri döndürür → atlananlar
+      // fark alınarak bulunur, ayrı bir ön SELECT'e ve TOCTOU penceresine gerek yok).
+      const updated = await rawRows<{ id: string; max_uses: number; use_count: number }>(tx, sql`
+        UPDATE license_items
+        SET status = 'voided'
+        WHERE id = ANY(${ids}::uuid[])
+          AND product_id = ${input.productId}
+          AND status = 'available'
+        RETURNING id, max_uses, use_count;
+      `);
+
+      if (updated.length === 0) {
+        throw new BadRequestException(
+          ids.length === 1
+            ? 'Lisans satırı bulunamadı ya da satılabilir (available) durumda değil'
+            : 'Seçilen lisansların hiçbiri stoktan düşülemedi (satılmış ya da zaten geçersiz olabilir)',
+        );
+      }
+
+      // Fire miktarı FORM'dan DEĞİL, yok edilen kalemin KENDİSİNDEN türetilir: tek-kullanımda 1,
+      // MAK/çok-kullanımlıda KALAN kapasite (controller varsayılanı qty=0 → sıfır fire yazardı).
+      const rows: StockAdjustment[] = [];
+      let qtyTotal = 0;
+      for (const item of updated) {
+        const remaining = Number(item.max_uses) - Number(item.use_count);
+        const qty = remaining > 0 ? remaining : 1;
+        qtyTotal += qty;
+        const [row] = await tx
+          .insert(stockAdjustments)
+          .values({
+            productId: input.productId,
+            licenseItemId: item.id,
+            action: input.action,
+            qty,
+            reason: input.reason,
+            actor,
+          })
+          .returning();
+        rows.push(row!);
+        await tx.insert(auditLog).values({
+          action: 'adjust',
           actor,
-        })
-        .returning();
+          targetType: 'license_item',
+          targetId: item.id,
+          meta: {
+            action: input.action,
+            qty,
+            reason: input.reason,
+            affectedItem: true,
+            // Toplu işlemde hangi kalemler birlikte iptal edildi — denetimde tek tıkla izlenebilsin.
+            ...(ids.length > 1 ? { bulk: ids.length } : {}),
+          },
+        });
+      }
 
-      await tx.insert(auditLog).values({
-        action: 'adjust',
-        actor,
-        targetType: input.licenseItemId ? 'license_item' : 'product',
-        targetId: input.licenseItemId ?? input.productId,
-        meta: {
-          action: input.action,
-          qty: qtyToStore,
-          reason: input.reason,
-          affectedItem,
-        },
-      });
-
-      return row!;
+      return {
+        rows,
+        requested: ids.length,
+        affected: updated.length,
+        skipped: ids.length - updated.length,
+        qtyTotal,
+      };
     });
   }
 
