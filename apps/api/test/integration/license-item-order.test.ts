@@ -1,11 +1,22 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Site } from '../../src/db/schema';
 import { StockService } from '../../src/stock/stock.service';
+import { OrdersService } from '../../src/orders/orders.service';
 import { FulfillmentService } from '../../src/orders/fulfillment.service';
 import { ProductsService } from '../../src/products/products.service';
+import { AdminOrdersService } from '../../src/orders/admin-orders.service';
 import { assignAvailableSingleUse } from '../../src/assignment/assign';
 import type { CryptoService } from '../../src/crypto/crypto.service';
-import { cleanupByTag, createProduct, makeCrypto, makeDb, type Db } from './_helpers';
+import {
+  cleanupByTag,
+  createOrderWithLine,
+  createProduct,
+  createSite,
+  makeCrypto,
+  makeDb,
+  type Db,
+} from './_helpers';
 
 /**
  * ENTEGRASYON — lisans envanterinde EKLEME SIRASI korunur (`license_items.seq`).
@@ -32,11 +43,18 @@ let end: () => Promise<void>;
 let crypto: CryptoService;
 let products: ProductsService;
 let stock: StockService;
+let orders: OrdersService;
+let fulfillment: FulfillmentService;
 
 const mailFake = { enqueueDelivery: async () => {} } as never;
 const webhookFake = { emit: async () => {} } as never;
 const configFake = { get: () => undefined } as never;
 const autocompleteQueueFake = { add: async () => ({ id: 'fake' }) } as never;
+const redisFake = {} as never;
+const securityFake = {
+  recordQuotaExceeded: async () => false,
+  recordQuotaHeld: async () => false,
+} as never;
 
 /** Sıra sabit ve gözle okunur olsun: 01..08. */
 const KEYS_A = Array.from({ length: 8 }, (_, i) => `SIRA-A-${String(i + 1).padStart(2, '0')}`);
@@ -57,7 +75,8 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
     end = conn.end;
     crypto = makeCrypto();
     products = new ProductsService(db as never);
-    const fulfillment = new FulfillmentService(db as never, products, mailFake, webhookFake);
+    fulfillment = new FulfillmentService(db as never, products, mailFake, webhookFake);
+    const admin = new AdminOrdersService(db as never, redisFake, crypto, mailFake, fulfillment);
     stock = new StockService(
       db as never,
       crypto,
@@ -65,6 +84,16 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
       fulfillment,
       configFake,
       autocompleteQueueFake,
+    );
+    orders = new OrdersService(
+      db as never,
+      products,
+      crypto,
+      mailFake,
+      webhookFake,
+      fulfillment,
+      admin,
+      securityFake,
     );
   });
 
@@ -116,6 +145,33 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
       ...KEYS_A.map((k) => `${k}-Y`),
       ...KEYS_B.map((k) => `${k}-Y`),
     ]);
+  });
+
+  it('(5) MÜŞTERİ görünümü (getDeliveries) de giriş sırasını korur', async () => {
+    // Bu yüzeyde ORDER BY HİÇ YOKTU → müşterinin My Account listesi ve teslimat maili
+    // panelden farklı sırada gelebiliyordu. Envanter testi bunu KAPSAMIYOR (ayrı sorgu).
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
+    await stock.import(
+      product.id,
+      KEYS_A.map((payload) => ({ payload: `${payload}-D` })),
+      undefined,
+      false,
+      ACTOR,
+    );
+    const site = await createSite(db, crypto, { tag });
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: KEYS_A.length,
+      tag,
+      status: 'pending',
+    });
+    // Tüm satırı ata → sipariş fulfilled; müşteri sekiz anahtarı da görür.
+    await fulfillment.completeLine(order.lineId, ACTOR);
+
+    const view = await orders.getDeliveries({ id: site.id } as unknown as Site, order.orderId);
+    const seen = view.deliveries.map((d) => d.payload ?? '');
+    expect(seen).toEqual(KEYS_A.map((k) => `${k}-D`));
   });
 
   it('(4) FIFO: aynı partiden önce GİRİLEN anahtar önce ATANIR', async () => {

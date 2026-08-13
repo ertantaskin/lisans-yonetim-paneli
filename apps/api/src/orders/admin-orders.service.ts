@@ -1754,7 +1754,15 @@ export class AdminOrdersService {
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .innerJoin(products, eq(orderLines.productId, products.id))
       .where(eq(assignments.orderId, order.id))
-      .orderBy(desc(assignments.deliveredAt));
+      // WP meta box (mağaza sipariş ekranı). Panel sipariş detayı / My Account / teslimat maili
+      // ARTIK `licenseItems.seq` ile sıralanıyor; burası tek başına `deliveredAt DESC` kalsaydı
+      // aynı sipariş mağaza tarafında TERS yönde ve aynı damgalı atamalarda KEYFİ sırada
+      // görünürdü (tek teslimatta deliveredAt hepsinde eşittir).
+      //
+      // `deliveredAt DESC` BİRİNCİL anahtar olarak KORUNUR (kısmi teslimatta en son gelen parti
+      // üstte — bu ekranın mevcut sözleşmesi); yalnız eşitlik `seq ASC` ile çözülür → tek
+      // teslimatlı olağan siparişte sıra panelin diğer yüzeyleriyle AYNI olur.
+      .orderBy(desc(assignments.deliveredAt), licenseItems.seq);
 
     // Eski/yeni anahtar AYRI alias'larla — geçmiş satırında "neyle değişti" de görünsün (maskeli).
     const oldItem = alias(licenseItems, 'old_li');
