@@ -2088,10 +2088,10 @@ export class AdminOrdersService {
       // TIE-BREAK (seq) ŞART: bu ORDER BY bir LIMIT ile birlikte çalışıyor. Eşit damgalı
       // satırlarda hangilerinin pencereye gireceği tie-break olmadan KEYFİ olur — aynı
       // süzgeç iki koşuda farklı kayıt kümesi döndürebilir (kırpma uyarısı da yanıltır).
-      // YÖN: `seq ASC` — panel geneli kural "blok DESC (en yeni olay üstte), blok İÇİNDE
-      // giriş sırası ASC" (envanter listesiyle aynı). Bir recall/void tüm partiyi aynı
-      // damgayla öldürür; `seq DESC` o partiyi operatörün girdiği listenin TERSİ gösterirdi.
-      .orderBy(sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt}) DESC, ${licenseItems.seq} ASC`)
+      // YÖN: `seq DESC` — envanter listesiyle aynı kural (satır satır en yeni üstte).
+      // Bir recall/void tüm partiyi aynı damgayla öldürür; eşitliği en son eklenen anahtar
+      // kazanır, böylece iki liste aynı sırayı gösterir.
+      .orderBy(sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt}) DESC, ${licenseItems.seq} DESC`)
       .limit(fetchLimit);
 
     // audit_log fallback (detail() reasonRows deseni): düz-revoke (değişim değil) sebebi

@@ -26,9 +26,12 @@ import {
  * bir giriş tek damga). Sıralamanın tie-break'i rastgele UUID (`id`) olduğu sürece operatörün
  * yapıştırdığı liste ekranda KARIŞIK görünür — kullanıcı şikâyeti tam olarak buydu.
  *
- * Bu dosya iki ayrı vaadi kilitler:
- *   1. LİSTELEME — "en yeni giriş üstte, blok içinde yapıştırılan sıra".
+ * Bu dosya iki ayrı — ve TERS YÖNLÜ — vaadi kilitler:
+ *   1. LİSTELEME — SATIR SATIR en yeni üstte (`test1, test2` girildiyse `test2` üstte).
+ *      Kullanıcı kararı: envanter bir AKIŞ, en son eklenen her zaman başta.
  *   2. TESLİMAT (FIFO) — aynı partide önce girilen anahtar önce atanır.
+ * İkisi birbirinin tersi olduğu için ikisi de ayrı ayrı test edilir: birini düzeltirken
+ * diğerini bozmak bu projede daha önce olmuş bir hata sınıfıdır.
  *
  * NOT: tie-break olmadan bu testler ARADA yeşil kalabilirdi (rastgele sıra tesadüfen doğru
  * çıkabilir). Bu yüzden satır sayısı 8 tutuldu: 8! = 40.320 permütasyon → yanlış davranışın
@@ -102,7 +105,7 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
     await end();
   });
 
-  it('(1) tek içe aktarma: liste operatörün girdiği sırayı AYNEN gösterir', async () => {
+  it('(1) tek içe aktarma: liste TERS sırada — en son yapıştırılan anahtar en üstte', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
     const res = await stock.import(
       product.id,
@@ -113,12 +116,12 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
     );
     expect(res.imported).toBe(KEYS_A.length);
 
-    // Varsayılan sıra ('created_desc') → aynı damgalı blok içinde seq ASC.
+    // Varsayılan sıra ('created_desc') → aynı damgalı blok içinde seq DESC.
     const page = await stock.listLicenseItems({ productId: product.id }, ACTOR, true);
-    expect(plainKeys(page.rows)).toEqual(KEYS_A);
+    expect(plainKeys(page.rows)).toEqual([...KEYS_A].reverse());
   });
 
-  it('(2) ikinci içe aktarma BLOK OLARAK üste gelir; her blok kendi içinde sıralı kalır', async () => {
+  it('(2) ikinci içe aktarma BLOK OLARAK üste gelir; her blok kendi içinde ters sıralı', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
     await stock.import(product.id, KEYS_A.map((payload) => ({ payload: `${payload}-X` })), undefined, false, ACTOR);
     // İkinci giriş AYRI transaction → farklı created_at damgası.
@@ -126,12 +129,12 @@ describe('license_items.seq — içe aktarma sırası listede ve teslimatta koru
 
     const page = await stock.listLicenseItems({ productId: product.id }, ACTOR, true);
     expect(plainKeys(page.rows)).toEqual([
-      ...KEYS_B.map((k) => `${k}-X`), // en yeni blok üstte
-      ...KEYS_A.map((k) => `${k}-X`), // altında ilk blok, kendi sırasıyla
+      ...[...KEYS_B].reverse().map((k) => `${k}-X`), // en yeni blok üstte, içinde en son giren başta
+      ...[...KEYS_A].reverse().map((k) => `${k}-X`), // altında ilk blok, o da ters
     ]);
   });
 
-  it('(3) "En eski giriş üstte" sıralaması tam tersini verir (blok sırası döner, blok içi sıra KORUNUR)', async () => {
+  it('(3) "En eski giriş üstte" sıralaması tam tersini verir (hem blok hem blok içi ters döner)', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
     await stock.import(product.id, KEYS_A.map((payload) => ({ payload: `${payload}-Y` })), undefined, false, ACTOR);
     await stock.import(product.id, KEYS_B.map((payload) => ({ payload: `${payload}-Y` })), undefined, false, ACTOR);

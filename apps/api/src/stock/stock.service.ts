@@ -1246,21 +1246,25 @@ export class StockService {
     // AYNI (ölçüldü: 15 satırlık giriş tek damga). Eski tie-break rastgele UUID olduğu için
     // operatörün yapıştırdığı liste ekranda KARIŞIK görünüyordu.
     //
-    // Yön BİLİNÇLİ olarak karışık: blok (created_at) DESC ama blok İÇİ seq ASC → "en yeni
-    // giriş en üstte, o girişin içinde benim verdiğim sıra". `seq DESC` deseydik operatörün
-    // listesi baş aşağı görünürdü.
+    // YÖN (kullanıcı kararı): SATIR SATIR en yeni üstte → `created_at DESC, seq DESC`.
+    // Yani bir girişte `test1, test2` yapıştırıldıysa listede `test2` ÜSTTE görünür; bloklar
+    // arası da en yeni giriş üstte. "Blok içi ASC" (yapıştırma sırası) İLK denenen yorumdu,
+    // kullanıcı ekran görüntüsüyle düzeltti: liste bir AKIŞ, en son eklenen her zaman başta.
+    // TESLİMAT bundan BAĞIMSIZ ve TERS yönde kalır (assign.ts: FEFO → created_at → seq ASC,
+    // yani önce girilen önce teslim edilir) — listeleme sunum, atama iş kuralı.
     //
-    // `NULLS LAST` AÇIKÇA yazılır: PostgreSQL'de `DESC`in varsayılanı NULLS FIRST'tür, ama
-    // index `(created_at DESC NULLS LAST, seq)` olarak yaratılır (drizzle `.desc()` böyle
-    // üretir). Pathkey karşılaştırması nulls yönünü de içerdiği için yazmazsak planlayıcı
-    // sıralamayı index'ten KARŞILAMAZ ve tam sort'a düşer. `created_at` NOT NULL olduğu için
-    // sonuç kümesi birebir aynıdır — bu yalnız planlayıcıyla anlaşma.
+    // PLANLAYICI: `(created_at DESC, seq DESC)` sıralaması `license_items_created_asc_idx`
+    // `(created_at ASC, seq ASC)` btree'sinin GERİYE taramasıyla karşılanır (geriye tarama
+    // her iki kolonun yönünü de çevirir). Bu yüzden burada `NULLS LAST` YAZILMAZ: geriye
+    // tarama `DESC NULLS FIRST` üretir ve `DESC`in SQL varsayılanı da NULLS FIRST'tür →
+    // pathkey birebir eşleşir. (`NULLS LAST` yazarsak eşleşme kaçar, tam sort'a düşeriz.)
+    // Her iki kolon da NOT NULL olduğu için sonuç kümesi zaten aynıdır.
     const orderBy =
       params.sort === 'created_asc'
         ? sql`li.created_at ASC, li.seq ASC`
         : params.sort === 'assigned_desc'
-          ? sql`li.assigned_at DESC NULLS LAST, li.created_at DESC NULLS LAST, li.seq ASC`
-          : sql`li.created_at DESC NULLS LAST, li.seq ASC`;
+          ? sql`li.assigned_at DESC NULLS LAST, li.created_at DESC, li.seq DESC`
+          : sql`li.created_at DESC, li.seq DESC`;
 
     // ── Sayfa + toplam: TEK sorgu ──
     // Eskiden rows ve count(*) AYRI iki sorguydu; ikisi de aynı süzgeçle license_items'ı

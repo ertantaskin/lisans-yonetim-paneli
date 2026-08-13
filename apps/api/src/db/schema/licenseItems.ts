@@ -61,9 +61,10 @@ export const licenseItems = pgTable(
      * NEDEN GEREKLİ: bir içe aktarmanın TÜM satırları tek transaction'da yazılır, bu yüzden
      * `now()` (transaction başlangıcı) hepsinde AYNIDIR — dev'de ölçüldü: 15 satırlık giriş
      * tek damga. Eski tie-break `id DESC` idi ve `id` rastgele UUID v4 → operatörün girdiği
-     * liste ekranda KARIŞIK görünüyordu. `seq` ekleme sırasını taşır; sıralama
-     * `created_at DESC, seq ASC` olunca "en yeni giriş üstte, blok içinde yapıştırılan sıra"
-     * elde edilir.
+     * liste ekranda KARIŞIK görünüyordu. `seq` ekleme sırasını taşır.
+     *
+     * LİSTELEME `created_at DESC, seq DESC` (kullanıcı kararı): satır satır en yeni üstte —
+     * `test1, test2` girildiyse `test2` üstte. TESLİMAT bunun TERSİ (`seq ASC`, aşağıda).
      *
      * FIFO: atama sorgusu da (`assignment/assign.ts`) bu kolonla tie-break yapar → aynı
      * partide önce girilen anahtar önce teslim edilir (eskiden rastgeleydi).
@@ -89,17 +90,18 @@ export const licenseItems = pgTable(
       .where(sql`${t.status} = 'available'`),
     // Son 5 hane araması.
     index('license_items_suffix_idx').on(t.payloadSuffixHash),
-    // Envanter ekranı sıcak yolları (0025 — elle yazılmıştı, şemaya taşındı ki `db:generate`
-    // bir daha drift üretmesin). Tie-break artık `seq` (ekleme sırası): sayfalar arasında
-    // satır yer değiştirmez VE aynı içe aktarmadaki satırlar operatörün girdiği sırada kalır
-    // (eski `id DESC` tie-break'i sayfalamayı sabitliyordu ama sırayı RASTGELE yapıyordu).
+    // Envanter ekranı sıcak yolu (0025 — elle yazılmıştı, şemaya taşındı ki `db:generate`
+    // bir daha drift üretmesin). Yalın `created_at DESC` sıralamalarına hizmet eder.
+    // NOT: envanterin İKİ sıralama seçeneği de artık AŞAĞIDAKİ `_asc_idx`'ten karşılanıyor
+    // (bkz. yorum); bu index ONLARIN yolunda DEĞİL. Bırakıldı: düşürmek migration ister,
+    // faydası yazma maliyetinden düşük ama sıfır risk değil.
     index('license_items_created_idx').on(t.createdAt.desc(), t.seq.asc()),
-    // "En eski giriş üstte" (`created_asc`) için AYRI index — ŞART.
-    // `(created_at DESC, seq ASC)` btree'sini GERİYE taramak `(created_at ASC, seq DESC)`
-    // verir; istediğimiz `(created_at ASC, seq ASC)` DEĞİL. Yönler ayna olmadığı için tek
-    // index iki sıralamayı karşılayamaz. Bu index olmadan "En eski" seçeneği index desteğini
-    // KAYBEDERDİ (eski `(created_at DESC, id DESC)` geriye taramayla karşılıyordu) — büyük
-    // tabloda tam sıralama demek. Maliyeti düşük: iki dar kolon.
+    // ENVANTERİN İKİ SIRALAMASINI DA BU index karşılar — btree geriye taraması TÜM
+    // kolonların yönünü birden çevirdiği için:
+    //   ileri  → `(created_at ASC,  seq ASC)`  = "En eski giriş üstte"
+    //   geriye → `(created_at DESC, seq DESC)` = varsayılan "En yeni giriş üstte"
+    // (Tek başına `(created_at DESC, seq ASC)` index'i İKİSİNİ DE veremez: geriye taraması
+    // `(ASC, DESC)` üretir, bu ne "en yeni" ne "en eski" sıralamasıdır.)
     index('license_items_created_asc_idx').on(t.createdAt.asc(), t.seq.asc()),
     index('license_items_status_created_idx').on(t.status, t.createdAt.desc()),
     index('license_items_assigned_idx').on(sql`${t.assignedAt} DESC NULLS LAST`),
