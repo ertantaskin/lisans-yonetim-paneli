@@ -958,7 +958,10 @@ export function QuarantineTable({
             icon: Truck,
             label: 'Tedarikçisi belli',
             value: counts.traceable,
-            hint: 'değişim talep edilebilir',
+            // Bu sayaç tedarikçi zinciri KURULABİLEN kalemleri sayar; bir kısmı zaten
+            // fişe girmiş olabilir. "Talep edilebilir" demek yanıltıcı olurdu — bildirilmeyi
+            // BEKLEYENLER üstteki panelde ve sekme sayacında görünür.
+            hint: 'parti/tedarikçi izi var',
           },
         ]}
       />

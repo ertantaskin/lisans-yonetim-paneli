@@ -231,7 +231,9 @@ export default function GuidePage() {
         </p>
         <Tip>
           Geçersiz kılınan (void) ve değiştirilen ölü anahtarlar silinmez;{' '}
-          <R href="/quarantine">Karantina</R> ekranında sebebi ve kaynak siparişiyle birlikte durur.
+          <R href="/quarantine">Kusurlu Anahtarlar</R> ekranında sebebi ve kaynak siparişiyle
+          birlikte durur. Oradan tedarikçiye <strong>değişim fişi</strong> kesip süreci takip
+          edebilirsiniz — bkz. aşağıdaki bölüm.
         </Tip>
       </Section>
 
@@ -431,7 +433,15 @@ export default function GuidePage() {
           <li><strong><R href="/suppliers">Tedarikçiler</R>:</strong> tedarikçi kartı + karne (teslim performansı, geri-çekilme oranı, para birimi başına maliyet).</li>
           <li><strong><R href="/purchase-orders">Satın Alma</R>:</strong> açık/kapalı emirler ve teslim alma. &quot;Otomatik&quot; rozetli emirlerde teslim alma adımı yoktur (mal zaten girilmiştir).</li>
           <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi anahtar hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> anahtarlar geçersiz kılınır. <strong>Müşterilerdeki anahtarlara DOKUNULMAZ</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yeni anahtarla değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır (askıya alınmış atamalar buna dahil değildir, onlar elle işlenir).</li>
+          <li><strong><R href="/quarantine">Kusurlu Anahtarlar → Değişim fişi</R>:</strong> bozuk çıkan anahtarları tedarikçiye <strong>toplu bildirmenin</strong> yolu. <em>Bekleyenler</em> sekmesi henüz bildirilmemiş kusurluları tedarikçi ve parti kırılımıyla gösterir; <strong>“Fiş oluştur”</strong> deyip tarih aralığı seçtiğinizde o pencerede biriken tüm kusurlular otomatik gelir (istemediğinizi çıkarırsınız) ve <code>DEG-YYYYAAGG-NN</code> numaralı bir fiş kesilir. Fişi <strong>.txt veya .csv</strong> olarak indirip tedarikçiye gönderin, sonra “Gönderildi” işaretleyin. Tedarikçi cevap verdikçe kalemleri <em>Yenisi geldi / Bedeli iade edildi / Reddedildi</em> olarak işaretlersiniz. <strong>Reddedilen anahtar bekleyenler havuzuna GERİ DÖNER</strong> ve yeniden bildirilebilir; yenilenen kapanır. Fiş kesilen anahtar bir daha aynı listeye düşmez — aynı kusuru iki kez bildirmezsiniz.</li>
         </Bullets>
+        <Tip>
+          Tedarikçiye giden dosyada <strong>müşteri e-postası ve sipariş numarası BULUNMAZ</strong> (KVKK):
+          yalnız ürün, anahtar, parti, kusur gerekçesi ve tarih. Fiş içeriği kesildiği andaki
+          <strong> anlık görüntüdür</strong> — ürün adı değişse ya da parti silinse bile gönderdiğiniz
+          dosyayla panelde gördüğünüz liste birebir aynı kalır. Tedarikçinin kusur oranını ve ortalama
+          çözülme süresini <R href="/suppliers">tedarikçi karnesinde</R> görürsünüz.
+        </Tip>
         <Tip>
           Partisiz (hızlı) giriş yaparsanız o anahtarlar hiçbir partiye bağlanmaz: maliyet raporunda
           &quot;kapsanamayan&quot; sayılır, geri çekme ve tedarikçi karnesi de onları kapsamaz. İzlenebilirlik
