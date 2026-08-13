@@ -14,6 +14,39 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Lisans listesi: içe aktarma sırası korunur (migration 0030 + 0031)
+
+Kullanıcı: *"Windows 11 Pro ürününe bugün sıralı bir stok eklemiştim ama lisans anahtarı
+listesinde hepsi karışık, rastgele sırada görünüyor. Verdiğim liste gibi sıralı olmalı — sonuncu
+eklenen her zaman en üstte, sıra şaşmadan."*
+
+**Kök neden (dev veritabanında gerçek veriyle ölçüldü, tahmin değil).** Bir içe aktarmanın bütün
+satırları tek transaction'da yazılıyor; `created_at` varsayılanı `now()` = *transaction* zamanı
+olduğu için o bloktaki her satır **aynı damgayı** taşıyor (ölçüm: 15 satırlık bir giriş tek damga).
+Sıralamanın ikinci anahtarı ise rastgele bir UUID'ydi → blok içindeki sıra keyfi görünüyordu.
+Aynı boşluk **atama** yolunda da vardı (`ORDER BY expires_at, created_at`, üçüncü anahtar yok):
+aynı partiden hangi anahtarın müşteriye gideceği de rastgeleydi.
+
+**Çözüm.** `license_items.seq` (monoton artan) kolonu + iki index. Listeleme
+`created_at DESC, seq ASC` → **en yeni giriş en üstte, blok içinde operatörün yapıştırdığı sıra**.
+Atamada `seq` üçüncü anahtar olarak eklendi: FEFO önceliği (önce ölecek satılır) bozulmadan
+"önce girilen önce teslim edilir".
+
+**Sıra kolonu tek başına yetmiyordu.** Çok-ajanlı tarama, müşteri teslimatı (`getDeliveries`),
+teslimat maili ve admin sipariş detayı sorgularında **hiç ORDER BY olmadığını** ortaya çıkardı —
+yani panel düzelse bile mail ve My Account farklı sıra gösterebiliyordu; üçü de bağlandı.
+Çekişmeli doğrulama ayrıca **kendi değişikliğimdeki bir boşluğu** yakaladı: WP mağaza ekranındaki
+meta box tek başına `deliveredAt DESC` kalmıştı (ters yön, tek teslimatta keyfi) → birincil anahtar
+korunarak `seq` ile eşitlik çözüldü. Aynı sınıftan üç belirsizlik daha kapatıldı: karantina
+listesi (LIMIT'li sıralama tie-break'sizdi → hangi satırların pencereye gireceği keyfiydi),
+Ctrl+K anahtar araması (`ORDER BY`sız `LIMIT 10`) ve toplu değiştirme adayları.
+
+**Bilinen sınır (dürüstlük).** Migration'dan **önceki** satırların `seq` değerleri tablonun fiziksel
+sırasından gelir; bu satırlar zaman içinde güncellendiği için eski bloklarda sıra garanti değildir.
+Yapıştırma sırası daha önce hiçbir yere yazılmıyordu, geri kazanılamaz — **bundan sonraki girişlerde**
+sıra kesin. Migration tabloyu yeniden yazar; uygulandığında tablo küçüktü (prod 3, dev 22 satır),
+ileride büyük tablolar için rewrite'sız reçete migration dosyasının başına yazıldı.
+
 ### İkinci onay modali (panel geneli) + rozet dilinin tek kaynağa toplanması (migration YOK)
 
 Kullanıcı: *"Stok giriş durumlarında 2. onay gereksin, ekrana modal gelsin, lisansların olduğu bir

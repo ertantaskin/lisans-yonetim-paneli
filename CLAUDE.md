@@ -1249,6 +1249,35 @@ başka yerlerde de teyit gerekiyorsa yapalım; /stock rozetleri /orders ile senk
   `oklch(0.696 0.17 162.48)`+ikon = /orders ile BİREBİR; dropdown→modal akışı çalıştı ·
   prod `/health` 200 v1.0.0, admin ERROR 0.
 
+**LİSANS SIRASI — GİRİŞ SIRASI KORUNUR (commit f4720a3→6efc038, CANLI prod+dev, migration 0030+0031):**
+Kullanıcı "sıralı stok ekledim ama listede karışık; sonuncu eklenen hep en üstte, verdiğim liste
+gibi, sıra şaşmadan" dedi. **ÖLÇÜLDÜ (dev gerçek veri):** bir içe aktarmanın TÜM satırları tek
+transaction'da yazılıyor → `created_at` = transaction damgası, hepsinde AYNI (15 satır tek damga);
+tie-break rastgele `uuid v4` → blok içi sıra keyfi.
+- **0030** `license_items.seq` (bigserial) + `created_idx (created_at DESC NULLS LAST, seq)` ·
+  **0031** `created_asc_idx (created_at ASC, seq)` — "En eski" eski index'in TERS taramasıyla
+  karşılanıyordu; yönler ayna OLMADIĞI için ayrı index ŞART (yoksa büyük tabloda tam sort).
+- Listeleme `created_at DESC NULLS LAST, seq ASC` (en yeni giriş üstte, blok İÇİNDE yapıştırma
+  sırası). **`NULLS LAST` açıkça yazılır:** DESC'in varsayılanı NULLS FIRST, index NULLS LAST →
+  yazılmazsa planlayıcı sıralamayı index'ten karşılamaz.
+- Atama (assign.ts ×2): `seq` **ÜÇÜNCÜ** anahtar → FEFO bozulmadan "önce girilen önce teslim".
+- **SEQ TEK BAŞINA YETMİYOR** (keşif bulgusu): `getDeliveries` + teslimat maili + admin sipariş
+  detayı sorgularında ORDER BY **HİÇ YOKTU** → mail/My Account/panel farklı sıra gösterebiliyordu.
+- **Çekişmeli doğrulama KENDİ değişikliğimde boşluk buldu:** WP meta box (`siteAdminView`) tek
+  başına `deliveredAt DESC` kalmıştı → `deliveredAt DESC, seq ASC` (birincil anahtar korundu).
+  Aynı sınıf: karantina listesi (LIMIT'li ORDER BY tie-break'siz → pencereye giren satırlar keyfi),
+  Ctrl+K (ORDER BY'sız LIMIT 10), toplu değiştirme adayları.
+- **BİLİNEN SINIR:** migration ÖNCESİ satırların seq'i heap FİZİKSEL sırasından gelir (o satırlar
+  UPDATE görmüş olabilir) → eski bloklarda sıra garanti DEĞİL; yapıştırma sırası daha önce hiçbir
+  yere yazılmıyordu, geri kazanılamaz. `ADD COLUMN bigserial NOT NULL` tabloyu YENİDEN YAZAR
+  (volatile default) ve boot'ta auto-migrate koşar → deploy.sh 60 sn sağlık penceresi; uygulandığında
+  tablo küçüktü (prod 3, dev 22 — ölçüldü), rewrite'sız reçete 0030 SQL'inin başına yazıldı.
+- **Doğrulama:** typecheck 4/4 · VPS izole test DB **entegrasyon 183/183 + yarış 3/3** (5 yeni sıra
+  testi) · **dev canlı E2E:** 10 anahtarlık sıralı giriş → liste `SIRALI-TEST-01..10` BİREBİR sırada ·
+  prod /health 200 v1.0.0, migration tracking 32, api ERROR 0. **DERS:** "sıra" şikâyetinde tek bir
+  sorguyu düzeltmek yetmez — aynı veriyi gösteren TÜM yüzeyleri (panel/mail/müşteri/mağaza) ve
+  SEÇİM yolunu (atama) birlikte gözden geçir; LIMIT'li her ORDER BY'ın tie-break'i olmalı.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te
