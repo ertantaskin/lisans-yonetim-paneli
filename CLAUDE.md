@@ -1213,6 +1213,42 @@ ekranı kullandıktan sonra ardışık geri bildirim verdi.
   sıfır-genişlik yakalandı→temizlendi, `2026-08-13-A` ön-dolu → tarih 04.11 → `2026-11-04-A`, gerçek giriş
   partisi 13.08.2026 → aynı gün ikinci giriş `-B`; test verisi silindi) · prod /health 200 v1.0.0, ERROR 0.
 
+**İKİNCİ ONAY MODALİ + ROZET DİLİ TEK KAYNAĞA (commit 62bb81b→258ddc6, CANLI prod+dev, migration YOK):**
+Kullanıcı "stok girişinde 2. onay gereksin (modal + lisans listesi) — eklenip eklenmediği anlaşılmıyor;
+başka yerlerde de teyit gerekiyorsa yapalım; /stock rozetleri /orders ile senkron değil" dedi.
+- **Yeni primitifler:** `ui/dialog.tsx` (Radix Dialog — Sheet=çalışma yüzeyi, **Dialog=KARAR yüzeyi**) +
+  `ui/confirm.tsx` **`useConfirm()`**: söz-tabanlı (`await confirm({...})`) → `window.confirm`'den geçiş
+  birebir. `details` (serbest liste/özet) · `tone:'danger'` (kırmızı onay, odak **İPTAL**'de başlar) ·
+  `reason` (zorunlu/opsiyonel; textarea/text/**password**+minLength). Dropdown'dan çağrılınca modal bir
+  makro-görev geciktirilir (menü kapanışının odak geri-vermesi modalin odak tuzağıyla yarışmasın).
+- **Stok girişi 2. onay:** "Onayla ve Dağıt" modal açar — ürün · kayıt sayısı (+MAK kullanım hakkı) ·
+  tedarik özeti · **girilecek kayıtların LİSTESİ** (ilk 20; hesap ürününde secret alan maskeli) ·
+  mükerrer/boş satır · **"bu giriş N bekleyen birimi HEMEN teslim eder"**. Gerçek gönderim GİZLİ submit
+  düğmesiyle (`name=dryRun value=false` yalnız submitter üzerinden gövdeye girer). Sonuç ayrıca **toast**.
+- **19 yerli kutu → panel modali** (kod tabanında `window.confirm/prompt/alert` **SIFIR**): sipariş
+  askıya al/iptal/değiştir · değişim onayla/reddet · inceleme onayla/reddet · site askıya al (2 yer) ·
+  secret yenile · bağlan kodu · eşleme kaldır (2) · şablon sil (2) · admin sil + parola sıfırla (MASKELİ
+  alan) · KVKK anonimleştir · bildirim okundu · görünüm kaydet. /review'ın elle yazılmış modali silindi (−85 satır).
+- **Rozet dili:** /stock envanteri ikonsuz düz Badge + yerel sözlük kullanıyordu → `StatusBadge`
+  (`available/reserved/assigned/depleted` paylaşılan haritaya) · karantina `voided` amber↔kırmızı çelişkisi ·
+  tedarikte **DÖRT ayrı** rozet uygulaması çelişiyordu (`voided` karnede amber/ürün detayında kırmızı;
+  `ordered` PO'da gri/ürün detayında amber; PO etiketleri sözlüğü atlayıp elle küçük harf + ikonsuz) →
+  yeni **`SupplyStatusBadge`** · `SupportStatusBadge` → StatusBadge. **TON KURALI** `ui/badge.tsx`'e
+  yazıldı: success=sağlıklı · warning=bekliyor · danger=ölü · neutral=kapanmış; aynı ton içinde ayrım
+  İKON ile (**yeni renk hue'su EKLENMEZ** — monokrom kimlik).
+- **DÜZELTİLEN İDDİA (dürüstlük):** ara commit "kapanan menü görünmez tıklama ölü bölgesi bırakıyor"
+  diye CANLI hata raporladı; kontrol denemesi çürüttü — doğrulamada kullanılan **tarayıcı paneli CSS
+  animasyonlarını hiç koşturmuyor** (sıfırdan 60 ms'lik animasyon bile `animationend` üretmedi), Radix
+  unmount için o olayı bekliyor. Gerçek tarayıcıda hayalet katman KANITLANMADI; eklenen durum-kapılı
+  giriş/çıkış animasyonu (dropdown/popover/select/tooltip) doğru eşleşme olduğu için kaldı.
+  **DERS:** bu panelde klavye olayları ve CSS animasyonları çalışmıyor — oradaki "ölçüm"ü canlı hata
+  saymadan önce KONTROL DENEMESİ yap (aynı şey değişikliğin olmadığı yolda da oluyor mu?).
+- **Doğrulama:** typecheck 4/4 + check-use-server · admin production build · **dev canlı E2E**: onay
+  modali (ürün + 3 anahtarın listesi + partisiz uyarısı), odak modal içinde "Vazgeç"te, 6 kardeş öğe
+  aria-hidden, onayla → 3 kayıt + toast; **rozet senkronu ölçüldü** — /stock "Teslim edildi"
+  `oklch(0.696 0.17 162.48)`+ikon = /orders ile BİREBİR; dropdown→modal akışı çalıştı ·
+  prod `/health` 200 v1.0.0, admin ERROR 0.
+
 ## Geliştirme
 
 **Yayın/dağıtım (özet — tam süreç `docs/RUNBOOK-RELEASE.md`):** Panel: kod→dev'de test→`git push`→VPS'te

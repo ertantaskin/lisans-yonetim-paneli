@@ -14,6 +14,53 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### İkinci onay modali (panel geneli) + rozet dilinin tek kaynağa toplanması (migration YOK)
+
+Kullanıcı: *"Stok giriş durumlarında 2. onay gereksin, ekrana modal gelsin, lisansların olduğu bir
+liste vs, ondan sonra ekleme yapmalı — eklenip eklenmediği tam anlaşılmıyor. Başka yerlerde de
+benzer teyit durumları gerekiyorsa yapalım. Ayrıca /stock rozetleri (teslim edildi, stokta,
+geçersiz kılındı) siparişler sayfasındaki gibi değil; senkron bir palet olmalı."*
+
+**Yeni primitifler.** `ui/dialog.tsx` (Radix Dialog — `Sheet` kenardan açılan *çalışma* yüzeyi,
+`Dialog` ekranın ortasındaki *karar* yüzeyi) ve `ui/confirm.tsx` → **`useConfirm()`**: söz-tabanlı
+API (`if (!(await confirm({...}))) return;`) sayesinde `window.confirm`/`prompt` çağrı yerleri
+neredeyse birebir taşındı. Destekler: serbest `details` (liste/özet), `tone:'danger'` (kırmızı onay
+düğmesi + odak **İPTAL**'de başlar → yanlışlıkla Enter silmez), `reason` (zorunlu/opsiyonel gerekçe;
+çok satırlı · tek satır · **parola** + `minLength`).
+
+**Stok girişinde ikinci onay (asıl istek).** "Onayla ve Dağıt" artık doğrudan kaydetmiyor: modal
+ürünü, kayıt sayısını (MAK ürününde ayrıca kullanım hakkını), tedarik özetini, **girilecek
+kayıtların listesini** (ilk 20; hesap ürününde gizli alanlar maskeli), mükerrer/boş satır notunu ve
+en önemlisi *"bu giriş **N bekleyen birimi hemen teslim eder** — müşteriye e-posta gider"*
+uyarısını gösterir. Sonuç artık **toast** ile de bildiriliyor (form temizlendiği için "oldu mu?"
+sorusu kalmasın); `imported = 0` asla yeşil gösterilmez.
+
+**19 yerli tarayıcı kutusu panel modaline taşındı** — kod tabanında `window.confirm/prompt/alert`
+artık **sıfır**: sipariş askıya al · iptal (gerekçe) · anahtar değiştir (gerekçe) · değişim talebi
+onayla/reddet · inceleme kuyruğu onayla/reddet · site askıya al/aktifleştir (iki ekran) · HMAC
+secret yenile · bağlan kodu üret · eşleme kaldır (iki ekran) · şablon sil (iki ekran) · yönetici sil
+ve parola sıfırla (artık **maskeli** alan; kısa parola `alert` yerine kilitli düğmeyle engellenir) ·
+KVKK anonimleştirme · bildirimleri okundu yap · görünüm kaydet. `/review`'daki elle yazılmış modal
+(portalsız, odak tuzağı yok) silinip paylaşılana taşındı (−85 satır).
+
+**Rozet dili tek kaynağa toplandı.** `/stock` lisans envanteri ikonsuz düz `Badge` + kendi ton
+sözlüğünü kullanıyordu → `StatusBadge`; `available/reserved/assigned/depleted` paylaşılan haritaya
+eklendi, böylece "Teslim edildi" `/orders` ile **aynı yeşil ve aynı ikon**. Karantina tablosu
+`voided`'ı amber basıyordu (envanterde kırmızıydı). Tedarik zincirinde **dört ayrı** rozet
+uygulaması vardı ve birbiriyle çelişiyordu — `voided` tedarikçi karnesinde amber / ürün detayında
+kırmızı; `ordered` satın alma emri listesinde gri / ürün detayında amber; PO listesi etiketleri
+sözlüğü atlayıp elle küçük harf yazıyor ve ikon basmıyordu → tek bir **`SupplyStatusBadge`**.
+`SupportStatusBadge` de paylaşılana devredildi. `ui/badge.tsx`'e **ton kuralı** yazıldı: success =
+sağlıklı/eylem gerekmez · warning = bekliyor/bak · danger = ölü/hatalı · neutral = kapanmış; aynı ton
+içindeki durumlar **ikon + etiketle** ayrışır — yeni renk eklenmez (monokrom kimlik korunur).
+
+**Düzeltilen iddia.** Ara bir commit, "kapanan açılır menü görünmez bir tıklama ölü bölgesi
+bırakıyor" diye canlı bir hata raporladı. Kontrol denemesi bunu çürüttü: doğrulamada kullanılan
+tarayıcı paneli CSS animasyonlarını hiç koşturmuyor (sıfırdan oluşturulan 60 ms'lik bir animasyon
+bile `animationend` üretmedi), Radix de unmount için o olayı bekliyor. Gerçek tarayıcıda böyle bir
+hayalet katman **kanıtlanmadı**; dropdown/popover/select/tooltip'e eklenen durum-kapılı giriş/çıkış
+animasyonu doğru eşleşme olduğu için kaldı ama "canlı bir hatayı düzeltti" diye okunmamalı.
+
 ### Stok girişi: gün-bazlı parti etiketi + canlı satır/lisans sayacı + sınır görünürlüğü (migration YOK)
 
 Kullanıcı: *"Parti etiketi gün vs de içerebilir ayırt etme konusunda. Ayrıca başka sorun var mı?
