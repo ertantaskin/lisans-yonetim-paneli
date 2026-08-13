@@ -1,6 +1,8 @@
-import { PackageCheck } from 'lucide-react';
+import Link from 'next/link';
+import { PackageCheck, PackagePlus } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
+import { Button } from '../../components/ui/button';
 import { BatchesTable } from '../../components/batches-table';
 import { getBatches, type BatchRow } from './queries';
 
@@ -20,8 +22,14 @@ export default async function BatchesPage() {
       <PageHeader
         icon={PackageCheck}
         title="Partiler"
-        description="Tedarik partileri — satılmamış/satılmış adet ve geri çekme."
-      />
+        description="Bir partide gelen anahtarların tedarikçi/tarih izi: satılmamış-satılmış adet ve geri çekme (recall). Parti, Stok Girişi'nde tedarikçi + alım tarihi girildiğinde (satır 'Otomatik' rozetli olur) ya da bir satın alma emri teslim alındığında oluşur."
+      >
+        <Button asChild variant="outline">
+          <Link href="/stock/import">
+            <PackagePlus /> Stok Girişi
+          </Link>
+        </Button>
+      </PageHeader>
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>

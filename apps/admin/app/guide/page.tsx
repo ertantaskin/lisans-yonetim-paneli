@@ -7,6 +7,7 @@ import {
   Workflow,
   Plug,
   Boxes,
+  PackagePlus,
   Link2,
   ShoppingCart,
   ClipboardCheck,
@@ -34,8 +35,9 @@ export const dynamic = 'force-static';
 const TOC: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'genel', label: 'Panel nasıl çalışır', icon: Workflow },
   { id: 'kurulum', label: 'İlk kurulum: site bağlama', icon: Plug },
-  { id: 'urunler', label: 'Ürünler ve stok', icon: Boxes },
-  { id: 'esleme', label: 'Site eşlemeleri', icon: Link2 },
+  { id: 'urunler', label: 'Ürünler', icon: Boxes },
+  { id: 'stokgiris', label: 'Stok girişi', icon: PackagePlus },
+  { id: 'esleme', label: 'Ürün eşleştirme', icon: Link2 },
   { id: 'siparis', label: 'Siparişler ve teslimat', icon: ShoppingCart },
   { id: 'inceleme', label: 'İnceleme kuyruğu ve kota', icon: ClipboardCheck },
   { id: 'degisim', label: 'Değişim ve garanti', icon: RefreshCw },
@@ -202,8 +204,8 @@ export default function GuidePage() {
       <Section
         id="urunler"
         icon={Boxes}
-        title="Ürünler ve stok"
-        description="Ürün tanımlama, tipler ve stok (key/hesap) yükleme."
+        title="Ürünler"
+        description="Ürün tanımlama ve ürün detay sayfasının ne işe yaradığı."
       >
         <p>
           <R href="/stock">Stok &amp; Ürünler</R> ekranı ürün listesidir. Sağ üstteki{' '}
@@ -218,33 +220,109 @@ export default function GuidePage() {
           <li><strong>Stok &amp; gelişmiş:</strong> stoksuz/ön sipariş + yayın tarihi, key format doğrulaması (regex).</li>
         </Bullets>
         <p>
-          Bir ürüne stok yüklemek için ürünün <strong>Detay</strong> sayfasını açın (listede &quot;Detay&quot;).
-          Detay sayfası o ürünün <strong>yönetim merkezidir</strong>: stok kırılımı, satış hızı/tükenme tahmini,
-          <strong> Key/Stok İçe Aktar</strong>, site eşlemeleri, partiler, düzeltmeler.
+          Listedeki <strong>Detay</strong> bağlantısı o ürünün <strong>yönetim merkezini</strong> açar:
+          stok kırılımı, satış hızı/tükenme tahmini, site eşlemeleri, ürünün partileri ve satın alma
+          emirleri, stok düzeltmeleri ve <strong>lisans envanteri</strong> (tek tek anahtar/hesap kalemleri).
+        </p>
+        <p>
+          Anahtar/hesap eklemek ayrı bir ekranda yapılır: <R href="/stock/import">Stok Girişi</R>. Ürün
+          detayındaki <strong>&quot;Bu ürüne stok gir&quot;</strong> düğmesi de aynı ekranı, ürün
+          ön-seçili olarak açar. Ayrıntı için bir sonraki bölüme bakın.
         </p>
         <Tip>
-          İçe aktarmadan önce <strong>&quot;Kuru Çalıştır (Önizleme)&quot;</strong> ile hiçbir şey kaydetmeden
-          doğrulayın: kaç key kabul edilecek, kaç mükerrer/hatalı var, hangi bekleyen siparişleri tamamlar.
+          Geçersiz kılınan (void) ve değiştirilen ölü anahtarlar silinmez;{' '}
+          <R href="/quarantine">Karantina</R> ekranında sebebi ve kaynak siparişiyle birlikte durur.
+        </Tip>
+      </Section>
+
+      <Section
+        id="stokgiris"
+        icon={PackagePlus}
+        title="Stok girişi (anahtar/hesap ekleme)"
+        description="Yeni anahtar/hesabın panele girildiği tek ekran — iki yol: hızlı giriş ve tedarikli giriş."
+      >
+        <p>
+          <R href="/stock/import">Stok Girişi</R> sol menüde <strong>Envanter</strong> altındadır. Ürün
+          detayındaki <strong>&quot;Bu ürüne stok gir&quot;</strong> ve <R href="/batches">Partiler</R>{' '}
+          listesindeki <strong>&quot;Bu partiye stok gir&quot;</strong> bağlantıları da aynı ekranı ürün
+          (ve varsa parti) ön-seçili açar.
+        </p>
+        <Steps>
+          <li>Ürünü seçin (ad veya SKU ile aranır).</li>
+          <li>
+            <strong>Tedarik bilgisi</strong> adımında yolu seçin: <em>Partisiz</em>, <em>Yeni parti</em>{' '}
+            veya <em>Mevcut parti</em> (aşağıda açıklanıyor).
+          </li>
+          <li>
+            Anahtarları yapıştırın ya da <strong>.txt / .csv</strong> yükleyin. Hesap ürünlerinde satırlar
+            alan-alan girilir (ör. kullanıcı adı + parola).
+          </li>
+          <li>
+            <strong>&quot;Önizle (kuru çalıştır)&quot;</strong> ile doğrulayın: kaç anahtar kabul edilecek,
+            kaçı mükerrer, kaçı reddedilecek. <strong>Hiçbir şey kaydedilmez.</strong>
+          </li>
+          <li>
+            <strong>&quot;Onayla ve Dağıt&quot;</strong> ile girişi tamamlayın. Stok girer girmez bekleyen
+            siparişler otomatik tamamlanmaya başlar.
+          </li>
+        </Steps>
+        <p className="font-medium text-foreground">İki yol:</p>
+        <Bullets>
+          <li>
+            <strong>Hızlı giriş (Partisiz):</strong> yalnız anahtarları girersiniz. Tedarikçi ve maliyet
+            izi <strong>tutulmaz</strong> → bu anahtarlar maliyet raporlarında{' '}
+            <strong>&quot;kapsanamayan&quot;</strong> görünür ve bu sonradan düzeltilemez; geri çekme
+            (recall) ve tedarikçi karnesi de bu girişi kapsamaz. Elinizde maliyet/tedarikçi bilgisi yoksa
+            veya tekil/deneme anahtarı giriyorsanız uygundur.
+          </li>
+          <li>
+            <strong>Tedarikli giriş (Yeni parti):</strong> tedarikçi + alım tarihi + parti etiketi + birim
+            maliyet girersiniz. Panel aynı adımda <strong>teslim alınmış</strong> bir{' '}
+            <strong>Satın Alma Emri</strong> ve ona bağlı bir <strong>Parti</strong> açar; anahtarlar o
+            partiye bağlanır. Maliyet raporu, tedarikçi karnesi ve geri çekme bu girişi kapsar.
+          </li>
+          <li>
+            <strong>Mevcut parti:</strong> daha önce açılmış bir partiye ek anahtar girersiniz. Yalnız o
+            ürünün <em>aktif</em> partileri listelenir (geri çekilmiş/iptal partiye ekleme yapılamaz).
+          </li>
+        </Bullets>
+        <Tip>
+          Tedarikli girişte açılan emir ve parti, listelerde <strong>&quot;Otomatik&quot;</strong> rozetiyle
+          işaretlenir: mal zaten girilmiştir, bu emir ikinci kez <em>&quot;Teslim Al&quot;</em> istemez.
+          Tedarikçi alanına yeni bir ad yazarsanız aynı adlı kayıt varsa yeniden kullanılır, yoksa
+          oluşturulur. Birim maliyeti <strong>lira</strong> olarak girin (ör. 12,50) — panel kuruşa kendisi çevirir.
         </Tip>
       </Section>
 
       <Section
         id="esleme"
         icon={Link2}
-        title="Site eşlemeleri"
-        description="Mağaza ürününü panel ürününe bağlama."
+        title="Ürün eşleştirme"
+        description="Mağaza ürününü panel ürününe bağlama — teslimat bu bağa göre yapılır."
       >
         <p>
-          Panel, gelen bir siparişin hangi panel ürününü teslim edeceğini <strong>eşlemeden</strong> bulur.
-          Eşlemeler ürün detay sayfasındaki <strong>Site Eşlemeleri</strong> kartından yönetilir:
+          Panel, gelen bir siparişin hangi panel ürününü teslim edeceğini <strong>eşlemeden</strong> bulur:{' '}
+          <strong>Site</strong> + <strong>mağaza ürünü</strong> (varsa <strong>varyasyonu</strong>) → panel
+          ürünü. <strong>Paket adedi</strong> ise 1 mağaza kaleminin kaç lisans teslim edeceğidir (varsayılan 1).
         </p>
+        <p className="font-medium text-foreground">Eşleme iki yerden yapılır:</p>
         <Bullets>
-          <li><strong>Site</strong> + <strong>mağaza ürün ID</strong> (varsa <strong>varyasyon ID</strong>) → bu panel ürünü.</li>
-          <li><strong>Paket adedi:</strong> 1 mağaza siparişi kaç key teslim etsin (varsayılan 1).</li>
+          <li>
+            <strong><R href="/mappings">Ürün Eşleştirme</R> ekranı:</strong> site seçersiniz, mağazanın
+            ürün kataloğunu <strong>adıyla</strong> görüp sipariş beklemeden eşlersiniz. Aynı ekranda
+            &quot;siparişte geldi ama eşlenmemiş&quot; ürünler ve <strong>eşleme bekleyen sipariş
+            satırları</strong> listelenir; eşlemeyi kurduğunuzda bu eski satırlar geriye dönük çözülür.
+          </li>
+          <li>
+            <strong>Ürün detayı → Site Eşlemeleri kartı:</strong> tek bir ürünün eşlemelerini yönetmek için —
+            yeni eşleme ekleme (paket adedi ile), pasifleştirme/etkinleştirme ve kaldırma.
+          </li>
         </Bullets>
         <Tip>
-          Bir mağaza ürünü panelde eşli değilse, o ürünün siparişi teslim edilemez ve bekleyen olarak kalır.
-          Yeni ürün satışa açtığınızda eşlemeyi eklemeyi unutmayın.
+          Mağaza ürün ID&apos;sini <strong>elle yazmazsınız</strong> — mağazanın bildirdiği katalogdan/gerçek
+          siparişten gelir (yazım hatası riski yok). <strong>Otomatik eşleştirme yoktur:</strong> hangi mağaza
+          ürününün hangi lisansı teslim edeceğine her zaman operatör karar verir. Eşli olmayan bir ürünün
+          siparişi <strong>teslim edilmez</strong>, bekleyen olarak kalır — yanlış lisans gitmez.
         </Tip>
       </Section>
 
@@ -260,8 +338,19 @@ export default function GuidePage() {
         </p>
         <Bullets>
           <li><strong>Durumlar:</strong> Bekliyor → Kısmi teslim → Tamamlandı (stok geldikçe otomatik ilerler).</li>
-          <li><strong><R href="/pending">Bekleyen Teslimatlar</R>:</strong> stok yetmediği için tamamlanamayan siparişler. Stok gelince otomatik tamamlanır; elle <strong>&quot;Kalanları Ata&quot;</strong> da yapabilirsiniz.</li>
-          <li>Sipariş detayında bir lisansı <strong>Göster</strong> (görüntüleme audit&apos;e düşer), <strong>Askıya Al</strong>, <strong>İptal</strong> edebilir veya <strong>Maili Yeniden Gönder</strong>ebilirsiniz.</li>
+          <li>
+            <strong><R href="/pending">Bekleyen Teslimatlar</R>:</strong> teslim edilememiş siparişler — iki
+            sebebi olur: <em>stok yetmiyor</em> (stok gelince otomatik tamamlanır; elle{' '}
+            <strong>&quot;Kalanları Ata&quot;</strong> da yapabilirsiniz) veya{' '}
+            <em>mağaza ürünü eşlenmemiş</em> (satırda <strong>&quot;Eşleştir&quot;</strong> ile{' '}
+            <R href="/mappings">Ürün Eşleştirme</R> ekranına geçip bağlarsınız).
+          </li>
+          <li>
+            Sipariş detayında lisans doğrudan görünür (&quot;owner&quot; rolünde açık, diğer yöneticilerde
+            maskeli) ve her görüntüleme <strong>denetim günlüğüne</strong> yazılır. Satır aksiyonları:{' '}
+            <strong>Değiştir</strong>, <strong>Askıya Al</strong>, <strong>İptal</strong>; sipariş
+            genelinde <strong>Maili Yeniden Gönder</strong>.
+          </li>
         </Bullets>
         <Tip>
           Kısmi teslimat birinci sınıf bir akıştır: <em>kısmi otomatik</em> ürünlerde eldeki kadar teslim
@@ -311,13 +400,34 @@ export default function GuidePage() {
         id="tedarik"
         icon={Truck}
         title="Tedarik zinciri"
-        description="Tedarikçi, satın alma emri, parti ve geri çekme."
+        description="Tedarikçi, satın alma emri, parti ve geri çekme — ve hangisinin ne zaman gerektiği."
       >
+        <p className="font-medium text-foreground">Önce hangi yolu kullanacağınıza karar verin:</p>
         <Bullets>
-          <li><strong><R href="/suppliers">Tedarikçiler</R>:</strong> tedarikçi kartı + karne (teslim performansı, geri-çekilme oranı).</li>
-          <li><strong><R href="/purchase-orders">Satın Alma</R>:</strong> satın alma emri açın, gelen malı <strong>kısmi</strong> teslim alın (fazla teslim-al kilitli).</li>
-          <li><strong><R href="/batches">Partiler</R>:</strong> gelen stok partileri. Bir parti sorunluysa <strong>geri çekin</strong> (recall) → o partinin satılmamış key&apos;leri geçersiz olur; satılanlar için toplu değiştirme sihirbazı vardır.</li>
+          <li>
+            <strong>Mal zaten elinizdeyse</strong> (anahtarları aldınız, girmek istiyorsunuz):{' '}
+            <R href="/stock/import">Stok Girişi</R> yeter. Tedarikçi + tarih + maliyet girerseniz panel
+            arka planda <strong>teslim alınmış</strong> bir Satın Alma Emri ve bir Parti açar — ayrıca emir
+            açmanıza gerek yoktur. Bu kayıtlar listelerde <strong>&quot;Otomatik&quot;</strong> rozetlidir.
+          </li>
+          <li>
+            <strong>Önceden sipariş verip malı sonra alacaksanız</strong> (ya da mal parça parça
+            gelecekse): <R href="/purchase-orders">Satın Alma Emri</R> akışını kullanın. Emri açarsınız
+            (beklenen adet + ETA), mal geldikçe <strong>kısmi teslim alırsınız</strong>; her teslim alma
+            bir <strong>Parti</strong> oluşturur ve anahtarları o partiye girersiniz. Fazla teslim alma kilitlidir.
+          </li>
         </Bullets>
+        <p className="font-medium text-foreground">Ekranlar:</p>
+        <Bullets>
+          <li><strong><R href="/suppliers">Tedarikçiler</R>:</strong> tedarikçi kartı + karne (teslim performansı, geri-çekilme oranı, para birimi başına maliyet).</li>
+          <li><strong><R href="/purchase-orders">Satın Alma</R>:</strong> açık/kapalı emirler ve teslim alma. &quot;Otomatik&quot; rozetli emirlerde teslim alma adımı yoktur (mal zaten girilmiştir).</li>
+          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi anahtar hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall) → o partinin satılmamış anahtarları geçersiz olur; satılanlar için toplu değiştirme sihirbazı vardır.</li>
+        </Bullets>
+        <Tip>
+          Partisiz (hızlı) giriş yaparsanız o anahtarlar hiçbir partiye bağlanmaz: maliyet raporunda
+          &quot;kapsanamayan&quot; sayılır, geri çekme ve tedarikçi karnesi de onları kapsamaz. İzlenebilirlik
+          istiyorsanız girişte tedarikçi ve maliyeti doldurun.
+        </Tip>
       </Section>
 
       <Section
@@ -332,8 +442,9 @@ export default function GuidePage() {
           zorunludur ve her kayıt <strong>denetim (audit) günlüğüne</strong> yazılır.
         </p>
         <Tip>
-          Belirli bir key&apos;i void/hasar yapacaksanız &quot;Lisans satırı&quot; alanına ilgili kaydın
-          kimliğini girin; genel bir düzeltmede boş bırakabilirsiniz.
+          Stokun <strong>gerçekten</strong> düşmesi için &quot;Stoktan düşülecek lisans&quot; alanında ilgili
+          anahtarı seçmelisiniz; boş bırakırsanız kayıt yalnız deftere yazılır, stok değişmez (ekran bunu
+          satır satır belirtir). Düşülen anahtarlar <R href="/quarantine">Karantina</R> ekranında görünür.
         </Tip>
       </Section>
 
@@ -358,10 +469,11 @@ export default function GuidePage() {
         description="Stok, satış hızı, maliyet, anomali ve operasyon sağlığı."
       >
         <Bullets>
-          <li><strong><R href="/reports">Raporlar</R>:</strong> stok/satış hızı/tükenme tahmini ve maliyet raporu (tedarik harcaması + stok değerleme; satış fiyatı panelde yoktur, bu yüzden kâr değil maliyet gösterilir).</li>
+          <li><strong><R href="/reports">Raporlar</R>:</strong> stok, satış hızı ve tükenme tahmini.</li>
+          <li><strong><R href="/reports/costs">Maliyet Raporu</R>:</strong> tedarik harcaması + stok değerleme + teslim edilen mal maliyeti. Satış fiyatı panelde yoktur (ödeme mağaza tarafında) → kâr değil <strong>maliyet</strong> gösterilir. Tedarikçi/maliyet bilgisi olmadan (partisiz) girilen stok burada <strong>&quot;kapsanamayan&quot;</strong> olarak dürüstçe ayrı gösterilir.</li>
           <li><strong><R href="/notifications">Bildirimler</R>:</strong> düşük stok ve kritik olaylar (Telegram tanımlıysa oraya da düşer).</li>
           <li><strong><R href="/security">Güvenlik</R>:</strong> anomali/velocity tespiti ve güvenlik olayları (otomatik askıya alma yok).</li>
-          <li><strong><R href="/ops">Dead-letter</R>:</strong> başarısız iş/webhook kuyruğu ve yeniden deneme (replay).</li>
+          <li><strong><R href="/ops">Başarısız İşler</R>:</strong> başarısız iş/webhook kuyruğu ve yeniden deneme (replay).</li>
           <li><strong><R href="/ai">AI Operasyon</R>:</strong> destek triyajı, doğal dilden rapor, günlük anomali özeti — <em>yalnızca öneri</em>, varsayılan kapalıdır.</li>
         </Bullets>
       </Section>

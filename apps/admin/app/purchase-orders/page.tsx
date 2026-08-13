@@ -26,7 +26,7 @@ export default async function PurchaseOrdersPage() {
       <PageHeader
         icon={ClipboardList}
         title="Satın Alma Emirleri"
-        description="Tedarikçilere verilen emirler — teslim aldıkça parti oluşur."
+        description="Önceden verdiğiniz tedarik emirleri: mal geldikçe (parça parça da olabilir) teslim alırsınız, her teslim alma bir parti oluşturur. Mal zaten elinizdeyse emir açmanız gerekmez — Stok Girişi'nde tedarikçi + maliyet girerseniz panel teslim alınmış emri ve partiyi kendisi açar ('Otomatik' rozetli satırlar)."
       >
         <CreatePOSheet suppliers={suppliers} products={products} />
       </PageHeader>

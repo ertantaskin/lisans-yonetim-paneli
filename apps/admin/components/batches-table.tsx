@@ -14,6 +14,7 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
+import { isAutoReceipt } from '@lisans/shared';
 import type { BatchRow } from '../app/batches/queries';
 import { fmtDateTime, includesTr } from '../lib/utils';
 import { supplyStatusLabel } from '../lib/labels';
@@ -111,7 +112,25 @@ const baseColumns: ColumnDef<BatchRow>[] = [
     accessorKey: 'status',
     meta: { title: 'Durum' },
     header: 'Durum',
-    cell: ({ row }) => <BatchStatusBadge status={row.original.status} />,
+    cell: ({ row }) => (
+      <span className="flex flex-wrap items-center gap-1.5">
+        <BatchStatusBadge status={row.original.status} />
+        {/*
+          OTOMATİK PARTİ (§12): bu partiyi operatör elle açmadı — Stok Girişi ekranı, girilen
+          anahtarlara maliyet/tedarikçi izi tutmak için türetti (aynı adımda teslim alınmış bir
+          satın alma emri de açılır). İşaret serbest-metin `notes` önekindedir; ham `[oto-giris]`
+          metni EKRANA BASILMAZ, yalnız bu rozete çevrilir (purchase-orders-table ile aynı desen).
+        */}
+        {isAutoReceipt(row.original.notes) && (
+          <Badge
+            variant="outline"
+            title="Stok girişinden otomatik oluşturuldu — mal girişle birlikte teslim alındı."
+          >
+            Otomatik
+          </Badge>
+        )}
+      </span>
+    ),
     filterFn: (row, id, value: string[]) => value.includes(row.getValue(id)),
   },
   {
@@ -572,7 +591,7 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
         searchPlaceholder="Parti etiketi veya ürün…"
         facets={facets}
         initialSorting={[{ id: 'receivedAt', desc: true }]}
-        emptyLabel="Henüz parti yok."
+        emptyLabel="Henüz parti yok. Parti, Stok Girişi'nde tedarikçi + alım tarihi girdiğinizde ya da bir satın alma emrini teslim aldığınızda oluşur."
       />
 
       {recallTarget && (

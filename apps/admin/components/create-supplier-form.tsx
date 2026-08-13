@@ -7,7 +7,8 @@ import {
   type SupplierFormState,
 } from '@/app/suppliers/actions';
 import type { SupplierRow } from '@/app/suppliers/queries';
-import { Input, Textarea, Label } from './ui/input';
+import { Input, Textarea } from './ui/input';
+import { Field, FieldRow } from './ui/field';
 import { Button } from './ui/button';
 
 /**
@@ -46,40 +47,48 @@ export function CreateSupplierForm({
   return (
     <form action={formAction} className="space-y-3">
       {editing && <input type="hidden" name="id" value={supplier!.id} />}
-      <div className="flex flex-wrap gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sup-name">Ad</Label>
+      <FieldRow className="max-w-lg">
+        <Field
+          label="Ad"
+          htmlFor="sup-name"
+          required
+          hint="Partilerde, satın alma emirlerinde ve maliyet raporunda bu ad görünür."
+        >
           <Input
             id="sup-name"
             name="name"
             defaultValue={supplier?.name ?? ''}
-            placeholder="Tedarikçi adı"
+            placeholder="ör. Acme Yazılım"
             required
-            className="w-56"
           />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sup-contact">İletişim (ops.)</Label>
+        </Field>
+        <Field
+          label="İletişim (opsiyonel)"
+          htmlFor="sup-contact"
+          hint="Sorun/değişim durumunda kime ulaşacağınız."
+        >
           <Input
             id="sup-contact"
             name="contact"
             defaultValue={supplier?.contact ?? ''}
             placeholder="e-posta / telefon"
-            className="w-56"
           />
-        </div>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="sup-notes">Not (ops.)</Label>
+        </Field>
+      </FieldRow>
+      <Field
+        label="Not (opsiyonel)"
+        htmlFor="sup-notes"
+        hint="Serbest not — ödeme koşulu, teslim süresi, sözleşme numarası…"
+        className="max-w-lg"
+      >
         <Textarea
           id="sup-notes"
           name="notes"
           defaultValue={supplier?.notes ?? ''}
           placeholder="Serbest not"
           rows={2}
-          className="max-w-lg"
         />
-      </div>
+      </Field>
 
       <div className="flex items-center gap-2">
         <Button type="submit" disabled={pending}>

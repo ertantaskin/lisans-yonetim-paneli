@@ -198,9 +198,13 @@ export function cleanHiddenChars(value: string): string {
  *
  * Kabul edilen biçimler: "12", "12,5", "12.50", "1.234,56", "1 234,56".
  * Geçersiz/negatif giriş → `null` (çağıran hata gösterir; sessizce 0 kaydetmez).
+ *
+ * NOT: temizlenen sınıftaki NBSP kaçış diziyle (`\u00a0`) yazılır — ham U+00A0 kaynağa
+ * gömülmez (gözle görülmez, düzenlemede sessizce bozulur; yukarıdaki görünmez-karakter
+ * bölümüyle aynı kural). Davranış birebir aynıdır.
  */
 export function liraToCents(raw: string): number | null {
-  const s = raw.replace(/[\s ₺]/g, '').replace(/[A-Za-zĞÜŞİÖÇğüşıöç]/g, '');
+  const s = raw.replace(/[\s\u00a0₺]/g, '').replace(/[A-Za-zĞÜŞİÖÇğüşıöç]/g, '');
   if (!s) return null;
   let normalized = s;
   const lastComma = s.lastIndexOf(',');
@@ -222,6 +226,12 @@ export function liraToCents(raw: string): number | null {
   return cents;
 }
 
+/** Para birimi → alan içi önek simgesi (bilinmeyen kod → kodun kendisi). */
+export function currencySymbol(currency: string): string {
+  const map: Record<string, string> = { TRY: '₺', USD: '$', EUR: '€', GBP: '£' };
+  return map[(currency || 'TRY').toUpperCase()] ?? (currency || '').toUpperCase();
+}
+
 /** Kuruşu para birimiyle biçimler (tr-TR). Bilinmeyen kod → sade sayı + kod. */
 export function formatMoney(cents: number, currency: string): string {
   const value = cents / 100;
@@ -234,4 +244,51 @@ export function formatMoney(cents: number, currency: string): string {
   } catch {
     return `${value.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ${currency}`.trim();
   }
+}
+
+// ── Parti etiketi (otomatik) ─────────────────────────────────────────────────
+/**
+ * Sıra numarasını harf ekine çevirir: 0→A, 1→B, … 25→Z, 26→AA (Excel sütun deseni).
+ * 26'dan sonra ikinci harfe geçer — bir üründe aynı ay içinde 26'dan fazla parti açılırsa
+ * etiket çakışmasın.
+ */
+export function batchLabelSuffix(index: number): string {
+  let n = Math.max(0, Math.floor(index));
+  let out = '';
+  for (;;) {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+    if (n < 0) return out;
+  }
+}
+
+/**
+ * Alım tarihinden parti etiketi türetir: `YYYY-MM-<HARF>` (ör. `2026-08-A`).
+ *
+ * NEDEN: etiket eskiden ZORUNLU ve BOŞ başlıyordu — operatör her girişte elle bir ad
+ * uydurmak zorundaydı ve alan kırmızı-zorunlu duruyordu. Harf, AYNI ÜRÜNÜN aynı aya ait
+ * mevcut partilerinden ilerletilir (A, B, C…): `existingLabels` içinde kullanılmayan İLK
+ * harf seçilir (boşluk varsa doldurulur, mükerrer üretilmez).
+ *
+ * Liste EKSİK olabilir (yalnız AKTİF partiler çekilir; geri çekilmiş partiler görünmez) →
+ * öneri kesin değildir; sunucu `labelDuplicate` ile yumuşak uyarı verir, engel değildir.
+ *
+ * @param receivedAt `<input type="date">` değeri (`YYYY-MM-DD`). Okunamazsa `''` döner
+ *   (çağıran mevcut değeri KORUR — sessizce boşaltmaz).
+ */
+export function autoBatchLabel(receivedAt: string, existingLabels: readonly string[]): string {
+  const m = /^(\d{4})-(\d{2})/.exec((receivedAt || '').trim());
+  if (!m) return '';
+  const prefix = `${m[1]}-${m[2]}`;
+  // Yalnız "aynı ay + saf harf eki" biçimindeki etiketler sayılır; operatörün elle yazdığı
+  // serbest adlar (ör. "kasım-toptan") diziyi kaydırmaz.
+  const used = new Set<string>();
+  const re = new RegExp(`^${prefix}-([A-Za-z]+)$`);
+  for (const raw of existingLabels) {
+    const hit = re.exec((raw || '').trim());
+    if (hit) used.add(hit[1].toUpperCase());
+  }
+  let i = 0;
+  while (used.has(batchLabelSuffix(i))) i += 1;
+  return `${prefix}-${batchLabelSuffix(i)}`;
 }

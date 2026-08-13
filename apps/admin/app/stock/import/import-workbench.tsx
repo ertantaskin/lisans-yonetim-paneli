@@ -16,6 +16,7 @@ import {
   Info,
   KeyRound,
   Package,
+  RotateCcw,
   Table2,
   TriangleAlert,
   Truck,
@@ -44,6 +45,8 @@ import { cn, formatDate } from '../../../lib/utils';
 import { AccountRowsEditor, emptyAccountRow, type AccountColumn } from './account-rows-editor';
 import { MAX_IMPORT_BYTES, MAX_IMPORT_ITEMS, MAX_IMPORT_LABEL, formatBytes } from './limits';
 import {
+  autoBatchLabel,
+  currencySymbol,
   formatMoney,
   liraToCents,
   splitLines,
@@ -87,6 +90,103 @@ function byteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
+/** Parti modları — sıra segment kontrolündeki soldan sağa sıradır. */
+const BATCH_MODES: ReadonlyArray<{ value: BatchMode; title: string; desc: string }> = [
+  {
+    value: 'none',
+    title: 'Partisiz',
+    desc: 'Yalnız anahtarlar girilir — maliyet/tedarikçi izi tutulmaz.',
+  },
+  {
+    value: 'new',
+    title: 'Yeni parti',
+    desc: 'Bu girişle birlikte teslim alınmış bir parti (+ satın alma emri) açılır.',
+  },
+  {
+    value: 'existing',
+    title: 'Mevcut parti',
+    desc: 'Bu ürünün daha önce açılmış bir partisine eklenir.',
+  },
+];
+
+/**
+ * Parti modu seçici — üç seçenek YAN YANA tek satırda (eski hâli üç adet iki satırlı
+ * açıklamalı kutuydu ve asıl alanları ekranın çok altına itiyordu).
+ *
+ * `radio-group` primitifi yok → WAI-ARIA radiogroup deseni elle kurulur: gruba TEK sekme
+ * durağı (roving tabindex) + ok tuşlarıyla gezinme/seçim. Seçim FORM ALANI DEĞİLDİR —
+ * değer üstteki `<input type="hidden" name="batchMode">` ile gider (buton `type="button"`,
+ * yanlışlıkla submit etmez).
+ */
+function BatchModeSegment({
+  value,
+  onChange,
+}: {
+  value: BatchMode;
+  onChange: (next: BatchMode) => void;
+}) {
+  const refs = React.useRef<Array<HTMLButtonElement | null>>([]);
+  const index = Math.max(
+    BATCH_MODES.findIndex((m) => m.value === value),
+    0,
+  );
+
+  const goTo = (next: number) => {
+    const i = (next + BATCH_MODES.length) % BATCH_MODES.length;
+    onChange(BATCH_MODES[i].value);
+    refs.current[i]?.focus();
+  };
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Parti bağlama modu"
+      className="flex w-full max-w-lg gap-0.5 rounded-md border border-border bg-muted/40 p-0.5"
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          goTo(index + 1);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          goTo(index - 1);
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          goTo(0);
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          goTo(BATCH_MODES.length - 1);
+        }
+      }}
+    >
+      {BATCH_MODES.map((m, i) => {
+        const active = m.value === value;
+        return (
+          <button
+            key={m.value}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(m.value)}
+            className={cn(
+              'flex-1 rounded-[0.3rem] px-3 py-1.5 text-xs font-medium outline-none transition-colors',
+              'focus-visible:ring-2 focus-visible:ring-ring/60',
+              active
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {m.title}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * Stok Girişi iş tezgâhı (§12/§13).
  *
@@ -100,6 +200,12 @@ function byteLength(value: string): number {
  *   raporlarında geri dönülemez biçimde "kapsanamayan" olur).
  * - Katlanan bölüm DOM'dan kaldırılmaz, yalnız `display:none` olur → içindeki alanlar formla
  *   birlikte gönderilmeye devam eder (kapatınca sessizce veri kaybı olmaz).
+ * - Parti modu **segment kontrolü**dür (üç açıklamalı kutu yerine yan yana üç düğme + yalnız
+ *   seçili modun tek satırlık açıklaması) — asıl alanlar ekranın üstünde kalır.
+ * - **Parti etiketi otomatiktir**: alım tarihinden `YYYY-MM-<HARF>` türetilir, harf o ürünün
+ *   aynı aya ait mevcut partilerinden ilerler. Operatör alana dokunana kadar tarih/ürün
+ *   değişimini izler; dokununca donar ("Otomatik" düğmesiyle geri alınır). Alan artık boş ve
+ *   kırmızı-zorunlu başlamaz.
  * - Birim maliyet **LİRA** olarak girilir; kuruşa dönüşüm tek yerde (`liraToCents`) yapılır.
  *   Alan eskiden kuruştu ve "12" yazan operatör 0,12 ₺ kaydediyordu.
  * - Reddedilen satırlar **kaynak satır numarasıyla** listelenir (API'nin `items[]` sırası değil).
@@ -157,6 +263,8 @@ export function ImportWorkbench({
   const [supplierId, setSupplierId] = React.useState('');
   const [supplierName, setSupplierName] = React.useState('');
   const [batchLabel, setBatchLabel] = React.useState('');
+  /** Operatör etiket alanına DOKUNDU mu — dokunduysa otomatik öneri artık üzerine yazmaz. */
+  const [labelTouched, setLabelTouched] = React.useState(false);
   const [receivedAt, setReceivedAt] = React.useState(todayInputValue);
   const [unitCostLira, setUnitCostLira] = React.useState('');
   const [currency, setCurrency] = React.useState<string>('TRY');
@@ -199,6 +307,10 @@ export function ImportWorkbench({
     // Parti bir ÜRÜNE aittir: ürün değişince önceki seçim geçersizdir (API başka ürünün
     // partisini 400 ile reddeder) → sessizce taşınmasın.
     setBatchId('');
+    // Etiket de ürüne özgüdür. `labelTouched` sıfırlanmazsa, A ürünü için elle yazılan
+    // ad (ör. "temmuz-toptan") B ürününe DONMUŞ hâlde taşınır ve 2. bölüm katlıyken
+    // yalnız özet satırında görünür → yanlış adlı parti açılır. batchId ile simetrik olsun.
+    setLabelTouched(false);
     setBatchesLoading(true);
     setBatchesError(null);
     void fetchProductBatchesAction(productId)
@@ -222,6 +334,25 @@ export function ImportWorkbench({
       alive = false;
     };
   }, [productId]);
+
+  // ── Parti etiketi önerisi ──────────────────────────────────────────────────
+  // Alım tarihinden `YYYY-MM-<HARF>` türetilir; harf o ÜRÜNÜN aynı aya ait mevcut
+  // partilerinden ilerler (A → B → C…). Operatör alana dokunana kadar tarih/ürün
+  // değişince öneri kendini günceller; dokunulduktan sonra DONAR (yazdığını ezmeyiz).
+  // Tarih boşaltılırsa BUGÜNE düşülür: aksi halde `autoBatchLabel` '' döner, "Otomatik"
+  // düğmesi hiç render edilmez ama hata metni "Otomatik'e basın" der → çıkışsız yönlendirme.
+  // Sunucu da `receivedAt` gönderilmezse now() kullanıyor; öneri onunla aynı varsayımı yapar.
+  const autoLabel = React.useMemo(
+    () => autoBatchLabel(receivedAt || todayInputValue(), batches.map((b) => b.label)),
+    [receivedAt, batches],
+  );
+  // `batchLabel` de bağımlılıktır: giriş sonrası form temizliği alanı boşaltınca öneri
+  // KENDİNİ YENİDEN yazar (yalnız `autoLabel` dinlenseydi, aynı ay içinde parti açılmayan
+  // bir girişten sonra alan boş kalırdı). Değer öneriye eşitlenince efekt no-op olur → döngü yok.
+  React.useEffect(() => {
+    if (labelTouched || !autoLabel || batchLabel === autoLabel) return;
+    setBatchLabel(autoLabel);
+  }, [autoLabel, labelTouched, batchLabel]);
 
   // Bekleyen talep önizlemesi — ürün başına BİR kez çekilir; satır sayısı değiştikçe
   // hesap istemcide yapılır (ağ turu yok).
@@ -330,7 +461,8 @@ export function ImportWorkbench({
   const blockers: string[] = [];
   if (!productId) blockers.push('Ürün seçin.');
   if (productId && items.length === 0) blockers.push('En az bir kayıt girin.');
-  if (labelMissing) blockers.push('Yeni parti için etiket girin (ör. 2026-08-A).');
+  // Etiket normalde otomatik dolar → bu engel yalnız operatör alanı ELLE boşalttıysa çıkar.
+  if (labelMissing) blockers.push('Parti etiketi boş — yazın ya da "Otomatik" düğmesine basın.');
   if (newBatchActive && costInvalid) blockers.push('Birim maliyeti lira olarak girin — ör. 12,50.');
   if (costWithoutSupplier) {
     blockers.push('Birim maliyet girdiniz — tedarikçi seçin ya da maliyeti boşaltın.');
@@ -374,6 +506,22 @@ export function ImportWorkbench({
     if (fileRef.current) fileRef.current.value = '';
     setBatchMode('none');
     setBatchId('');
+    // Bu girişte açılan parti listeye eklenir: hem "mevcut parti" seçicisinde görünür hem de
+    // BİR SONRAKİ otomatik etiket harfini ilerletir (aksi halde aynı ay tekrar "A" önerilirdi).
+    const nb = r.newBatch;
+    if (nb?.created && nb.batchId) {
+      const created: ProductBatchOption = {
+        id: nb.batchId,
+        label: nb.label,
+        status: 'active',
+        receivedAt: nb.receivedAt ?? null,
+        supplierName: nb.supplierName ?? null,
+        qtyReceived: nb.qtyReceived ?? 0,
+      };
+      setBatches((prev) => (prev.some((b) => b.id === created.id) ? prev : [...prev, created]));
+    }
+    // Etiket yeniden OTOMATİĞE döner (yukarıdaki öneri efekti bir sonraki harfi yazar).
+    setLabelTouched(false);
     setBatchLabel('');
     setSupplierId('');
     setSupplierName('');
@@ -416,14 +564,19 @@ export function ImportWorkbench({
     if (batchMode === 'existing') {
       return selectedBatch ? `Mevcut parti: ${selectedBatch.label}` : 'Mevcut parti seçilmedi';
     }
-    const parts = [batchLabel.trim() || 'etiket girilmedi'];
-    if (supplierChosen) {
-      parts.push(supplierNew ? supplierName.trim() : (suppliers.find((s) => s.id === supplierId)?.name ?? ''));
-    }
+    // YALNIZ dolu parçalar yazılır — eksik alan "girilmedi" diye olumsuz cümle kurmaz
+    // (etiket zaten otomatik dolar; boş kalması istisnadır).
+    const parts: string[] = [];
+    const label = batchLabel.trim();
+    if (label) parts.push(label);
+    const supplier = supplierNew
+      ? supplierName.trim()
+      : (suppliers.find((s) => s.id === supplierId)?.name ?? '');
+    if (supplierChosen && supplier) parts.push(supplier);
     if (costCents != null && items.length > 0) {
       parts.push(`${items.length} × ${formatMoney(costCents, currency)}`);
     }
-    return `Yeni parti: ${parts.filter(Boolean).join(' · ')}`;
+    return parts.length > 0 ? `Yeni parti: ${parts.join(' · ')}` : 'Yeni parti açılacak';
   };
 
   return (
@@ -547,54 +700,17 @@ export function ImportWorkbench({
           {/* DOM'dan kaldırılmaz — yalnız gizlenir: kapatınca alanlar gönderilmeye devam eder. */}
           <div id="si-supply" className={cn('px-5 pb-5', !batchOpen && 'hidden')}>
             <Separator className="mb-4" />
-            <fieldset className="space-y-3">
-              <legend className="sr-only">Parti bağlama modu</legend>
-              {(
-                [
-                  {
-                    value: 'none' as const,
-                    title: 'Partisiz',
-                    desc: 'Yalnız anahtarları gir. Maliyet/tedarikçi izi tutulmaz.',
-                  },
-                  {
-                    value: 'new' as const,
-                    title: 'Yeni parti',
-                    desc: 'Bu girişle birlikte teslim alınmış bir parti (+ satın alma emri) aç.',
-                  },
-                  {
-                    value: 'existing' as const,
-                    title: 'Mevcut parti',
-                    desc: 'Bu ürünün daha önce açılmış bir partisine ekle.',
-                  },
-                ] satisfies Array<{ value: BatchMode; title: string; desc: string }>
-              ).map((opt) => (
-                <label
-                  key={opt.value}
-                  className={cn(
-                    'flex cursor-pointer items-start gap-2.5 rounded-md border p-3 transition-colors',
-                    batchMode === opt.value
-                      ? 'border-ring bg-accent/40'
-                      : 'border-border hover:bg-accent/20',
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="batchModeChoice"
-                    value={opt.value}
-                    checked={batchMode === opt.value}
-                    onChange={() => setBatchMode(opt.value)}
-                    className={cn(checkboxClass, 'mt-0.5 rounded-full')}
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-foreground">{opt.title}</span>
-                    <span className="block text-xs text-muted-foreground">{opt.desc}</span>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
+            {/* Segment + YALNIZ seçili modun tek satırlık açıklaması (üç açıklamayı birden
+                göstermek asıl alanları ekranın altına itiyordu). */}
+            <div className="space-y-1.5">
+              <BatchModeSegment value={batchMode} onChange={setBatchMode} />
+              <p className="text-xs text-muted-foreground">
+                {(BATCH_MODES.find((m) => m.value === batchMode) ?? BATCH_MODES[0]).desc}
+              </p>
+            </div>
 
             {batchMode === 'none' && (
-              <Alert variant="warning" className="mt-4">
+              <Alert variant="warning" className="mt-3">
                 <TriangleAlert />
                 <AlertDescription>
                   Bu anahtarların maliyeti raporlarda &quot;kapsanamayan&quot; görünür ve sonradan
@@ -654,49 +770,69 @@ export function ImportWorkbench({
             )}
 
             {batchMode === 'new' && (
+              /* ALAN SIRASI: önce KİM/NE ZAMAN (tedarikçi + tarih), sonra NE KADAR (maliyet +
+                 para birimi), en sonda KİMLİK/NOT (etiket artık otomatik → ikincil). Her satır
+                 iki dolu hücre — boş grid hücresi bırakılmaz. */
               <div className="mt-4 space-y-3">
                 <FieldRow>
-                  {supplierNew ? (
-                    <Field
-                      label="Yeni tedarikçi adı"
-                      htmlFor="si-supplier-name"
-                      hint="Aynı adla kayıt varsa YENİDEN KULLANILIR; yoksa oluşturulur."
-                    >
-                      <Input
-                        id="si-supplier-name"
-                        name="supplierName"
-                        value={supplierName}
-                        onChange={(e) => setSupplierName(e.target.value)}
-                        placeholder="ör. Acme Yazılım"
-                      />
-                    </Field>
-                  ) : (
-                    <Field
-                      label="Tedarikçi"
-                      htmlFor="si-supplier"
-                      hint="Maliyet gireceksen zorunlu — maliyet satın alma emrinde tutulur."
-                    >
-                      <Combobox
-                        id="si-supplier"
-                        name="supplierId"
-                        ariaLabel="Tedarikçi"
-                        value={supplierId}
-                        onValueChange={setSupplierId}
-                        items={suppliers
-                          .filter((s) => s.active)
-                          .map((s) => ({ value: s.id, label: s.name }))}
-                        allowClear
-                        clearLabel="— tedarikçisiz —"
-                        placeholder="— tedarikçi seçin —"
-                        searchPlaceholder="Tedarikçi ara…"
-                        emptyText="Tedarikçi bulunamadı"
-                      />
-                    </Field>
-                  )}
+                  {/* Tedarikçi ve "listede yok" seçeneği TEK alanın içinde: onay kutusu
+                      kontrolün hemen altında durur (eskiden yardım metninin altında ayrı
+                      satırdaydı, hangi alana ait olduğu anlaşılmıyordu). */}
+                  <Field
+                    label={supplierNew ? 'Yeni tedarikçi adı' : 'Tedarikçi'}
+                    htmlFor={supplierNew ? 'si-supplier-name' : 'si-supplier'}
+                    hint={
+                      supplierNew
+                        ? 'Aynı adla kayıt varsa YENİDEN KULLANILIR; yoksa oluşturulur.'
+                        : 'Maliyet gireceksen zorunlu — maliyet satın alma emrinde tutulur.'
+                    }
+                  >
+                    <div className="space-y-1.5">
+                      {/*
+                        İki alan KARŞILIKLI DIŞLAYICI (API ikisini birlikte 400'ler). Pasif olan
+                        kontrol DOM'da HİÇ bulunmaz → yalnız biri gönderilir. Değerler state'te
+                        korunur: kutuyu açıp kapatan operatör yazdığını kaybetmez.
+                      */}
+                      {supplierNew ? (
+                        <Input
+                          id="si-supplier-name"
+                          name="supplierName"
+                          value={supplierName}
+                          onChange={(e) => setSupplierName(e.target.value)}
+                          placeholder="ör. Acme Yazılım"
+                        />
+                      ) : (
+                        <Combobox
+                          id="si-supplier"
+                          name="supplierId"
+                          ariaLabel="Tedarikçi"
+                          value={supplierId}
+                          onValueChange={setSupplierId}
+                          items={suppliers
+                            .filter((s) => s.active)
+                            .map((s) => ({ value: s.id, label: s.name }))}
+                          allowClear
+                          clearLabel="— tedarikçisiz —"
+                          placeholder="— tedarikçi seçin —"
+                          searchPlaceholder="Tedarikçi ara…"
+                          emptyText="Tedarikçi bulunamadı"
+                        />
+                      )}
+                      <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={supplierNew}
+                          onChange={(e) => setSupplierNew(e.target.checked)}
+                          className={checkboxClass}
+                        />
+                        Listede yok — yeni ad gireceğim
+                      </label>
+                    </div>
+                  </Field>
                   <Field
                     label="Alım tarihi"
                     htmlFor="si-received"
-                    hint="Maliyet raporu ayları bu tarihe göre gruplanır. Varsayılan: bugün."
+                    hint="Maliyet raporu ayları bu tarihe göre gruplanır; parti etiketi de bundan üretilir."
                   >
                     <Input
                       id="si-received"
@@ -708,55 +844,43 @@ export function ImportWorkbench({
                   </Field>
                 </FieldRow>
 
-                <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={supplierNew}
-                    onChange={(e) => {
-                      // İki alan KARŞILIKLI DIŞLAYICI (API ikisi birlikte gelirse 400 döner) →
-                      // mod değişince diğerinin değeri temizlenir.
-                      setSupplierNew(e.target.checked);
-                      setSupplierId('');
-                      setSupplierName('');
-                    }}
-                    className={checkboxClass}
-                  />
-                  Tedarikçi listede yok — yeni ad gireceğim
-                </label>
-
-                <Field
-                  label="Parti etiketi"
-                  htmlFor="si-label"
-                  required
-                  hint="Partiyi tanıdığınız ad. Aynı ürüne aynı etiket ikinci kez girilirse uyarılırsınız."
-                >
-                  <Input
-                    id="si-label"
-                    name="batchLabel"
-                    value={batchLabel}
-                    onChange={(e) => setBatchLabel(e.target.value)}
-                    placeholder="2026-08-A"
-                    className="max-w-xs"
-                    aria-invalid={labelMissing || undefined}
-                  />
-                </Field>
-
                 <FieldRow>
                   <Field
-                    label="Birim maliyet (LİRA)"
+                    label="Birim maliyet"
                     htmlFor="si-cost"
                     error={costInvalid ? 'Sayı okunamadı. Örnek: 12,50' : undefined}
-                    hint="Kuruş DEĞİL, lira girin — ör. 12,50 (panel kuruşa kendisi çevirir). Boş bırakılabilir."
+                    hint="Kuruş DEĞİL — ör. 12,50. Boş bırakılabilir."
                   >
-                    <Input
-                      id="si-cost"
-                      name="unitCostLira"
-                      inputMode="decimal"
-                      value={unitCostLira}
-                      onChange={(e) => setUnitCostLira(e.target.value)}
-                      placeholder="12,50"
-                      aria-invalid={costInvalid || undefined}
-                    />
+                    <div className="space-y-1">
+                      <div className="relative">
+                        {/* Para birimi öneki: "12" yazan operatörün kuruş mu lira mı girdiği
+                            tereddüdünü alanın İÇİNDE giderir (uzun yardım metni yerine). */}
+                        <span
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground"
+                          aria-hidden
+                        >
+                          {currencySymbol(currency)}
+                        </span>
+                        <Input
+                          id="si-cost"
+                          name="unitCostLira"
+                          inputMode="decimal"
+                          value={unitCostLira}
+                          onChange={(e) => setUnitCostLira(e.target.value)}
+                          placeholder="12,50"
+                          className="pl-7"
+                          aria-invalid={costInvalid || undefined}
+                        />
+                      </div>
+                      {costCents != null && items.length > 0 && (
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                          {items.length} × {formatMoney(costCents, currency)} ={' '}
+                          <strong className="text-foreground">
+                            {formatMoney(costCents * items.length, currency)}
+                          </strong>
+                        </p>
+                      )}
+                    </div>
                   </Field>
                   <Field label="Para birimi" htmlFor="si-currency">
                     <select
@@ -775,38 +899,80 @@ export function ImportWorkbench({
                   </Field>
                 </FieldRow>
 
-                <Field label="Not" htmlFor="si-notes" hint="Serbest not (opsiyonel).">
-                  <Textarea
-                    id="si-notes"
-                    name="batchNotes"
-                    rows={2}
-                    value={batchNotes}
-                    onChange={(e) => setBatchNotes(e.target.value)}
-                    placeholder="Fatura no, teslim şekli…"
-                    className="max-w-lg"
-                  />
-                </Field>
+                <FieldRow>
+                  <Field
+                    label={
+                      <span className="inline-flex items-center gap-1.5">
+                        Parti etiketi
+                        {!labelTouched && autoLabel && (
+                          <Badge variant="outline" className="px-1.5 py-0 font-normal">
+                            otomatik
+                          </Badge>
+                        )}
+                      </span>
+                    }
+                    htmlFor="si-label"
+                    required
+                    error={
+                      labelMissing
+                        ? 'Etiket boş — parti açılamaz. "Otomatik" ile geri getirebilirsiniz.'
+                        : undefined
+                    }
+                    hint="Alım tarihinden üretilir (yıl-ay-harf). Aynı ürüne aynı etiket ikinci kez girilirse uyarılırsınız."
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        id="si-label"
+                        name="batchLabel"
+                        value={batchLabel}
+                        onChange={(e) => {
+                          // Elle yazan operatörün değerini bir daha EZMEYİZ (öneri donar).
+                          setLabelTouched(true);
+                          setBatchLabel(e.target.value);
+                        }}
+                        placeholder={autoLabel || '2026-08-A'}
+                        className="max-w-[11rem]"
+                        aria-invalid={labelMissing || undefined}
+                      />
+                      {labelTouched && autoLabel && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setLabelTouched(false);
+                            setBatchLabel(autoLabel);
+                          }}
+                          title={`Otomatik etikete dön (${autoLabel})`}
+                        >
+                          <RotateCcw />
+                          Otomatik
+                        </Button>
+                      )}
+                    </div>
+                  </Field>
+
+                  <Field label="Not" htmlFor="si-notes" hint="Serbest not (opsiyonel).">
+                    <Textarea
+                      id="si-notes"
+                      name="batchNotes"
+                      rows={2}
+                      value={batchNotes}
+                      onChange={(e) => setBatchNotes(e.target.value)}
+                      placeholder="Fatura no, teslim şekli…"
+                    />
+                  </Field>
+                </FieldRow>
 
                 <Alert variant="info">
                   <Banknote />
                   <AlertDescription>
-                    {items.length > 0 && costCents != null ? (
-                      <>
-                        <strong className="text-foreground">
-                          {items.length} kayıt × {formatMoney(costCents, currency)} ={' '}
-                          {formatMoney(costCents * items.length, currency)}
-                        </strong>{' '}
-                        tutarında, {receivedAt ? formatDate(`${receivedAt}T00:00:00`, false) : 'bugün'}{' '}
-                        teslim alınmış bir satın alma emri + parti açılacak. Adet BEYAN DEĞİL,
-                        gerçekten kaydedilen kayıt sayısıdır.
-                      </>
-                    ) : (
-                      <>
-                        Bu girişle birlikte &quot;teslim alındı&quot; durumunda bir parti açılır.
-                        Tedarikçi + birim maliyet girerseniz satın alma emri de oluşur ve maliyet
-                        her lisans kaydına anlık-görüntü olarak yazılır.
-                      </>
-                    )}
+                    Bu girişle birlikte{' '}
+                    {receivedAt ? formatDate(`${receivedAt}T00:00:00`, false) : 'bugün'} tarihli,
+                    &quot;teslim alındı&quot; durumunda bir parti açılır. Tedarikçi + birim maliyet
+                    girerseniz satın alma emri de oluşur ve maliyet her lisans kaydına
+                    anlık-görüntü olarak yazılır. Adet BEYAN DEĞİL, gerçekten kaydedilen kayıt
+                    sayısıdır.
                   </AlertDescription>
                 </Alert>
               </div>

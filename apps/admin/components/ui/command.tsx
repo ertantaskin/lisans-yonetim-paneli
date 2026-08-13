@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import { Command as CommandPrimitive } from 'cmdk';
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 /** cmdk sarmalayıcı (shadcn deseni) — faceted filter + arama listelerinde kullanılır. */
@@ -20,22 +20,84 @@ export const Command = React.forwardRef<
 ));
 Command.displayName = 'Command';
 
+/**
+ * Açılır liste içi arama satırı — panel genelindeki `SearchInput` ile AYNI refleksler:
+ * aynı boyutta büyüteç (`size-3.5`), doluyken sağda aynı stilde temizle (×) düğmesi ve
+ * `Escape` ile temizleme. (Önceden bu kutu temizlenemiyordu; operatör metni elle silmek
+ * zorundaydı ve iki arama kutusu birbirine benzemiyordu.)
+ *
+ * KONTROL: dışarıdan `value` verilirse kontrollü (ör. Combobox sonuç sayacını da sürer),
+ * verilmezse bileşen kendi state'ini tutar — çağrı yerleri (faceted filtre) DEĞİŞMEDEN
+ * eski davranışı sürdürür, üstelik temizle/Escape orada da çalışır.
+ *
+ * NOT: Radix'in Escape dinleyicisi capture aşamasında olduğundan popover'ın kapanmasını
+ * buradan engelleyemeyiz; dolu kutuda popover'ı AÇIK tutmak isteyen çağrı yeri bunu
+ * `PopoverContent onEscapeKeyDown` ile yapar (bkz. `combobox.tsx`).
+ */
 export const CommandInput = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Input>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
->(({ className, ...props }, ref) => (
-  <div className="flex items-center gap-2 border-b border-border px-3" cmdk-input-wrapper="">
-    <Search className="size-4 shrink-0 text-muted-foreground" />
-    <CommandPrimitive.Input
-      ref={ref}
-      className={cn(
-        'flex h-9 w-full bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50',
-        className,
+>(({ className, value, onValueChange, onKeyDown, ...props }, ref) => {
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const [internal, setInternal] = React.useState('');
+  const isControlled = value !== undefined;
+  const current = value ?? internal;
+
+  const setSearch = (next: string) => {
+    if (!isControlled) setInternal(next);
+    onValueChange?.(next);
+  };
+
+  const setRefs = React.useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node;
+      if (typeof ref === 'function') ref(node);
+      else if (ref) (ref as React.MutableRefObject<HTMLInputElement | null>).current = node;
+    },
+    [ref],
+  );
+
+  return (
+    <div
+      className="flex items-center gap-2 border-b border-border bg-muted/40 px-2.5"
+      cmdk-input-wrapper=""
+    >
+      <Search className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <CommandPrimitive.Input
+        ref={setRefs}
+        value={current}
+        onValueChange={setSearch}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          // Kutu DOLUYKEN Escape önce aramayı temizler; BOŞKEN dokunmayız →
+          // Radix popover'ı kapatmaya devam eder (beklenen davranış).
+          if (event.key === 'Escape' && current !== '') {
+            event.preventDefault();
+            setSearch('');
+          }
+        }}
+        className={cn(
+          'h-9 min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50',
+          className,
+        )}
+        {...props}
+      />
+      {current !== '' && (
+        <button
+          type="button"
+          onClick={() => {
+            setSearch('');
+            inputRef.current?.focus();
+          }}
+          aria-label="Aramayı temizle"
+          className="grid size-5 shrink-0 place-items-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
       )}
-      {...props}
-    />
-  </div>
-));
+    </div>
+  );
+});
 CommandInput.displayName = 'CommandInput';
 
 export const CommandList = React.forwardRef<
@@ -53,8 +115,13 @@ CommandList.displayName = 'CommandList';
 export const CommandEmpty = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Empty>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Empty>
->((props, ref) => (
-  <CommandPrimitive.Empty ref={ref} className="py-6 text-center text-sm text-muted-foreground" {...props} />
+>(({ className, ...props }, ref) => (
+  // `break-words`: boş durum metni arama terimini içerebiliyor (uzun terim taşmasın).
+  <CommandPrimitive.Empty
+    ref={ref}
+    className={cn('break-words px-3 py-6 text-center text-sm text-muted-foreground', className)}
+    {...props}
+  />
 ));
 CommandEmpty.displayName = 'CommandEmpty';
 

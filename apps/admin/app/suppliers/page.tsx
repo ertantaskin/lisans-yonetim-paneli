@@ -18,7 +18,11 @@ export default async function SuppliersPage() {
 
   return (
     <div>
-      <PageHeader icon={Truck} title="Tedarikçiler" description="Lisans/key tedarikçileri — satın alma emirleri ve partiler buraya bağlanır." />
+      <PageHeader
+        icon={Truck}
+        title="Tedarikçiler"
+        description="Anahtarları aldığınız tedarikçiler — satın alma emirleri, partiler ve maliyet raporu buraya bağlanır. Tedarikçiyi burada elle ekleyebilir ya da Stok Girişi'nde adını yazarak oluşturabilirsiniz (aynı adlı kayıt varsa yeniden kullanılır, mükerrer açılmaz)."
+      />
 
       <Card className="mb-5 max-w-2xl">
         <CardContent className="p-5">

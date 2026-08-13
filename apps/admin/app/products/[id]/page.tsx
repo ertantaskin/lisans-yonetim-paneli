@@ -228,10 +228,13 @@ export default async function ProductDetailPage({
           */}
           <Card>
             <CardHeader>
-              <CardTitle icon={Upload}>Key / Stok İçe Aktar</CardTitle>
+              <CardTitle icon={Upload}>Stok Girişi</CardTitle>
               <CardDescription>
-                Bu ürüne yeni key/hesap eklemek Stok Girişi ekranında yapılır — ürün ön-seçili
-                açılır, girmeden önce &apos;Kuru Çalıştır&apos; ile güvenle doğrulayabilirsiniz.
+                Bu ürüne yeni anahtar/hesap eklemek <strong>Stok Girişi</strong> ekranında yapılır —
+                ürün ön-seçili açılır. İki yol vardır: <strong>hızlı giriş</strong> (yalnız anahtarlar;
+                maliyet/tedarikçi izi tutulmaz) veya <strong>tedarikli giriş</strong> (tedarikçi + alım
+                tarihi + birim maliyet → parti ve satın alma emri aynı adımda açılır). Girmeden önce
+                &quot;Önizle (kuru çalıştır)&quot; ile hiçbir şey kaydetmeden doğrulayabilirsiniz.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -270,7 +273,9 @@ export default async function ProductDetailPage({
             <CardHeader>
               <CardTitle icon={Package}>Partiler</CardTitle>
               <CardDescription>
-                Tedarikçiden gelen stok partileri (geri çekme bu partiler üzerinden yapılır).
+                Bu ürünün stok partileri — hangi anahtarlar kimden, ne zaman geldi. Parti,{' '}
+                <strong>Stok Girişi</strong>&apos;nde tedarikçi/maliyet girildiğinde ya da bir satın
+                alma emri teslim alındığında oluşur; geri çekme (recall) bu partiler üzerinden yapılır.
               </CardDescription>
             </CardHeader>
             <CardContent className={batches.length === 0 ? '' : 'overflow-x-auto p-0'}>
@@ -278,8 +283,14 @@ export default async function ProductDetailPage({
                 <EmptyState
                   icon={Package}
                   title="Parti yok"
-                  description="Bu ürün için henüz tedarik partisi kaydı yok."
-                />
+                  description="Bu ürünün anahtarları bir partiye bağlı değil (ya hiç stok girilmedi ya da partisiz/hızlı giriş yapıldı). Maliyet ve tedarikçi izi için stok girişinde tedarikçi + alım tarihi + birim maliyet doldurun."
+                >
+                  <Button asChild size="sm" variant="outline">
+                    <Link href={importHref}>
+                      <PackagePlus /> Stok Girişi
+                    </Link>
+                  </Button>
+                </EmptyState>
               ) : (
                 <Table>
                   <TableHeader>
@@ -295,6 +306,15 @@ export default async function ProductDetailPage({
                       <TableRow key={b.id}>
                         <TableCell className="font-medium text-foreground">
                           {b.label}
+                          {/*
+                            NOT: "Otomatik" rozeti (stok girişinden türemiş parti/emir) BURADA
+                            gösterilemiyor — `products/:id/detail` ucu parti/emir `notes` alanını
+                            döndürmüyor, işaret ise `isAutoReceipt(notes)` ile okunuyor. Ham
+                            `[oto-giris]` öneki de bu ekranda hiç basılmaz (notes render edilmiyor),
+                            yani kullanıcıya sızan bir şey yok. Rozet istenirse önce API yanıtına
+                            `notes` eklenmeli (kontrat değişikliği) — /batches ve /purchase-orders
+                            listelerinde rozet zaten var.
+                          */}
                           {/* Tedarikçi + teslim tarihi: "bu parti kimden, ne zaman geldi" ekranda. */}
                           <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
                             {[b.supplierName ?? null, b.receivedAt ? formatDate(b.receivedAt, false) : null]
@@ -334,15 +354,25 @@ export default async function ProductDetailPage({
           <Card>
             <CardHeader>
               <CardTitle icon={Truck}>Satın Alma Emirleri</CardTitle>
-              <CardDescription>Bu ürün için açık/kapalı tedarik siparişleri.</CardDescription>
+              <CardDescription>
+                Bu ürün için açık/kapalı tedarik siparişleri. Emri önceden verip malı sonra (ya da
+                parça parça) alıyorsanız buradan takip edilir; tedarikli stok girişinde panel emri
+                zaten teslim alınmış olarak kendisi açar.
+              </CardDescription>
             </CardHeader>
             <CardContent className={purchaseOrders.length === 0 ? '' : 'overflow-x-auto p-0'}>
               {purchaseOrders.length === 0 ? (
                 <EmptyState
                   icon={Truck}
                   title="Satın alma emri yok"
-                  description="Açık satın alma emri yok."
-                />
+                  description="Bu ürün için tedarik emri kaydı yok. Beklenen bir teslimat varsa Satın Alma ekranından emir açabilirsiniz."
+                >
+                  <Button asChild size="sm" variant="outline">
+                    <Link href="/purchase-orders">
+                      <Truck /> Satın Alma
+                    </Link>
+                  </Button>
+                </EmptyState>
               ) : (
                 <Table>
                   <TableHeader>
