@@ -192,7 +192,15 @@ export function AccountRowsEditor({
                           aria-invalid={dirty || undefined}
                           className={cn(
                             'h-8 font-mono text-xs',
-                            dirty && 'border-warning pr-7 focus-visible:ring-warning/30',
+                            // Görsel uyarı `aria-invalid` üzerinden gelir (controlBase:
+                            // kırmızı kenarlık + kırmızı odak outline'ı) ve yanındaki amber
+                            // üçgen ikonla desteklenir. Burada BİR ZAMANLAR `border-warning
+                            // focus-visible:ring-warning/30` yazıyordu; ikisi de ÖLÜYDÜ —
+                            // `aria-[invalid=true]:*` kuralları (0,2,0) düz sınıfı (0,1,0)
+                            // yener, ayrıca `ring-<renk>` kalınlık üretmez (onu `ring-2`
+                            // yapar, o da tek-gösterge kuralıyla kaldırıldı). Kodun yalan
+                            // söylememesi için silindiler; ekranda hiçbir şey değişmedi.
+                            dirty && 'pr-7',
                           )}
                         />
                         {dirty && (

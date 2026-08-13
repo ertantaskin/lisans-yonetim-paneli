@@ -41,6 +41,13 @@ export const TabsTrigger = React.forwardRef<
       className={cn(
         'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium text-muted-foreground transition-colors',
         'hover:text-foreground',
+        // TEK İSTİSNA (globals.css'teki "bileşen kendi halkasını eklemez" kuralına):
+        // TabsList `overflow-x-auto` taşıyor ve CSS Overflow 3 gereği overflow-y de `auto`ya
+        // hesaplanıyor → global outline (2px kalınlık + 2px offset = elemanın 4px DIŞI)
+        // kırpılıyor; ölçüldü: sekme ile liste arasında yalnız 3px var, üst/alt 1px kesiliyor.
+        // `ring-inset` eleman İÇİNE çizildiği için kırpılmaz. Tam opaklık (6.54:1 açık /
+        // 4.18:1 koyu) — soluk /60 varyantı 3:1 eşiğinin altındaydı.
+        'focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
         'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm',
         '[&_svg]:size-4 [&_svg]:shrink-0',
         className,
