@@ -14,6 +14,69 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Re-doğrulama: 16 bulgu — kendi H1 regresyonum dahil (migration 0036, eklenti v1.0.4)
+
+Yukarıdaki denetim partisinin düzeltmeleri, bu kez onları **çürütmeye çalışan** 5 lensli bir
+workflow'dan (27 ajan) geçirildi → **16 doğrulanmış / 6 çürütülmüş**. En ağır bulgu benim
+düzeltmemdi ve bu, projenin kayıtlı dersini bir kez daha doğruladı: *kendi düzeltmen yeni bir
+yol açar.*
+
+#### Düzeltildi — correctness
+
+- **[ORTA, kendi regresyonum] Per-atama iptalinde satırı terminal yapmayıp `qty` düşürmek,
+  H1 bedava-lisans yolunu YENİDEN AÇTI.** `reconcileOrder`'ın iade koruması tek bir yükleme
+  dayanıyor (`if (line.canceled) continue`); satır artık terminal olmadığı için mağazadan
+  gelen bir yeniden-gönderim adedi geri yükseltiyor ve partial-auto iptal edilen birime taze
+  anahtar teslim ediyordu. Ters yönde de: iptal sebebi "kusurlu anahtar" ise adet düşüşü
+  müşterinin **ödediği hakkı** sessizce kısıyor ve satırı 'fulfilled' işaretliyordu.
+  **Kök neden:** `qty`'ye iki anlam birden yüklenmişti — hem *mağaza gerçeği* hem *doldurma
+  hedefi*. **Düzeltme:** `order_lines.canceled_units` defteri (migration 0036, additive).
+  `qty` mağazadan gelir ve dokunulmaz; iptaller ayrı kolonda birikir; hedef tek noktada
+  `qty − canceled_units` (`orders/fill-target.ts`) — teslimat motoru, all-or-nothing kapısı,
+  satır durumu, "neden bekliyor" tanısı, müşteri ilerlemesi ve mağaza yoklaması hepsi oradan
+  okur. Mağaza adedi düşerse defter aynı miktarda azaltılır (aynı iptal iki kez sayılmaz);
+  adedi artıp defter doluysa görünür olay yazılır.
+- Tam iadede (`revokeOrderForSite`) satır zaten terminalken defter şişiyor ve yanıltıcı olay
+  yazılıyordu.
+
+#### Düzeltildi — güvenlik
+
+- **[ORTA]** Tedarikçi fişindeki `key_snapshot` kolonu salt-okunur SQL denylist'inde yoktu →
+  fiş maskesi AI NL→SQL yolundan **tamamen atlatılabiliyordu** (AI varsayılan kapalı; savunma
+  derinliği). Kolon ve iki tablo denylist'e eklendi, regresyon testiyle kilitlendi.
+- Hesap tipli fiş kaleminde maskeleme sır **olmayan** alanları da siliyordu → tedarikçi raporu
+  bilgisiz kalıyordu; karantina listesiyle aynı alan-farkında davranışa çekildi.
+
+#### Düzeltildi — UI/UX
+
+- **[ORTA] `includesTr` ASCII büyük 'I'da sessiz boş sonuç veriyordu**: Türkçe katlamada
+  'I' → 'ı' olduğu için "ai" araması "AI Operasyon"u bulamıyordu. Bir önceki parti bu kusuru
+  5 yeni yere yaymıştı. Merkezî düzeltme (iki geçişli katlama) ~15 çağıranı birden onarır.
+- Stok girişindeki parti seçicisi artık sunucu-taraflı `?productId=` süzgeci kullanıyor —
+  global 500'lük pencere + istemci süzgeci, geçerli bir partiyi "yok" gösterebiliyordu.
+- Kırpma bayrağı hata/temizleme yollarında bayat kalıyordu; iptal onay modali artık gerçekleşen
+  davranışı anlatıyor ("diğer N lisans geçerli kalmaya devam eder"); maskeli fiş raporu sessizce
+  indiriliyordu → uyarı bandı.
+- `truncated` tam sınırda yanlış pozitifti (tam 500 parti / 2.000 müşteride "liste eksik") →
+  "tavan+1 çek, kırp" desenine geçildi.
+
+#### Düzeltildi — WP eklentisi (v1.0.4)
+
+- Bir önceki partide eklediğim "paket adresi reddedildi" uyarısı, Docker/aynı-sunucu
+  kurulumlarında **kalıcı ve kapatılamaz bir kırmızı banda** dönüşüyordu: paket doğrulaması,
+  1.0.3'te genişletilen panel-adresi kuralıyla çelişiyordu. İki kapı tek tanıma bağlandı
+  (indirme host'unun panel host'una eşit olma şartı aynen korundu).
+- Multisite'ta bayrak kapsamı, çok baytlı karakterde boşalan mesaj ve panele ulaşılamazken
+  bayat kalan uyarı düzeltildi.
+
+#### Doğrulama
+
+typecheck 4/4 · admin production build · VPS izole test DB **entegrasyon 210/210 + yarış 3/3**
+(mağaza yeniden-gönderiminin iptal edilen birimi taze anahtarla dolduramadığını kanıtlayan yeni
+regresyon testi dahil) · **PHP-lint 12/12** (bir önceki partide hiç koşulmamıştı) · prod
+`/health` 200 v1.0.0, migration tracking 37, `canceled_units` canlı, api ERROR 0 ·
+eklenti v1.0.4 panele yayınlandı.
+
 ### Proje geneli denetim: 17 doğrulanmış bulgu (migration 0035)
 
 Kullanıcı: *"Projeyi baştan sona incele, denetle — güvenlik, performans veya UI/UX ile ilgili
