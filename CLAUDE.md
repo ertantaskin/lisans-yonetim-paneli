@@ -1494,3 +1494,53 @@ raporu alıp indirebilmeliyim; süreç kapsamlı, temiz, karışık olmadan iler
   çekilen partide **satılmış** kalemler "Toplu Değiştir" koşulmadan havuza düşmez · partisiz girişte
   tedarikçi bilinmez → fiş kesilemez · tedarikçiden gelen **yeni anahtarların** fişe bağlanması kapsam
   dışı (kullanıcı "tam kapanış"ı seçmedi) · fiş panelden GÖNDERİLMEZ, dosya indirilir.
+
+**KUSURLU STOK İŞ İSTASYONU — üç sekme, tek süzgeç, kapsayıcı terimler (commit fd9d063→44d233d,
+CANLI prod+dev, migration 0034):** Kullanıcı: *"sadece anahtar değil, birden fazla ürün varyasyonu
+vs olabilir, hesap vs gibi — ilerleyen süreçte daha kapsamlı terimler anlaşılabilir hale getir;
+/quarantine çok karışık, dijital ürün tedarik paneline uygun kolay anlaşılır olmalı; 'Cevap
+bekleniyor' yazıyor bunu da anlamadık; rehber niteliğinde açıklamalar."*
+- **TERİM (sistem geneli, sunum katmanı):** panel yalnız lisans ANAHTARI satmıyor — hesap, kod/hediye
+  çeki, süreli hesap ve özel ürünler de var (§2) ve aynı ekranda **karışık** durabilirler. `labels.ts`'e
+  **`itemNoun` / `itemNounPlural` / `itemCount(n, kinds)`**: küme TEK tipteyse o tipin adı ("3 hesap"),
+  karışıksa **ya da tek bir kalemin tipi bile bilinmiyorsa** nötr "kalem". Nötr ad hiçbir zaman yanlış
+  olmaz; özel ad okunabilirliği artırır. Uygulandı: kusurlu stok · fiş · parti (geri çekme/toplu değiştirme
+  onayları ve sonuç bantları) · lisans envanteri · sipariş detayı · rehber. **Menü "Kusurlu Anahtarlar" →
+  "Kusurlu Stok"** (ekranın adı kalem tipini varsaymamalı).
+- **"Cevap bekleniyor" belirsizliği (kullanıcı sorusu):** rozet listelerde TEK BAŞINA da görünüyor, yani
+  aktörü çevresindeki başlıktan öğrenemez → **"Tedarikçi yanıtı bekleniyor"**; `rejected` → "Tedarikçi
+  kabul etmedi" (destek dilindeki müşteri reddiyle karışıyordu). Ayrıca her yanıt ve fiş durumu için tek
+  cümlelik **ANLAM** sözlüğü (`claimOutcomeHint`/`claimStatusHint`) + fiş detayında dört yanıtı açıklayan
+  **rozet sözlüğü** (LegendList).
+- **ÜÇ SEKME (asıl karışıklık):** "Bekleyenler" sekmesi **1** derken altındaki tablo **16** satır
+  gösteriyordu — çünkü havuz (iş listesi) ile defter (tüm ölü kalemler) AYNI sekmedeydi ve farkın sebebi
+  hiçbir yerde yazmıyordu. Artık her sekmenin TEK işi var: **Bildirilecekler** (henüz fişe girmemiş havuz;
+  tedarikçi→parti, parti satırı KATLANIR ve içindeki kalemleri gösterir — ilk 50, `<details>` kapalıyken de
+  DOM'a girdiği için cap ŞART) · **Değişim Fişleri** · **Tüm Kayıtlar** (değişmez defter + süzgeç + dışa
+  aktarma). Sunucu süzgeci etkinken havuzun da daraldığı açıkça söylenir (sessiz eksik liste YOK).
+- **TEK ARAÇ ÇUBUĞU:** iki süzgeç kartı ve **İKİ ARAMA KUTUSU** ("Sunucu süzgeci" / "Yüklenen liste içinde
+  süz") vardı; operatör hangisine yazacağını bilmiyordu. Tek kutu: **yazdıkça** yüklenen listede süzer,
+  **Enter** ile veritabanındaki tüm kayıtlarda arar. Katmanların teknik farkı kaybolmadı, katlanır
+  **"Nasıl çalışır?"** kutusuna taşındı. Aktif sunucu süzgeçleri de kaldırılabilir rozet oldu.
+- **Satır başına "Tedarikçiye bildirim" kolonu + hızlı süzgeç** (Bildirilmedi / Fişte, yanıt bekliyor /
+  Tedarikçi yanıtladı) — sekme sayacı ile liste arasındaki fark artık HER SATIRDA görünür. Yüklem sunucudaki
+  `claimed` süzgeciyle BİREBİR aynı (reddedilen kalem havuza döndüğü için `claimId` boş gelir → "Bildirilmedi";
+  bilinçli, tek tanım). Sayaçlar da bildirim eksenine çevrildi (Kusurlu kalem · Bildirilmedi · Fişte · Yanıtladı).
+- **Yeni primitifler `ui/help-note.tsx`:** `HowItWorks` (3 adımlı akış şeridi — kusur havuza düşer → fiş
+  kesilir → yanıt işlenir) · `HelpNote` (katlanır ayrıntı) · `LegendList` (rozet sözlüğü). Üçü de SUNUCU
+  bileşeni ve JS gerektirmez (native `<details>`) → istemci paketine yük binmez, doğrulama tarayıcısında da
+  çalışır (orada CSS animasyonu/klavye olayı çalışmıyor — belgelenmiş sınır).
+- **Fiş detayı:** duruma göre "sırada ne var" şeridi (taslak → indir/gönder/işaretle; gönderildi →
+  bekle/işaretle/kapat), "Sonuç" → **"Tedarikçi yanıtı"**, kalem TİPİ satırda ve indirilen raporda (**"Tür"**
+  kolonu — tedarikçi kalemin hesap mı anahtar mı olduğunu bilmeli), kapanmış fişte yanıtsız kalem varsa
+  dürüst bilgi bandı ("Kapandı" rozeti tek başına "her şey çözüldü" gibi okunuyordu).
+- **migration 0034 (additive):** `supplier_claim_items.product_kind` snapshot + mevcut satırlar için geriye
+  dönük doldurma (`UPDATE … FROM products`). `listBatches`e `p.kind` eklendi (parti tek ürüne bağlı:
+  `batches.product_id NOT NULL`) → parti ekranları da doğru adı yazar. **`when` tuzağı kontrol edildi:**
+  üretilen damga 0033'ten büyük (1786643071095 > 1786639201572).
+- **Doğrulama:** typecheck 4/4 + check-use-server (22/74) · admin production build (`/quarantine` 18.2 kB) ·
+  **VPS izole test DB: entegrasyon 200/200 + yarış 3/3 + api birim 72/72** (regresyon yok) · dev canlı:
+  üç sekme (1 · 2 · 16), defter kolonları ve satır rozetleri ("Bildirilmedi" / "DEG-20260813-02 + Tedarikçi
+  yanıtı bekleniyor"), TEK arama kutusu + 4 facet, breadcrumb "Kusurlu Stok › Değişim Fişleri › Detay",
+  0034 backfill 18/18 · prod deploy (rollback'li) → `/health` 200 v1.0.0, migration tracking 35, api ERROR 0.
+  migration 0000-0034.
