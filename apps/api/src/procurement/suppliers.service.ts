@@ -32,7 +32,11 @@ export interface SupplierScorecard {
   /**
    * Teslim alınan miktarın maliyeti (kuruş) — PARA BİRİMİ BAŞINA AYRI satır
    * (purchase_orders.currency PO başına değişebilir; karışım tek toplama BİRLEŞTİRİLMEZ,
-   * sibling CostsService.bySupplier deseni). Maliyeti olan para birimi yoksa boş dizi.
+   * sibling CostsService.bySupplier deseni).
+   *
+   * Satırlar tedarikçinin PO'larının para birimlerinden gelir: hiç PO yoksa boş dizi;
+   * PO var ama `unit_cost_cents` NULL ise o para birimi `cents: 0` ile YİNE listelenir
+   * (maliyeti girilmemiş alım "yok" gibi gizlenmez).
    */
   totalCostCents: SupplierCostByCurrency[];
   /**
@@ -134,10 +138,17 @@ export class SuppliersService {
 
     // Teslim-maliyeti PARA BİRİMİ BAŞINA (purchase_orders.currency PO başına değişebilir).
     // totalCostCents = teslim alınan miktar × birim maliyet; karışım tek toplama BİRLEŞTİRİLMEZ.
+    //
+    // `::bigint` ÇARPANLARDA (sonuçta DEĞİL) — GEREKÇE: `qty_received` ve `unit_cost_cents`
+    // kolonları PG `integer`; `int4 * int4` yine int4 döner ve TOPLAMA GİRMEDEN taşar
+    // (SQLSTATE 22003 → karne ekranı ham 500). Denetim sınırları buna izin veriyor:
+    // controller `unitCostCents` ≤ 2.000.000.000 ve `qtyOrdered` ≤ 1.000.000 kabul ediyor,
+    // yani 500 adet × 43.000 ₺ gibi GERÇEKÇİ bir alım bile 2^31-1'i aşıyor. Sondaki
+    // `::bigint` cast'i yalnız sum SONUCUNA uygulandığı için çok geç kalıyordu.
     const costRows = await rawRows<{ currency: string; cents: number }>(this.db, sql`
       SELECT
         currency AS currency,
-        coalesce(sum(qty_received * coalesce(unit_cost_cents, 0)), 0)::bigint AS cents
+        coalesce(sum(qty_received::bigint * coalesce(unit_cost_cents, 0)::bigint), 0)::bigint AS cents
       FROM purchase_orders
       WHERE supplier_id = ${id}
       GROUP BY currency

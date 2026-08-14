@@ -130,7 +130,14 @@ export class PurchaseOrdersService {
     id: string,
     input: { qty: number; batchLabel: string; notes?: string },
   ): Promise<{ purchaseOrder: PurchaseOrder; batchId: string; accepted: number }> {
-    if (input.qty <= 0) throw new BadRequestException('qty > 0 olmalı');
+    // SAVUNMA DERİNLİĞİ: controller (`ReceiveBody`) zaten `int().positive().max(1_000_000)`
+    // uyguluyor; burası servisin DOĞRUDAN çağrıldığı yolları (test/iç servis) kapsar.
+    // `qty <= 0` tek başına YETMEZ: NaN ile karşılaştırma hep false döner → NaN guard'ı
+    // geçer, `Math.min(NaN, remaining)` NaN olur ve `qty_received` (integer) kolonuna
+    // NaN yazılmaya çalışılır. Ondalık qty ise PG tarafında YUVARLANARAK sessizce
+    // kalandan fazla teslim alınmış gösterebilir. İkisi de tam sayı defterini bozar.
+    if (!Number.isInteger(input.qty) || input.qty <= 0)
+      throw new BadRequestException('qty pozitif tam sayı olmalı');
 
     return this.db.transaction(async (tx) => {
       const [po] = await tx
