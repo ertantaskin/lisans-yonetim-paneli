@@ -9,6 +9,7 @@ import {
 import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { isUniqueViolation } from '../db/pg-error';
 import { notExpiredCond } from '../assignment/assign';
 import {
   products,
@@ -686,7 +687,7 @@ export class ProductsService {
         return row!;
       } catch (err) {
         // Varyasyonlu yarışta mappings_site_remote_uniq (23505) → ham 500 yerine anlamlı 409.
-        if (String(err).toLowerCase().includes('unique') || String(err).includes('23505')) {
+        if (isUniqueViolation(err)) {
           throw new ConflictException('Bu site + mağaza ürün/varyasyon eşlemesi zaten kayıtlı');
         }
         throw err;
@@ -1193,7 +1194,7 @@ export class ProductsService {
         return row!;
       } catch (err) {
         // Varyasyonlu yol: mappings_site_remote_uniq ihlali → ham 500 yerine anlamlı 409.
-        if (String(err).toLowerCase().includes('unique') || String(err).includes('23505')) {
+        if (isUniqueViolation(err)) {
           throw new ConflictException('Bu site + remote ürün/varyasyon eşlemesi zaten kayıtlı');
         }
         throw err;

@@ -18,6 +18,7 @@ import { REDIS } from '../redis/redis.module';
 import { adminUsers, type AdminUser } from '../db/schema';
 import { securityEvents } from '../db/schema/securityEvents';
 import { hashPassword, verifyPassword, dummyHash } from '../auth/password';
+import { isUniqueViolation } from '../db/pg-error';
 
 /** Parola hash'i olmadan dışa dönük admin görünümü. */
 export type PublicAdminUser = Omit<AdminUser, 'passwordHash'>;
@@ -128,7 +129,7 @@ export class AdminUsersService implements OnModuleInit {
       });
       return this.toPublic(row!);
     } catch (e) {
-      if (String(e).toLowerCase().includes('unique') || String(e).includes('23505')) {
+      if (isUniqueViolation(e)) {
         throw new ConflictException('E-posta veya kullanıcı adı zaten kayıtlı.');
       }
       throw e;

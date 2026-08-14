@@ -2,6 +2,7 @@ import { ConflictException, Inject, Injectable, NotFoundException } from '@nestj
 import { eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { isUniqueViolation } from '../db/pg-error';
 import { productCategories } from '../db/schema/productCategories';
 
 /**
@@ -151,7 +152,7 @@ export class ProductCategoriesService {
       return row;
     } catch (e) {
       // 23505 = unique_violation (product_categories_name_lower_idx)
-      if ((e as { code?: string }).code === '23505') {
+      if (isUniqueViolation(e)) {
         throw new ConflictException(`"${name}" kategorisi zaten var`);
       }
       throw e;
@@ -181,7 +182,7 @@ export class ProductCategoriesService {
       if (!row) throw new NotFoundException('Kategori bulunamadı');
       return row;
     } catch (e) {
-      if ((e as { code?: string }).code === '23505') {
+      if (isUniqueViolation(e)) {
         throw new ConflictException('Bu adda bir kategori zaten var');
       }
       throw e;
