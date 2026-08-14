@@ -402,4 +402,35 @@ describe('PurchaseOrdersService.receive (kısmi teslim-al + over-receive kilidi,
     // 2 × 2.000.000.000 = 4.000.000.000 > 2^31-1 → int4'te taşardı.
     expect(row!.cents).toBe(4_000_000_000);
   });
+
+  it('(12) received_at YALNIZ emir tamamlanınca yazılır (kısmi teslimde BOŞ kalır)', async () => {
+    // REGRESYON: alan her kısmi teslim almada üzerine yazılıyordu → anlamı "SON sevkiyat"
+    // oluyordu ve status=partial iken de doluyordu. Tek tüketicisi tedarikçi karnesindeki
+    // avgLeadDays; açık emirler ortalamaya girip tedarik süresini olduğundan KISA gösteriyordu.
+    const { poId } = await seedPo({ qtyOrdered: 6 });
+
+    await po.receive(poId, { qty: 2, batchLabel: tag + '-ra-1' });
+    const afterPartial = await reload(poId);
+    expect(afterPartial.status).toBe('partial');
+    expect(afterPartial.receivedAt).toBeNull();
+
+    await po.receive(poId, { qty: 4, batchLabel: tag + '-ra-2' });
+    const afterFull = await reload(poId);
+    expect(afterFull.status).toBe('received');
+    expect(afterFull.receivedAt).not.toBeNull();
+
+    // Sevkiyat başına tarih KAYBOLMAZ: her teslim alma kendi partisini damgalar.
+    const b = await batchesOf(poId);
+    expect(b).toHaveLength(2);
+    expect(b.every((x) => x.receivedAt != null)).toBe(true);
+  });
+
+  it('(13) denetim izine GERÇEK admin yazılır (sabit panel:admin değil)', async () => {
+    // REGRESYON: servis audit_log.actor alanına sabit 'panel:admin' yazıyordu, yani
+    // "teslim alan kim" sorusunun cevabı hiç kaydedilmiyordu (jsdoc aksini söylüyordu).
+    const { poId } = await seedPo({ qtyOrdered: 3 });
+    await po.receive(poId, { qty: 3, batchLabel: tag + '-actor' }, 'panel:ertan@ornek');
+    const audits = await receiveAudits(poId);
+    expect(audits.some((a) => a.actor === 'panel:ertan@ornek')).toBe(true);
+  });
 });

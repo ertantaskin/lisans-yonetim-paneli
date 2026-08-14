@@ -131,8 +131,17 @@ export default async function PurchaseOrderDetailPage({
               <dd className="text-foreground">{fmtDate(po.orderedAt)}</dd>
               <dt className="text-muted-foreground">ETA</dt>
               <dd className="text-foreground">{fmtDate(po.eta)}</dd>
-              <dt className="text-muted-foreground">Teslim tarihi</dt>
-              <dd className="text-foreground">{fmtDate(po.receivedAt)}</dd>
+              {/*
+                "Tamamlanma": emrin TAMAMEN teslim alındığı an. Kısmi teslim almalarda BOŞ
+                kalır (backend artık yalnız emir kapanınca yazıyor) — her sevkiyatın kendi
+                tarihi aşağıdaki parti listesinde durur. Eskiden etiketi "Teslim tarihi" idi
+                ve her kısmi teslimde güncelleniyordu; "son sevkiyat" ile "emir tamamlandı"
+                aynı alanda karışıyordu.
+              */}
+              <dt className="text-muted-foreground">Tamamlanma</dt>
+              <dd className="text-foreground">
+                {po.receivedAt ? fmtDate(po.receivedAt) : '— (henüz tamamlanmadı)'}
+              </dd>
               <dt className="text-muted-foreground">Oluşturma</dt>
               <dd className="text-foreground">{fmtDate(po.createdAt)}</dd>
             </dl>

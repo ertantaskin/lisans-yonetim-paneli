@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { PurchaseOrdersService } from './purchase-orders.service';
@@ -65,12 +66,20 @@ export class PurchaseOrdersController {
     return this.purchaseOrders.update(id, body);
   }
 
-  /** Teslim al: kısmi teslim destekli (kabul = min(qty, kalan)); yeni parti açar. */
+  /**
+   * Teslim al: kısmi teslim destekli (kabul = min(qty, kalan)); yeni parti açar.
+   *
+   * AKTÖR (denetim bulgusu): servis denetim kaydına sabit 'panel:admin' yazıyordu, yani
+   * audit_log "teslim alan kim" sorusuna cevap VERMİYORDU — oysa jsdoc'u aktörün düştüğünü
+   * söylüyordu. Çoklu-admin (§8) canlı; stok girişi/düzeltme uçları çoktan @AdminActor
+   * kullanıyor, bu uç atlanmıştı.
+   */
   @Post(':id/receive')
   receive(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(ReceiveBody)) body: ReceiveBody,
+    @AdminActor() actor: string,
   ) {
-    return this.purchaseOrders.receive(id, body);
+    return this.purchaseOrders.receive(id, body, actor);
   }
 }

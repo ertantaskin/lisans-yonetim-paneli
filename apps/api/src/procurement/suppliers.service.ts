@@ -114,7 +114,11 @@ export class SuppliersService {
     const supplier = await this.getById(id);
 
     // PO agregaları: adet, teslim alınan, açık PO, ort. lead süresi (gün).
-    // avgLeadDays: yalnız hem ordered_at hem received_at dolu PO'lardan (teslim alınanlar).
+    // avgLeadDays: yalnız hem ordered_at hem received_at dolu VE gerçekten KAPANMIŞ
+    // (status='received') PO'lardan. Durum koşulu ESKİ VERİ için gerekli: `received_at`
+    // eskiden her kısmi teslim almada yazılıyordu (düzeltildi — artık yalnız emir tamamen
+    // teslim alınınca yazılır), yani veritabanında hâlâ AÇIK ama tarihi dolu satırlar
+    // olabilir. Onlar sayılırsa tedarik süresi olduğundan KISA görünür.
     // Para birimi-bağımsız (adet/lead) tek satır; MALİYET para birimine göre AYRI sorguda
     // (aşağıdaki costRows) — currency GROUP BY bunları çok satıra bölerdi.
     const poAgg = await this.db.execute<{
@@ -130,7 +134,8 @@ export class SuppliersService {
         coalesce(sum(qty_received), 0)::int AS total_received,
         count(*) FILTER (WHERE status IN ('draft', 'ordered', 'partial'))::int AS open_po_count,
         avg(extract(epoch FROM (received_at - ordered_at)) / 86400.0)
-          FILTER (WHERE received_at IS NOT NULL AND ordered_at IS NOT NULL) AS avg_lead_days
+          FILTER (WHERE received_at IS NOT NULL AND ordered_at IS NOT NULL AND status = 'received')
+          AS avg_lead_days
       FROM purchase_orders
       WHERE supplier_id = ${id};
     `);

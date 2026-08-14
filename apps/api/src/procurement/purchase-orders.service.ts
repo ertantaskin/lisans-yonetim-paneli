@@ -129,6 +129,9 @@ export class PurchaseOrdersService {
   async receive(
     id: string,
     input: { qty: number; batchLabel: string; notes?: string },
+    // Denetim izine YAZILAN aktör. Varsayılan yalnız servisin doğrudan çağrıldığı yollar
+    // (test/iç servis) içindir; HTTP yolu @AdminActor ile gerçek admini geçirir.
+    actor = 'panel:admin',
   ): Promise<{ purchaseOrder: PurchaseOrder; batchId: string; accepted: number }> {
     // SAVUNMA DERİNLİĞİ: controller (`ReceiveBody`) zaten `int().positive().max(1_000_000)`
     // uyguluyor; burası servisin DOĞRUDAN çağrıldığı yolları (test/iç servis) kapsar.
@@ -158,12 +161,25 @@ export class PurchaseOrdersService {
       const newStatus: PoStatus = newReceived >= po.qtyOrdered ? 'received' : 'partial';
       const now = new Date();
 
+      /*
+       * `received_at` YALNIZ emir TAMAMEN teslim alındığında yazılır (denetim bulgusu).
+       *
+       * ÖNCEDEN her kısmi teslim almada üzerine yazılıyordu → alanın anlamı "SON sevkiyatın
+       * tarihi" oluyordu ve `status='partial'` iken de doluyordu. Bunun TEK tüketicisi
+       * tedarikçi karnesindeki `avgLeadDays = avg(received_at - ordered_at)`; yani hâlâ AÇIK
+       * olan emirler tedarik süresi ortalamasına giriyor ve KPI'yı olduğundan kısa gösteriyordu
+       * (ilk parça gelir gelmez "teslim edildi" sayılıyordu).
+       *
+       * Sevkiyat başına tarih KAYBOLMAZ: her teslim alma kendi `batches.received_at` kaydını
+       * açar (maliyet raporu zaten ayı ORADAN bucketlar — bu değişiklik maliyet raporunu
+       * etkilemez). PO seviyesindeki alan artık tek bir şeyi ifade eder: emrin KAPANDIĞI an.
+       */
       const [updated] = await tx
         .update(purchaseOrders)
         .set({
           qtyReceived: newReceived,
           status: newStatus,
-          receivedAt: now,
+          ...(newStatus === 'received' ? { receivedAt: now } : {}),
           updatedAt: now,
         })
         .where(eq(purchaseOrders.id, id))
@@ -185,7 +201,7 @@ export class PurchaseOrdersService {
       // Sebepli/aktörlü denetim izi (§12): PO teslim-alma.
       await tx.insert(auditLog).values({
         action: 'receive',
-        actor: 'panel:admin',
+        actor,
         targetType: 'purchase_order',
         targetId: po.id,
         meta: {
