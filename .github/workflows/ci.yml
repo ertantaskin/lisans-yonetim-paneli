@@ -64,6 +64,16 @@ jobs:
           done < <(find apps/wp-plugin -name '*.php' -print0)
           echo "PHP-lint temiz — $COUNT dosya"
 
+      # WP EKLENTİSİ DAVRANIŞ TESTLERİ (denetim kapsam boşluğu): `php -l` yalnız SÖZDİZİMİ
+      # doğruluyordu — eklentinin güvenlik kapıları (panel URL şeması, paket URL doğrulaması,
+      # webhook HMAC + kanonik yol, klon tespiti) davranış olarak hiç sınanmıyordu. Oysa bu kod
+      # panelin güncelleyicisiyle MÜŞTERİ SİTELERİNE otomatik kurulur: bir regresyon uzaktan ve
+      # sessizce yayılır (geçmişte `is_clone()` kalıcı no-op ve `is_secure_panel_url()` kesintisi
+      # tam olarak böyle yaşandı). Koşucu saf PHP + sıfır bağımlılık (PHPUnit YOK), WP
+      # fonksiyonlarını kendi içinde stub'lar ve başarısızlıkta exit 1 döner.
+      - name: WP eklentisi davranış testleri
+        run: php apps/wp-plugin/tests/run.php
+
       # ŞEMA/MIGRATION SAPMASI (denetim bulgusu): drizzle şeması ile migration snapshot'ı
       # ayrışırsa `db:generate` aradaki HER ŞEYİ yeniden yaratan bir migration üretir; prod'a
       # giderse "already exists" ile API BOOT ETMEZ (bu iki kez üretimi kırma eşiğine geldi).

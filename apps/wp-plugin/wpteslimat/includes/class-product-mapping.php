@@ -138,7 +138,13 @@ class Wpteslimat_Product_Mapping {
             echo '<p style="margin:0 0 8px"><strong>' . esc_html__('Eşli:', 'wpteslimat') . '</strong> '
                 . esc_html($pname);
             if ($psku !== '') echo ' (' . esc_html($psku) . ')';
-            echo ' · ' . esc_html($current_qty) . ' key</p>';
+            // Terminoloji (§ sunum): panel yalnız "key" satmıyor (hesap/kod/özel ürün de var) ve
+            // ham İngilizce sözcük operatöre çıkmamalı. Çeviri fonksiyonundan geçen tek metin.
+            echo ' · ' . esc_html(sprintf(
+                /* translators: %d: adet başına düşen panel kalemi sayısı */
+                _n('%d kalem', '%d kalem', $current_qty, 'wpteslimat'),
+                $current_qty
+            )) . '</p>';
         } else {
             echo '<p style="margin:0 0 8px"><em>' . esc_html__('Henüz eşlenmedi.', 'wpteslimat') . '</em></p>';
         }
@@ -169,12 +175,13 @@ class Wpteslimat_Product_Mapping {
         }
         echo '</select></p>';
 
-        // Adet başına key (bundleQty).
-        echo '<p><label for="wpteslimat-map-qty"><strong>' . esc_html__('Adet başına key', 'wpteslimat')
+        // Adet başına panel kalemi (bundleQty). Etiketler platform-bağımsız + Türkçe: panel
+        // WooCommerce'e sabit değildir ("Woo" yerine "mağaza") ve kalem her zaman anahtar değildir.
+        echo '<p><label for="wpteslimat-map-qty"><strong>' . esc_html__('Adet başına kalem', 'wpteslimat')
             . '</strong></label><br>';
         echo '<input type="number" id="wpteslimat-map-qty" class="wpteslimat-map-qty" min="1" step="1" value="'
             . esc_attr($current_qty) . '" style="width:80px">';
-        echo '<br><small>' . esc_html__('1 Woo adedi kaç key\'e denk gelir (varsayılan 1).', 'wpteslimat')
+        echo '<br><small>' . esc_html__('Mağazadaki 1 adet, panelde kaç kaleme (anahtar/hesap/kod) denk gelir (varsayılan 1).', 'wpteslimat')
             . '</small></p>';
 
         // Butonlar.

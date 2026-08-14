@@ -48,6 +48,14 @@ class Wpteslimat_Webhook {
             return new WP_REST_Response(['error' => 'invalid_signature'], 401);
         }
 
+        // Bu REST rotası WooCommerce'ten BAĞIMSIZ kayıtlıdır (rest_api_init). Woo devre dışıyken
+        // aşağıdaki wc_get_order() tanımsız-fonksiyon FATAL'i verirdi (panel 500 görür, olay
+        // dead-letter'a düşerdi). GEÇİCİ hata olarak 503 dön → panel outbox'ı normal şekilde tekrar
+        // dener. Nonce BURADA HARCANMAZ (aşağıda tüketilir) → tekrar denemede olay işlenebilir.
+        if (!function_exists('wc_get_order')) {
+            return new WP_REST_Response(['error' => 'store_unavailable'], 503);
+        }
+
         // Nonce replay koruması (§4): imza DOĞRULANDIKTAN sonra, aksiyon almadan ÖNCE
         // nonce'u harca. Zaman penceresi ±300sn olduğundan replay [T−300, T+300] aralığında
         // olabilir. TTL TAM 2×tolerans (600) olursa saat kayması + saniye-altı zamanlamayla

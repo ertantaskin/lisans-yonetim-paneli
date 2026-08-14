@@ -164,12 +164,21 @@ class Wpteslimat_My_Account {
 
             // §7 çok-adetlide TOPLU .txt indirme (loglu) — 2+ teslimatta göster.
             if (count($deliveries) >= 2) {
+                // (denetim B1 deseninin tamamlanması) order_key bir BEARER token'dır: onu bilen
+                // herkes siparişi (ve bu sayfadan lisansları) görebilir. GİRİŞ YAPMIŞ müşteride
+                // sahiplik `current_user_can('view_order')` ile kanıtlanır (bkz. can_view) → anahtarı
+                // ayrıca URL'e koymak gereksiz ifşadır (tarayıcı geçmişi, sunucu erişim logu, kopyala-
+                // yapıştır ile paylaşılan bağlantı). MİSAFİR siparişte tek sahiplik kanıtı odur → orada
+                // KORUNUR. Report_Issue formunda aynı karar alınmıştı; bu iki yüzey atlanmıştı.
+                $dl_args = [
+                    'action'   => 'wpteslimat_download',
+                    'order_id' => $order->get_id(),
+                ];
+                if (!is_user_logged_in()) {
+                    $dl_args['order_key'] = $order->get_order_key();
+                }
                 $dl = wp_nonce_url(
-                    add_query_arg([
-                        'action'   => 'wpteslimat_download',
-                        'order_id' => $order->get_id(),
-                        'order_key' => $order->get_order_key(),
-                    ], admin_url('admin-post.php')),
+                    add_query_arg($dl_args, admin_url('admin-post.php')),
                     'wpteslimat_download_' . $order->get_id()
                 );
                 echo '<p><a href="' . esc_url($dl) . '" class="button button-small">' .
@@ -270,13 +279,17 @@ class Wpteslimat_My_Account {
     /** Canlı yoklama script'i — ajax_poll'u periyodik çağırır; teslim ilerleyince sayfayı yeniler. */
     private function print_poll_script($order, $count, $status) {
         $nonce = wp_create_nonce('wpteslimat_poll_' . $order->get_id());
+        // (denetim B1 deseni) order_key YALNIZ misafir siparişinde DOM'a girer; giriş yapmış
+        // müşteride sahiplik view_order yetkisiyle kanıtlanır (can_view) → boş string gönderilir ve
+        // ajax_poll onu hiç okumaz. Böylece bearer token gereksiz yere sayfa kaynağına basılmaz.
+        $poll_key = is_user_logged_in() ? '' : $order->get_order_key();
         ?>
         <script>
         (function(){
           var data = {
             action: 'wpteslimat_poll',
             order_id: <?php echo (int) $order->get_id(); ?>,
-            order_key: <?php echo wp_json_encode($order->get_order_key()); ?>,
+            order_key: <?php echo wp_json_encode($poll_key); ?>,
             _n: <?php echo wp_json_encode($nonce); ?>
           };
           var base = { count: <?php echo (int) $count; ?>, status: <?php echo wp_json_encode($status); ?> };
@@ -314,6 +327,11 @@ class Wpteslimat_My_Account {
             !wp_verify_nonce(wp_unslash($_POST['_n']), 'wpteslimat_poll_' . $order_id)) {
             wp_send_json_error(['error' => 'bad_request'], 400);
         }
+        // admin-ajax uçları WooCommerce'ten BAĞIMSIZ kayıtlıdır; Woo geçici olarak devre dışıyken
+        // wc_get_order() tanımsız fonksiyon FATAL'i üretirdi (beyaz ekran). Dürüst geçici hata dön.
+        if (!function_exists('wc_get_order')) {
+            wp_send_json_error(['error' => 'unavailable'], 200);
+        }
         $order = wc_get_order($order_id);
         if (!$order || !self::can_view($order, $key)) {
             wp_send_json_error(['error' => 'forbidden'], 403);
@@ -348,6 +366,15 @@ class Wpteslimat_My_Account {
         if (!$order_id || !isset($_GET['_wpnonce']) ||
             !wp_verify_nonce(wp_unslash($_GET['_wpnonce']), 'wpteslimat_download_' . $order_id)) {
             wp_die(esc_html__('Geçersiz istek.', 'wpteslimat'), '', ['response' => 403]);
+        }
+        // admin-post ucu WooCommerce'ten BAĞIMSIZ kayıtlıdır (nopriv dâhil) → Woo devre dışıyken
+        // wc_get_order() FATAL üretirdi. Geçici hata olarak dön (müşteri tekrar deneyebilir).
+        if (!function_exists('wc_get_order')) {
+            wp_die(
+                esc_html__('Lisans bilgileriniz şu an alınamadı, birazdan tekrar deneyin.', 'wpteslimat'),
+                '',
+                ['response' => 503]
+            );
         }
         $order = wc_get_order($order_id);
         if (!$order || !self::can_view($order, $key)) {
@@ -421,11 +448,22 @@ class Wpteslimat_My_Account {
         exit;
     }
 
-    /** ISO 8601 → WP yerelleştirilmiş tarih (ham ISO string müşteriye gösterilmez). */
+    /**
+     * ISO 8601 → WP yerelleştirilmiş tarih (ham ISO string müşteriye gösterilmez).
+     *
+     * `wp_date()` KULLANILIR, `date_i18n()` DEĞİL: date_i18n() verilen timestamp'i ZATEN
+     * yerelleştirilmiş sayar ve üstüne saat dilimi uygulamaz → panelden gelen UTC ISO değeri
+     * (validUntil, değişim tarihi) mağazanın saat diliminde değil, UTC olarak basılıyordu
+     * (Türkiye'de 3 saat geriden — "geçerlilik 21:00" yerine "18:00"). wp_date() timestamp'i UTC
+     * kabul edip mağaza saat dilimine çevirir. Aynı dosyadaki .txt indirme başlığı (wp_date) ve
+     * güncelleyicinin uyarı metni (wp_date) zaten doğrusunu kullanıyordu — bu fonksiyon sapmıştı.
+     * date_i18n fallback yalnız WP < 5.3 için korunur.
+     */
     public static function format_date($iso) {
         $ts = strtotime((string) $iso);
         if (!$ts) return (string) $iso;
-        return date_i18n(get_option('date_format') . ' H:i', $ts);
+        $fmt = get_option('date_format') . ' H:i';
+        return function_exists('wp_date') ? wp_date($fmt, $ts) : date_i18n($fmt, $ts);
     }
 
     /** (§8) held işaretini idempotent temizler. */

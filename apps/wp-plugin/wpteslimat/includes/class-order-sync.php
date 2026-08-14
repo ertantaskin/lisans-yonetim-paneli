@@ -146,6 +146,11 @@ class Wpteslimat_Order_Sync {
         add_action('wpteslimat_retry_push', [$this, 'push'], 10, 2);
         add_action('wpteslimat_retry_revoke', [$this, 'revoke'], 10, 2);
         add_action('wpteslimat_retry_refund', [$this, 'sync_refund'], 10, 2);
+        // (denetim) resync'in tekrar denemesi EKSİKTİ: kalem düzenlemesi panele iletilemediğinde
+        // (panel kapalı/ağ hatası) hiçbir not, hiçbir tekrar deneme yoktu → panel ESKİ adette kalıyor
+        // ve operatör bunu yalnız kuyruk log tablosuna bakarsa fark ediyordu. Adet DÜŞÜRÜLDÜYSE bu,
+        // fazladan teslim edilmiş birimin geri alınmaması demektir (§2). Diğer üç iş gibi retry'lı.
+        add_action('wpteslimat_retry_resync', [$this, 'resync_items'], 10, 2);
     }
 
     /**
@@ -588,10 +593,21 @@ class Wpteslimat_Order_Sync {
             (int) $order_id,
             self::JOB_RESCHEDULE_DELAY
         ));
-        if (!function_exists('as_schedule_single_action')) return;
-        // Aynı argümanlarla zaten bekleyen bir güvenlik-ağı koşumu varsa tekrar ekleme (kuyruk şişmesin).
-        if (function_exists('as_has_scheduled_action') && as_has_scheduled_action('wpteslimat_recheck', $args, 'wpteslimat')) return;
-        as_schedule_single_action(time() + self::JOB_RESCHEDULE_DELAY, 'wpteslimat_recheck', $args, 'wpteslimat');
+        if (function_exists('as_schedule_single_action')) {
+            // Aynı argümanlarla zaten bekleyen bir güvenlik-ağı koşumu varsa tekrar ekleme (kuyruk şişmesin).
+            if (function_exists('as_has_scheduled_action') && as_has_scheduled_action('wpteslimat_recheck', $args, 'wpteslimat')) return;
+            as_schedule_single_action(time() + self::JOB_RESCHEDULE_DELAY, 'wpteslimat_recheck', $args, 'wpteslimat');
+            return;
+        }
+        // (denetim) Action Scheduler YOKSA burası eskiden SESSİZCE dönüyordu → iş KAYBOLUYORDU.
+        // "Eşzamanlılık zaten oluşmaz" varsayımı yanlıştı: AS'siz kurulumda iş SENKRON koşar ve iki
+        // eşzamanlı istek (ör. iki yöneticinin aynı siparişi işlemesi, ödeme geçidi IPN'i ile admin
+        // isteğinin çakışması) aynı kilide gider; kaybeden koşum hiç yeniden denenmezdi. Ayrıca
+        // ÖNCEKİ koşum fatal alıp kilidi takılı bıraktıysa hiçbir kurtarma yolu kalmıyordu.
+        // wp-cron'a düş (schedule_retry ile AYNI fallback deseni) — dedupe: aynı argümanlı olay varsa ekleme.
+        if (!function_exists('wp_schedule_single_event')) return;
+        if (function_exists('wp_next_scheduled') && wp_next_scheduled('wpteslimat_recheck', $args)) return;
+        wp_schedule_single_event(time() + self::JOB_RESCHEDULE_DELAY, 'wpteslimat_recheck', $args);
     }
 
     /**
@@ -842,19 +858,44 @@ class Wpteslimat_Order_Sync {
             'lines'         => $lines,
         ];
 
+        // try/finally: panel çağrısı ya da save() bir Throwable atarsa re-entrancy bayrağı AÇIK
+        // kalıyordu → aynı istekte koşan SONRAKİ resync işleri sessizce no-op oluyor, üstelik
+        // run_locked "çalıştı" (true) döndüğü için kuyruktaki AS ikizleri de düşürülüyordu (iş kaybı).
         self::$syncing = true;
-        self::apply_actor($actor);
-        $res = Wpteslimat_Panel_Client::post('/v1/orders', $body);
-        $this->log($order_id, 'resync', $body, $res);
+        try {
+            self::apply_actor($actor);
+            $res = Wpteslimat_Panel_Client::post('/v1/orders', $body);
+            $this->log($order_id, 'resync', $body, $res);
 
-        // 200/201/207/202 → panel güncel adetlerle uzlaştı; durum meta'sını tazele.
-        if (in_array($res['code'], [200, 201, 202, 207], true)) {
-            if (!empty($res['body']['status'])) {
-                $order->update_meta_data('_wpteslimat_status', $res['body']['status']);
+            // 200/201/207/202 → panel güncel adetlerle uzlaştı; durum meta'sını tazele.
+            if (in_array($res['code'], [200, 201, 202, 207], true)) {
+                if (!empty($res['body']['status'])) {
+                    $order->update_meta_data('_wpteslimat_status', $res['body']['status']);
+                    $order->save();
+                }
+            } else {
+                // (denetim) Eskiden bu dal YOKTU: başarısız uzlaştırma tamamen sessizdi. Panel eski
+                // adette kalır; adet DÜŞÜRÜLMÜŞSE fazla teslim edilen birim geri alınmaz (§2).
+                // push/revoke/refund ile aynı davranış: görünür sipariş notu + otomatik tekrar deneme.
+                $order->add_order_note(sprintf(
+                    'Teslimat: sipariş kalemi güncellemesi panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.',
+                    isset($res['code']) ? (int) $res['code'] : 0
+                ));
                 $order->save();
+                $this->schedule_resync_retry($order_id, $actor);
             }
+        } finally {
+            self::$syncing = false;
         }
-        self::$syncing = false;
+    }
+
+    /** Kalem uzlaştırması için tekrar deneme (push/revoke/refund ile aynı desen ve gecikme). */
+    private function schedule_resync_retry($order_id, $actor = '') {
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action(time() + 300, 'wpteslimat_retry_resync', [$order_id, $actor], 'wpteslimat');
+        } else {
+            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_resync', [$order_id, $actor]);
+        }
     }
 
     /**

@@ -58,6 +58,12 @@ class Wpteslimat_Settings {
         }
         $ok = get_transient('wpteslimat_health_ok');
         if ($ok === false) {
+            // PERFORMANS (denetim): admin bar MAĞAZA ÖN YÜZÜNDE de çizilir (giriş yapmış mağaza
+            // yetkilisi vitrini gezerken). Buradaki senkron panel çağrısı 4sn'ye kadar sürebildiği
+            // için önbellek her sönümlendiğinde bir MÜŞTERİYE AÇIK sayfa render'ı bloklanıyordu.
+            // Ağ yoklaması yalnız YÖNETİM isteklerinde yapılır; ön yüzde sıcak önbellek varsa rozet
+            // yine gösterilir, yoksa rozet çizilmez (teşhis zaten yönetim tarafında yapılır).
+            if (!is_admin()) return;
             $res = Wpteslimat_Panel_Client::get('/v1/health', 4);
             $ok = (isset($res['code']) && $res['code'] === 200 && isset($res['body']['status']) && $res['body']['status'] === 'ok') ? '1' : '0';
             set_transient('wpteslimat_health_ok', $ok, 60);

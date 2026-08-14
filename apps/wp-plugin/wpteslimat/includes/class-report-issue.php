@@ -92,6 +92,16 @@ class Wpteslimat_Report_Issue {
             wp_die(esc_html__('Geçersiz istek.', 'wpteslimat'), '', ['response' => 403]);
         }
 
+        // admin-post ucu (nopriv dâhil) WooCommerce'ten BAĞIMSIZ kayıtlıdır → Woo geçici olarak
+        // devre dışıyken wc_get_order() FATAL üretirdi. Geçici hata olarak dön.
+        if (!function_exists('wc_get_order')) {
+            wp_die(
+                esc_html__('Talebiniz şu an alınamıyor. Lütfen daha sonra tekrar deneyin.', 'wpteslimat'),
+                '',
+                ['response' => 503]
+            );
+        }
+
         $order = wc_get_order($order_id);
         if (!$order) {
             wp_die(esc_html__('Bu sipariş için yetkiniz yok.', 'wpteslimat'), '', ['response' => 403]);
