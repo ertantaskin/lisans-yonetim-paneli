@@ -357,6 +357,34 @@
 .animate-feed-in {
   animation: feed-row-in 0.45s ease-out;
 }
+
+/* ── Sağa sabit eylem sütunu (geniş operasyon tabloları) ──────────────────────
+ *
+ * Tablo kendi kabında yatay kaydığında (proje sözleşmesi) kayan kısmın EN SAĞI eylem
+ * sütunudur → satırı okuyamamak kaydırmayla çözülür ama üzerinde İŞLEM YAPAMAMAK
+ * çözülmez. Sütun `sticky right-0` ile sabitlenir.
+ *
+ * ZEMİN OPAK OLMAK ZORUNDA: satır tonu yarı saydam (`hover:bg-accent/40`,
+ * `data-[state=selected]:bg-accent/60`); sabit hücreye aynı saydam tonu verirsek ALTINDAN
+ * GEÇEN hücreler görünür. Bu yüzden aynı tonlar kart zeminine `color-mix` ile karıştırılıp
+ * OPAK karşılıkları kullanılır (görsel sonuç birebir aynı).
+ *
+ * NEDEN BURADA, UTILITY DEĞİL: `[tr:hover>&]:bg-[color-mix(...)]` biçimindeki arbitrary
+ * variant'lar SESSİZCE derlenmedi (CSSOM'da kural yok — ölçüldü). Sessiz kırılma yerine
+ * kural tek kaynağa yazıldı. Katman YOK ki utility'lerle çakışmasın diye değil, tersine:
+ * yalnız `.sticky-actions` taşıyan hücreleri etkiler.
+ */
+.sticky-actions {
+  position: sticky;
+  right: 0;
+  background-color: var(--card);
+}
+tr:hover > .sticky-actions {
+  background-color: color-mix(in oklch, var(--accent) 40%, var(--card));
+}
+tr[data-state='selected'] > .sticky-actions {
+  background-color: color-mix(in oklch, var(--accent) 60%, var(--card));
+}
 @media (prefers-reduced-motion: reduce) {
   .animate-feed-in {
     animation: none;

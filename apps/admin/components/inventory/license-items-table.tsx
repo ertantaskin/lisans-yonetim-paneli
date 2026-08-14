@@ -48,6 +48,21 @@ import { LicenseItemActions, statusLabel } from './license-item-actions';
 const PAGE_SIZES = LICENSE_PAGE_SIZES;
 
 /**
+ * Eylem sütunu SAĞA SABİT.
+ *
+ * NEDEN: bu tablo dokuz kolonlu; 1024-1280 bandında menü açıkken kap 652px'e iniyor ve tablo
+ * kendi kabında yatay kayıyor (proje sözleşmesi: geniş tablo kabında kayar). Kayan kısmın EN
+ * SAĞI ise eylem sütunu → "Değiştir/Sil/Yenisiyle değiştir" ekranın dışında kalıyordu
+ * (kullanıcı ekran görüntüsüyle bildirdi; 1369px'te 15px, 1030px'te 107px ölçüldü). Bir satırı
+ * OKUYAMAMAK kaydırmayla çözülür, ama üzerinde İŞLEM YAPAMAMAK kabul edilemez.
+ *
+ * Sabitleme + OPAK zemin (hover/seçili dahil) `globals.css`'teki `.sticky-actions`'ta —
+ * gerekçesi orada. Utility olarak yazılan arbitrary variant'lar (`[tr:hover>&]:bg-[…]`)
+ * SESSİZCE derlenmemişti (CSSOM'da kural yoktu, ölçüldü).
+ */
+const STICKY_ACTIONS = 'sticky-actions z-10 border-l border-border/60';
+
+/**
  * Durum süzgeci. ETİKETLER TEK KAYNAKTAN (`lib/labels` → statusLabel) gelir — burada yalnız
  * hangi durumların sunulacağı seçilir; ham enum kullanıcıya ÇIKMAZ.
  * 'expired' = STOK ÖMRÜ dolmuş kalem (API bu süzgeci `status='expired'` VEYA `expires_at ≤ now`
@@ -624,7 +639,7 @@ export function LicenseItemsTable({
               <TableHead className="hidden 2xl:table-cell">Parti</TableHead>
               <TableHead className="hidden xl:table-cell">Teslimat</TableHead>
               <TableHead className="hidden 2xl:table-cell">Eklenme</TableHead>
-              <TableHead className="text-right">
+              <TableHead className={cn('text-right', STICKY_ACTIONS)}>
                 <span className="sr-only">İşlemler</span>
               </TableHead>
             </TableRow>
@@ -791,7 +806,7 @@ export function LicenseItemsTable({
                     </span>
                   </TableCell>
 
-                  <TableCell className="text-right">
+                  <TableCell className={cn('text-right', STICKY_ACTIONS)}>
                     <LicenseItemActions
                       row={row}
                       payloadSchema={productId ? payloadSchema : undefined}

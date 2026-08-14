@@ -249,17 +249,37 @@ function ReplaceDeliveredButton({
     );
   }
 
+  /*
+   * `compact` (TABLO) burada da uygulanmak ZORUNDA: etiketli hâli 145px ve tablonun EN SON
+   * kolonunda duruyor → 1369px'te tablo kabı 15px aşıyor ve tam da bu düğme kırpılıyordu
+   * (ölçüldü; kullanıcı ekran görüntüsüyle bildirdi). Diğer satır eylemleri (Düzenle/Sil)
+   * tabloda çoktan ikona indirilmişti, bu düğme atlanmıştı. İkon tek başına "yenisiyle
+   * değiştir"i anlatmadığı için compact hâlde ipucu ZORUNLU (devre dışı hâlinde zaten var).
+   */
+  const label = busy ? 'Değişiyor…' : 'Yenisiyle değiştir';
+  const button = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => void run()}
+      disabled={busy}
+      aria-label={`${d.remoteOrderId} siparişindeki kalemi yenisiyle değiştir`}
+      title={compact ? label : undefined}
+    >
+      <RefreshCw aria-hidden /> <span className={compact ? 'sr-only' : undefined}>{label}</span>
+    </Button>
+  );
+
   return (
     <div className="flex items-center justify-end gap-1.5">
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => void run()}
-        disabled={busy}
-        aria-label={`${d.remoteOrderId} siparişindeki kalemi yenisiyle değiştir`}
-      >
-        <RefreshCw aria-hidden /> {busy ? 'Değişiyor…' : 'Yenisiyle değiştir'}
-      </Button>
+      {compact ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{button}</TooltipTrigger>
+          <TooltipContent>{label}</TooltipContent>
+        </Tooltip>
+      ) : (
+        button
+      )}
       {dialog}
     </div>
   );
