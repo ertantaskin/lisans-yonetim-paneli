@@ -23,6 +23,7 @@ import type {
   QuarantineRange,
   QuarantineStatusFilter,
 } from '../app/quarantine/queries';
+import { SEGMENTED_LIST, segmentedItem } from '../lib/segmented';
 import { cn, fmtDateTime } from '../lib/utils';
 import { claimOutcomeLabel, licenseItemStatusLabel, productKindLabel } from '../lib/labels';
 import {
@@ -131,7 +132,8 @@ function KeyCell({ value }: { value: string }) {
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="size-7 shrink-0"
+        // 32px dokunma hedefi (icon-sm) — `size-7` ezmesi 28px'e düşürüyordu.
+        className="shrink-0"
         onClick={copy}
         aria-label={copied ? 'Kopyalandı' : 'Kalem değerini kopyala'}
         title={copied ? 'Kopyalandı' : 'Kopyala'}
@@ -287,7 +289,7 @@ const columns: ColumnDef<QuarantineItem>[] = [
                 href={storeAdminUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
                 title="Mağaza panelinde aç"
                 aria-label="Siparişi mağaza panelinde aç (yeni sekme)"
               >
@@ -943,19 +945,21 @@ export function QuarantineTable({
               <span className="text-xs font-medium text-foreground/70" id="kusurlu-durum-etiket">
                 Kalem durumu
               </span>
-              <div className="flex flex-wrap gap-1" role="group" aria-labelledby="kusurlu-durum-etiket">
+              {/* Görünüm TEK KAYNAK lib/segmented.ts: bu bir "kümeden tek seçim" çubuğudur ve
+                  eskiden dolu/outline Button çiftiyle çiziliyordu — aynı anlamı taşıyan sekme ve
+                  bölüm çubuklarından farklı görünüyordu. Semantik korunur (role=group + aria-pressed). */}
+              <div className={SEGMENTED_LIST} role="group" aria-labelledby="kusurlu-durum-etiket">
                 {STATUS_FILTERS.map((s) => (
-                  <Button
+                  <button
                     key={s.value || 'all'}
                     type="button"
-                    size="sm"
-                    variant={filters.status === s.value ? 'default' : 'outline'}
+                    className={segmentedItem(filters.status === s.value)}
                     aria-pressed={filters.status === s.value}
                     disabled={pending}
                     onClick={() => go({ status: s.value })}
                   >
                     {s.label}
-                  </Button>
+                  </button>
                 ))}
               </div>
             </div>
@@ -964,19 +968,19 @@ export function QuarantineTable({
               <span className="text-xs font-medium text-foreground/70" id="kusurlu-tarih-etiket">
                 Kusur tarihi
               </span>
-              <div className="flex flex-wrap gap-1" role="group" aria-labelledby="kusurlu-tarih-etiket">
+              {/* Görünüm TEK KAYNAK lib/segmented.ts (gerekçe: yukarıdaki durum çubuğu). */}
+              <div className={SEGMENTED_LIST} role="group" aria-labelledby="kusurlu-tarih-etiket">
                 {RANGE_PRESETS.map((p) => (
-                  <Button
+                  <button
                     key={p.value || 'all'}
                     type="button"
-                    size="sm"
-                    variant={range === p.value ? 'default' : 'outline'}
+                    className={segmentedItem(range === p.value)}
                     aria-pressed={range === p.value}
                     disabled={pending}
                     onClick={() => pickRange(p.value)}
                   >
                     {p.label}
-                  </Button>
+                  </button>
                 ))}
               </div>
             </div>

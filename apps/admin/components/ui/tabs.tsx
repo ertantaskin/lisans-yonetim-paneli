@@ -1,6 +1,11 @@
 'use client';
 import * as React from 'react';
 import * as TabsPrimitive from '@radix-ui/react-tabs';
+import {
+  SEGMENTED_ITEM,
+  SEGMENTED_ITEM_IDLE,
+  SEGMENTED_LIST,
+} from '../../lib/segmented';
 import { cn } from '../../lib/utils';
 
 /**
@@ -31,7 +36,8 @@ export const TabsList = React.forwardRef<
         // sarar; `sm:w-auto` sayesinde geniş ekranda görünüm birebir aynı (tek satır) kalır.
         // `h-9` → `min-h-9`: 28px'lik tetik 26px'lik içerik kutusuna sığmıyordu (kalıcı 1px
         // dikey taşma + her genişlikte beliren dikey çubuk artefaktı) — ancak böyle kapanır.
-        'inline-flex min-h-9 w-full flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1 sm:w-auto',
+        SEGMENTED_LIST,
+        'w-full sm:w-auto',
         className,
       )}
       {...props}
@@ -47,20 +53,13 @@ export const TabsTrigger = React.forwardRef<
     <TabsPrimitive.Trigger
       ref={ref}
       className={cn(
-        'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium text-muted-foreground transition-colors',
-        'hover:text-foreground',
-        // globals.css'teki "bileşen kendi halkasını eklemez" kuralına İSTİSNA.
-        // GEREKÇE ARTIK GEÇERSİZ: bu istisna TabsList'in `overflow-x-auto` taşıması yüzünden
-        // konmuştu (overflow-y de `auto`ya hesaplanıyor → elemanın 4px DIŞINA çizilen global
-        // outline üst/altta 1px kırpılıyordu). TabsList artık kaydırmıyor, SARIYOR (yukarı bak)
-        // → kap kırpmıyor, global outline eksiksiz görünüyor. Halkanın kaldırılması odak
-        // göstergesi sözleşmesine (globals.css TEK KAYNAK) dokunduğu için AYRI bir değişiklik
-        // olarak ele alınmalı; burada davranış bilinçli olarak korundu.
-        // HALKA KALDIRILDI: yukarıdaki gerekçe ("kap kırpıyor") TabsList sarmaya geçince
-        // geçersizleşti — kırpan kap yok, global `:focus-visible` outline'ı eksiksiz görünüyor.
-        // Odak göstergesi TEK KAYNAK kuralı (globals.css) artık burada da geçerli.
+        SEGMENTED_ITEM,
+        SEGMENTED_ITEM_IDLE,
+        // Odak halkası YOK (globals.css TEK KAYNAK outline). Buradaki eski istisna, TabsList
+        // `overflow-x-auto` taşırken outline'ın kırpılmasına dayanıyordu; liste kaydırma yerine
+        // SARMAYA geçince kırpan kap kalmadı ve halka kaldırıldı.
+        // Aktif durum Radix data-özniteliğinden sürülür; renkler paylaşılan sabitle aynı.
         'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm',
-        '[&_svg]:size-4 [&_svg]:shrink-0',
         className,
       )}
       {...props}

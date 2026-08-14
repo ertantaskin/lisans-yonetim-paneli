@@ -73,6 +73,27 @@ export function SidebarProvider({
     return isMobile ? setOpenMobile((o) => !o) : setOpen((o) => !o);
   }, [isMobile, setOpen]);
 
+  /**
+   * DAR MASAÜSTÜNDE (md..lg arası, 768-1023px) menü otomatik DARALIR.
+   *
+   * Neden: o bantta 256px'lik menü içeriğe ~500px bırakıyor; sayfa başlıkları, açıklama
+   * şeritleri ve çok kolonlu kartlar sıkışıyor (kırılmıyor ama okunaklılık düşüyor).
+   * 1024px ve üstünde kullanıcının KAYITLI tercihine geri dönülür.
+   *
+   * Cookie YAZILMAZ (`setOpen` yerine doğrudan `_setOpen`): bu otomatik bir sunum kararıdır,
+   * kullanıcının açık/kapalı tercihini kalıcı olarak EZMEMELİ. Bant içinde kullanıcı elle
+   * açarsa açık kalır — efekt yalnız eşik GEÇİŞİNDE çalışır.
+   */
+  React.useEffect(() => {
+    if (setOpenProp) return; // kontrollü kullanımda karışma
+    const mq = window.matchMedia('(min-width: 48rem) and (max-width: 63.9375rem)');
+    const uygula = (dar: boolean) => _setOpen(dar ? false : defaultOpen);
+    uygula(mq.matches);
+    const onChange = (e: MediaQueryListEvent) => uygula(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [defaultOpen, setOpenProp]);
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === SIDEBAR_KEYBOARD_SHORTCUT && (e.metaKey || e.ctrlKey)) {

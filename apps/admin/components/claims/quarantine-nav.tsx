@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Archive, FileText, Inbox } from 'lucide-react';
+import { SEGMENTED_LIST, segmentedItem } from '../../lib/segmented';
 import { cn } from '../../lib/utils';
 
 /**
@@ -46,7 +47,7 @@ export function QuarantineNav() {
         odak halkası yerine panelin STANDART outline'ı kullanılabiliyor (tek odak göstergesi
         kuralı — bkz. globals.css).
       */}
-      <ul className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
+      <ul className={cn(SEGMENTED_LIST, "flex")}>
         {SECTIONS.map((s) => {
           // '/quarantine' TAM eşleşme olmalı (prefix olsaydı her alt rotada da aktif görünürdü);
           // alt bölümler prefix ile eşleşir → '/quarantine/claims/<id>' detayında da "Değişim
@@ -62,12 +63,10 @@ export function QuarantineNav() {
                 href={s.href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'inline-flex items-center gap-2 whitespace-nowrap rounded-md px-3.5 py-2 text-sm font-medium transition-colors',
-                  '[&_svg]:size-4 [&_svg]:shrink-0',
-                  active
-                    ? // Aktif bölüm: yükseltilmiş yüzey + ince kenar → gri zeminden AÇIKÇA ayrışır.
-                      'bg-background text-foreground shadow-sm ring-1 ring-border'
-                    : 'text-muted-foreground hover:bg-background/60 hover:text-foreground',
+                  // Görünüm TEK KAYNAK lib/segmented.ts — eskiden burada dolgu (px-3.5 py-2)
+                  // ve aktif durumda fazladan 'ring-1 ring-border' vardı; aynı işi yapan sekme
+                  // çubuğundan farklı görünüyordu.
+                  segmentedItem(active),
                 )}
               >
                 <Icon />

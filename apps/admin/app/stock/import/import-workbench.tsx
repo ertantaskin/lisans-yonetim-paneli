@@ -33,6 +33,7 @@ import {
   type ProductBatchOption,
 } from '../actions';
 import type { ProductRow } from '../../../lib/api';
+import { SEGMENTED_LIST, segmentedItem } from '../../../lib/segmented';
 import { toast } from 'sonner';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 import { useConfirm } from '../../../components/ui/confirm';
@@ -147,7 +148,7 @@ function BatchModeSegment({
     <div
       role="radiogroup"
       aria-label="Parti bağlama modu"
-      className="flex w-full max-w-lg gap-0.5 rounded-md border border-border bg-muted/40 p-0.5"
+      className={cn(SEGMENTED_LIST, "flex w-full max-w-lg")}
       onKeyDown={(e) => {
         if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
           e.preventDefault();
@@ -178,12 +179,11 @@ function BatchModeSegment({
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(m.value)}
             className={cn(
-              // Odak göstergesi global `:focus-visible` outline'ıdır (globals.css) — buraya
-              // ayrıca halka eklemek göstergeyi ikizler ve kontrastı düşürür.
-              'flex-1 rounded-[0.3rem] px-3 py-1.5 text-xs font-medium transition-colors',
-              active
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
+              // Görünüm TEK KAYNAK lib/segmented.ts (odak halkası EKLENMEZ — globals.css outline).
+              // Eskiden burada rounded-[0.3rem] + text-xs vardı; aynı işi yapan sekme/segment
+              // çubuklarından farklı görünüyordu.
+              segmentedItem(active),
+              'flex-1 justify-center',
             )}
           >
             {m.title}

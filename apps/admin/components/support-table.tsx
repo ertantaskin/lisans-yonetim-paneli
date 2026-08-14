@@ -14,6 +14,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import type { ReplacementRow } from '../app/support/queries';
+import { SEGMENTED_LIST, segmentedItem } from '../lib/segmented';
 import { cn, fmtDateTime, includesTr } from '../lib/utils';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -427,7 +428,7 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
           üretir ve klavye davranışını (roving tabindex) değiştirirdi.
         */}
         <div
-          className="inline-flex min-h-9 flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/40 p-1"
+          className={SEGMENTED_LIST}
           role="group"
           aria-label="Kuyruk kapsamı"
         >
@@ -439,16 +440,10 @@ export function SupportTable({ replacements }: { replacements: ReplacementRow[] 
               aria-pressed={scope === s.key}
               title={s.hint}
               className={cn(
-                // whitespace-nowrap: sarma olduğunda TÜM düğme alt satıra insin, etiket
-                // kelime kelime kırılmasın ("Yanıt bekleyenler" tek satır kalır).
-                // Yer varken etkisiz; en geniş düğme ~146px, kap asla taşmaz.
-                // Sınıflar `ui/tabs.tsx` TabsTrigger ile birebir (tek görünüm dili).
-                'inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1',
-                'text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
-                // Ölü `focus-visible:outline-none` KALDIRILDI: globals.css'teki katmansız
-                // `:focus-visible { outline }` kuralını zaten kapatamıyordu, yalnız okuyanı
-                // "odak bastırılmış" sanmaya itiyordu. Odak göstergesi TEK KAYNAK.
-                scope === s.key && 'bg-background text-foreground shadow-sm',
+                // Görünüm TEK KAYNAK lib/segmented.ts (whitespace-nowrap oradan gelir: sarma
+                // olduğunda TÜM düğme alt satıra iner, etiket kelime kelime kırılmaz).
+                // Odak halkası EKLENMEZ — globals.css outline'ı tek göstergedir.
+                segmentedItem(scope === s.key),
               )}
             >
               {s.label}{' '}

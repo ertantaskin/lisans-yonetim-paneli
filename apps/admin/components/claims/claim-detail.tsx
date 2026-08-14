@@ -324,16 +324,20 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
+                  {/* 44px dokunma hedefi (license-items-table ile aynı desen): görsel kutu 16px
+                      kalır, tıklanabilir alan label ile hücrenin tamamını kaplar. */}
                   {canMarkOutcome && (
-                    <TableHead className="w-9">
-                      <Checkbox
-                        aria-label="Tümünü seç"
-                        checked={allSelected}
-                        indeterminate={selected.size > 0 && !allSelected}
-                        onChange={(e) =>
-                          setSelected(e.target.checked ? new Set(selectableIds) : new Set())
-                        }
-                      />
+                    <TableHead className="w-11 p-0">
+                      <label className="flex size-11 cursor-pointer items-center justify-center">
+                        <Checkbox
+                          aria-label="Tümünü seç"
+                          checked={allSelected}
+                          indeterminate={selected.size > 0 && !allSelected}
+                          onChange={(e) =>
+                            setSelected(e.target.checked ? new Set(selectableIds) : new Set())
+                          }
+                        />
+                      </label>
                     </TableHead>
                   )}
                   <TableHead>Ürün</TableHead>
@@ -356,19 +360,21 @@ export function ClaimDetail({ claim, items }: { claim: ClaimRow; items: ClaimIte
                   items.map((i) => (
                     <TableRow key={i.id} data-state={selected.has(i.id) ? 'selected' : undefined}>
                       {canMarkOutcome && (
-                        <TableCell className="w-9">
-                          <Checkbox
-                            aria-label="Kalemi seç"
-                            checked={selected.has(i.id)}
-                            onChange={(e) =>
-                              setSelected((prev) => {
-                                const next = new Set(prev);
-                                if (e.target.checked) next.add(i.id);
-                                else next.delete(i.id);
-                                return next;
-                              })
-                            }
-                          />
+                        <TableCell className="w-11 p-0">
+                          <label className="flex size-11 cursor-pointer items-center justify-center">
+                            <Checkbox
+                              aria-label="Kalemi seç"
+                              checked={selected.has(i.id)}
+                              onChange={(e) =>
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(i.id);
+                                  else next.delete(i.id);
+                                  return next;
+                                })
+                              }
+                            />
+                          </label>
                         </TableCell>
                       )}
                       <TableCell>
