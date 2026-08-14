@@ -18,7 +18,8 @@ import { getActor } from '../../lib/session';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** API `optionalDigits` şeması `^\d{1,7}$` bekler → sayfa numarası bu aralığa kırpılır. */
 const MAX_PAGE = 9_999_999;
-const PAGE_SIZES = [25, 50, 100];
+// TEK KAYNAK: lib/license-page-sizes (uc ayri kopya bu partide birlestirildi).
+const PAGE_SIZES: readonly number[] = LICENSE_PAGE_SIZES;
 const SORTS = ['created_desc', 'created_asc', 'assigned_desc'];
 /** UI'da sunulan durum süzgeçleri (license_items enum'unun tamamı değil — operatör dili). */
 const STATUSES = [
@@ -161,7 +162,9 @@ export async function fetchLicenseItemsAction(
   qs.set('page', String(page));
 
   const rawSize = Number(params.pageSize);
-  qs.set('pageSize', String(PAGE_SIZES.includes(rawSize) ? rawSize : PAGE_SIZES[0]));
+  // Geçersiz/eksik değerde 25'e düşülür — listenin İLK elemanına DEĞİL: liste başına 10
+  // eklenince "pageSize gönderilmeyen" tüm çağrılar sessizce 10 satıra düşerdi.
+  qs.set('pageSize', String(PAGE_SIZES.includes(rawSize) ? rawSize : 25));
 
   if (params.sort && SORTS.includes(params.sort)) qs.set('sort', params.sort);
 

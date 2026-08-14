@@ -38,13 +38,14 @@ import {
   TableRow,
 } from '../ui/table';
 import { selectClass } from '../ui/input';
+import { LICENSE_PAGE_SIZES } from '../../lib/license-page-sizes';
 import type { PayloadFieldDef } from '../../lib/api';
 import { cn, fmtDateTime } from '../../lib/utils';
 import { assignmentStatusLabel, productKindLabel, siteTypeLabel } from '../../lib/labels';
 import { LicenseItemActions, statusLabel } from './license-item-actions';
 
-/** Sayfa boyutu seçenekleri — API bu üç değere kırpar (kullanıcının açık isteği). */
-const PAGE_SIZES = [10, 25, 50, 100] as const;
+/** Sayfa boyutu seçenekleri — TEK KAYNAK lib/license-page-sizes (API bu değerlere kırpar). */
+const PAGE_SIZES = LICENSE_PAGE_SIZES;
 
 /**
  * Durum süzgeci. ETİKETLER TEK KAYNAKTAN (`lib/labels` → statusLabel) gelir — burada yalnız
