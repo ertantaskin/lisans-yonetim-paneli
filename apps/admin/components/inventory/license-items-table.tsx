@@ -402,7 +402,7 @@ export function LicenseItemsTable({
             id={`${uid}-search`}
             value={search}
             onValueChange={setSearch}
-            placeholder="Anahtarın son 5 hanesi, e-posta, sipariş no…"
+            placeholder="Tam anahtar veya son 5 hane, ürün, e-posta, sipariş no…"
             ariaLabel="Lisans ara"
             className="w-full"
           />
@@ -452,9 +452,10 @@ export function LicenseItemsTable({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Anahtar araması gizlilik gereği yalnız <strong>son 5 hane</strong> üzerinden çalışır
-        (kayıtlar şifreli saklanır). Müşteri e-postası, mağaza sipariş numarası ve parti kodu
-        ile de arayabilirsiniz.
+        Aranabilenler: <strong>anahtarın tamamı</strong> ya da <strong>son 5 hanesi</strong>,
+        ürün adı/SKU, müşteri e-postası, mağaza sipariş numarası, parti kodu. Anahtarlar şifreli
+        saklandığı için parça arama (ortadan birkaç hane) yapılamaz — tam değer veya son 5 hane
+        gerekir; büyük/küçük harf ve boşluk farkı sorun değildir.
       </p>
 
       {error && (
@@ -933,7 +934,9 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
           <div key={f.key} className="flex gap-1.5 text-xs">
             <span className="shrink-0 text-muted-foreground">{f.label}:</span>
             <span
-              className="truncate font-mono text-foreground/90"
+              // Hesap alanı da kırpılmaz (anahtarla aynı gerekçe): parola/kullanıcı adının
+              // sonu görünmezse kalem ayırt edilemez. Gizliyse zaten maske basılır.
+              className="min-w-0 whitespace-normal break-all font-mono text-foreground/90"
               title={f.secret && !shown ? 'Gizli alan — göstermek için Göster' : f.value}
             >
               {f.secret && !shown ? MASK : f.value}
@@ -965,8 +968,15 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
   }
   return (
     <div className="flex items-start gap-1">
+      {/*
+        KIRPMA YOK (kullanıcı: "lisans tamamen görünmüyor, son haneleri"): anahtar
+        `truncate` ile tek satıra sıkıştırılıp sonu "…" oluyordu ve dar ekranda kalemi
+        AYIRT EDEN kısım (son haneler) tam olarak kaybolan kısımdı. `break-all` ile dar
+        alanda iki satıra sarar, geniş ekranda zaten tek satıra sığar (29 karakter ≈ 244px,
+        kolon 288px). Kopyalamak için hâlâ tek tık var.
+      */}
       <code
-        className="block flex-1 truncate font-mono text-sm text-foreground/90"
+        className="block flex-1 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90"
         title={row.value}
       >
         {row.value}

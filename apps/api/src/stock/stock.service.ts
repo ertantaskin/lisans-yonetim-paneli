@@ -1232,13 +1232,51 @@ export class StockService {
     const term = (params.search ?? '').trim();
     if (term.length >= 2) {
       const pattern = `%${escapeLike(term)}%`;
+
+      /*
+       * ANAHTAR ARAMASI İKİ YOLLU (kullanıcı: "lisansı tam haliyle de arayabilelim").
+       *
+       * Payload ŞİFRELİ, üzerinde LIKE yapılamaz — arama yalnız ANAHTARLI hash eşitliğiyle
+       * mümkündür. İki hash var ve ikisi de kullanılır:
+       *   1) payload_hash        → TAM eşleşme (operatör anahtarın tamamını yapıştırır)
+       *   2) payload_suffix_hash → son 5 hane (elinde yalnız kuyruğu varken)
+       *
+       * BİÇİM TOLERANSI: operatör anahtarı büyük/küçük harf ya da farklı boşluklarla
+       * yapıştırabilir; hash birebir metin üzerinden hesaplandığı için tek varyant denemek
+       * "yok" derdi. Bu yüzden birkaç kanonik varyant (ham · boşluklar sadeleşmiş · boşluksuz,
+       * her biri ayrıca BÜYÜK harfli) denenir. Sayı sabittir (≤6), maliyeti ihmal edilebilir.
+       * NOT: hash'ler anahtarlıdır (master key) → DB'yi ele geçiren biri bu aramayı yapamaz.
+       */
+      const collapsed = term.replace(/\s+/g, ' ');
+      const variants = new Set<string>([
+        term,
+        collapsed,
+        collapsed.replace(/\s+/g, ''),
+        term.toUpperCase(),
+        collapsed.toUpperCase(),
+        collapsed.replace(/\s+/g, '').toUpperCase(),
+      ]);
+      const exactList = [...variants].map((v) => sql`${this.crypto.payloadHash(v)}`);
+      const exactCond = sql`li.payload_hash IN (${sql.join(exactList, sql`, `)})`;
+
+      // Son-5 yolu: 5+ karakter girildiyse. Varyantların son 5'i farklı olabileceği için
+      // (ör. boşluklu yapıştırma) hepsi denenir; 4 hane TEK BAŞINA eşleşmez (bilinçli kısıt).
+      const suffixList = [...variants]
+        .filter((v) => v.length >= 5)
+        .map((v) => sql`${this.crypto.payloadSuffixHash(v)}`);
       const suffixCond =
-        term.length >= 5
-          ? sql`li.payload_suffix_hash = ${this.crypto.payloadSuffixHash(term)}`
+        suffixList.length > 0
+          ? sql`li.payload_suffix_hash IN (${sql.join(suffixList, sql`, `)})`
           : sql`false`;
+
       conds.push(sql`(
-        ${suffixCond}
+        ${exactCond}
+        OR ${suffixCond}
         OR b.label ILIKE ${pattern} ESCAPE '\\'
+        -- ÜRÜN ADI/SKU: operatör çoğu zaman "hangi üründen kaç kalem var" diye arıyor;
+        -- eskiden bu eksen YOKTU ve ürün adı yazınca liste boş dönüyordu (yanıltıcı).
+        OR p.name ILIKE ${pattern} ESCAPE '\\'
+        OR p.sku ILIKE ${pattern} ESCAPE '\\'
         OR EXISTS (
           SELECT 1 FROM assignments a3
           JOIN orders o3 ON o3.id = a3.order_id
@@ -1307,8 +1345,11 @@ export class StockService {
         WITH page_slice AS (
           SELECT li.id AS id, (count(*) OVER ())::int AS total_count
           FROM license_items li
-          -- b: yalnız arama süzgeci (b.label) için — LEFT JOIN, satır çoğaltmaz (b.id PK).
+          -- b/p: yalnız arama süzgeci (b.label, p.name, p.sku) için — LEFT JOIN, satır
+          -- çoğaltmaz (ikisi de PK üzerinden). Süzgeç fragmanı countLicenseItems ile
+          -- BİREBİR aynı olmalı, yoksa toplam ile liste ayrışır.
           LEFT JOIN batches b ON b.id = li.batch_id
+          LEFT JOIN products p ON p.id = li.product_id
           WHERE ${where}
           ORDER BY ${orderBy}
           LIMIT ${pageSize} OFFSET ${offset}
@@ -1436,6 +1477,7 @@ export class StockService {
       SELECT count(*)::int AS c
       FROM license_items li
       LEFT JOIN batches b ON b.id = li.batch_id
+      LEFT JOIN products p ON p.id = li.product_id
       WHERE ${where};
     `);
     return Number(rows[0]?.c ?? 0);
