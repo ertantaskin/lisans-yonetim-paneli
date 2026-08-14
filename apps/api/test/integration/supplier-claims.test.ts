@@ -139,6 +139,25 @@ async function seedAccountDefect(
   return { supplierId: supplier.id, productId: product.id, itemId };
 }
 
+/** Bu fişe düşen 'reveal' audit kaydı sayısı (denetim D4). */
+async function revealAuditCount(claimId: string): Promise<number> {
+  const rows = await db.execute<{ c: number }>(sql`
+    SELECT count(*)::int AS c FROM audit_log
+    WHERE action = 'reveal' AND target_type = 'supplier_claim' AND target_id = ${claimId}
+  `);
+  return Number((rows as unknown as Array<{ c: number }>)[0]?.c ?? 0);
+}
+
+/** Bu fişin son 'reveal' audit kaydının meta'sı (sayaç dürüstlüğü kontrolü). */
+async function revealAuditMeta(claimId: string): Promise<{ count?: number } | null> {
+  const rows = await db.execute<{ meta: { count?: number } | null }>(sql`
+    SELECT meta FROM audit_log
+    WHERE action = 'reveal' AND target_type = 'supplier_claim' AND target_id = ${claimId}
+    ORDER BY created_at DESC LIMIT 1
+  `);
+  return (rows as unknown as Array<{ meta: { count?: number } | null }>)[0]?.meta ?? null;
+}
+
 /** Havuzda (bildirilmemiş) kaç kusurlu kalem var? */
 async function poolCount(supplierId: string): Promise<number> {
   const res = await claims.candidates({ supplierId, reveal: true, actor: ACTOR });
@@ -164,6 +183,18 @@ describe('tedarikçi değişim fişleri', () => {
   });
 
   afterAll(async () => {
+    // (Denetim D4) `detail()` artık düz-metin dönen okumada 'reveal' audit yazıyor → bu
+    // dosyanın ürettiği kayıtlar cleanupByTag kapsamı DIŞINDA (audit_log'a FK yok).
+    // supplier_claims silinmeden ÖNCE, yalnız bu tag'in fişlerine ait satırları temizle.
+    await db.execute(sql`
+      DELETE FROM audit_log
+      WHERE target_type = 'supplier_claim'
+        AND target_id IN (
+          SELECT sc.id::text FROM supplier_claims sc
+          JOIN suppliers s ON s.id = sc.supplier_id
+          WHERE s.name LIKE ${`${tagPrefix(tag)}-%`}
+        )
+    `);
     await cleanupByTag(db, tag);
     await end();
   });
@@ -254,6 +285,38 @@ describe('tedarikçi değişim fişleri', () => {
     // ÇİFT MASKELEME YOK: zaten maskeli snapshot ikinci kez maskelenmez (gövde ikiye katlanmaz).
     const otherRead = await claims.detail(cb.id, { reveal: false, actor: 'panel:admin' });
     expect(otherRead.items[0]!.keySnapshot).toBe(ownerRead.items[0]!.keySnapshot);
+  });
+
+  it('reveal audit YALNIZ düz metin GERÇEKTEN dönerse yazılır (denetim D4)', async () => {
+    // KUSUR: audit `reveal && items.length > 0`e bakıyordu. Fişi owner-OLMAYAN biri kestiyse
+    // snapshot ZATEN maskeli yazılır (kesme anındaki yetkiyle donar) → owner detayı açtığında
+    // hiçbir düz metin görmediği hâlde "N anahtar açıldı" kaydı düşüyordu. Projede DÜZ METİN
+    // GÖSTERMEDEN reveal yazmak, göstermeden yazmamak kadar yasak (denetim izini yalanlar).
+
+    // (a) owner-OLMAYAN keser → snapshot maskeli. Owner okusa BİLE düz metin GÖRMEZ → audit YOK.
+    const masked = await seedDefects({ count: 2, label: 'aud-mask' });
+    const cMasked = await claims.create({ supplierId: masked.supplierId }, 'panel:admin', false);
+    const maskedRead = await claims.detail(cMasked.id, { reveal: true, actor: ACTOR });
+    expect(maskedRead.masked).toBe(true);
+    expect(await revealAuditCount(cMasked.id)).toBe(0);
+
+    // (b) owner-OLMAYAN okuma da audit üretmez (maskeli görünüm sır ifşa etmez).
+    await claims.detail(cMasked.id, { reveal: false, actor: 'panel:admin' });
+    expect(await revealAuditCount(cMasked.id)).toBe(0);
+
+    // (c) owner keser + owner okur → GERÇEKTEN düz metin döner → audit YAZILIR (per-view).
+    const plain = await seedDefects({ count: 3, label: 'aud-plain' });
+    const cPlain = await claims.create({ supplierId: plain.supplierId }, ACTOR, true);
+    const plainRead = await claims.detail(cPlain.id, { reveal: true, actor: ACTOR });
+    expect(plainRead.masked).toBe(false);
+    expect(await revealAuditCount(cPlain.id)).toBe(1);
+    // Sayaç, fişin TOPLAM kalemi değil GERÇEKTEN düz görülen kalem sayısıdır.
+    const meta = await revealAuditMeta(cPlain.id);
+    expect(meta?.count).toBe(3);
+
+    // (d) aynı fişi owner-OLMAYAN okursa YENİ audit düşmez (maskeli döner).
+    await claims.detail(cPlain.id, { reveal: false, actor: 'panel:admin' });
+    expect(await revealAuditCount(cPlain.id)).toBe(1);
   });
 
   it('AYNI kalem ikinci bir fişe GİREMEZ (kısmi unique index)', async () => {

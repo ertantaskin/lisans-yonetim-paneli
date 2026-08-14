@@ -39,6 +39,14 @@ const SECRET_COLUMN_DENYLIST = [
   'api_key_enc',
   'code_hash',
   'password_hash',
+  // Denetim D3: admin_users.totp_secret_enc — iki faktörlü giriş sırrı (AES-256-GCM envelope).
+  // 'hmac_secret_enc' kalıbı bunu YAKALAMAZ: \b sınırı kelime-karakteri olan '_' üzerinde
+  // eşleşmez ('totp_secret_enc' içinde 'secret_enc'ten önce '_' var) — 'api_key_hash_prev'
+  // için yukarıda yazılan gerekçenin aynısı. Bugün TABLE_DENYLIST 'admin_users'ı zaten
+  // reddediyor, yani sömürülebilir DEĞİL; ama bu dosyanın doktrini "bilinen sır kolonlarını
+  // EKSİKSİZ listele"dir ve aynı dizi DÖNEN-kolon süzgecini (SECRET_COLUMN_SET) de besler →
+  // kolon bir görünüm/alias üzerinden dönerse ikinci katman da kapalı olsun.
+  'totp_secret_enc',
   'scrypt',
   // Denetim (fiş maskesi bypass'ı): supplier_claim_items.key_snapshot, fiş KESİLİRKEN çağıranın
   // yetkisiyle donar → owner kestiyse içinde TAM DÜZ lisans değeri (anahtar/hesap alanları) durur.

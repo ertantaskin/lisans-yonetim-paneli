@@ -22,7 +22,7 @@ import {
 import { alias } from 'drizzle-orm/pg-core';
 import type Redis from 'ioredis';
 import { recomputeOrderStatus } from './order-status';
-import { lineStatusFor, remainingUnits } from './fill-target';
+import { lineStatusFor, remainingUnits, remainingUnitsSql } from './fill-target';
 import { recordReplacementLineage } from './assignment-history';
 import { buildStoreAdminUrl } from './store-admin-url';
 import { FulfillmentService } from './fulfillment.service';
@@ -460,6 +460,10 @@ export class AdminOrdersService {
       .limit(200);
   }
 
+  /** Bekleyen kuyruğu üst sınırları (kova başına AYRI — biri diğerini yiyemez, F11). */
+  private static readonly PENDING_WAITING_LIMIT = 200;
+  private static readonly PENDING_UNMAPPED_LIMIT = 100;
+
   /**
    * Bekleyen Teslimatlar ana ekranı (§13): henüz TAMAMLANMAMIŞ siparişler.
    *
@@ -475,7 +479,9 @@ export class AdminOrdersService {
    * Artık İKİ AYRI sorgu var — pending/partial için 200, unmapped için 100 — sonuçlar tarih
    * azalan birleştirilir. Kova birbirini yiyemez.
    *
-   * Dönüş tipi DİZİ kalır (S3: şekil değişikliği YOK); her satıra `hasUnmappedLine` eklenir —
+   * DÖNÜŞ ŞEKLİ (R5 ile DEĞİŞTİ): düz dizi yerine `{ items, truncated }` zarfı — kuyruk sunucuda
+   * kırpılabildiği için "liste eksik" sinyali taşınmak ZORUNDA (proje kuralı: sessiz kırpma yasak;
+   * `listHeldOrders` ile aynı zarf). Her satıra `hasUnmappedLine` eklenir —
    * "bu siparişin eşlemesi olmayan AKTİF satırı var mı" (S1 ile aynı ifade). Sipariş `status`
    * alanı kısmen teslim edilmiş karma siparişlerde 'partial' olabilir ama satırlarından biri
    * hâlâ eşlemesizdir; operatör bunu status'ten göremiyordu. Tek EXISTS alt sorgusu ile çözülür
@@ -507,8 +513,14 @@ export class AdminOrdersService {
     //
     // Yalnız İŞ BEKLEYEN satırlar sayılır: iptal/iade (canceled) satır yeniden teslim edilmez
     // (H1), terminal satır zaten bitmiştir. `qty` PANEL birimidir (eşleme anında bundleQty ile
-    // ölçeklenmiş) → `qty - fulfilled_qty` doğrudan "kaç lisans eksik" demektir.
+    // ölçeklenmiş).
     // product_id NULL satırlar burada YOKTUR (eşlemesiz) — onları `hasUnmappedLine` anlatır.
+    //
+    // R1 (TEK TANIM): eksik birim `qty − canceled_units − fulfilled_qty` (fill-target.ts
+    // `remainingUnitsSql`). Ham `qty − fulfilled_qty` yazılıydı → panelden KALICI iptal edilmiş
+    // birimler hâlâ "bekleyen iş" sayılıyordu: operatör /pending'de kapanmayacak bir eksik görüyor,
+    // stok girişi onay modali de "bu giriş N bekleyen birimi teslim eder" diye tutulamayacak bir
+    // söz veriyordu (aynı satırı `completeLine` zaten doldurmaz).
     //
     // Korelasyonda `orders.id` DÜZ METİN yazılır (yukarıdaki EXISTS ile aynı tuzak: gömülü
     // kolon tablo-öneksiz basılıp iç kapsamdan çözülebilir).
@@ -521,7 +533,7 @@ export class AdminOrdersService {
       select json_build_object(
         'productId', ol.product_id,
         'name', min(p.name),
-        'missing', sum(greatest(ol.qty - ol.fulfilled_qty, 0))::int
+        'missing', sum(${remainingUnitsSql('ol')})::int
       )
       from order_lines ol
       join products p on p.id = ol.product_id
@@ -529,7 +541,7 @@ export class AdminOrdersService {
         and ol.canceled = false
         and ol.status in ('pending', 'partial')
       group by ol.product_id
-      order by sum(greatest(ol.qty - ol.fulfilled_qty, 0)) desc, min(p.name)
+      order by sum(${remainingUnitsSql('ol')}) desc, min(p.name)
     ))`;
 
     const columns = getTableColumns(orders);
@@ -546,6 +558,19 @@ export class AdminOrdersService {
       siteType: sites.type,
     };
 
+    /*
+     * R5 — SESSİZ KIRPMA YASAK + TIE-BREAK.
+     *
+     * İki kova da sabit LIMIT'liydi ve kırpıldığı hiçbir yere yazılmıyordu: operatör 200'den
+     * eski bir siparişi kuyrukta "yok" görüyordu (bu panelde sessiz LIMIT daha önce de "o
+     * müşteri yok" dedirtmişti). Ayrıca `ORDER BY created_at DESC` tie-break'sizdi — mağaza
+     * bir siparişi toplu push ettiğinde damgalar eşit olabilir ve pencereye HANGİ satırların
+     * gireceği KEYFİ kalırdı (aynı ekran iki yenilemede farklı liste gösterir). Kardeş
+     * `dashboard.service.live()` bu yüzden `created_at DESC, id DESC` kullanıyor; aynı kural.
+     *
+     * Desen (proje standardı): TAVAN+1 çek, JS'te kırp, `n > TAVAN` ile KESİN sinyal ver
+     * (`n >= TAVAN` tam tavanda YANLIŞ ALARM üretirdi).
+     */
     const [waiting, unmapped] = await Promise.all([
       // Stok/kalan bekleyenler (klasik kuyruk).
       this.db
@@ -553,22 +578,32 @@ export class AdminOrdersService {
         .from(orders)
         .leftJoin(sites, eq(sites.id, orders.siteId))
         .where(inArray(orders.status, ['pending', 'partial']))
-        .orderBy(desc(orders.createdAt))
-        .limit(200),
+        .orderBy(desc(orders.createdAt), desc(orders.id))
+        .limit(AdminOrdersService.PENDING_WAITING_LIMIT + 1),
       // Eşlemesiz siparişler AYRI kotada — kendi seli yalnız kendi kovasını doldurur.
       this.db
         .select(selection)
         .from(orders)
         .leftJoin(sites, eq(sites.id, orders.siteId))
         .where(eq(orders.status, 'unmapped'))
-        .orderBy(desc(orders.createdAt))
-        .limit(100),
+        .orderBy(desc(orders.createdAt), desc(orders.id))
+        .limit(AdminOrdersService.PENDING_UNMAPPED_LIMIT + 1),
     ]);
 
-    // Tek liste, tarih azalan (UI eşlemesizleri ayrıca öne alabilir — sıralama sunum kararı).
-    return [...waiting, ...unmapped].sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-    );
+    const truncated =
+      waiting.length > AdminOrdersService.PENDING_WAITING_LIMIT ||
+      unmapped.length > AdminOrdersService.PENDING_UNMAPPED_LIMIT;
+
+    // Tespit için çekilen fazladan satır YANITA GİRMEZ (sözleşme: kova başına en fazla TAVAN).
+    const items = [
+      ...waiting.slice(0, AdminOrdersService.PENDING_WAITING_LIMIT),
+      ...unmapped.slice(0, AdminOrdersService.PENDING_UNMAPPED_LIMIT),
+    ]
+      // Tek liste, tarih azalan (UI eşlemesizleri ayrıca öne alabilir — sıralama sunum kararı).
+      // SQL ile AYNI tie-break: eşit damgada birleşik listenin sırası da deterministik olsun.
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1));
+
+    return { items, truncated };
   }
 
   /** Admin sipariş detayı: satırlar + atamalar (maskeli) + timeline (§7 meta box). */
@@ -1255,7 +1290,15 @@ export class AdminOrdersService {
         .for('update');
       if (line) {
         const nf = Math.max(0, line.fulfilledQty - take);
-        const lineStatus = nf >= line.qty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+        // C3: durum HAM `qty` ile değil HEDEFLE türetilir (`lineStatusFor` = qty − canceled_units).
+        // Defterinde iptal edilmiş birim olan bir satırda `nf >= qty` asla sağlanamaz → satır
+        // kalıcı 'partial', sipariş kalıcı 'partial' (WP'de "eksik teslimat", /pending'de hayalet
+        // iş, her stok girişinde boşuna taranan satır). Tek tanım: fill-target.ts.
+        const lineStatus = lineStatusFor({
+          qty: line.qty,
+          canceledUnits: line.canceledUnits,
+          fulfilledQty: nf,
+        });
         await tx
           .update(orderLines)
           .set({ fulfilledQty: nf, status: lineStatus })
@@ -1607,15 +1650,50 @@ export class AdminOrdersService {
 
         // 2) qty'yi NET'e düşür (revoke sonrası taze fulfilled ile satır durumu yeniden).
         const [fresh] = await tx
-          .select({ fulfilledQty: orderLines.fulfilledQty })
+          .select({
+            fulfilledQty: orderLines.fulfilledQty,
+            // Defter TAZE okunur: yukarıdaki revoke'lar markLineCanceled=false ile çağrıldığı
+            // için deftere dokunmazlar, ama bu okuma varsayıma değil duruma dayansın.
+            canceledUnits: orderLines.canceledUnits,
+          })
           .from(orderLines)
           .where(eq(orderLines.id, line.id))
           .limit(1);
         const nf = fresh?.fulfilledQty ?? 0;
-        const lineStatus = nf >= netQty ? 'fulfilled' : nf > 0 ? 'partial' : 'pending';
+
+        /*
+         * C1 — ÇİFT SAYIM ÖNLEME (`reconcileOrder` ile AYNI kural, tek tanım).
+         *
+         * Bu yol `qty`yi mağazanın NET adedine düşürüyor ama `canceled_units` defterine hiç
+         * dokunmuyordu → panelde iptal edilmiş bir birim, mağaza da iadeyi işleyince İKİ KEZ
+         * sayılıyordu. Senaryo: qty=3, 3 teslim; operatör 1 atamayı iptal eder
+         * (canceled_units=1, fulfilled=2); müşteri 1 birim iade eder → netQty=2 yazılır ama
+         * defter 1 kalır → hedef = 2−1 = 1 iken fulfilled = 2. Satır KALICI bozulur:
+         * `remainingUnits`=0 olduğu için değişim/`completeLine` yolu "stok yok" (409) verir
+         * (stok VARKEN), müşteriye/WP'ye "2/1" gibi imkânsız bir ilerleme gösterilir ve durum
+         * kendini onarmaz. Mağaza adedi D kadar DÜŞTÜYSE mağaza o iptali kendi kaydına
+         * işlemiş demektir → defterden en fazla D birim düşülür.
+         */
+        const drop = Math.max(0, line.qty - netQty);
+        const prevCanceled = fresh?.canceledUnits ?? line.canceledUnits ?? 0;
+        const nextCanceled = Math.max(0, prevCanceled - drop);
+
+        // C3: satır durumu HAM `qty` ile değil hedefle (`fillTarget` = qty − canceled_units)
+        // türetilir — aksi halde defteri dolu satır sonsuza dek 'partial' kalır (sipariş de
+        // 'partial' → WP'de "eksik teslimat", /pending'de hayalet iş, her stok girişinde
+        // boşuna taranan satır).
+        const lineStatus = lineStatusFor({
+          qty: netQty,
+          canceledUnits: nextCanceled,
+          fulfilledQty: nf,
+        });
         await tx
           .update(orderLines)
-          .set({ qty: netQty, status: lineStatus })
+          .set({
+            qty: netQty,
+            ...(nextCanceled !== prevCanceled ? { canceledUnits: nextCanceled } : {}),
+            status: lineStatus,
+          })
           .where(eq(orderLines.id, line.id));
         adjusted++;
       }
@@ -2224,7 +2302,10 @@ export class AdminOrdersService {
       // Bir recall/void tüm partiyi aynı damgayla öldürür; eşitliği en son eklenen anahtar
       // kazanır, böylece iki liste aynı sırayı gösterir.
       .orderBy(sql`coalesce(${licenseItems.assignedAt}, ${licenseItems.createdAt}) DESC, ${licenseItems.seq} DESC`)
-      .limit(fetchLimit);
+      // R7: TAVAN+1 (proje deseni: listBatches / pending-lines). Aşağıdaki `truncated` sinyali
+      // bu fazladan satırın GELİP GELMEDİĞİNE bakar; fazladan satır yanıta girmez
+      // (`filtered.slice(0, limit)` zaten çok daha küçük bir pencere döndürür).
+      .limit(fetchLimit + 1);
 
     // audit_log fallback (detail() reasonRows deseni): düz-revoke (değişim değil) sebebi
     // audit_log.meta.reason'da → formerAssignmentId kümesi için topla (en yeni kazanır).
@@ -2409,7 +2490,12 @@ export class AdminOrdersService {
     // durumu doğuyordu (operatör o dönemin bozuk anahtarlarını hiç görmeden dışa aktarıyordu).
     // İki kaynak: (1) SQL fetch üst sınırına dayanıldı → daha eskiler HİÇ okunmadı;
     // (2) dedupe sonrası kayıt sayısı `limit`i aştı → kuyruk kesildi.
-    const truncated = rows.length >= fetchLimit || filtered.length > limit;
+    //
+    // R7: (1) sinyali `>= fetchLimit` idi ve TAM tavan kadar kayıt varken (hiçbir şey
+    // kırpılmamışken) "liste eksik" diyordu. Yanlış alarm daha zararlıdır: operatör GERÇEK
+    // kırpmaya da inanmaz. TAVAN+1 çekilip `> fetchLimit` denerek sinyal KESİNLEŞTİRİLDİ
+    // (listBatches'te aynı düzeltme aynı gerekçeyle yapılmıştı).
+    const truncated = rows.length > fetchLimit || filtered.length > limit;
 
     // "reveal audit'e düşer" (§17) bu yol için de geçerli: karantina listesi ölü anahtarların
     // DÜZ METNİNİ toplu döndürür (operatör tedarikçiye değişim talebi için dışa aktarır).
@@ -2578,15 +2664,28 @@ export class AdminOrdersService {
       .where(eq(orders.id, orderId))
       .limit(1);
     if (afterState?.status === 'revoked') {
+      // (Denetim H1 sınıfı) active + suspended: askıdaki atama da CANLI hak taşır ("Geri aç"ta
+      // çalışır) → iade edilmiş siparişte sağ kalmamalı.
       const stray = await this.db
         .select({ id: assignments.id })
         .from(assignments)
-        .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+        .where(
+          and(
+            eq(assignments.orderId, orderId),
+            inArray(assignments.status, ['active', 'suspended']),
+          ),
+        );
       for (const a of stray) {
+        // C4: BAĞLAM İADE/İPTAL → `returnMultiCapacity=false` (§2). Varsayılan `true` bırakılmıştı:
+        // MAK'ta teslim edilmiş birim geri alınırken `use_count` düşüyor ve harcanan aktivasyon
+        // yeniden satılabilir görünüyordu (sessiz aşırı-satış).
         await this.revokeAssignment(
           a.id,
           'İade/iptal ile yarış — teslimat geri alındı',
           actor,
+          true,
+          undefined,
+          false,
         ).catch(() => undefined);
       }
     }
@@ -2635,21 +2734,48 @@ export class AdminOrdersService {
         .update(orders)
         .set({ heldForReview: false, updatedAt: new Date() })
         .where(eq(orders.id, orderId));
-      // Held satırda normalde atama yoktur (createOrder held-dalı atama yapmaz); yine de bir yarış
-      // bıraktıysa savunma amaçlı revoke et (kapasite/karantina getDeliveries filtresiyle birlikte
-      // reddedilen siparişte canlı key kalmasını engeller).
-      const activeAsgs = await tx
+
+      // Satırlar terminal 'canceled' (yeniden-teslime uygun değil, §2). SIRA BİLİNÇLİ: iptal
+      // işareti kaçak atamaları geri almadan ÖNCE basılır — `revokeOrderForSite` ile aynı desen.
+      // Böylece `revokeAssignment` satırı ZATEN terminal görür, `canceled_units` defterini
+      // şişirmez ve gereksiz "N birim kalıcı iptal edildi" olayı yazmaz.
+      await tx.update(orderLines).set({ canceled: true }).where(eq(orderLines.orderId, orderId));
+
+      /*
+       * C4 — Held satırda normalde atama yoktur (createOrder held-dalı atama yapmaz); yine de bir
+       * yarış bıraktıysa geri al. ESKİDEN bu, ham bir `UPDATE assignments SET status='revoked'`
+       * idi ve üç şeyi birden kaçırıyordu:
+       *   · `license_items` durumu güncellenmiyordu → tek-kullanımlık kalem kalıcı 'assigned'
+       *     limbosunda kalıyordu: ne müşteride canlı ne stokta satılabilir (SESSİZ STOK KAYBI);
+       *     hiçbir ekran da onu göstermiyordu (karantina yalnız quarantined/voided listeler).
+       *   · `order_lines.fulfilled_qty` düşürülmüyordu → fulfilled_qty>0 iken ayakta atama 0
+       *     kalıyor ve `reconcile` cron'u bunu KALICI kritik alarm olarak raporluyordu.
+       *   · Yalnız `'active'` süzülüyordu → askıdaki (`suspended`) atama sağ kalıyordu; sonradan
+       *     "Geri aç" ile reddedilmiş siparişte CANLI lisans doğuyordu (H1 sınıfı bedava lisans).
+       * Artık MEVCUT idempotent yardımcı kullanılır: markLineCanceled=true (gerçek iptal),
+       * tx geçilir (aynı bağlantı/kilitler — ayrı bağlantı kendi kilidimizi beklerdi),
+       * returnMultiCapacity=false (§2 — bağlam iade/iptal, MAK hakkı havuza dönmez).
+       */
+      const liveAsgs = await tx
         .select({ id: assignments.id })
         .from(assignments)
-        .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
-      if (activeAsgs.length > 0) {
-        await tx
-          .update(assignments)
-          .set({ status: 'revoked' })
-          .where(and(eq(assignments.orderId, orderId), eq(assignments.status, 'active')));
+        .where(
+          and(
+            eq(assignments.orderId, orderId),
+            inArray(assignments.status, ['active', 'suspended']),
+          ),
+        )
+        .orderBy(asc(assignments.id));
+      for (const a of liveAsgs) {
+        await this.revokeAssignment(
+          a.id,
+          `İnceleme reddedildi: ${reason}`,
+          actor,
+          true,
+          tx,
+          false,
+        );
       }
-      // Satırlar terminal 'canceled' (yeniden-teslime uygun değil, §2) → recompute 'revoked'.
-      await tx.update(orderLines).set({ canceled: true }).where(eq(orderLines.orderId, orderId));
       const s = await recomputeOrderStatus(tx, orderId);
       await tx.insert(fulfillmentEvents).values({
         orderId,

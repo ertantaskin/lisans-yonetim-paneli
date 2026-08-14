@@ -113,9 +113,10 @@ export default async function StockPage({
   return (
     <div className="space-y-5">
       <PageHeader icon={Boxes} title="Stok & Ürünler" description={description}>
-        {/* Kayıtlı görünümler (§14): bu ekranın süzgeçleri (`?category=`, `?q=`) ADRESTE
-            yaşadığı için menü gerçekten çalışır — kaydedilen görünüm aynı kategoriyi/aramayı
-            geri getirir. Görünümler KİŞİSELDİR (actor bazlı). */}
+        {/* Kayıtlı görünümler (§14): bu ekranın süzgeçleri (`?category=`, `?q=`) ve TABLO İÇİ
+            arama/facet/sıralama (`tq`/`tf.*`/`tsort` — ProductsTable `syncUrl`) ADRESTE
+            yaşadığı için menü gerçekten çalışır; `unsyncedFilters` GEÇİLMEZ (yazılmayan
+            süzgeç yok). Görünümler KİŞİSELDİR (actor bazlı). */}
         <SavedViewsMenu page="stock" />
         <Button asChild variant="outline">
           <Link href="/categories">

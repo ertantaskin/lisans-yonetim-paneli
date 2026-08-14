@@ -15,6 +15,7 @@ import { notExpiredCond } from '../assignment/assign';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from './fulfillment.service';
 import { recomputeOrderStatus } from './order-status';
+import { remainingUnits } from './fill-target';
 
 /**
  * Bekleyen (eşlemesiz) sipariş satırlarının tanılaması + eşleme-sonrası GERİYE DÖNÜK çözümü (§3/§4).
@@ -498,6 +499,9 @@ export class PendingLinesService {
       product_name: string | null;
       qty: number;
       fulfilled_qty: number;
+      // R1: doldurma hedefi `qty − canceled_units` (fill-target.ts) — tanı "kaç birim eksik"i
+      // bu deftere göre hesaplamak ZORUNDA, yoksa iptal edilmiş birimi "bekleyen iş" sanar.
+      canceled_units: number | null;
       status: string;
       canceled: boolean;
       stockless: boolean | null;
@@ -516,6 +520,7 @@ export class PendingLinesService {
                p.name AS product_name,
                ol.qty,
                ol.fulfilled_qty,
+               ol.canceled_units,
                ol.status,
                ol.canceled,
                p.stockless,
@@ -566,7 +571,18 @@ export class PendingLinesService {
 
     const lines: LineDiagnosis[] = rows.map((r) => {
       const available = r.product_id ? (stock.get(r.product_id) ?? 0) : null;
-      const remaining = r.qty - r.fulfilled_qty;
+      /*
+       * R1 (TEK TANIM): kalan birim = hedef − teslim edilen; hedef `qty − canceled_units`
+       * (fill-target.ts `remainingUnits`). Ham `qty − fulfilled_qty` yazılıydı → panelden
+       * KALICI iptal edilmiş birimler tanıda hâlâ eksik sayılıyor ve satır "stok yok / kısmi"
+       * gibi işaretleniyordu. Oysa `completeLine` aynı satırı ASLA doldurmaz (hedefi bu
+       * defterden okur) → operatöre kapanmayacak bir iş gösteriliyordu.
+       */
+      const remaining = remainingUnits({
+        qty: Number(r.qty),
+        canceledUnits: r.canceled_units,
+        fulfilledQty: Number(r.fulfilled_qty),
+      });
       const d = this.diagnoseLine(r, order.held, available, remaining);
       return {
         lineId: r.id,

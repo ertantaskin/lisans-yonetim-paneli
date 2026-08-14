@@ -151,8 +151,11 @@ export function TotpCard({
         <form action={confirmAction} className="grid max-w-md gap-3">
           {!showSecret && (
             <p className="text-sm text-muted-foreground">
+              {/* Metin ekrandaki GERÇEK düğme etiketiyle eşitlendi (denetim bulgusu U4):
+                  burada “Kurulumu başlat” yazıyordu ama bu dalda o düğme render edilmiyor;
+                  operatör olmayan bir düğmeyi arıyordu. */}
               Yarım kalmış bir kurulum var. Uygulamanızdaki kodu girerek tamamlayın ya da
-              “Kurulumu başlat” ile yeni bir anahtar üretin.
+              “Yeni anahtar üret” ile baştan başlayın (eski anahtar geçersiz olur).
             </p>
           )}
           <div className="space-y-1.5">
@@ -176,7 +179,20 @@ export function TotpCard({
               <ShieldCheck /> {confirmPending ? 'Doğrulanıyor…' : 'Doğrula ve aç'}
             </Button>
             {!showSecret && (
-              <Button type="submit" variant="outline" formAction={startAction} disabled={startPending}>
+              <Button
+                type="submit"
+                variant="outline"
+                formAction={startAction}
+                /*
+                 * KURTARMA YOLU KİLİTLİYDİ (denetim bulgusu U4): kod alanı `required`
+                 * olduğu için tarayıcı, BU düğmenin submit'ini de doğrulamada bloklıyordu
+                 * — oysa "yeni anahtar üret" tam olarak koda erişemeyen kullanıcının çıkış
+                 * yolu. `formNoValidate` yalnız bu submitter için doğrulamayı atlar;
+                 * "Doğrula ve aç" düğmesinde kod zorunluluğu aynen kalır.
+                 */
+                formNoValidate
+                disabled={startPending}
+              >
                 <KeyRound /> Yeni anahtar üret
               </Button>
             )}

@@ -86,11 +86,19 @@ function shortDay(day: string): string {
     : d.toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' });
 }
 
-/** Oran metni ("142 / 150 · %94,7"). Payda 0 ise yalnız "—". */
-function ratio(part: number, total: number): string {
-  if (total <= 0) return '—';
+/**
+ * Yüzde metni ("%94,7"). Payda 0 ise `null` — ÇAĞIRAN cümleyi kurmaz.
+ *
+ * Eskiden '—' dönüyordu ve çağıran onu cümlenin içine gömüyordu: ölçülen sipariş 0 olan
+ * (ama hâlâ açık siparişi olan) bir pencerede kart ipucu "ölçülenin —'i · stok bekletmedi"
+ * diye okunuyordu (denetim bulgusu U8). `null` dönmek "oran YOK" durumunu tip düzeyinde
+ * zorunlu kılar. Yüzde işareti Türkçe yazımdaki gibi BAŞTA (jsdoc da buna göre düzeltildi;
+ * eski açıklama "142 / 150 · %94,7" diyordu ama fonksiyon hiçbir zaman payı basmıyordu).
+ */
+function ratio(part: number, total: number): string | null {
+  if (total <= 0) return null;
   const pct = Math.round((part / total) * 1000) / 10;
-  return `${pct.toLocaleString('tr-TR')}%`;
+  return `%${pct.toLocaleString('tr-TR')}`;
 }
 
 interface DailyDatum {
@@ -245,6 +253,8 @@ export function ReportsSlaView({ data }: { data: SlaReport }) {
   }
 
   const anyWaited = totals.waited > 0;
+  /** Anında teslim oranı — ölçülen sipariş yoksa `null` (cümle hiç kurulmaz, bkz. `ratio`). */
+  const instantRatio = ratio(totals.instant, totals.measured);
 
   return (
     <div className="space-y-6">
@@ -262,7 +272,14 @@ export function ReportsSlaView({ data }: { data: SlaReport }) {
           value={fmtNum(totals.instant)}
           icon={Clock}
           tone="success"
-          hint={`ölçülenin ${ratio(totals.instant, totals.measured)}'i · stok bekletmedi`}
+          /* Ölçülen sipariş yoksa oran cümlesi KURULMAZ ("ölçülenin —'i" diye okunuyordu).
+             Pencerede hâlâ açık sipariş olabilir → "veri yok" ile "0" karıştırılmasın diye
+             sebebi söylenir. */
+          hint={
+            instantRatio
+              ? `ölçülenin ${instantRatio} kadarı · stok bekletmedi`
+              : 'bu pencerede ölçülen sipariş yok — oran hesaplanamıyor'
+          }
         />
         <StatTile
           label="Stok bekledi"

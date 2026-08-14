@@ -1,7 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { notExpiredCond } from '../assignment/assign';
+import { STANDING_STATUSES } from './standing-statuses';
 
 /**
  * YENİDEN-SİPARİŞ ÖNERİSİ — "tedarik süresi içinde tükenecekler".
@@ -32,6 +34,8 @@ import { rawRows } from '../db/raw-query';
  * emirler varsa (`ordered_at` bilerek NULL). Bu durumda ÖNERİ ÜRETİLMEZ — varsayılan bir
  * süre uydurmak operatöre yanlış bir kesinlik satardı. Satır `status='unknown_lead'` ile
  * listelenir ve arayüz "tedarik süresi bilinmiyor — ilk kapanan emirden sonra hesaplanır" der.
+ * TEK İSTİSNA: eldeki kapasite 0 ise satır `out` olur (bkz. aşağıdaki statü bloğu) — "stok
+ * bitti" tespiti tedarik süresine ihtiyaç duymaz, öneri (miktar) yine üretilmez.
  *
  * ── BİRİM MANTIĞI (MAK / çok kullanımlı) ────────────────────────────────────────────────
  * Stok, satış hızı ve öneri BİRİM (kullanım hakkı) uzayında hesaplanır:
@@ -65,11 +69,13 @@ export const REORDER_ROW_LIMIT = 200;
 
 /**
  * Satır durumu:
- *  - `out`          : elde kullanılabilir birim kalmadı (satış sürüyor) — en acil.
+ *  - `out`          : elde kullanılabilir birim kalmadı (satış sürüyor) — en acil. Tedarik
+ *                     süresi bilinmese de bu statü verilir (öneri miktarı üretilmez).
  *  - `order_now`    : stok yeniden sipariş noktasının altında → ŞİMDİ emir açılmalı.
  *  - `watch`        : hedef stok günü penceresine girdi → yakında gerekecek.
  *  - `ok`           : yeterli.
- *  - `unknown_lead` : tedarik süresi bilinmiyor → öneri üretilmedi (dürüst boşluk).
+ *  - `unknown_lead` : tedarik süresi bilinmiyor → öneri üretilmedi (dürüst boşluk). Stok
+ *                     BİTMİŞSE bu statü verilmez, `out` kazanır (aciliyet gizlenmez).
  */
 export type ReorderStatus = 'out' | 'order_now' | 'watch' | 'ok' | 'unknown_lead';
 
@@ -131,6 +137,41 @@ export interface ReorderReport {
   };
 }
 
+/**
+ * SATIŞ (tüketim) CTE'si — TEK KAYNAK, iki sorgu da bunu kullanır.
+ *
+ * NEDEN AYRI FONKSİYON (denetim bulgusu R2): "son pencerede satışı olan ürün" yüklemi
+ * bu dosyada İKİ KEZ yazılıydı — bir kez burada, bir kez de `excluded.noSalesProducts`
+ * sayacının `NOT EXISTS` alt sorgusunda. İki tanım demek, birine `canceled = false`
+ * eklenip diğerine eklenmediğinde ekranın "listede N ürün var, ayrıca M ürün satışsız"
+ * cümlesinin toplamının tutmaması demektir (bu projede "aynı kavramın iki yüklemi"
+ * sınıfı hata defalarca yanlış sayı üretti).
+ *
+ * PERF: sayaç sorgusundaki `NOT EXISTS` WHERE dalında DEĞİL, `count(*) FILTER (...)`
+ * ifadesinin İÇİNDEYDİ. Postgres sublink pullup'ı yalnız qual (WHERE/JOIN) konumunda
+ * çalışır → agregat FILTER'ının içindeki alt sorgu ÜRÜN BAŞINA bir SubPlan olarak koşuyordu.
+ * Üstelik `order_lines`'ta düz bir `product_id` indeksi YOK (mevcut kısmi indeks statü
+ * yüklemi ister) → her ürün için ayrı bir tarama. Artık tek geçiş: `LEFT JOIN sales`.
+ */
+function salesCte(): SQL {
+  return sql`
+    sales AS (
+      /* Son pencerede TÜKETİLEN birim. Yalnız AYAKTA atamalar (STANDING_STATUSES — reports
+         velocity / reconcile ile AYNI küme) + iptal edilmemiş satırlar; iade/değişimde düşen
+         atama satış sayılmaz.
+         a.created_at FONKSİYONA SARILMAZ → assignments_created_idx kullanılır.
+         DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA. */
+      SELECT ol.product_id AS product_id, coalesce(sum(a.units), 0)::int AS sold_units
+      FROM assignments a
+      JOIN order_lines ol ON ol.id = a.line_id
+      WHERE a.created_at >= now() - make_interval(days => ${REORDER_WINDOW_DAYS}::int)
+        AND a.status IN ${STANDING_STATUSES}
+        AND ol.canceled = false
+        AND ol.product_id IS NOT NULL
+      GROUP BY ol.product_id
+    )`;
+}
+
 interface RawReorderRow {
   product_id: string;
   sku: string;
@@ -157,27 +198,16 @@ export class ReorderService {
       rawRows<RawReorderRow>(
         this.db,
         sql`
-          WITH sales AS (
-            /* Son pencerede TÜKETİLEN birim. Yalnız AYAKTA atamalar (reports.velocity ile aynı
-               küme) + iptal edilmemiş satırlar; iade/değişimde düşen atama satış sayılmaz.
-               a.created_at FONKSİYONA SARILMAZ → assignments_created_idx kullanılır.
-               DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA. */
-            SELECT ol.product_id AS product_id, coalesce(sum(a.units), 0)::int AS sold_units
-            FROM assignments a
-            JOIN order_lines ol ON ol.id = a.line_id
-            WHERE a.created_at >= now() - make_interval(days => ${w}::int)
-              AND a.status IN ('active', 'suspended', 'expired')
-              AND ol.canceled = false
-              AND ol.product_id IS NOT NULL
-            GROUP BY ol.product_id
-          ),
+          WITH ${salesCte()},
           stock AS (
-            /* Atanabilir KAPASİTE — assign.ts'in notExpiredCond yüklemiyle BİREBİR aynı.
-               (Süresi geçmiş kalem sayılırsa tükenme tahmini olduğundan uzun çıkar.) */
+            /* Atanabilir KAPASİTE — assign.ts'in notExpiredCond yüklemi (TEK KAYNAK) ile.
+               Eskiden koşul burada ELLE yazılıydı: bugün semantik olarak aynıydı ama
+               helper'ın var olma sebebi tam olarak bu kopyayı engellemekti (süre kuralı
+               ileride değişirse rapor sessizce sapardı). */
             SELECT li.product_id, coalesce(sum(li.max_uses - li.use_count), 0)::int AS available
             FROM license_items li
             WHERE li.status = 'available'
-              AND (li.expires_at IS NULL OR li.expires_at > now())
+              AND ${notExpiredCond('li')}
             GROUP BY li.product_id
           ),
           open_po AS (
@@ -250,21 +280,18 @@ export class ReorderService {
       rawRows<{ stockless_products: number; no_sales_products: number }>(
         this.db,
         sql`
+          /* TEK GEÇİŞ (denetim R2): ürün başına korele SubPlan yerine sales CTE'siyle
+             LEFT JOIN. "s.product_id IS NULL" eski NOT EXISTS ile BİREBİR aynı kümedir —
+             sales satırı yalnız pencerede EN AZ BİR uygun atama varsa üretilir. Yüklem artık
+             ana listeyle AYNI CTE'den geliyor (iki tanım kalmadı).
+             DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA. */
+          WITH ${salesCte()}
           SELECT
             count(*) FILTER (WHERE p.stockless = true)::int AS stockless_products,
-            count(*) FILTER (
-              WHERE p.stockless = false
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM assignments a
-                  JOIN order_lines ol ON ol.id = a.line_id
-                  WHERE ol.product_id = p.id
-                    AND ol.canceled = false
-                    AND a.created_at >= now() - make_interval(days => ${w}::int)
-                    AND a.status IN ('active', 'suspended', 'expired')
-                )
-            )::int AS no_sales_products
-          FROM products p;
+            count(*) FILTER (WHERE p.stockless = false AND s.product_id IS NULL)::int
+              AS no_sales_products
+          FROM products p
+          LEFT JOIN sales s ON s.product_id = p.id;
         `,
       ),
     ]);
@@ -305,8 +332,8 @@ export class ReorderService {
       let reorderPointUnits: number | null = null;
       let suggestedUnits: number | null = null;
       let suggestedKeys: number | null = null;
-      let status: ReorderStatus = 'unknown_lead';
 
+      // ÖNERİ (miktar) tedarik süresine BAĞLIDIR: `leadDays` yoksa hiçbir sayı uydurulmaz.
       if (leadDays != null) {
         reorderPointUnits = Math.ceil(dailyRate * (leadDays + SAFETY_DAYS));
         const targetUnits = Math.ceil(
@@ -314,15 +341,36 @@ export class ReorderService {
         );
         suggestedUnits = Math.max(0, targetUnits - available - openOrderUnits);
         suggestedKeys = Math.ceil(suggestedUnits / unitsPerKey);
+      }
 
-        if (available <= 0) status = 'out';
-        else if (available <= reorderPointUnits) status = 'order_now';
-        else if (
-          daysRemaining != null &&
-          daysRemaining <= leadDays + SAFETY_DAYS + TARGET_COVER_DAYS
-        ) {
-          status = 'watch';
-        } else status = 'ok';
+      /*
+       * DURUM — `out` kararı tedarik süresinden BAĞIMSIZ (denetim bulgusu R8).
+       *
+       * KUSUR: statü yalnız `leadDays != null` dalında hesaplanıyordu. Yani satışı SÜREN ama
+       * eldeki kapasitesi 0'a düşmüş bir ürün, tedarikçisinin kapanmış bir emri yoksa
+       * (ör. yalnız Stok Girişi'nden açılan otomatik emirler → ordered_at NULL) `unknown_lead`
+       * kalıyor ve `counts.out` sayacında GÖRÜNMÜYORDU. Ekranın en acil kutusu ("Stok bitti: 0")
+       * gerçekte tükenmiş ürünler varken sıfır gösteriyordu — sayaç operatöre YALAN söylüyordu.
+       *
+       * "Stok bitti" tespiti tedarik süresi bilgisine ihtiyaç DUYMAZ: eldeki kapasite 0 ve
+       * pencerede satış var (bu listeye zaten yalnız satışı olan ürünler giriyor). Öneri
+       * (miktar) yine üretilmez — `suggestedKeys` null kalır ve arayüz '—' basar; yani
+       * "acil" bilgisi verilirken uydurma bir miktar satılmaz.
+       */
+      let status: ReorderStatus;
+      if (available <= 0) {
+        status = 'out';
+      } else if (leadDays == null || reorderPointUnits == null) {
+        status = 'unknown_lead';
+      } else if (available <= reorderPointUnits) {
+        status = 'order_now';
+      } else if (
+        daysRemaining != null &&
+        daysRemaining <= leadDays + SAFETY_DAYS + TARGET_COVER_DAYS
+      ) {
+        status = 'watch';
+      } else {
+        status = 'ok';
       }
 
       counts[status] += 1;

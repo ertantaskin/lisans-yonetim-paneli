@@ -287,7 +287,9 @@ export default async function DeploymentsPage() {
           </CardHeader>
           <CardContent>
             {owner ? (
-              <DeployForm />
+              /* `busy`: yedek/dağıtım AYNI kuyruğu paylaşır → aktif iş varken düğme baştan
+                 kapanır (yedek formuyla tutarlı; eskiden tıklanıp 409 hatası dönüyordu). */
+              <DeployForm busy={hasActiveDeployment} />
             ) : (
               <Alert>
                 <Lock />

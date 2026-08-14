@@ -58,7 +58,7 @@ export interface CreateAdjustmentInput {
 /**
  * Toplu düzeltme sonucu. `affected` GERÇEKTEN stoktan düşen kalem sayısıdır; `skipped`
  * istekte olup dokunulamayanlar (araya giren bir sipariş kalemi kapmış / zaten geçersiz /
- * başka ürüne ait). İstemci ikisini de gösterir — "N kayıt eklendi" deyip sessizce 3 kalemi
+ * başka ürüne ait / müşteride CANLI ataması var — C6). İstemci ikisini de gösterir — "N kayıt eklendi" deyip sessizce 3 kalemi
  * atlamak, bozuk anahtarın müşteriye gitmeye devam etmesi demektir.
  */
 export interface AdjustmentResult {
@@ -321,13 +321,36 @@ export class SupplyOpsService {
       // Parti durumu → recalled.
       await tx.execute(sql`UPDATE batches SET status = 'recalled' WHERE id = ${batchId};`);
 
-      // Satılmamış (available) lisanslar → voided; id + product_id + KALAN KAPASİTE geri al.
-      // remaining = max_uses - use_count: tek-kullanımda 1 (max_uses=1, use_count=0 → davranış
-      // korunur); multi/MAK'ta yok edilen gerçek kapasite (fire miktarı hardcoded 1 değil).
+      /*
+       * Satılmamış (available) + TÜKENMİŞ (depleted) lisanslar → voided; id + product_id +
+       * KALAN KAPASİTE geri al. remaining = max_uses - use_count: tek-kullanımda 1
+       * (max_uses=1, use_count=0 → davranış korunur); multi/MAK'ta yok edilen gerçek kapasite.
+       *
+       * C5 — NEDEN 'depleted' DE DAHİL (geri çekilen partiden yeniden satış açığı):
+       * Eskiden yalnız `available` kalemler void'leniyordu. MAK/çok-kullanımlık bir anahtar
+       * kapasitesi dolunca `depleted` olur ve recall ona DOKUNMUYORDU; sonra MEŞRU bir kapasite
+       * iadesi (değişim / adet-düşür / recall-bulkReplace yollarındaki
+       * `use_count -= units, depleted → available`) o anahtarı SATIŞ HAVUZUNA geri sokuyordu →
+       * geri çekilmiş (kusurlu) partiden yeni müşteriye anahtar teslim edilebiliyordu.
+       * `voided` durumundaki kalem o CASE ifadesinin ('depleted' → 'available') dışında kalır,
+       * yani kapasite iadesi artık onu diriltemez.
+       *
+       * NEDEN BURADA, `assign.ts` YÜKLEMİNDE DEĞİL: tek-kaynak açısından atama sorgusuna
+       * "partisi recalled değil" koşulu eklemek daha temiz olurdu; ama o sorgu sistemin en sıcak
+       * yolu (FOR UPDATE SKIP LOCKED) ve `batches`'e JOIN + yeni bir index gerektirirdi. Recall
+       * NADİR ve TOPLU bir olaydır → durumu kalem üzerinde bir kez yazmak, her atamada bir join
+       * ödemekten hem ucuz hem geriye dönük güvenli (mevcut atama yüklemleri `status='available'`
+       * zaten süzüyor). Şema/migration GEREKMEZ.
+       *
+       * MÜŞTERİYİ ETKİLEMEZ: `getDeliveries` atama durumuna bakar, `license_items.status`'a
+       * değil → müşterideki canlı lisans çalışmaya devam eder (§15 "insan onaylar": elle
+       * değiştirme `soldNeedingReplacement` ile raporlanır). `dead_count`/`customer_count`
+       * sayaçları da `status <> 'available'` tabanlı olduğundan değişmez.
+       */
       const voided = await rawRows<{ id: string; product_id: string; remaining: number }>(tx, sql`
         UPDATE license_items
         SET status = 'voided'
-        WHERE batch_id = ${batchId} AND status = 'available'
+        WHERE batch_id = ${batchId} AND status IN ('available', 'depleted')
         RETURNING id, product_id, (max_uses - use_count) AS remaining;
       `);
 
@@ -350,16 +373,25 @@ export class SupplyOpsService {
       const soldNeedingReplacement = Number(soldRows[0]?.active_c ?? 0);
       const customerHeld = Number(soldRows[0]?.live_c ?? 0);
 
-      // Her void edilen lisans için sebepli stok düzeltmesi (§12 — sebepsiz değişiklik yok).
-      // qty = kalan kapasite (tek-kullanım→1, multi/MAK→max_uses-use_count) → CostsService.wastage
-      // gerçek yok edilen birim(ler)i değerler, sabit 1 değil. Defansif: <=0 ise 1.
+      /*
+       * Her void edilen lisans için sebepli stok düzeltmesi (§12 — sebepsiz değişiklik yok).
+       * qty = kalan kapasite (tek-kullanım→1, multi/MAK→max_uses-use_count) → CostsService.wastage
+       * gerçek yok edilen birim(ler)i değerler, sabit 1 değil.
+       *
+       * C5 yan etkisi: kümeye giren `depleted` MAK anahtarında remaining = 0'dır — HİÇBİR kapasite
+       * ziyan olmadı, hepsi zaten SATILDI. Eski defansif `<=0 ise 1` kuralı burada YANLIŞ olurdu
+       * (satılmış her MAK anahtarı için 1 birim hayalet fire → zayi/maliyet raporu şişer). Bu
+       * yüzden taban 0'a çekildi; `available` kalemde davranış BİREBİR aynı (o kalemde
+       * use_count < max_uses olduğundan remaining her zaman ≥ 1). Kayıt yine YAZILIR: karantina
+       * ekranı iptal SEBEBİNİ `stock_adjustments`ten okur, satır atlanırsa sebep '—' görünürdü.
+       */
       if (voided.length > 0) {
         await tx.insert(stockAdjustments).values(
           voided.map((v) => ({
             productId: v.product_id,
             licenseItemId: v.id,
             action: 'recall' as const,
-            qty: Number(v.remaining) > 0 ? Number(v.remaining) : 1,
+            qty: Math.max(0, Number(v.remaining)),
             reason,
             actor,
           })),
@@ -544,7 +576,8 @@ export class SupplyOpsService {
    * Sebepli stok düzeltme (§12) — TEKİL ya da TOPLU.
    *
    * `action` 'void'/'damage' ise seçilen lisans satır(lar)ı 'voided'e çekilir (yalnız
-   * `available` iken). Kalem başına AYRI bir `stock_adjustments` satırı yazılır: karantina
+   * `available` iken VE müşteride canlı ataması yokken — C6, tekil yolla parite).
+   * Kalem başına AYRI bir `stock_adjustments` satırı yazılır: karantina
    * ekranı sebebi `license_item_id` üzerinden okur, tek toplu satır yazılsaydı iptal edilen
    * anahtarların hiçbirinin sebebi görünmezdi. Hepsi TEK transaction'da.
    *
@@ -609,20 +642,39 @@ export class SupplyOpsService {
         ids.map((v) => sql`${v}::uuid`),
         sql`, `,
       );
+      /*
+       * C6 — "TESLİM EDİLMİŞ Mİ" KONTROLÜ (tekil yolla parite).
+       *
+       * Tekil `StockService.voidLicenseItem` canlı atama (`active|suspended`) varsa 409 verir;
+       * toplu yol yalnız `status='available'` bakıyordu. Bu ikisi MAK/çok-kullanımlıkta AYNI ŞEY
+       * DEĞİLDİR: kısmen satılmış bir MAK anahtarı kapasitesi bitene kadar 'available' KALIR.
+       * Yani müşterilerde canlı aktivasyonları varken toplu seçimle 'voided' yapılabiliyordu —
+       * anahtar envanterden düşer, zayi olarak değerlenir ve karantinada "ölü" görünür, oysa
+       * müşteri onu kullanmaya devam eder (tutarsız defter + yanlış maliyet).
+       *
+       * `NOT EXISTS` UPDATE'in KENDİ koşulunda durur (ayrı ön SELECT + TOCTOU penceresi yok);
+       * atlananlar zaten `requested/affected/skipped` ile dürüstçe raporlanıyor — tekil yoldaki
+       * 409 mesajının toplu karşılığı budur.
+       */
       const updated = await rawRows<{ id: string; max_uses: number; use_count: number }>(tx, sql`
         UPDATE license_items
         SET status = 'voided'
         WHERE id IN (${idList})
           AND product_id = ${input.productId}
           AND status = 'available'
+          AND NOT EXISTS (
+            SELECT 1 FROM assignments a
+            WHERE a.license_item_id = license_items.id
+              AND a.status IN ('active', 'suspended')
+          )
         RETURNING id, max_uses, use_count;
       `);
 
       if (updated.length === 0) {
         throw new BadRequestException(
           ids.length === 1
-            ? 'Lisans satırı bulunamadı ya da satılabilir (available) durumda değil'
-            : 'Seçilen lisansların hiçbiri stoktan düşülemedi (satılmış ya da zaten geçersiz olabilir)',
+            ? 'Lisans satırı bulunamadı, satılabilir (available) durumda değil ya da müşteride canlı bir ataması var'
+            : 'Seçilen lisansların hiçbiri stoktan düşülemedi (satılmış, müşteride canlı ya da zaten geçersiz olabilir)',
         );
       }
 

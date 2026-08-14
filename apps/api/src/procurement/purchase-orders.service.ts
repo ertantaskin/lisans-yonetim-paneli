@@ -17,16 +17,43 @@ export interface PurchaseOrderRow extends PurchaseOrder {
 }
 
 /**
+ * Emir listesi zarfı (denetim bulgusu R3 — sessiz kırpma yasak).
+ *
+ * `list()` eskiden DÜZ DİZİ döndürüyordu ve LIMIT'i YOKTU. Bu tablo artık HER STOK GİRİŞİNDE
+ * satır kazanıyor (otomatik teslim-alma emri) → ekran zamanla tüm geçmişi çekip tam sıralama
+ * yapacaktı. Tavan koyarken kırpmayı GİZLEMEK bu projede yasak (sessiz LIMIT daha önce
+ * "o kayıt yok" dedirtmişti) → `truncated` ile yüzeye taşınır.
+ */
+export interface PurchaseOrderList {
+  items: PurchaseOrderRow[];
+  /** true ise EKRANDAKİ liste EKSİKTİR (daha eski emirler var). */
+  truncated: boolean;
+}
+
+/**
  * PurchaseOrdersService — satın alma emri (§12). Teslim alma (receive) emri
  * qtyReceived'i artırır, partial/received'a çeker ve YENİ bir parti (batch) kaydı
  * açar. Gerçek key'lerin stok girişi ayrıdır (stock.import; batchId ile bağlanır).
  */
 @Injectable()
 export class PurchaseOrdersService {
+  /**
+   * Liste tavanı. Otomatik teslim-alma emirleri yüzünden tablo her stok girişinde büyür;
+   * TAVAN+1 çekilir ("tavan+1 çek, JS'te kırp" — supply-ops.listBatches / suppliers karnesi
+   * deseni) ki tam TAVAN kadar emir varken YANLIŞ kırpma alarmı basılmasın.
+   */
+  static readonly LIST_LIMIT = 500;
+
   constructor(@Inject(DB) private readonly db: Database) {}
 
-  /** Tedarikçi adı + ürün sku/name JOIN'li liste. */
-  async list(): Promise<PurchaseOrderRow[]> {
+  /**
+   * Tedarikçi adı + ürün sku/name JOIN'li liste (en yeni önce).
+   *
+   * TIE-BREAK (`id DESC`) ZORUNLU: aynı transaction'da açılan emirler (Stok Girişi'nin
+   * otomatik emri) BİREBİR aynı `created_at` damgasını taşır — tie-break olmadan LIMIT
+   * penceresinin sınırı keyfi olurdu (aynı veri, iki farklı çağrıda farklı satır seti).
+   */
+  async list(): Promise<PurchaseOrderList> {
     const rows = await this.db
       .select({
         po: purchaseOrders,
@@ -37,14 +64,20 @@ export class PurchaseOrdersService {
       .from(purchaseOrders)
       .innerJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))
       .innerJoin(products, eq(purchaseOrders.productId, products.id))
-      .orderBy(desc(purchaseOrders.createdAt));
+      .orderBy(desc(purchaseOrders.createdAt), desc(purchaseOrders.id))
+      .limit(PurchaseOrdersService.LIST_LIMIT + 1);
 
-    return rows.map((r) => ({
-      ...r.po,
-      supplierName: r.supplierName,
-      productSku: r.productSku,
-      productName: r.productName,
-    }));
+    // Sinyal HAM satır sayısından türer; tespit için çekilen fazladan satır YANITA GİRMEZ.
+    const truncated = rows.length > PurchaseOrdersService.LIST_LIMIT;
+    return {
+      items: rows.slice(0, PurchaseOrdersService.LIST_LIMIT).map((r) => ({
+        ...r.po,
+        supplierName: r.supplierName,
+        productSku: r.productSku,
+        productName: r.productName,
+      })),
+      truncated,
+    };
   }
 
   async getById(id: string): Promise<PurchaseOrderRow> {

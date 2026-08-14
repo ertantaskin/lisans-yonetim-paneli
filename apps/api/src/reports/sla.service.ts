@@ -37,7 +37,10 @@ import { rawRows } from '../db/raw-query';
  *  4. DEĞİŞİMLE verilen taze anahtar (`assignment_history.assignment_id` = o atama): ilk
  *     teslimat çoktan yapılmıştır; değişim tarihi "teslim süresi" sayılırsa p95 çöker.
  *     `assignment_history_assignment_idx` sayesinde NOT EXISTS kontrolü indexlidir.
- *  Üçü de yanıtta `excluded` altında SAYIYLA raporlanır (sessiz eleme yok).
+ *  Üçü de yanıtta `excluded` altında SAYIYLA raporlanır (sessiz eleme yok). Buna ek olarak
+ *  ölçülebilir satırı HİÇ kalmayan sipariş sayısı da (2+3'ün SİPARİŞ karşılığı)
+ *  `excluded.ordersWithoutMeasurableLines` ile döner — o siparişler ne `measured`'a ne
+ *  `stillOpen`'a girer, yani sayısı verilmezse raporda sessizce yok olurlar.
  *
  * ── MAK / ÇOK KULLANIMLI ÜRÜNLER ─────────────────────────────────────────────────────────
  * "Sipariş tamamen teslim edildi mi?" sorusu BİRİM uzayında sorulur: hedef = `qty −
@@ -116,6 +119,16 @@ export interface SlaReport {
     heldOrders: number;
     canceledLines: number;
     bonusLines: number;
+    /**
+     * ÖLÇÜLEBİLİR SATIRI HİÇ OLMAYAN sipariş (denetim bulgusu R11): `order_wait` CTE'si
+     * `line_delivery` ile INNER JOIN yaptığı için satırı olmayan ya da TÜM satırları
+     * iptal/bonus olan sipariş `measured`'a da `stillOpen`'a da GİRMEZ — sessizce yok
+     * olurdu. Eleme SATIR sayısıyla (canceledLines/bonusLines) raporlanıyordu ama
+     * SİPARİŞ olarak değil; "dün 40 sipariş vardı, raporda 37 var" farkı açıklanamıyordu.
+     * Bu sayaç o farkı görünür kılar. (Bunlar "açık" DEĞİLDİR: tamamı iptal edilmiş bir
+     * sipariş bekleyen iş değildir → `stillOpen`'a eklemek de yanlış olurdu.)
+     */
+    ordersWithoutMeasurableLines: number;
   };
 }
 
@@ -236,7 +249,12 @@ export class SlaService {
           ) AS last_delivery_at
         FROM scoped_lines sl
       ),
-      /* Sipariş bazlı: tüm satırları tamamlandıysa ölçülebilir; bekleme = son teslim − sipariş. */
+      /* Sipariş bazlı: tüm satırları tamamlandıysa ölçülebilir; bekleme = son teslim − sipariş.
+         JOIN bilerek INNER: ölçülebilir SATIRI olmayan sipariş (satırsız / tüm satırları
+         iptal ya da bonus) bir "bekleme" üretemez; ortalamaya 0 ya da NULL olarak sokmak
+         raporu bozardı. Ama SESSİZ kaybolmasın diye SAYISI ayrıca raporlanır
+         (excluded.ordersWithoutMeasurableLines — aşağıdaki excluded_counts).
+         DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA. */
       order_wait AS (
         SELECT
           so.id AS order_id,
@@ -311,6 +329,7 @@ export class SlaService {
           held_orders: number;
           canceled_lines: number;
           bonus_lines: number;
+          unmeasurable_orders: number;
         }
       >(
         this.db,
@@ -334,7 +353,14 @@ export class SlaService {
                 JOIN orders o ON o.id = ol.order_id, win
                 WHERE o.created_at >= win.from_ts AND o.created_at < win.to_ts
                   AND ol.remote_line_id LIKE 'bonus:%'
-              ) AS bonus_lines
+              ) AS bonus_lines,
+              (
+                /* Kapsamdaki ama ÖLÇÜLEBİLİR SATIRI OLMAYAN sipariş — order_wait'in INNER
+                   JOIN'inden düşenlerin TAM KARŞILIĞI (aynı scoped_lines yüklemi üzerinden
+                   NOT EXISTS): satırsız sipariş ya da tüm satırları iptal/bonus olanlar. */
+                SELECT count(*)::int FROM scoped_orders so
+                WHERE NOT EXISTS (SELECT 1 FROM scoped_lines sl WHERE sl.order_id = so.id)
+              ) AS unmeasurable_orders
           )
           SELECT
             ${STAT_COLS},
@@ -342,7 +368,8 @@ export class SlaService {
             (SELECT to_ts FROM win) AS to_ts,
             (SELECT held_orders FROM excluded_counts) AS held_orders,
             (SELECT canceled_lines FROM excluded_counts) AS canceled_lines,
-            (SELECT bonus_lines FROM excluded_counts) AS bonus_lines
+            (SELECT bonus_lines FROM excluded_counts) AS bonus_lines,
+            (SELECT unmeasurable_orders FROM excluded_counts) AS unmeasurable_orders
           FROM order_wait;
         `,
       ),
@@ -439,6 +466,7 @@ export class SlaService {
         heldOrders: Number(t?.held_orders ?? 0),
         canceledLines: Number(t?.canceled_lines ?? 0),
         bonusLines: Number(t?.bonus_lines ?? 0),
+        ordersWithoutMeasurableLines: Number(t?.unmeasurable_orders ?? 0),
       },
     };
   }

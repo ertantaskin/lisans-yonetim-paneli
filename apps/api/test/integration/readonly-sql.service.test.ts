@@ -180,6 +180,21 @@ describe('ReadonlySqlService (NL→SQL salt-okunur çalıştırma)', () => {
     await expectRejected('SELECT 1 AS key_snapshot');
   });
 
+  it('admin_users.totp_secret_enc kolonu reddedilir (denetim D3 — \\b sınırı kaçağı)', async () => {
+    // KUSUR: 'hmac_secret_enc' kalıbı bunu YAKALAMIYORDU — \b sınırı '_' üzerinde eşleşmez
+    // ('totp_secret_enc' içinde 'secret_enc'ten önce kelime-karakteri '_' var); tıpkı
+    // 'api_key_hash' → 'api_key_hash_prev' kaçağı gibi. Tablo kapısı (admin_users) bunu
+    // zaten kesiyordu, ama kolon adı bir GÖRÜNÜM/alias üzerinden de gelebilir.
+    // (a) tablo adını hiç yazmayan metin kapısı:
+    await expectRejected('SELECT totp_secret_enc FROM some_view');
+    // (b) takma ad olarak da geçemez — DÖNEN kolon süzgeci (SECRET_COLUMN_SET) aynı diziden
+    //     beslendiği için bu satır, sabitin enforcement yoluna GERÇEKTEN bağlı olduğunu kanıtlar
+    //     (bu projede "tanımlı ama çağrılmayan" bir güvenlik regex'i sessiz no-op olarak yaşamıştı).
+    await expectRejected('SELECT 1 AS totp_secret_enc');
+    // (c) tablo kapısı da yerinde (regresyon):
+    await expectRejected('SELECT id FROM admin_users');
+  });
+
   it('unicode-escape sözdizimi (U&"..." / U&\'...\') reddedilir — denylist obfuscation kapısı', async () => {
     // U&'\0061dmin_users' gibi kod-noktası kaçışı denylist ADlarını gizleyip TÜM metin
     // denylist'lerini (tablo/kolon/fonksiyon) atlatabilir → sözdizimini tümden reddet.

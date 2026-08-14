@@ -20,6 +20,12 @@ export interface AnonymizeResult {
    * mesaj gövdesi serbest-metin PII (e-posta/ad) taşıyabilir → "unutulma hakkı" kapsamında maskelenir.
    */
   anonymizedMessages: number;
+  /**
+   * Maskelenen kayıtlı görünüm (saved_views) sayısı (denetim D5/KVKK). `query` operatörün
+   * ADRES ÇUBUĞUNU birebir sakladığı için müşteri e-postası taşıyabilir (/customers araması
+   * tasarımca e-posta ile yapılır) → "unutulma hakkı" bu kasayı da kapsamalı.
+   */
+  anonymizedSavedViews: number;
   redactedEmail: string;
 }
 
@@ -58,6 +64,24 @@ export class ComplianceService {
     // Regex meta-karakterleri (. + vb.) JS'te kaçırılır; 'i' bayrağı `original`ı da gereksiz kılar.
     // redacted düz-metindir ('\'/'&'/backref içermez) → değiştirme dizesi güvenli.
     const emailRe = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    /**
+     * (Denetim D5) saved_views.query için AYRI desen: orada e-posta URL-KODLU durur.
+     * `URLSearchParams.toString()` '@'yi '%40', '+'yı '%2B' yapar → düz `emailRe` bu kasayı
+     * KAÇIRIR. Üç varyantı alternasyonla kapsıyoruz: ham · yalnız '@' kodlanmış · tam
+     * `encodeURIComponent`. '%' regex meta-karakteri DEĞİL, ek kaçış gerekmez.
+     * DÜRÜSTLÜK: bu best-effort'tur — egzotik yüzde-kodlaması (ör. büyük harfli olmayan
+     * kodlama, form-urlencoded '*'/'(' varyantları) kapsanmaz; kalan risk operatörün kendi
+     * kaydettiği bir süzgeç dizesidir, müşteriye giden bir yüzey değildir.
+     */
+    const savedViewVariants = [
+      normalized,
+      normalized.replace(/@/g, '%40'),
+      encodeURIComponent(normalized),
+    ];
+    const savedViewRe = [...new Set(savedViewVariants)]
+      .map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
 
     return this.db.transaction(async (tx) => {
       // orders.customer_email maskele (lowercase eşleştir; zaten maskeliyse etkilenmez).
@@ -139,6 +163,35 @@ export class ComplianceService {
       `);
       const anonymizedSecurityEvents = securityRows.length;
 
+      /**
+       * saved_views.query (denetim D5 / KVKK) — "kayıtlı görünüm" operatörün ADRES ÇUBUĞUNU
+       * BİREBİR saklar (`apps/admin/components/saved-views-menu.tsx`: `?${searchParams}`) ve
+       * menü /customers + /quarantine/records ekranlarına bağlıdır. /customers araması
+       * TASARIMCA e-posta ile yapılır (`?q=musteri@ornek.test`) → müşteri PII'si bu kasada
+       * KALICI olarak durur ve anonymize onu HİÇ görmüyordu ("PII maskelendi" raporu eksik
+       * kalıyordu).
+       *
+       * KAPSAM (dürüstlük): TAM lisans anahtarı bu yolla sızmaz — envanter araması React
+       * state'inde yaşar, adrese yazılmaz. Maskelenen şey e-posta PII'sidir.
+       *
+       * `name` (operatörün verdiği görünen ad) KAPSAM DIŞI: serbest metindir ama operatörün
+       * kendi etiketidir; e-posta yapıştırılmışsa aynı desen orada da çalışırdı — bilinçli
+       * olarak dokunulmuyor ki görünüm adları (operasyonel kimlik) bozulmasın.
+       *
+       * WHERE ~* : yalnız gerçekten adres geçen satır sayılır → idempotent (2. çağrıda 0).
+       * Maske düz metindir; query içine kodlanmadan yazılır (round-trip sadakati DEĞİL,
+       * PII imhası hedeflenir — görünüm yeniden yüklenirse yalnız "sonuç yok" verir).
+       */
+      const savedViewRows = await rawRows<{ id: string }>(tx, sql`
+        UPDATE saved_views
+        SET query = regexp_replace(query, ${savedViewRe}, ${redacted}, 'gi')
+        -- ::text AÇIK cast: belirsiz parametre tipi (unknown) '~*' çözümünü şaşırtmasın
+        -- (security_events'teki strpos cast'iyle aynı gerekçe).
+        WHERE query ~* ${savedViewRe}::text
+        RETURNING id;
+      `);
+      const anonymizedSavedViews = savedViewRows.length;
+
       // customers profil satırını sil (kalıcı meta — etiket/not — PII taşır).
       await tx.execute(sql`DELETE FROM customers WHERE lower(email) = ${normalized};`);
 
@@ -150,6 +203,7 @@ export class ComplianceService {
         anonymizedEmails,
         anonymizedSecurityEvents,
         anonymizedMessages,
+        anonymizedSavedViews,
       });
       await tx.execute(sql`
         INSERT INTO audit_log (action, actor, target_type, target_id, meta)
@@ -159,7 +213,8 @@ export class ComplianceService {
       this.logger.warn(
         `KVKK anonimleştirme: ${anonymizedOrders} sipariş + ${anonymizedReplacements} değişim + ` +
           `${anonymizedEmails} mail + ${anonymizedSecurityEvents} güvenlik kaydı + ` +
-          `${anonymizedMessages} destek mesajı maskelendi (aktör=${actor})`,
+          `${anonymizedMessages} destek mesajı + ${anonymizedSavedViews} kayıtlı görünüm ` +
+          `maskelendi (aktör=${actor})`,
       );
       return {
         anonymizedOrders,
@@ -167,6 +222,7 @@ export class ComplianceService {
         anonymizedEmails,
         anonymizedSecurityEvents,
         anonymizedMessages,
+        anonymizedSavedViews,
         redactedEmail: redacted,
       };
     });

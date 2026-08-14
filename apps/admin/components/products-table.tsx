@@ -293,6 +293,13 @@ export function ProductsTable({
       searchPlaceholder="Ürün adı veya SKU…"
       facets={facets}
       initialSorting={[{ id: 'availableStock', desc: false }]}
+      /* Süzgeçler adres çubuğuna yazılır (`tq`/`tf.*`/`tsort` — sayfanın kendi `?category=`
+         ve `?q=` parametreleriyle çakışmaz, bkz. data-table/url-state.ts).
+         GEREKÇE (denetim bulgusu U1): bu ekranda "Görünümler" menüsü var. Sync olmadan
+         operatörün tabloya yazdığı arama/facet adrese girmiyordu → `?category=X` dolu
+         olduğu için menü uyarı da vermiyor, kaydedilen görünüm geri yüklendiğinde FARKLI
+         bir liste geliyordu (sessiz veri kaybı sınıfı). */
+      syncUrl
       emptyLabel="Ürün yok."
     />
   );

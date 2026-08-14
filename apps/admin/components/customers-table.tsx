@@ -164,6 +164,11 @@ export function CustomersTable({
       searchColumnId="email"
       searchPlaceholder="E-posta ara…"
       initialSorting={[{ id: 'lastOrderAt', desc: true }]}
+      /* Süzgeçler adres çubuğuna yazılır (`tq`/`tsort`). Sayfanın KENDİ `?q=` sunucu araması
+         ve `?site=` süzgeci AYRI anahtarlardır (url-state.ts önekleri) → biri diğerini ezmez.
+         GEREKÇE (denetim bulgusu U1): `/customers?site=X` adresinde tabloya yazılan arama
+         adrese girmediği için kaydedilen "Görünüm" uyarısız ve EKSİK oluyordu. */
+      syncUrl
       emptyLabel={siteScoped ? 'Bu sitenin müşterisi yok.' : 'Henüz müşteri yok.'}
     />
   );

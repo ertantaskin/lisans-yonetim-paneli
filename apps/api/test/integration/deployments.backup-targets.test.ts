@@ -69,6 +69,23 @@ describe('DeploymentsService — yedek hedefleri (integration)', () => {
     `);
   }
 
+  /** Belirtilen süredir 'running' takılı bir kayıt üretir (zombi eşiği senaryoları). */
+  async function seedRunning(target: string, agoMinutes: number): Promise<string> {
+    const secs = agoMinutes * 60;
+    const ins = await db.execute(sql`
+      INSERT INTO deployments (target, status, requested_by, started_at, created_at)
+      VALUES (${target}, 'running', ${actor},
+              now() - make_interval(secs => ${secs}), now() - make_interval(secs => ${secs}))
+      RETURNING id
+    `);
+    return (ins[0] as { id: string }).id;
+  }
+
+  async function statusOf(id: string): Promise<string> {
+    const rows = await db.execute(sql`SELECT status FROM deployments WHERE id = ${id}`);
+    return (rows[0] as { status: string }).status;
+  }
+
   beforeAll(async () => {
     ({ db, end } = makeDb());
     svc = new DeploymentsService(db as never);
@@ -172,24 +189,87 @@ describe('DeploymentsService — yedek hedefleri (integration)', () => {
     await svc.finish(b2.id, 'success', {});
   });
 
-  it('30dk takılı yedek işi otomatik "failed" olur (self-heal, kilit açılır)', async () => {
-    const ins = await db.execute(sql`
-      INSERT INTO deployments (target, status, requested_by, started_at, created_at)
-      VALUES ('backup-drill', 'running', ${actor},
-              now() - interval '40 minutes', now() - interval '40 minutes')
-      RETURNING id
-    `);
-    const stuckId = (ins[0] as { id: string }).id;
+  it('takılı DAĞITIM işi 30dk sonra otomatik "failed" olur (self-heal, kilit açılır)', async () => {
+    const stuckId = await seedRunning('api admin', 40);
 
     expect(await svc.claimNext(BACKUP_RUNNER_TARGETS)).toBeNull();
-
-    const after = await db.execute(sql`SELECT status FROM deployments WHERE id = ${stuckId}`);
-    expect((after[0] as { status: string }).status).toBe('failed');
+    expect(await statusOf(stuckId)).toBe('failed');
 
     // Zombi temizlendi → yeni yedek isteği yeniden kabul edilir.
     const d = await svc.request('backup', actor);
     expect(d.status).toBe('pending');
     await closeActive(d.id);
+  });
+
+  /**
+   * O2 REGRESYONU — zombi zaman aşımı HEDEFE göre.
+   *
+   * Eskiden tek bir 30dk eşiği vardı: RTO hedefi 2 SAAT olan bir tatbikat 30. dakikada
+   * "failed" damgalanıp tek-aktif-iş kilidini açıyordu; ardından `deploy.sh` tatbikatla
+   * AYNI ANDA koşabiliyordu (docker build/up ⟷ pg_restore). Bu test o eşik ayrımını kilitler.
+   */
+  it('O2: uzun süren TATBİKAT 30dk-2sa arasında zombi sayılmaz; eşiği aşınca kapatılır', async () => {
+    // 40 dakikadır koşan tatbikat MEŞRUDUR (eski davranışta burada öldürülüyordu).
+    const drillId = await seedRunning('backup-drill', 40);
+    expect(await svc.claimNext(BACKUP_RUNNER_TARGETS)).toBeNull();
+    expect(await statusOf(drillId)).toBe('running');
+
+    // 2 saati aşan ama 4 saatlik tatbikat eşiğinin altındaki koşum da MEŞRU kalır.
+    await db.execute(sql`
+      UPDATE deployments SET started_at = now() - interval '150 minutes' WHERE id = ${drillId}
+    `);
+    await svc.claimNext(BACKUP_RUNNER_TARGETS);
+    expect(await statusOf(drillId)).toBe('running');
+
+    // Kilit sonsuza kadar tutulmaz: eşiği (240dk) aşınca self-heal devreye girer.
+    await db.execute(sql`
+      UPDATE deployments SET started_at = now() - interval '5 hours' WHERE id = ${drillId}
+    `);
+    await svc.claimNext(BACKUP_RUNNER_TARGETS);
+    expect(await statusOf(drillId)).toBe('failed');
+
+    // 'backup' (yalnız dump) eşiği daha kısa: 40dk meşru, 3 saat zombi.
+    const backupId = await seedRunning('backup', 40);
+    await svc.claimNext(BACKUP_RUNNER_TARGETS);
+    expect(await statusOf(backupId)).toBe('running');
+    await db.execute(sql`
+      UPDATE deployments SET started_at = now() - interval '3 hours' WHERE id = ${backupId}
+    `);
+    await svc.claimNext(BACKUP_RUNNER_TARGETS);
+    expect(await statusOf(backupId)).toBe('failed');
+  });
+
+  /**
+   * O2 REGRESYONU (ikinci yarısı) — `finish` CAS.
+   *
+   * Zombi temizliği bir işi 'failed' yaptıktan SONRA gerçek runner geç `finish success`
+   * yazarsa satır ESKİDEN sessizce 'success'e dönüyordu: zaman aşımının, açılan kilidin ve
+   * eşzamanlı koşmuş olabilecek dağıtımın hiçbir izi kalmıyordu. Artık sonuç EZİLMEZ ve
+   * çakışma görünür biçimde işaretlenir.
+   */
+  it('O2: zombi olarak kapatılmış işin GEÇ finish\'i durumu EZMEZ, çakışma olarak işaretlenir', async () => {
+    const id = await seedRunning('backup-drill', 60 * 6); // eşiğin (4sa) ötesi
+    await svc.claimNext(BACKUP_RUNNER_TARGETS); // zombi temizliği burada koşar
+    expect(await statusOf(id)).toBe('failed');
+
+    const late = await svc.finish(id, 'success', {
+      gitSha: 'late123',
+      log: 'BACKUP_FILE=/opt/backups/late.dump\nBACKUP_BYTES=123',
+    });
+
+    // Durum KORUNUR (geç bildirim 'failed' → 'success' yapmaz).
+    expect(late?.status).toBe('failed');
+    expect(late?.error).toContain('GEÇ BİLDİRİM');
+    // Zombi kapanışının kendi gerekçesi de silinmez (iki bilgi birlikte durur).
+    expect(late?.error).toContain('Zaman aşımı');
+    // Runner'ın logu kaybolmaz: satırda log yoktu → yazılır (kök-neden analizi bununla yapılır).
+    expect(late?.log).toContain('BACKUP_FILE=/opt/backups/late.dump');
+    expect(late?.gitSha).toBe('late123');
+
+    // Bilinmeyen id → null (uydurma kayıt üretilmez).
+    expect(
+      await svc.finish('00000000-0000-0000-0000-000000000000', 'success', {}),
+    ).toBeNull();
   });
 
   it('30dk takılı "pending" yedek isteği istek yolunda temizlenir (runner hiç koşmasa bile)', async () => {

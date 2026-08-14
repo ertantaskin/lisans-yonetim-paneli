@@ -106,13 +106,27 @@ export class AdminOrdersController {
     return this.fulfillment.completeLine(lineId, n && n > 0 ? n : undefined);
   }
 
+  /**
+   * Admin MANUEL iptali (gerçek iade/iptal — değişim DEĞİL).
+   *
+   * §2 (denetim C2): `returnMultiCapacity=false` AÇIKÇA geçilir. Varsayılan `true` idi ve bu
+   * yolun anlamıyla çelişiyordu: MAK/çok-kullanımlıkta müşteriye TESLİM EDİLMİŞ 1 birim iptal
+   * edilince `use_count -= 1` yapılıp kalem yeniden satılabilir hâle geliyordu — oysa aktivasyon
+   * Microsoft tarafında ZATEN HARCANMIŞTI → sessiz aşırı-satış (ikinci müşteri "kota doldu"
+   * hatası alır). Aynı olayın diğer iki yolu (`revokeOrderForSite` tam iade, `syncRefunds` kısmi
+   * iade) çoktan `false` geçiyordu; bu uç tek sapmaydı. MEŞRU yeniden-atama yolları
+   * (değişim / adet-düşür / recall-bulkReplace) `true` geçmeye DEVAM eder.
+   * Tek-kullanımlık üründe etkisiz (o zaten karantinaya gider).
+   */
   @Post('assignments/:id/revoke')
   revoke(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(RevokeBody)) body: { reason: string },
     @AdminActor() actor: string,
   ) {
-    return this.adminOrders.revokeAssignment(id, body.reason, actor);
+    // markLineCanceled=true (gerçek iptal → satır defterine işlenir), exec=undefined (servis
+    // kendi transaction'ını açar), returnMultiCapacity=false (§2 — hak geri dönmez).
+    return this.adminOrders.revokeAssignment(id, body.reason, actor, true, undefined, false);
   }
 
   /** Proaktif değişim (§4): kusurlu key'i aynı üründen taze key ile değiştir (reason zorunlu). */

@@ -25,11 +25,21 @@ export async function GET(req: NextRequest) {
   if (page.trim().length === 0) return NextResponse.json([]);
   try {
     const res = await apiFetch('GET', `/v1/admin/saved-views?page=${encodeURIComponent(page)}`);
-    if (!res.ok) return NextResponse.json([]);
+    // DENETİM BULGUSU (U5): burada hata da BOŞ LİSTE ile karşılanıyordu → menü
+    // "Henüz kayıtlı görünüm yok." diyordu. "Veri yok" ile "veri alınamadı" AYRI
+    // gösterilmeli; istemci artık durumu okuyup dürüst mesaj basıyor.
+    if (!res.ok) {
+      return NextResponse.json(
+        { message: (await res.text().catch(() => '')).slice(0, 200) || `HTTP ${res.status}` },
+        { status: res.status },
+      );
+    }
     return NextResponse.json(await res.json());
-  } catch {
-    // Görünüm listesi hatası tabloyu kırmamalı — boş liste döndür.
-    return NextResponse.json([]);
+  } catch (e) {
+    return NextResponse.json(
+      { message: e instanceof Error ? e.message : 'Bağlantı hatası' },
+      { status: 502 },
+    );
   }
 }
 

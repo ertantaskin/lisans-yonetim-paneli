@@ -133,6 +133,11 @@ services:
       HMAC_IP_FAIL_LIMIT: ${HMAC_IP_FAIL_LIMIT:-}
       # Stok import sonrası inline tamamlanacak azami satır; kalanı BullMQ'ya devredilir (vars. 200).
       AUTOCOMPLETE_INLINE_CAP: ${AUTOCOMPLETE_INLINE_CAP:-}
+      # Mağaza SESSİZLİK eşiği (saat, vars. 24) — bir mağaza bu süre boyunca imzalı istek
+      # göndermediyse bildirim üretilir. DENETİM BULGUSU: kod okuyor ve .env.example'da
+      # belgeli olmasına rağmen buraya eklenmemişti → `.env`'e yazmak SESSİZCE ETKİSİZDİ
+      # (yukarıdaki uyarının anlattığı hatanın tam olarak tekrarı).
+      SITE_SILENCE_HOURS: ${SITE_SILENCE_HOURS:-}
       # Retention (§9/§16) gün eşikleri — boşsa: 180/30/365/365/730/90, audit-all KAPALI.
       RETENTION_FULFILLMENT_DAYS: ${RETENTION_FULFILLMENT_DAYS:-}
       RETENTION_OUTBOX_DAYS: ${RETENTION_OUTBOX_DAYS:-}

@@ -4,6 +4,7 @@ import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminGuard } from '../auth/admin.guard';
 import { OwnerGuard } from '../auth/owner.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
+import { BackupAlarmService } from './backup-alarm.service';
 import { DEPLOY_TARGETS, DeploymentsService } from './deployments.service';
 
 // note: hedefe özel serbest metin — 'plugin' hedefinde sürüm changelog'u (runner claim
@@ -52,7 +53,10 @@ type ClaimInput = z.infer<typeof ClaimSchema>;
 @Controller('admin/deployments')
 @UseGuards(AdminGuard)
 export class DeploymentsController {
-  constructor(private readonly deployments: DeploymentsService) {}
+  constructor(
+    private readonly deployments: DeploymentsService,
+    private readonly backupAlarm: BackupAlarmService,
+  ) {}
 
   // OwnerGuard: savunma-derinliği (denetim H1) — prod dağıtımı tetikleyen bu uç, Next isOwner()
   // kontrolüne EK olarak API'de de owner rolü ister (tek eksik UI kontrolü yükselmeyi sağlamasın).
@@ -75,6 +79,18 @@ export class DeploymentsController {
   @Get('backup-summary')
   async backupSummary() {
     return this.deployments.backupSummary();
+  }
+
+  /**
+   * Yedek/tatbikat TAZELİK alarmını ELLE koştur (§16 DR). Tekrarlı iş 6 saatte bir aynı işi
+   * yapar; bu uç kurulum doğrulaması + RUNBOOK adımı içindir ("alarm kanalı gerçekten
+   * çalışıyor mu?" sorusu ancak tetiklenerek yanıtlanır — yedek yolu sessizce ölebildiği için
+   * bu doğrulamanın kendisi de bir DR gereğidir). Yan etkisi YALNIZ bildirim üretimidir;
+   * yedek ALMAZ (yedek tetiklemek owner-only POST / ile yapılır).
+   */
+  @Post('backup-alarm/run')
+  async runBackupAlarm() {
+    return this.backupAlarm.checkFreshness();
   }
 
   /**

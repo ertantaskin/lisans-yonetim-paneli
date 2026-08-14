@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { notExpiredCond } from '../assignment/assign';
+import { STANDING_STATUSES } from './standing-statuses';
 
 /**
  * ANAHTAR-BAŞI MALİYETİ KULLANIMA ORANLA (denetim bulgusu).
@@ -29,11 +30,21 @@ export interface CostBySupplier {
   poCount: number;
 }
 
-/** Ay bazında harcama satırı (month "YYYY-MM"; para birimi başına AYRI). */
+/**
+ * Ay bazında harcama satırı (month "YYYY-MM"; para birimi başına AYRI).
+ *
+ * `uncoveredQty` (denetim bulgusu R9): maliyeti bağlanamayan teslim alma. Sorgu eskiden
+ * `JOIN purchase_orders` (INNER) idi → satın alma emri OLMAYAN parti (tedarikçisiz elle
+ * stok girişi) hiçbir aya GİRMİYOR, sessizce kayboluyordu. Artık aynı dosyadaki
+ * `valuation`/`wastage`/`deliveredCogs` ile aynı dürüstlük: kapsanamayan miktar ayrı
+ * kolonda sayılır (bilinmeyen para birimi = '' satırı) ve `spentCents`'e KATILMAZ.
+ */
 export interface CostByMonth {
   month: string;
   currency: string;
   spentCents: number;
+  /** Maliyeti bağlanamayan (PO yok / unit_cost_cents NULL) teslim alınan adet. */
+  uncoveredQty: number;
 }
 
 /** Ürün bazında harcama satırı (para birimi başına AYRI). */
@@ -183,28 +194,43 @@ export class CostsService {
    * Ay (TESLİM ALMA anı → "YYYY-MM") × para birimi bazında gerçekleşen harcama.
    * Kova PO oluşturma ayına DEĞİL, parti teslim-alma ayına göredir (M1'de açılıp M2/M3'te
    * teslim alınan PO'nun harcaması teslim ayına düşer). Parti başına toplanır:
-   * batches.qty_received × PO.unit_cost_cents, batches → purchase_orders join. En eski ay önce.
+   * batches.qty_received × PO.unit_cost_cents. En eski ay önce.
+   *
+   * KAPSANAMAYAN (denetim bulgusu R9): join eskiden INNER idi → satın alma emrine BAĞLI
+   * OLMAYAN parti (tedarikçisiz elle stok girişi; `batches.purchase_order_id` NULL) aylık
+   * seriye HİÇ girmiyordu. Ekran "bu ay şu kadar harcadık" derken o teslim almalar sessizce
+   * yok sayılıyordu — panelin başka hiçbir yerinde bu boşluk raporlanmıyordu. Artık LEFT JOIN
+   * + `uncoveredQty`: miktar görünür, parasal toplama KATILMAZ (uydurma maliyet yazılmaz).
+   * Para birimi bilinmiyorsa satır '' currency ile döner (valuation/deliveredCogs deseni).
    */
   private async byMonth(): Promise<CostByMonth[]> {
     const list = await rawRows<{
       month: string;
       currency: string;
       spent_cents: number;
+      uncovered_qty: number;
     }>(this.db, sql`
       SELECT
         to_char(b.received_at, 'YYYY-MM') AS month,
-        po.currency AS currency,
-        coalesce(sum(b.qty_received::bigint * coalesce(po.unit_cost_cents, 0)::bigint), 0)::bigint AS spent_cents
+        coalesce(po.currency, '') AS currency,
+        coalesce(
+          sum(b.qty_received::bigint * po.unit_cost_cents::bigint)
+            FILTER (WHERE po.unit_cost_cents IS NOT NULL),
+          0
+        )::bigint AS spent_cents,
+        coalesce(sum(b.qty_received) FILTER (WHERE po.unit_cost_cents IS NULL), 0)::int
+          AS uncovered_qty
       FROM batches b
-      JOIN purchase_orders po ON po.id = b.purchase_order_id
+      LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
       WHERE b.received_at IS NOT NULL
-      GROUP BY to_char(b.received_at, 'YYYY-MM'), po.currency
+      GROUP BY to_char(b.received_at, 'YYYY-MM'), coalesce(po.currency, '')
       ORDER BY month ASC, currency ASC;
     `);
     return list.map((r) => ({
       month: r.month,
       currency: r.currency,
       spentCents: Number(r.spent_cents),
+      uncoveredQty: Number(r.uncovered_qty),
     }));
   }
 
@@ -349,7 +375,7 @@ export class CostsService {
   }
 
   /**
-   * Teslim edilen COGS (§12, D17): AKTİF + teslim edilmiş (delivered_at IS NOT NULL)
+   * Teslim edilen COGS (§12, D17): AYAKTA + teslim edilmiş (delivered_at IS NOT NULL)
    * atamaların, bağlı license_item maliyet anlık-görüntüsü (unit_cost_cents) üzerinden
    * teslim maliyeti. Maliyet PO join'iyle DEĞİL, satırda saklı SNAPSHOT ile hesaplanır
    * (PO sonradan değişse bile teslim maliyeti sabit). Para birimi snapshot'tan (cost_currency)
@@ -360,6 +386,17 @@ export class CostsService {
    * kapasitenin yalnız birkaç birimini tüketir. Anahtar maliyetini units ile doğrudan
    * çarpmak COGS'u anahtarın TAM maliyeti kadar (hatta katı) gösteriyordu; artık tüketilen
    * kapasite oranı yazılır (tek kullanımda units=1, max_uses=1 → sonuç birebir aynı).
+   *
+   * AYAKTA KÜMESİ (denetim bulgusu R4): yüklem `a.status = 'active'` idi; oysa panelin
+   * "ayakta" tanımı HER YERDE `active | suspended | expired` (reconcile mutabakatı,
+   * reports velocity, ürün hızları — bkz. reports/standing-statuses.ts).
+   *  • `suspended` anahtar müşterinin ELİNDEDİR, yalnız geçici olarak gizlenmiştir (§4) —
+   *    iade DEĞİLDİR; maliyeti oluşmuştur.
+   *  • Süresi dolmuş (`expired`) süreli hesap da teslim EDİLMİŞTİ ve §2 gereği hak geri
+   *    gelmez (kapasite havuza dönmez) — maliyeti oluşmuştur.
+   * İkisi de dışlandığı için AYNI EKRANDAKİ satış hızı (velocity) ile COGS ÇELİŞİYORDU:
+   * bir anahtar askıya alınır alınmaz "satıldı ama maliyeti yok" gibi görünüyordu.
+   * `revoked`/`replaced` HÂLÂ hariç (gerçek iade + değişimde net'lenen eski atama).
    */
   private async deliveredCogs(): Promise<CostDeliveredCogs[]> {
     const cogs = PRORATED_COST('a.units', 'li.unit_cost_cents', 'li.max_uses');
@@ -385,7 +422,9 @@ export class CostsService {
         )::int AS uncovered_units
       FROM assignments a
       JOIN license_items li ON li.id = a.license_item_id
-      WHERE a.status = 'active' AND a.delivered_at IS NOT NULL
+      /* AYAKTA atamalar — TEK KAYNAK (reports/standing-statuses.ts). Bkz. metot jsdoc'u:
+         yalnız 'active' saymak askıdaki ve süresi dolmuş TESLİMATLARI maliyetten düşürüyordu. */
+      WHERE a.status IN ${STANDING_STATUSES} AND a.delivered_at IS NOT NULL
       GROUP BY coalesce(li.cost_currency, '')
       ORDER BY currency ASC;
     `);

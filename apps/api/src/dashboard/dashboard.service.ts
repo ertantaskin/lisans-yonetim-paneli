@@ -491,7 +491,15 @@ export class DashboardService {
     return Number(rows[0]?.total ?? 0);
   }
 
-  /** En yeni 5 sipariş (özet satır — sır/payload dönmez). */
+  /**
+   * En yeni 5 sipariş (özet satır — sır/payload dönmez).
+   *
+   * TIE-BREAK (`id DESC`) EKLENDİ (denetim R11): aynı dosyadaki üç canlı-akış sorgusu
+   * (liveOrders/liveSupports/liveNotifications) tie-break taşırken bu LIMIT'li sıralama
+   * taşımıyordu. Toplu push (tek transaction'da yazılan siparişler) BİREBİR aynı
+   * `created_at` damgasını taşır → 5'inci sıradaki sipariş art arda iki yüklemede
+   * DEĞİŞEBİLİYORDU (aynı veri, farklı liste).
+   */
   private async recentOrders(): Promise<DashboardRecentOrder[]> {
     const list = await rawRows<{
       id: string;
@@ -502,7 +510,7 @@ export class DashboardService {
     }>(this.db, sql`
       SELECT id, remote_order_id, customer_email, status, created_at
       FROM orders
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 5;
     `);
     return list.map((r) => ({

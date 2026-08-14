@@ -783,7 +783,13 @@ export default function GuidePage() {
           <li><strong>Sitelerdeki kurulu sürüm:</strong> aynı sayfadaki tablo her mağazanın hangi eklenti sürümünü çalıştırdığını gösterir (&quot;güncel&quot; / &quot;eski&quot;). Bilgi, mağazanın panele yaptığı imzalı isteklerden gelir.</li>
           <li><strong>Mağaza tarafı:</strong> yayınlanan sürüm WordPress → Güncellemeler ekranında görünür. WordPress sürüm bilgisini 12 saat önbelleğe alır; hemen görmek için o ekrandaki <em>&quot;Tekrar denetle&quot;</em> bağlantısını kullanın.</li>
           <li><strong><R href="/deployments">Dağıtımlar</R>:</strong> panelin kendi sürümünü (API/Admin) canlıya alır ve dağıtım geçmişini gösterir. Sağlık kontrolü başarısız olursa dağıtım otomatik geri alınır.</li>
-          <li><strong><R href="/deployments">Yedekleme</R>:</strong> aynı sayfadaki &quot;Son yedek&quot; ve &quot;Son tatbikat&quot; kartları veritabanı yedeğinin ne zaman alındığını, boyutunu ve <strong>dışarı kopyalanıp kopyalanmadığını</strong> gösterir. Gecelik yedek otomatiktir; &quot;Şimdi yedek al&quot; ile elle de tetikleyebilirsiniz. Yedek eskiyse kırmızı bant çıkar. <strong>Tatbikat</strong>, yedeği ayrı bir veritabanına geri yükleyip gerçekten açılabildiğini kanıtlar — hiç denenmemiş bir yedek, yedek sayılmaz.</li>
+          {/* DÜZELTME (denetim bulgusu U2): burada "Gecelik yedek otomatiktir" yazıyordu.
+              GERÇEK: gecelik iş SUNUCUDA ELLE kurulan bir crontab satırıdır
+              (`scripts/backup-runner.sh`, docs/RUNBOOK-DR.md §4.3); depoda onu kendiliğinden
+              kuran hiçbir şey yok ve panelin kendi metni (/deployments) "gecelik otomatik
+              yedeği KURUN" diyor. Rehbere güvenen operatör cron'u hiç kurmuyor → yedeksizlik,
+              bu panelde geri alınamaz TEK kayıp sınıfı. Metin gerçeğe çevrildi. */}
+          <li><strong><R href="/deployments">Yedekleme</R>:</strong> aynı sayfadaki &quot;Son yedek&quot; ve &quot;Son tatbikat&quot; kartları veritabanı yedeğinin ne zaman alındığını, boyutunu ve <strong>dışarı kopyalanıp kopyalanmadığını</strong> gösterir. &quot;Şimdi yedek al&quot; ile istediğiniz an elle tetikleyebilirsiniz. <strong>Gecelik yedek KENDİLİĞİNDEN çalışmaz</strong> — sunucuda bir kez kurulması gerekir (<code>scripts/backup-runner.sh</code> için zamanlanmış görev; adımlar <code>docs/RUNBOOK-DR.md §4.3</code>). Kurulmadığı sürece yalnız elle aldığınız yedekler vardır. Yedek eskiyse ya da hiç yoksa <R href="/deployments">Dağıtımlar</R> ekranında kırmızı bant çıkar. <strong>Tatbikat</strong>, yedeği ayrı bir veritabanına geri yükleyip gerçekten açılabildiğini kanıtlar — hiç denenmemiş bir yedek, yedek sayılmaz.</li>
           <li>Bu işlemlerin hepsi yalnız &quot;owner&quot; rolüne açıktır ve aynı kuyruğu kullanır: aynı anda tek iş çalışır (yedek sürerken dağıtım isteği reddedilir).</li>
         </Bullets>
         <Tip>
@@ -823,10 +829,19 @@ export default function GuidePage() {
             adlandırarak saklarsınız, sonra tek tıkla geri yüklersiniz. Görünümler kişiseldir —
             yalnız siz görürsünüz.
           </li>
+          {/* DÜZELTME (denetim bulgusu U3): bu madde "bu ekranlarda filtreler adrese yansır"
+              diyordu ama 5 ekranın 4'ünde tablo içi arama/facet adrese yazılmıyordu. Artık
+              /orders, /stock ve /customers gerçekten yazıyor (DataTable `syncUrl`); kalan iki
+              ekranda hangi süzgecin kapsam DIŞI kaldığı burada da, menüde de açıkça yazılır. */}
           <li>
-            Bu ekranlarda filtreler <strong>adres çubuğuna yansır</strong>: süzgeçli adresi yer
-            imlerine ekleyebilir ya da bir iş arkadaşınıza gönderebilirsiniz — aynı listeyi görür.
-            Kaydederken adres çubuğu boşsa menü sizi uyarır (boş bir görünüm kaydetmiş olmazsınız).
+            <R href="/orders">Siparişler</R>, <R href="/stock">Stok</R> ve{' '}
+            <R href="/customers">Müşteriler</R> ekranlarında filtreler{' '}
+            <strong>adres çubuğuna yansır</strong>: süzgeçli adresi yer imlerine ekleyebilir ya da
+            bir iş arkadaşınıza gönderebilirsiniz — aynı listeyi görür.{' '}
+            <R href="/mappings">Eşleştirme</R> ve{' '}
+            <R href="/quarantine/records">Kusurlu stok kayıtları</R> ekranlarında ise yalnız üstteki
+            (sunucu) süzgeçler adrese yazılır; liste üzerindeki <em>hızlı süzgeçler</em> yazılmaz ve
+            görünüme girmez — menü bunu kaydederken de söyler.
           </li>
           <li>Sağ üstten <strong>açık/koyu tema</strong> arasında geçiş yapabilirsiniz.</li>
         </Bullets>

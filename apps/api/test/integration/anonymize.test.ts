@@ -27,6 +27,8 @@ const actor = `panel:test-${tag}`;
 // Her koşuya özel benzersiz müşteri e-postası (izolasyon). Karışık kasa → normalize yolu da test edilir.
 const email = `KVKK-${tag}@Example.Test`;
 const normalized = email.trim().toLowerCase();
+// (Denetim D5) kayıtlı görünümler actor bazlıdır — kendi aktörümüzle seed edip temizliyoruz.
+const savedViewActor = `panel:sv-${tag}`;
 
 let db: Db;
 let end: () => Promise<void>;
@@ -87,6 +89,32 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
 
     // customers profil satırı (lowercase+trim ile yazılır — servis lower() ile eşler).
     await db.insert(schema.customers).values({ email: normalized, notes: `IT ${tag}` });
+
+    // (Denetim D5) saved_views.query — operatörün adres çubuğunun BİREBİR kopyası. /customers
+    // araması tasarımca e-posta ile yapılır ve URLSearchParams '@'yi '%40' KODLAR → düz
+    // e-posta deseni bu kasayı kaçırırdı. İKİ varyantı da seed'liyoruz:
+    await db.insert(schema.savedViews).values([
+      {
+        actor: savedViewActor,
+        page: 'customers',
+        name: `IT kodlu ${tag}`,
+        query: `?q=${encodeURIComponent(email)}`,
+      },
+      {
+        actor: savedViewActor,
+        page: 'customers',
+        name: `IT ham ${tag}`,
+        // Ham (kodlanmamış) hâl + FARKLI KASA: regexp 'gi' bunu da yakalamalı.
+        query: `?q=${email.toUpperCase()}&status=active`,
+      },
+      {
+        actor: savedViewActor,
+        page: 'orders',
+        name: `IT alakasız ${tag}`,
+        // PII İÇERMEYEN görünüm — maskeleme buna DOKUNMAMALI (aşırı-kapsam regresyonu).
+        query: '?status=pending&tq=windows',
+      },
+    ]);
   });
 
   afterAll(async () => {
@@ -99,6 +127,7 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
       DELETE FROM customers WHERE lower(email) IN (${normalized}, ${redacted ?? normalized})
     `);
     await db.execute(sql`DELETE FROM audit_log WHERE actor = ${actor}`);
+    await db.execute(sql`DELETE FROM saved_views WHERE actor = ${savedViewActor}`);
     await cleanupByTag(db, tag);
     await end();
   });
@@ -170,6 +199,29 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
       expect(row.subject).not.toContain(normalized);
     }
 
+    // (Denetim D5/KVKK) saved_views.query — İKİ PII'li görünüm maskelendi, PII'siz olan
+    // DOKUNULMADAN kaldı. Bu kasa anonymize'da HİÇ görülmüyordu ("PII maskelendi" eksikti).
+    expect(result.anonymizedSavedViews).toBe(2);
+    const savedViews = await db.execute<{ page: string; query: string }>(sql`
+      SELECT page, query FROM saved_views WHERE actor = ${savedViewActor} ORDER BY page, name
+    `);
+    const svList = savedViews as unknown as Array<{ page: string; query: string }>;
+    expect(svList).toHaveLength(3);
+    const encoded = encodeURIComponent(email);
+    for (const row of svList) {
+      // Hiçbir varyant (ham / BÜYÜK kasa / URL-kodlu) kalmadı.
+      expect(row.query).not.toContain(email);
+      expect(row.query).not.toContain(normalized);
+      expect(row.query).not.toContain(email.toUpperCase());
+      expect(row.query).not.toContain(encoded);
+      expect(row.query).not.toContain(encodeURIComponent(normalized));
+    }
+    // PII'siz görünüm AYNEN durur (maskeleme aşırı kapsamlı değil).
+    const untouched = svList.find((r) => r.page === 'orders');
+    expect(untouched?.query).toBe('?status=pending&tq=windows');
+    // Maskelenen görünümlerde diğer süzgeçler korunur (operasyonel bağlam bozulmaz).
+    expect(svList.some((r) => r.query.includes('status=active'))).toBe(true);
+
     // customers profil satırı silindi.
     const custRows = await db.execute<{ id: string }>(sql`
       SELECT id FROM customers WHERE lower(email) = ${normalized}
@@ -193,6 +245,8 @@ describe('KVKK anonimleştirme (ComplianceService.anonymize)', () => {
     expect(result.anonymizedEmails).toBe(0);
     // (Denetim M3) 2. çağrıda eşleşen talep yok → mesaj maskeleme de 0 (kapsam talep-id ile sınırlı).
     expect(result.anonymizedMessages).toBe(0);
+    // (Denetim D5) görünüm sorguları zaten temiz → ~* eşleşmez, 0 satır (idempotent).
+    expect(result.anonymizedSavedViews).toBe(0);
     // Aynı maske deterministik olarak yeniden üretilir.
     expect(result.redactedEmail).toBe(redacted);
   });

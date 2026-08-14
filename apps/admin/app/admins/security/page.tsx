@@ -17,7 +17,12 @@ interface TotpStatus {
 }
 
 /**
- * "Hesap güvenliğim" — HER yönetici kendi ikinci faktörünü buradan kurar.
+ * "Hesap Güvenliğim" — HER yönetici kendi ikinci faktörünü buradan kurar.
+ *
+ * AD TEK KAYNAK (denetim bulgusu U7): sol menü, sayfa başlığı ve breadcrumb aynı adı yazar.
+ * Eskiden üç farklı ad vardı ("Hesap Güvenliğim" / "Hesap güvenliği" / "Güvenlik") ve
+ * sonuncusu `/security` ekranının adıyla ÇAKIŞIYORDU. Breadcrumb artık tam yol sözlüğünden
+ * (`components/shell/site-header.tsx` → PATH_LABELS) okuyor.
  *
  * NEDEN /admins ALTINDA AMA OWNER KAPISI YOK: `/admins` yalnız owner'a açıktır (yönetici
  * CRUD'u); ikinci faktör ise herkesin KENDİ hesabının ayarıdır — owner kapısının arkasına
@@ -30,7 +35,7 @@ export default async function AdminSecurityPage() {
   if (!authEnabled() || !session) {
     return (
       <div>
-        <PageHeader icon={ShieldCheck} title="Hesap güvenliği" />
+        <PageHeader icon={ShieldCheck} title="Hesap Güvenliğim" />
         <Card>
           <CardContent className="p-5">
             <Alert variant="warning">
@@ -61,7 +66,7 @@ export default async function AdminSecurityPage() {
     <div>
       <PageHeader
         icon={ShieldCheck}
-        title="Hesap güvenliği"
+        title="Hesap Güvenliğim"
         description="Girişinize ikinci bir adım ekleyin: parolanız ele geçse bile telefonunuzdaki kod olmadan panele girilemez."
       />
       <Card>

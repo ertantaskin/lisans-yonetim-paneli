@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { rawRows } from '../db/raw-query';
 import { deployments, type Deployment } from '../db/schema/deployments';
 
 /**
@@ -53,6 +54,51 @@ export const BACKUP_RUNNER_TARGETS: readonly DeployTarget[] = ['backup', 'backup
 export const BACKUP_MAX_AGE_HOURS = 26;
 export const DRILL_MAX_AGE_DAYS = 35;
 
+/**
+ * ZOMBİ 'running' ZAMAN AŞIMI — HEDEFE GÖRE (dakika).
+ *
+ * KUSUR (denetim O2): eskiden TEK bir 30 dakikalık eşik vardı ve `claimNext` her çağrıda
+ * (iki runner × dakikada bir) uyguluyordu. Bu, işin GERÇEK süresiyle çelişiyordu:
+ * `backup-drill.sh` bir TATBİKATTIR ve §16 hedefi RTO ≤ 2 SAAT'tir (betiğin kendi özet
+ * satırı bunu yazar). Yani 40 dakikalık MEŞRU bir tatbikat 30. dakikada "failed" damgalanıp
+ * tek-aktif-iş kilidi AÇILIYORDU. Sonuç zinciri:
+ *   1) kilit açılır → panelden/cron'dan gelen bir `deploy.sh` isteği claim edilir,
+ *   2) `docker compose build/up` ile `pg_restore` AYNI host'ta aynı anda koşar,
+ *   3) yük altında deploy'un 60 sn'lik sağlık penceresi düşer → SAĞLIKLI bir dağıtım
+ *      otomatik rollback yer (yani sağlam kod geri alınır),
+ *   4) tatbikat bitince runner `finish` yazar ve 'failed' satır 'success'e döner →
+ *      olayın hiçbir izi kalmaz (bkz. `finish` CAS'i).
+ *
+ * Bu yüzden eşik İŞİN DOĞASINA bağlandı. Değerler cömert seçildi: zombi temizliğinin amacı
+ * "kilidi sonsuza dek tutma"yı önlemektir, işi hızlı öldürmek değil. Erken öldürmenin bedeli
+ * (yukarıdaki 1-4) geç öldürmenin bedelinden (kilidin biraz daha uzun tutulması) çok daha ağır.
+ *
+ * • api/admin/api admin/plugin → 30 dk : `deploy.sh` sahada 1-2 dk sürer (rollback dahil).
+ * • backup                    → 120 dk: `pg_dump` + arşiv kontrolü + OFFSITE yükleme
+ *                                        (offsite komutunun kendi tavanı 900 sn, ama yavaş
+ *                                        hatta üst üste binebilir).
+ * • backup-drill              → 240 dk: RTO hedefi 2 SAAT; tatbikat "hedefi aşıyor mu"yu
+ *                                        ÖLÇMEK için vardır → eşik hedefin en az 2 katı
+ *                                        olmalı, yoksa ölçmek istediğimiz durumu ölçemeden
+ *                                        işi öldürürüz.
+ */
+export const RUNNING_TIMEOUT_MINUTES: Record<DeployTarget, number> = {
+  api: 30,
+  admin: 30,
+  'api admin': 30,
+  plugin: 30,
+  backup: 120,
+  'backup-drill': 240,
+};
+
+/**
+ * ÖKSÜZ 'pending' zaman aşımı (dakika) — hedeften BAĞIMSIZ ve bilinçli olarak 30.
+ * 'pending' süresi işin ne kadar sürdüğüyle değil, runner'ın DEVRALMA gecikmesiyle ilgilidir;
+ * her iki runner da cron'da dakikada bir yoklar. 30 dakikadır alınmamış bir istek "runner
+ * çalışmıyor" demektir (hedefi ne olursa olsun).
+ */
+const PENDING_TIMEOUT_MINUTES = 30;
+
 /** Log gövdesi DB'de sınırlı tutulur (runner deploy.sh çıktısının kuyruğunu gönderir). */
 const MAX_LOG_CHARS = 20000;
 
@@ -70,6 +116,8 @@ const MAX_NOTE_CHARS = 2000;
  */
 @Injectable()
 export class DeploymentsService {
+  private readonly logger = new Logger(DeploymentsService.name);
+
   constructor(@Inject(DB) private readonly db: Database) {}
 
   /**
@@ -83,6 +131,11 @@ export class DeploymentsService {
     if (!DEPLOY_TARGETS.includes(target as DeployTarget)) {
       throw new BadRequestException(`Geçersiz hedef. İzinli: ${DEPLOY_TARGETS.join(', ')}`);
     }
+    // Zombi 'running' temizliği İSTEK yolunda da koşar: temizlik yalnız `claimNext` içinde
+    // olsaydı, HER İKİ runner da ölü olduğunda (host yeniden kurulmuş, cron silinmiş) kilidi
+    // hiç kimse açamazdı — 'pending' için aynı gerekçeyle eklenen ikizin karşılığı.
+    await this.expireZombieRunning();
+
     // SELECT-sonra-INSERT arası yarış (form çift-tık / eşzamanlı iki POST) iki 'pending' üretip
     // aynı kodun ardışık iki redeploy'una yol açardı. Tüm istek yolunu tek transaction'da
     // pg_advisory_xact_lock ile serileştir → "aynı anda tek aktif dağıtım" gerçekten garanti
@@ -102,15 +155,15 @@ export class DeploymentsService {
         .set({
           status: 'failed',
           error:
-            'Runner isteği 30dk içinde almadı — host üzerindeki servis (cron) çalışmıyor ' +
-            'olabilir. Dağıtım/eklenti için docs/RUNBOOK-RELEASE.md §A2, yedek için ' +
-            'docs/RUNBOOK-DR.md §4.3.',
+            `Runner isteği ${PENDING_TIMEOUT_MINUTES}dk içinde almadı — host üzerindeki servis ` +
+            '(cron) çalışmıyor olabilir. Dağıtım/eklenti için docs/RUNBOOK-RELEASE.md §A2, ' +
+            'yedek için docs/RUNBOOK-DR.md §4.3.',
           finishedAt: new Date(),
         })
         .where(
           and(
             eq(deployments.status, 'pending'),
-            lt(deployments.createdAt, sql`now() - interval '30 minutes'`),
+            lt(deployments.createdAt, sql`now() - make_interval(mins => ${PENDING_TIMEOUT_MINUTES})`),
           ),
         );
 
@@ -139,6 +192,60 @@ export class DeploymentsService {
     });
   }
 
+  /**
+   * ZOMBİ 'running' TEMİZLİĞİ — hedefe göre zaman aşımı (bkz. RUNNING_TIMEOUT_MINUTES).
+   *
+   * Runner çöküp `finish` yazamazsa satır kalıcı 'running' kalır ve tek-aktif-iş guard'ı yeni
+   * işi SONSUZA DEK engeller; bu yüzden self-heal ŞART. Ama eşik işin doğasına göre değişir:
+   * 30 dakikalık tek eşik meşru bir yedek tatbikatını (RTO hedefi 2 saat) öldürüyor ve
+   * `deploy.sh` ile `pg_restore`'un aynı anda koşmasına kapı açıyordu.
+   *
+   * `coalesce(started_at, created_at)`: teoride 'running' bir satırın `started_at`'i NULL
+   * kalırsa (elle müdahale / kısmi yazım) karşılaştırma NULL döner ve satır SONSUZA DEK
+   * temizlenmezdi — tam da önlemek istediğimiz kilitlenme. Yedek zaman kaynağı bunu kapatır.
+   *
+   * @returns zombi olarak kapatılan satır sayısı (log/teşhis için).
+   */
+  private async expireZombieRunning(): Promise<number> {
+    // CASE dalları whitelist'ten üretilir (serbest metin yok → enjeksiyon yolu yok).
+    const cases = sql.join(
+      (Object.entries(RUNNING_TIMEOUT_MINUTES) as [string, number][]).map(
+        ([t, mins]) => sql`when ${t} then ${mins}`,
+      ),
+      sql` `,
+    );
+    // Bilinmeyen bir hedef (eski satır / ileride eklenip buraya yazılmayan hedef) sessizce
+    // "sonsuz" olmasın diye ELSE dalı en muhafazakâr değere (en uzun eşik) düşer: erken
+    // öldürmenin bedeli geç öldürmeninkinden ağır (bkz. RUNNING_TIMEOUT_MINUTES gerekçesi).
+    const fallback = Math.max(...Object.values(RUNNING_TIMEOUT_MINUTES));
+    const killed = await rawRows<{ id: string; target: string }>(this.db, sql`
+      with t as (
+        select id, (case target ${cases} else ${fallback} end)::int as tmo
+        from deployments
+        where status = 'running'
+      )
+      update deployments d
+         set status = 'failed',
+             error = 'Zaman aşımı — runner sonucu ' || t.tmo ||
+                     ' dakika içinde bildirmedi (hedef: ' || d.target ||
+                     '). Host runner çökmüş olabilir; kilit açıldı.',
+             finished_at = now()
+        from t
+       where d.id = t.id
+         and coalesce(d.started_at, d.created_at) < now() - make_interval(mins => t.tmo)
+      returning d.id, d.target
+    `);
+    for (const r of killed) {
+      // Sessiz ölüm yok: kilit açmak bir ONARIM değil, bir ARIZA işaretidir.
+      this.logger.error(
+        `Zombi iş kapatıldı: id=${r.id} target=${r.target} ` +
+          `(eşik ${RUNNING_TIMEOUT_MINUTES[r.target as DeployTarget] ?? fallback} dk). ` +
+          'Host runner çökmüş/öldürülmüş olabilir — docs/RUNBOOK-DR.md §4.3.',
+      );
+    }
+    return killed.length;
+  }
+
   /** Dağıtım geçmişi (en yeni önce). */
   async list(limit = 50): Promise<Deployment[]> {
     return this.db
@@ -165,24 +272,7 @@ export class DeploymentsService {
    *   Argümansız çağrı ESKİ davranış (tüm hedefler) → eski runner sürümü kırılmaz.
    */
   async claimNext(targets?: readonly string[]): Promise<Deployment | null> {
-    // Zombi 'running' temizliği: runner çöküp finish yazamazsa satır kalıcı 'running' kalır
-    // ve request() guard'ı yeni işi SONSUZA DEK engeller. 30dk'dan eski 'running' → 'failed'
-    // (self-heal, runner'dan bağımsız). Hedeften BAĞIMSIZ, yedek işlerini de kapsar.
-    // SINIR: 30dk'yı aşan bir yedek TATBİKATI panelde "başarısız" görünür (koşum host'ta
-    // sürer). DB büyürse tatbikatı cron'dan/elle koş — bkz. docs/RUNBOOK-DR.md §4.3.
-    await this.db
-      .update(deployments)
-      .set({
-        status: 'failed',
-        error: 'Zaman aşımı — runner sonucu 30dk içinde bildirmedi (dağıtım/yedek).',
-        finishedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(deployments.status, 'running'),
-          lt(deployments.startedAt, sql`now() - interval '30 minutes'`),
-        ),
-      );
+    await this.expireZombieRunning();
 
     let allowed: string[] | null = null;
     if (targets) {
@@ -210,7 +300,21 @@ export class DeploymentsService {
     return row ?? null;
   }
 
-  /** Runner: dağıtım sonucunu yaz (success|failed) + log/sha/hata. */
+  /**
+   * Runner: dağıtım sonucunu yaz (success|failed) + log/sha/hata.
+   *
+   * CAS (compare-and-set): güncelleme YALNIZ satır hâlâ 'running' iken uygulanır.
+   *
+   * KUSUR (denetim O2, ikinci yarısı): eskiden koşul yalnız `id` idi. Zombi temizliği bir işi
+   * 'failed' yaptıktan SONRA gerçek runner işini bitirip `finish success` yazdığında satır
+   * sessizce 'success'e dönüyordu → zaman aşımının, açılan kilidin ve (muhtemelen) o sırada
+   * eşzamanlı koşan başka bir işin HİÇBİR İZİ kalmıyordu. Yani sistemin kendini onardığı ama
+   * bunu unuttuğu bir yol vardı; olay tekrarlansa bile geçmişte görünmezdi.
+   *
+   * Artık geç gelen bildirim satırın SONUCUNU DEĞİŞTİRMEZ; bunun yerine GÖRÜNÜR bir çakışma
+   * olarak işaretlenir (error alanına eklenir + logger.error) ve runner'ın gönderdiği log
+   * kaybolmasın diye (satırda log yoksa) saklanır — kök-neden analizi tam da bu logla yapılır.
+   */
   async finish(
     id: string,
     status: 'success' | 'failed',
@@ -219,18 +323,68 @@ export class DeploymentsService {
     if (status !== 'success' && status !== 'failed') {
       throw new BadRequestException("status yalnız 'success' veya 'failed' olabilir.");
     }
+    const log = opts.log ? opts.log.slice(-MAX_LOG_CHARS) : null;
     const [row] = await this.db
       .update(deployments)
       .set({
         status,
         gitSha: opts.gitSha?.slice(0, 80) ?? null,
-        log: opts.log ? opts.log.slice(-MAX_LOG_CHARS) : null,
+        log,
         error: opts.error?.slice(0, 4000) ?? null,
         finishedAt: new Date(),
       })
-      .where(eq(deployments.id, id))
+      .where(and(eq(deployments.id, id), eq(deployments.status, 'running')))
       .returning();
-    return row ?? null;
+    if (row) return row;
+
+    // CAS tuttu ↛ satır ya yok ya da artık 'running' değil.
+    const [existing] = await this.db
+      .select()
+      .from(deployments)
+      .where(eq(deployments.id, id))
+      .limit(1);
+    if (!existing) return null;
+
+    return this.markLateFinish(existing, status, log, opts.gitSha);
+  }
+
+  /**
+   * GEÇ BİLDİRİM işaretleme: zombi olarak kapatılmış (ya da başka biçimde terminal olmuş) bir
+   * işin sonucu sonradan gelirse durumu EZMEDEN görünür kılar. Best-effort — işaretleme
+   * başarısız olsa bile runner'a sağlıklı yanıt döner (log zaten `logger.error` ile düştü).
+   */
+  private async markLateFinish(
+    existing: Deployment,
+    status: 'success' | 'failed',
+    log: string | null,
+    gitSha?: string,
+  ): Promise<Deployment> {
+    const note =
+      `[GEÇ BİLDİRİM] Runner bu işi '${status}' olarak bildirdi ama kayıt o sırada ` +
+      `'${existing.status}' durumundaydı (büyük olasılıkla zombi zaman aşımıyla kapatılmış). ` +
+      'Sonuç EZİLMEDİ. İş eşikten uzun sürmüş ve bu sırada tek-aktif-iş kilidi açılmış ' +
+      'olabilir — docs/RUNBOOK-DR.md §4.3.';
+    this.logger.error(`Geç finish çakışması: id=${existing.id} target=${existing.target} ${note}`);
+
+    try {
+      const [updated] = await this.db
+        .update(deployments)
+        .set({
+          error: `${existing.error ? `${existing.error} | ` : ''}${note}`.slice(0, 4000),
+          // Runner'ın logu kaybolmasın: satırda log YOKSA (zombi kapanışında olmaz) yazılır.
+          // Varsa DOKUNULMAZ — terminal durumun kendi kanıtını üzerine yazmayız.
+          ...(existing.log ? {} : log ? { log } : {}),
+          ...(existing.gitSha ? {} : gitSha ? { gitSha: gitSha.slice(0, 80) } : {}),
+        })
+        .where(eq(deployments.id, existing.id))
+        .returning();
+      return updated ?? existing;
+    } catch (err) {
+      this.logger.warn(
+        `Geç finish işaretlemesi yazılamadı (best-effort): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return existing;
+    }
   }
 
   /**

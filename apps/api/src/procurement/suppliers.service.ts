@@ -1,8 +1,30 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { desc, eq, sql } from 'drizzle-orm';
+import { desc, eq, sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { suppliers, type Supplier } from '../db/schema/suppliers';
+
+/**
+ * "BU PARTİ BU TEDARİKÇİDEN Mİ?" — TEK YÜKLEM (denetim bulgusu R10).
+ *
+ * KUSUR: aynı karne yanıtında İKİ FARKLI tanım vardı. `batchCount`/`recallRate` düz
+ * `batches.supplier_id = $1` sayıyordu; `defects.*` ise `coalesce(b.supplier_id,
+ * po.supplier_id) = $1` (CostsService.wastage / ReorderService.last_supplier zinciriyle
+ * hizalı). Yani parti tedarikçiyi DOĞRUDAN taşımayıp yalnız satın alma emrinden miras
+ * alıyorsa (batches.supplier_id SET NULL'lı bir FK'dir — tedarikçi pasifleştirilip
+ * silindiğinde ya da elle açılan partide NULL olabilir) aynı ekran "0 parti" derken
+ * "şu kadar kusurlu kalem" gösteriyordu.
+ *
+ * Bugün her iki yazar da `batches.supplier_id`'yi dolduruyor, yani sapma çoğu kurulumda
+ * ULAŞILAMAZ; ama iki tanımı yan yana bırakmak bu projede defalarca yanlış sayı üretti
+ * ("satılmış 6 birim" hatası tam olarak buydu) → tek yükleme hizalandı.
+ *
+ * Çağıran sorgu `batches b LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id`
+ * takma adlarını kullanmak ZORUNDA (yüklem bu adlara göre yazılıdır).
+ */
+function batchSupplierCond(supplierId: string): SQL {
+  return sql`coalesce(b.supplier_id, po.supplier_id) = ${supplierId}`;
+}
 
 /** Tedarikçi karnesi parti satırı (§12). */
 export interface ScorecardBatchRow {
@@ -180,12 +202,14 @@ export class SuppliersService {
     `);
 
     // Parti agregası: geri-çekilme oranı (recalled / toplam).
+    // Yüklem `batchSupplierCond` (TEK KAYNAK) — kusur karnesiyle aynı küme.
     const batchAgg = await rawRows<{ total: number; recalled: number }>(this.db, sql`
       SELECT
         count(*)::int AS total,
-        count(*) FILTER (WHERE status = 'recalled')::int AS recalled
-      FROM batches
-      WHERE supplier_id = ${id};
+        count(*) FILTER (WHERE b.status = 'recalled')::int AS recalled
+      FROM batches b
+      LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
+      WHERE ${batchSupplierCond(id)};
     `);
     const bAgg = batchAgg[0] ?? {
       total: 0,
@@ -205,10 +229,11 @@ export class SuppliersService {
       qty_received: number;
       created_at: unknown;
     }>(this.db, sql`
-      SELECT id, label, status, qty_received, created_at
-      FROM batches
-      WHERE supplier_id = ${id}
-      ORDER BY created_at DESC, id DESC
+      SELECT b.id, b.label, b.status, b.qty_received, b.created_at
+      FROM batches b
+      LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
+      WHERE ${batchSupplierCond(id)}
+      ORDER BY b.created_at DESC, b.id DESC
       LIMIT ${SuppliersService.SCORECARD_BATCH_LIMIT + 1};
     `);
     // Sinyal HAM SQL satır sayısından türer; tespit için çekilen fazladan satır YANITA GİRMEZ.
@@ -233,9 +258,9 @@ export class SuppliersService {
       avgLeadRaw == null ? null : Math.round(Number(avgLeadRaw) * 10) / 10;
 
     // ── Kusur karnesi ──
-    // Tedarikçi zinciri `CostsService.wastage` ile AYNI: parti doğrudan tedarikçi taşımıyorsa
-    // satın alma emrinden gelir. İki farklı zincir kullanmak, aynı tedarikçi için iki farklı
-    // kusur oranı demektir.
+    // Tedarikçi zinciri `CostsService.wastage` ile AYNI (batchSupplierCond): parti doğrudan
+    // tedarikçi taşımıyorsa satın alma emrinden gelir. İki farklı zincir kullanmak, aynı
+    // tedarikçi için iki farklı kusur oranı demektir.
     const defectAgg = await rawRows<{
       total_items: number;
       dead_items: number;
@@ -254,7 +279,7 @@ export class SuppliersService {
       FROM license_items li
       JOIN batches b ON b.id = li.batch_id
       LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
-      WHERE coalesce(b.supplier_id, po.supplier_id) = ${id};
+      WHERE ${batchSupplierCond(id)};
     `);
     const dAgg = defectAgg[0] ?? { total_items: 0, dead_items: 0, unclaimed_items: 0 };
     const totalItems = Number(dAgg.total_items ?? 0);
@@ -301,8 +326,8 @@ export class SuppliersService {
       batchesTruncated,
       // GERÇEK sayım (`batchAgg`) — liste uzunluğu DEĞİL. Liste kırpılmış olabilir; iki kaynak
       // ayrışırsa ekrandaki "Parti" sayacı da kırpma uyarısıyla birlikte yanıltırdı.
-      // Sayım ile listenin YÜKLEMİ birebir aynı (`batches.supplier_id = id`) — farklı olsaydı
-      // "201 parti" deyip 200'den azını listeleyen bir ekran çıkardı.
+      // Sayım ile listenin YÜKLEMİ birebir aynı (`batchSupplierCond` — tek kaynak) — farklı
+      // olsaydı "201 parti" deyip 200'den azını listeleyen bir ekran çıkardı.
       batchCount: batchTotal,
       recallRate: batchTotal > 0 ? recalled / batchTotal : 0,
       totalCostCents: costRows.map((r) => ({

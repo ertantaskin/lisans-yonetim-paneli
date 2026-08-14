@@ -44,9 +44,34 @@ const LABELS: Record<string, string> = {
   sla: 'Teslimat Süresi',
   reorder: 'Yeniden Sipariş',
   // NOT: buraya 'security' EKLENMEZ — bu sözlük NAV'ın ÜSTÜNE yazar ve `/security`
-  // (Güvenlik) ekranının breadcrumb'ını da değiştirirdi. '/admins/security' zaten
-  // "Yöneticiler › Güvenlik" olarak okunuyor.
+  // (Güvenlik) ekranının breadcrumb'ını da değiştirirdi. Çok segmentli yolların çözümü
+  // aşağıdaki TAM YOL sözlüğüdür (PATH_LABELS), segment sözlüğü değil.
 };
+
+/**
+ * TAM YOL → etiket (NAV'dan türetilir). Segment sözlüğünden ÖNCE bakılır.
+ *
+ * NEDEN (denetim bulgusu U7): `/admins/security` ekranının menüdeki adı "Hesap Güvenliğim"
+ * ama breadcrumb son kırıntıyı TEK SEGMENTTEN ('security') çözdüğü için `/security`
+ * ekranının adını ("Güvenlik") basıyordu — aynı panelde iki farklı ekran aynı adla
+ * görünüyordu. Segment sözlüğüne 'security' eklemek çözüm DEĞİL: o sözlük NAV'ın üstüne
+ * yazıldığı için `/security` ekranının kırıntısını bozardı (ölçüldü). Tam yol araması
+ * çakışma üretmez: '/security' ve '/admins/security' AYRI anahtarlardır.
+ */
+const PATH_LABELS: Record<string, string> = Object.fromEntries(
+  NAV.flatMap((s) => s.items).map((i) => [i.href, i.label]),
+);
+
+/**
+ * ARA kırıntısı LİNK OLMAYAN yollar — hedef ekran rol kapısının arkasında.
+ *
+ * `/admins` yalnız "owner" rolüne açıktır; `/admins/security` ise bilinçli olarak HER
+ * yöneticiye açıktır (herkes kendi 2FA'sını kurabilmeli). Ara kırıntı link olarak
+ * kalsaydı owner-olmayan yönetici tek tıkla "Yetkiniz yok" sayfasına düşerdi. Owner için
+ * kayıp küçüktür (aynı bağlantı sol menüde duruyor); yanlış yönlendirme ise gerçek bir
+ * çıkmaz sokaktır.
+ */
+const UNLINKED_PARENTS = new Set(['/admins']);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -94,15 +119,22 @@ export function SiteHeader() {
           {segments.map((seg, i) => {
             const href = '/' + segments.slice(0, i + 1).join('/');
             const last = i === segments.length - 1;
+            // TAM YOL önce: çok segmentli rotalar kendi adını korur (bkz. PATH_LABELS).
+            const label = PATH_LABELS[href] ?? labelFor(seg);
             return (
               <React.Fragment key={href}>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
                   {last ? (
-                    <BreadcrumbPage>{labelFor(seg)}</BreadcrumbPage>
+                    <BreadcrumbPage>{label}</BreadcrumbPage>
+                  ) : UNLINKED_PARENTS.has(href) ? (
+                    // Rol kapısının arkasındaki ara kırıntı link YAPILMAZ (bkz. UNLINKED_PARENTS).
+                    // `BreadcrumbPage` KULLANILMAZ: o bileşen `aria-current="page"` taşır ve
+                    // ara kırıntıyı "bulunduğunuz sayfa" diye duyururdu (iki "current" olurdu).
+                    <span className="text-muted-foreground">{label}</span>
                   ) : (
                     <BreadcrumbLink asChild>
-                      <Link href={href}>{labelFor(seg)}</Link>
+                      <Link href={href}>{label}</Link>
                     </BreadcrumbLink>
                   )}
                 </BreadcrumbItem>

@@ -42,9 +42,17 @@ export default async function QuarantineRecordsPage({
       >
         {/* Kayıtlı görünümler (§14): SUNUCU süzgeçleri (`?status=&range=&from=&to=&q=`) adreste
             yaşıyor → "son 30 gün, geçersiz kılınanlar" gibi bir denetim görünümü tek tıkla
-            geri gelir. Tablo İÇİ hızlı süzgeçler (ürün/tedarikçi facet'i) adrese yazılmıyor,
-            onlar kaydedilmez — menü bunu boş query'de açıkça söyler. KİŞİSEL kayıt. */}
-        <SavedViewsMenu page="quarantine" />
+            geri gelir. KİŞİSEL kayıt.
+
+            `unsyncedFilters` (denetim bulgusu U1): hızlı süzgeçler bu ekranda `DataTable`ın
+            değil `QuarantineTable`ın state'inde yaşıyor (süzme tablo DIŞINDA yapılıyor ki
+            dışa aktarmadaki "görünen N kayıt" dürüst olsun) → `syncUrl` onları YAKALAYAMAZ.
+            Uyarı eskiden yalnız adres tamamen boşken çıkıyordu; bu ekranda adres neredeyse
+            her zaman dolu olduğu için pratikte HİÇ çıkmıyordu. */}
+        <SavedViewsMenu
+          page="quarantine"
+          unsyncedFilters="hızlı süzgeçler (Bildirim/Ürün/Tedarikçi/Site) ve arama kutusuna yazdıkça yapılan süzme"
+        />
       </PageHeader>
       <QuarantineNav />
       {error ? (

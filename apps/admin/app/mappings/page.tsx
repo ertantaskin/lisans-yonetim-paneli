@@ -79,8 +79,16 @@ export default async function MappingsPage({
         description="Mağaza ürünlerini panel ürünlerine eşleyin. Site kataloğundan sipariş beklemeden proaktif eşleyin ya da siparişte gelmiş eşlenmemiş ürünleri tek tıkla eşleyin — mağaza ürün ID'si veriden gelir, elle yazmazsınız (typo riski yok)."
       >
         {/* Kayıtlı görünümler (§14): seçili site `?site=` ile adreste → çok mağazalı kurulumda
-            "her açılışta mağazayı yeniden seç" derdini bitirir. Görünümler KİŞİSELDİR. */}
-        <SavedViewsMenu page="mappings" />
+            "her açılışta mağazayı yeniden seç" derdini bitirir. Görünümler KİŞİSELDİR.
+
+            `unsyncedFilters` (denetim bulgusu U1): katalog bölümündeki hızlı arama kutusu
+            `CatalogTable`ın KENDİ istemci state'idir (bu ekranda paylaşılan `DataTable`
+            kullanılmıyor) → adrese yazılmaz ve görünüme giremez. Operatör "site + arama"
+            kaydettiğini sanmasın diye menü bunu açıkça söyler. */}
+        <SavedViewsMenu
+          page="mappings"
+          unsyncedFilters="katalog listesindeki hızlı arama kutusu"
+        />
       </PageHeader>
       {error ? (
         <Card className="p-6">

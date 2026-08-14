@@ -43,6 +43,11 @@ type ReceiveBody = z.infer<typeof ReceiveBody>;
 export class PurchaseOrdersController {
   constructor(private readonly purchaseOrders: PurchaseOrdersService) {}
 
+  /**
+   * SÖZLEŞME DEĞİŞTİ (denetim R3): yanıt artık DÜZ DİZİ değil `{ items, truncated }` zarfı.
+   * Liste tavana (PurchaseOrdersService.LIST_LIMIT) dayandığında `truncated=true` döner ve
+   * arayüz "liste eksik" uyarısını basmalıdır — sessiz kırpma bu projede yasak.
+   */
   @Get()
   list() {
     return this.purchaseOrders.list();

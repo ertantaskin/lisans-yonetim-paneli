@@ -1,7 +1,9 @@
 'use client';
 import * as React from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { Bookmark, BookmarkPlus, Loader2, Trash2 } from 'lucide-react';
+import { Bookmark, BookmarkPlus, Loader2, TriangleAlert, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { savedViewSaveNotice } from '../lib/saved-views';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
 import {
@@ -22,6 +24,26 @@ interface SavedView {
 }
 
 /**
+ * Hata gövdesinden operatöre gösterilebilir tek satır çıkarır.
+ * Proxy rotası API gövdesini olduğu gibi (metin ya da JSON) geçirir; ham JSON'u ekrana
+ * dökmemek için `message` alanı varsa o kullanılır, yoksa kırpılmış düz metin.
+ */
+async function errorText(res: Response): Promise<string> {
+  const raw = await res.text().catch(() => '');
+  const body = raw.trim();
+  if (body.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(body) as { message?: unknown; error?: unknown };
+      const msg = parsed.message ?? parsed.error;
+      if (typeof msg === 'string' && msg.trim()) return msg.trim();
+    } catch {
+      /* JSON değilse düz metne düş */
+    }
+  }
+  return body.slice(0, 160) || `HTTP ${res.status}`;
+}
+
+/**
  * Kayıtlı görünümler menüsü (§14). Operatör mevcut tablo filtre/arama durumunu (URL query)
  * adlandırıp kaydeder, sonra tek tıkla geri yükler.
  *
@@ -37,13 +59,29 @@ interface SavedView {
  * SUSMAZ, açıkça uyarır (aşağıya bkz.) — sessizce işe yaramaz bir kayıt üretmek, bu panelde
  * en tehlikeli kusur sınıfıdır ("yaptım sanıp yapmamak").
  *
+ * DENETİM BULGUSU (U1) — uyarı ARTIK BOŞ-QUERY ŞARTINA BAĞLI DEĞİL: asıl tehlikeli durum
+ * "adres dolu ama eksik"ti. Operatör `/customers?site=X` adresindeyken tabloya "acme" yazıp
+ * görünümü kaydediyordu; adreste `?site=X` durduğu için HİÇ uyarı çıkmıyor, geri yüklediğinde
+ * farklı bir liste geliyordu. Ekran, adrese YAZILMAYAN süzgeçlerini `unsyncedFilters` ile
+ * bildirir; metin tek kaynaktan üretilir (`lib/saved-views.ts`, testli).
+ *
  * KİŞİSEL: kayıtlar actor bazlıdır (API `x-admin-actor` ile yalnız isteği yapan admin'in
  * satırlarını döndürür/siler) — menüde de böyle yazar, operatör görünümünü "takıma bıraktım"
  * sanmasın.
  *
  * `page` bu ekranın kimliğidir (ör. 'orders', 'stock'): görünümler ekranlar arası karışmaz.
  */
-export function SavedViewsMenu({ page }: { page: string }) {
+export interface SavedViewsMenuProps {
+  page: string;
+  /**
+   * Bu ekranda adrese YAZILMAYAN süzgeçlerin insan-okur adı. Verilirse kaydetme onayında
+   * ve menüde kalıcı uyarı çıkar. Ekranın tüm süzgeçleri URL'de yaşıyorsa GEÇİLMEZ
+   * (/orders, /stock, /customers → `DataTable syncUrl` ile yazılıyor).
+   */
+  unsyncedFilters?: string;
+}
+
+export function SavedViewsMenu({ page, unsyncedFilters }: SavedViewsMenuProps) {
   /*
    * SUSPENSE SINIRI: `useSearchParams()` bir CSR-bailout kancasıdır; sarmalanmadığında
    * statik prerender edilen bir rotada `next build` HATA verir. Bu menü artık birden çok
@@ -59,18 +97,25 @@ export function SavedViewsMenu({ page }: { page: string }) {
         </Button>
       }
     >
-      <SavedViewsMenuInner page={page} />
+      <SavedViewsMenuInner page={page} unsyncedFilters={unsyncedFilters} />
     </React.Suspense>
   );
 }
 
-function SavedViewsMenuInner({ page }: { page: string }) {
+function SavedViewsMenuInner({ page, unsyncedFilters }: SavedViewsMenuProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const [open, setOpen] = React.useState(false);
   const [views, setViews] = React.useState<SavedView[]>([]);
   const [loading, setLoading] = React.useState(false);
+  /**
+   * Liste ALINAMADI (veri YOK ile aynı şey değil). Eskiden hata da boş dizi ile
+   * karşılanıyordu → menü "Henüz kayıtlı görünüm yok." diyordu; operatör kayıtlarının
+   * silindiğini sanabilirdi ve "kaydet" düğmesine basıp aynı adı ikinci kez oluştururdu.
+   * (Komşu /deployments ekranı bu ayrımı doğru yapıyor; desen oradan alındı.)
+   */
+  const [loadError, setLoadError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const { confirm, dialog } = useConfirm();
 
@@ -83,10 +128,14 @@ function SavedViewsMenuInner({ page }: { page: string }) {
       const res = await fetch(`/api/saved-views?page=${encodeURIComponent(page)}`, {
         cache: 'no-store',
       });
-      setViews(res.ok ? ((await res.json()) as SavedView[]) : []);
-    } catch {
-      // Liste hatası menüyü kırmamalı — boş bırak.
-      setViews([]);
+      if (!res.ok) {
+        setLoadError(await errorText(res));
+        return;
+      }
+      setViews((await res.json()) as SavedView[]);
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Bağlantı hatası');
     } finally {
       setLoading(false);
     }
@@ -116,14 +165,13 @@ function SavedViewsMenuInner({ page }: { page: string }) {
   const save = async () => {
     // Menü ÖNCE kapanır: modal, açık bir dropdown'ın içinden değil temiz bir zeminden açılsın.
     setOpen(false);
+    // Metin TEK KAYNAK (lib/saved-views.ts): uyarı artık boş-query şartından bağımsız —
+    // adres dolu ama tablo içi süzgeçler yazılmıyorsa da basılır (bulgu U1).
+    const notice = savedViewSaveNotice({ hasQuery: Boolean(currentQuery), unsyncedFilters });
     const answer = await confirm({
       title: 'Bu görünümü kaydet',
-      description: currentQuery
-        ? 'Adres çubuğundaki süzgeç durumu bu adla kaydedilir; menüden tek tıkla geri dönebilirsiniz. Görünüm yalnız size görünür.'
-        : // DÜRÜSTLÜK: adres çubuğunda hiç süzgeç yokken kaydedilen görünüm sayfayı SÜZGEÇSİZ
-          // açar. Kaydı engellemiyoruz (bir ekranın "varsayılan hâli" de meşru bir görünümdür),
-          // ama operatör ne kaydettiğini bilerek onaylasın.
-          'DİKKAT: Adres çubuğunda şu an hiçbir süzgeç yok — bu görünüm sayfayı süzgeçsiz açar. Bu ekranın bazı süzgeçleri (tablo içi arama/facet) adrese yazılmadığı için kaydedilemez.',
+      description: notice.description,
+      details: notice.details.length > 0 ? notice.details : undefined,
       confirmLabel: 'Kaydet',
       reason: {
         label: 'Görünüm adı',
@@ -141,24 +189,39 @@ function SavedViewsMenuInner({ page }: { page: string }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ page, name, query: currentQuery }),
       });
-      if (res.ok) await load();
-    } catch {
-      /* yut: menü açık kalsın */
+      // SESSİZ BAŞARISIZLIK YASAK: eskiden 4xx/5xx tamamen yutuluyordu ve menü "kaydettim"
+      // görüntüsü veriyordu (liste yenilenmediği için fark bile edilmiyordu).
+      if (!res.ok) {
+        toast.error(`Görünüm kaydedilemedi: ${await errorText(res)}`);
+        return;
+      }
+      toast.success(`“${name}” görünümü kaydedildi.`);
+      await load();
+    } catch (e) {
+      toast.error(
+        `Görünüm kaydedilemedi: ${e instanceof Error ? e.message : 'Bağlantı hatası'}`,
+      );
     } finally {
       setBusy(false);
     }
   };
 
   // Görünümü sil (yalnız kendi görünümü; API actor doğrular).
-  const remove = async (id: string) => {
+  const remove = async (id: string, name: string) => {
     setBusy(true);
     try {
       const res = await fetch(`/api/saved-views?id=${encodeURIComponent(id)}`, {
         method: 'DELETE',
       });
-      if (res.ok) setViews((prev) => prev.filter((v) => v.id !== id));
-    } catch {
-      /* yut */
+      if (!res.ok) {
+        // Satırı listeden DÜŞÜRME: silinmediği hâlde kaybolursa operatör sildiğini sanır.
+        toast.error(`Görünüm silinemedi: ${await errorText(res)}`);
+        return;
+      }
+      setViews((prev) => prev.filter((v) => v.id !== id));
+      toast.success(`“${name}” görünümü silindi.`);
+    } catch (e) {
+      toast.error(`Görünüm silinemedi: ${e instanceof Error ? e.message : 'Bağlantı hatası'}`);
     } finally {
       setBusy(false);
     }
@@ -180,11 +243,33 @@ function SavedViewsMenuInner({ page }: { page: string }) {
         <p className="px-2.5 pb-1.5 text-xs leading-snug text-muted-foreground">
           Yalnız size görünür — bu ekrandaki süzgeçlerin adres çubuğuna yazılan hâlini saklar.
         </p>
+        {/* Ekranın adrese yazılmayan süzgeçleri varsa uyarı KALICI: operatör kaydetmeye
+            karar vermeden önce görsün (onay modalinde de tekrar edilir). */}
+        {unsyncedFilters && (
+          // Ton/renk TEK KAYNAK: rozet `warning` varyantıyla birebir aynı token çifti
+          // (`--warning-fill` + `--warning-ring`) — yeni hue eklenmez.
+          <p className="mx-2.5 mb-1.5 flex gap-1.5 rounded-md bg-(--warning-fill) px-2 py-1.5 text-xs leading-snug text-warning ring-1 ring-inset ring-(--warning-ring)">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>Bu ekranda {unsyncedFilters} adrese yazılmaz — görünüme dahil edilmez.</span>
+          </p>
+        )}
 
         {loading ? (
           <div className="flex items-center gap-2 px-2.5 py-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
             Yükleniyor…
+          </div>
+        ) : loadError ? (
+          // "Veri YOK" ile "veri ALINAMADI" ayrı gösterilir (projedeki dürüstlük kuralı).
+          <div className="px-2.5 py-2 text-sm">
+            <p className="text-destructive">Kayıtlı görünümler alınamadı: {loadError}</p>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="mt-1 rounded-sm text-xs text-foreground underline underline-offset-4 hover:no-underline"
+            >
+              Tekrar dene
+            </button>
           </div>
         ) : views.length === 0 ? (
           <div className="px-2.5 py-2 text-sm text-muted-foreground">Henüz kayıtlı görünüm yok.</div>
@@ -207,7 +292,7 @@ function SavedViewsMenuInner({ page }: { page: string }) {
                   variant="ghost"
                   size="icon-sm"
                   disabled={busy}
-                  onClick={() => void remove(view.id)}
+                  onClick={() => void remove(view.id, view.name)}
                   aria-label={`${view.name} görünümünü sil`}
                   className="text-muted-foreground hover:text-destructive"
                 >

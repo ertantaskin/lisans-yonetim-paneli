@@ -439,29 +439,6 @@ export class SupplierClaimsService {
     // Alan-alan maske için ürün şemaları (yalnız maskeleme yolunda).
     const secretLabels = reveal ? null : await this.accountSecretLabels(items);
 
-    // "reveal audit'e düşer" (§17) — fiş detayı ölü anahtarların DÜZ METNİNİ toplu döndürür
-    // (operatör tedarikçiye bildirir). listQuarantine deseni: tek kayıt = tek görüntüleme
-    // (per-view granülerlik) · YALNIZ gerçek düz-metin döndüğünde (maskeli görünüm sır ifşa
-    // etmez, yanıltıcı audit üretmemeli) · best-effort (yazım hatası bu OKUMA yolunu 500'lemez).
-    if (reveal && items.length > 0) {
-      try {
-        await this.db.insert(auditLog).values({
-          action: 'reveal',
-          actor: opts.actor || 'admin',
-          targetType: 'supplier_claim',
-          targetId: id,
-          meta: {
-            auto: true,
-            view: 'supplier_claim_detail',
-            code: claim.code,
-            count: items.length,
-          },
-        });
-      } catch {
-        /* audit yazımı başarısız → detay yine döner */
-      }
-    }
-
     const mapped: ClaimItemRow[] = items.map((i) => ({
       id: i.id,
       licenseItemId: i.licenseItemId,
@@ -491,6 +468,48 @@ export class SupplierClaimsService {
     const masked = mapped.some(
       (i) => i.keySnapshot != null && (!reveal || i.keySnapshot.includes(MASK_MARK)),
     );
+
+    /**
+     * "reveal audit'e düşer" (§17) — fiş detayı ölü anahtarların DÜZ METNİNİ toplu döndürür
+     * (operatör tedarikçiye bildirir). listQuarantine deseni: tek kayıt = tek görüntüleme
+     * (per-view granülerlik) · best-effort (yazım hatası bu OKUMA yolunu 500'lemez).
+     *
+     * DENETİM D4 — KUSUR: audit yalnız `reveal && items.length > 0`e bakıyor ve maske
+     * hesaplanmadan ÖNCE yazılıyordu. Fişi owner-OLMAYAN biri kestiyse `key_snapshot` ZATEN
+     * maskeli YAZILMIŞTIR (kesme anındaki yetkiyle donar) → owner detayı açtığında hiçbir düz
+     * metin görmediği hâlde `count: N` ile bir "reveal" kaydı düşüyordu. "Kim kaç anahtar
+     * gördü" sayımı yalan söylüyordu. Projede bunun TERSİ de yasak (düz metin gösterip audit
+     * YAZMAMAK) — bu yüzden koşul "maskeli mi" bayrağına değil, GERÇEKTEN düz metin dönen
+     * kalem SAYISINA bağlandı: karışık bir fiş (bugün üretilemiyor; kalemler tek `create()`
+     * çağrısında aynı yetkiyle yazılır) ileride oluşursa audit ne fazla ne eksik yazar.
+     *
+     * Sayım YALNIZ sır taşıyan gövdeye bakar: `MASK_MARK` içeren snapshot maskelidir.
+     * (Hesap kaleminde sır OLMAYAN alanlar — "Kullanıcı: …" — kasten korunur; onlar sır
+     * değildir ve reveal audit'inin konusu da değildir. Bu yüzden dış kapı `reveal`dir.)
+     */
+    const revealedCount = reveal
+      ? mapped.filter((i) => i.keySnapshot != null && !i.keySnapshot.includes(MASK_MARK)).length
+      : 0;
+    if (revealedCount > 0) {
+      try {
+        await this.db.insert(auditLog).values({
+          action: 'reveal',
+          actor: opts.actor || 'admin',
+          targetType: 'supplier_claim',
+          targetId: id,
+          meta: {
+            auto: true,
+            view: 'supplier_claim_detail',
+            code: claim.code,
+            // Fişteki TOPLAM kalem değil, düz metni GERÇEKTEN görülen kalem sayısı.
+            count: revealedCount,
+            itemCount: mapped.length,
+          },
+        });
+      } catch {
+        /* audit yazımı başarısız → detay yine döner */
+      }
+    }
 
     return { claim, items: mapped, masked };
   }

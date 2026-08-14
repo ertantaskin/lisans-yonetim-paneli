@@ -40,6 +40,8 @@ import { notExpiredCond } from '../assignment/assign';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 import { buildStoreAdminUrl } from '../orders/store-admin-url';
+// "Kaç birim eksik" yükleminin TEK kaynağı (notExpiredCond deseni) — bkz. orders/fill-target.ts.
+import { remainingUnitsSql } from '../orders/fill-target';
 import {
   AUTOCOMPLETE_INLINE_CAP_DEFAULT,
   AUTOCOMPLETE_INLINE_CAP_ENV,
@@ -169,7 +171,11 @@ export interface StockPreview {
   count: number;
   /** Bu ürün için bekleyen (pending/partial, iptal olmayan, incelemede olmayan) satır sayısı. */
   pendingLines: number;
-  /** Bekleyen TOPLAM birim = Σ(qty - fulfilled_qty) — otomatik dolacak + dolmayacak birlikte. */
+  /**
+   * Bekleyen TOPLAM birim = Σ(qty − canceled_units − fulfilled_qty) — otomatik dolacak +
+   * dolmayacak birlikte. Yüklem `orders/fill-target.ts` `remainingUnitsSql` (TEK tanım):
+   * panelden KALICI iptal edilmiş birim bekleyen iş DEĞİLDİR (autoComplete onu doldurmaz).
+   */
   pendingUnits: number;
   /**
    * Stok girişiyle OTOMATİK dolacak birim (efektif politika partial-auto + ön sipariş
@@ -1389,10 +1395,18 @@ export class StockService {
       .select({
         // Açık satır sayısı (politikadan bağımsız TOPLAM açık talep).
         lines: sql<number>`count(*)`,
-        // Bekleyen birim: qty - fulfilled_qty (negatif olamaz, coalesce güvenliği).
-        units: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.fulfilledQty}, 0)), 0)`,
+        /*
+         * Bekleyen birim — TEK TANIM (denetim R1): `remainingUnitsSql` (orders/fill-target.ts)
+         * = qty − canceled_units − fulfilled_qty. Burada ham `qty − fulfilled_qty` yazılıydı;
+         * panelden KALICI iptal edilmiş birimler (per-atama "İptal") hâlâ karşılanacak talep
+         * sayılıyordu. `autoCompleteProduct` o birimleri ASLA doldurmaz (hedef fill-target'tan
+         * gelir) → "Onayla ve Dağıt" modali "bu giriş N bekleyen birimi teslim eder" diye
+         * TUTULAMAYACAK bir söz veriyordu (aynı sınıf yanlış vaat bu metodun politika
+         * süzgeciyle bir kez düzeltilmişti; iptal defteri açığı kalmıştı).
+         */
+        units: sql<number>`coalesce(sum(${remainingUnitsSql('order_lines')}), 0)`,
         // Bunun otomatik dolacak kısmı — efektif politika partial-auto olan satırlar.
-        autoUnits: sql<number>`coalesce(sum(greatest(${orderLines.qty} - ${orderLines.fulfilledQty}, 0))
+        autoUnits: sql<number>`coalesce(sum(${remainingUnitsSql('order_lines')})
           FILTER (WHERE coalesce(${orderLines.policyOverride}, ${products.fulfillmentPolicy}) = 'partial-auto'), 0)`,
       })
       .from(orderLines)

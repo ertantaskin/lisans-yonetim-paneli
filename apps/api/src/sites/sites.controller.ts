@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { SitesService } from './sites.service';
 
@@ -86,7 +87,20 @@ export class SitesController {
   /**
    * HMAC secret rotasyonu (§4). Yeni secret döner (bir kez); eski secret 24s daha
    * geçerli kalır → WP eklentisi kesintisiz yeni secret'a geçer.
+   *
+   * OwnerGuard (denetim D2 — savunma-derinliği): panel bu işlemi ZATEN owner-only sayıyor
+   * (`apps/admin/app/sites/actions.ts` → `rotateSecretAction` başında `isOwner()`), ama
+   * OwnerGuard'ın var olma sebebi tam olarak "Next katmanındaki TEK bir eksik isOwner()
+   * kontrolü owner-only uçlara yükselemesin"dir. Kapı admin CRUD / deployments / reveal /
+   * anonymize / eklenti-yayınla uçlarına konmuş, bu uç atlanmıştı. ÖNEM: bu uç TAZE
+   * `apiKey` + `hmacSecret`'ı ÇAĞIRANA döndürür → o kimlikle site-facing uçlar (reveal
+   * dahil) imzalanabilir; yani sır rotasyonu güven kökünü değiştiren bir işlemdir.
+   *
+   * DİKKAT — `PATCH /sites/:id`'ye AYNISI EKLENMEZ: o ucu İKİ Next eylemi kullanıyor
+   * (`updateSiteAction` owner-DEĞİL, `setSiteStatusAction` owner). Guard oraya eklenirse
+   * meşru operasyon-ayarı düzenlemesi owner-olmayan admin için kırılır.
    */
+  @UseGuards(OwnerGuard)
   @Post(':id/rotate-secret')
   rotate(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.sites.rotateSecret(id);

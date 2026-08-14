@@ -99,8 +99,10 @@ export default async function CustomersPage({
         {/* Mağaza içindeyken hızlı geçiş için süzgeç kalır; giriş ekranında kartlar zaten
             aynı işi yapıyor, ikinci bir seçici gürültü olurdu. */}
         {mode === 'site' && <CustomerSiteFilter sites={sites} current={site} />}
-        {/* Kayıtlı görünümler (§14): `?site=` / `?q=` adreste yaşıyor → menü gerçekten çalışır
-            ("Acme mağazasının müşterileri" tek tıkla geri gelir). Görünümler KİŞİSELDİR. */}
+        {/* Kayıtlı görünümler (§14): `?site=` / `?q=` VE tablo içi arama/sıralama (`tq`/`tsort`
+            — CustomersTable `syncUrl`) adreste yaşıyor → menü gerçekten çalışır ("Acme
+            mağazasının müşterileri" tek tıkla geri gelir) ve `unsyncedFilters` gerekmez.
+            Görünümler KİŞİSELDİR. */}
         <SavedViewsMenu page="customers" />
       </PageHeader>
 

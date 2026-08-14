@@ -28,6 +28,7 @@ import { WebhookService } from '../webhook/webhook.service';
 import { releaseAllocations } from '../assignment/assign';
 import { allocate } from '../assignment/allocate';
 import { recomputeOrderStatus } from './order-status';
+import { lineStatusFor } from './fill-target';
 import { FulfillmentService } from './fulfillment.service';
 import { AdminOrdersService } from './admin-orders.service';
 import { SecurityService } from '../security/security.service';
@@ -792,8 +793,16 @@ export class OrdersService {
       for (const lineId of changedLineIds) {
         const [l] = await tx.select().from(orderLines).where(eq(orderLines.id, lineId)).limit(1);
         if (!l) continue;
-        const status =
-          l.fulfilledQty >= l.qty ? 'fulfilled' : l.fulfilledQty > 0 ? 'partial' : 'pending';
+        // C3: durum HAM `qty` ile değil HEDEFLE (`qty − canceled_units`) türetilir — tek tanım
+        // `fill-target.ts`. Yukarıdaki azalış dalı defteri uzlaştırdıktan sonra bile hedef qty'den
+        // küçük kalabilir (kısmen iptal edilmiş satır); ham karşılaştırma o satırı SONSUZA DEK
+        // 'partial' bırakıyordu → sipariş kalıcı 'partial', WP'de "eksik teslimat" görünür ve
+        // satır her stok girişinde boşuna taranır.
+        const status = lineStatusFor({
+          qty: l.qty,
+          canceledUnits: l.canceledUnits,
+          fulfilledQty: l.fulfilledQty,
+        });
         await tx.update(orderLines).set({ status }).where(eq(orderLines.id, lineId));
       }
       await recomputeOrderStatus(tx, order.id);
