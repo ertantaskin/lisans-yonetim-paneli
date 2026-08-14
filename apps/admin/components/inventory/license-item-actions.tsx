@@ -62,6 +62,7 @@ export function LicenseItemActions({
   row,
   payloadSchema,
   onDone,
+  compact = false,
 }: {
   row: LicenseInventoryRow;
   /**
@@ -72,6 +73,12 @@ export function LicenseItemActions({
   payloadSchema?: PayloadFieldDef[] | null;
   /** Başarılı işlemden sonra tabloyu tazelemek için. */
   onDone: () => void;
+  /**
+   * Yoğun TABLO satırında etiketler gizlenir (ikon + aria-label/title kalır): iki metin
+   * düğmesi kolona 197px yüklüyor ve 1600px ekranda bile tabloyu 162px yana kaydırıyordu
+   * (ölçüldü). Dar ekrandaki KART görünümünde yer var → etiketler orada görünür kalır.
+   */
+  compact?: boolean;
 }) {
   const [editOpen, setEditOpen] = React.useState(false);
   const [voidOpen, setVoidOpen] = React.useState(false);
@@ -81,7 +88,7 @@ export function LicenseItemActions({
   // Bu dal ÖNCE gelir: geri çekilmiş bir partide operatör satır satır karar verirken
   // devre dışı iki düğme yerine yapılabilecek TEK işlemi görmeli.
   if (row.delivered && LIVE_ASSIGNMENT.has(row.delivered.assignmentStatus)) {
-    return <ReplaceDeliveredButton row={row} onDone={onDone} />;
+    return <ReplaceDeliveredButton row={row} onDone={onDone} compact={compact} />;
   }
 
   if (!editable) {
@@ -95,7 +102,7 @@ export function LicenseItemActions({
             title={lockReason}
           >
             <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${lockReason}`}>
-              <Pencil aria-hidden /> <span className="hidden 2xl:inline">Değiştir</span>
+              <Pencil aria-hidden /> <span className={compact ? "sr-only" : undefined}>Değiştir</span>
             </Button>
             <Button
               variant="danger-outline"
@@ -103,7 +110,7 @@ export function LicenseItemActions({
               disabled
               aria-label={`Sil — ${lockReason}`}
             >
-              <Trash2 aria-hidden /> <span className="hidden 2xl:inline">Sil</span>
+              <Trash2 aria-hidden /> <span className={compact ? "sr-only" : undefined}>Sil</span>
             </Button>
           </span>
         </TooltipTrigger>
@@ -120,7 +127,7 @@ export function LicenseItemActions({
         onClick={() => setEditOpen(true)}
         aria-label={`${row.productName} lisansını değiştir`}
       >
-        <Pencil aria-hidden /> <span className="hidden 2xl:inline">Değiştir</span>
+        <Pencil aria-hidden /> <span className={compact ? "sr-only" : undefined}>Değiştir</span>
       </Button>
       <Button
         variant="danger-outline"
@@ -128,7 +135,7 @@ export function LicenseItemActions({
         onClick={() => setVoidOpen(true)}
         aria-label={`${row.productName} lisansını geçersiz kıl`}
       >
-        <Trash2 aria-hidden /> <span className="hidden 2xl:inline">Sil</span>
+        <Trash2 aria-hidden /> <span className={compact ? "sr-only" : undefined}>Sil</span>
       </Button>
 
       <EditLicenseSheet
@@ -158,11 +165,14 @@ export function LicenseItemActions({
  * da kapatılır (iki katman) çünkü aynı paylaşımlı anahtarı yeniden atamak anlamsızdır.
  */
 function ReplaceDeliveredButton({
+  compact = false,
   row,
   onDone,
 }: {
   row: LicenseInventoryRow;
   onDone: () => void;
+  /** Tabloda etiketler gizlenir (ikon + aria-label kalır) — bkz. LicenseItemActions. */
+  compact?: boolean;
 }) {
   const { confirm, dialog } = useConfirm();
   const [busy, setBusy] = React.useState(false);
@@ -230,7 +240,7 @@ function ReplaceDeliveredButton({
         <TooltipTrigger asChild>
           <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
             <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${why}`}>
-              <RefreshCw aria-hidden /> <span className="hidden 2xl:inline">Değiştir</span>
+              <RefreshCw aria-hidden /> <span className={compact ? "sr-only" : undefined}>Değiştir</span>
             </Button>
           </span>
         </TooltipTrigger>

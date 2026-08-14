@@ -690,7 +690,7 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
                   {showProductColumn && (
-                    <TableCell className="max-w-36 2xl:max-w-48">
+                    <TableCell className="max-w-36 2xl:max-w-40">
                       <Link
                         href={`/products/${row.productId}`}
                         className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
@@ -791,6 +791,7 @@ export function LicenseItemsTable({
                       row={row}
                       payloadSchema={productId ? payloadSchema : undefined}
                       onDone={reloadAfterMutation}
+                      compact
                     />
                   </TableCell>
                 </TableRow>
