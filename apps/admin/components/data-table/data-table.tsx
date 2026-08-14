@@ -153,7 +153,28 @@ export function DataTable<TData, TValue>({
             ) : (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
-                  {emptyLabel}
+                  {/*
+                    "HİÇ KAYIT YOK" ile "SÜZGEÇLE EŞLEŞEN YOK" AYRI cümlelerdir. Çağıranların
+                    `emptyLabel`'ı veri kümesini anlatır ("Bu sitenin müşterisi yok.") — süzgeç
+                    aktifken bunu basmak operatöre YALAN söyler. Risk `syncUrl` ile arttı:
+                    süzgeçli bir adres artık paylaşılabiliyor/yer imine eklenebiliyor, yani
+                    operatör sayfaya SÜZGEÇ AÇIKKEN girebiliyor ve boş listeyi "kayıt yok"
+                    diye okuyabiliyor. Süzgeci temizleme yolu da aynı cümlede gösterilir.
+                  */}
+                  {table.getState().columnFilters.length > 0 && data.length > 0 ? (
+                    <span className="inline-flex flex-wrap items-center justify-center gap-1.5">
+                      Süzgeçle eşleşen kayıt yok.
+                      <button
+                        type="button"
+                        onClick={() => table.resetColumnFilters()}
+                        className="font-medium text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground"
+                      >
+                        Süzgeçleri temizle
+                      </button>
+                    </span>
+                  ) : (
+                    emptyLabel
+                  )}
                 </TableCell>
               </TableRow>
             )}
