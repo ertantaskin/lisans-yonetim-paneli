@@ -14,6 +14,59 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Sekiz öneri maddesi (B1–B8): denetim izi · iki rapor · 2FA · yedek · görünümler (migration 0040)
+
+Önceki turda "eklenebilir" diye önerilen sekiz maddenin tamamı uygulandı. Altı paralel işçi
+ayrık dosya kümeleriyle çalıştı; şema değişiklikleri (üç madde şema istiyordu) **tek elde**
+toplandı — üç işçi eşzamanlı migration üretse drizzle journal dosyasında çakışırdı.
+
+**Eklendi**
+- **Denetim izi ekranı `/audit`.** `audit_log` doluydu ama listeleyen bir uç YOKTU: "bu anahtarı
+  kim gösterdi", "bu siparişi kim iptal etti" ancak veritabanına elle bağlanarak yanıtlanıyordu.
+  Salt-okunur (yazma ucu bilerek yok — denetim izinin değeri değiştirilemez olmasından gelir),
+  aktör/hedef/eylem/tarih/iz-kimliği süzgeçleri, `meta` redaksiyon kalkanı, `LIMIT CAP+1` ile
+  sınırlı sayım (aşımda `totalCapped` — sessiz yanlış toplam yok).
+- **`/reports/sla` — teslimat süresi.** "Anında" ↔ "bekledi" ayrımı uydurma bir eşik DEĞİL:
+  sipariş ve atamaları tek transaction'da yazıldığı için anında teslimde fark tam `0`.
+  Ortalamanın yanında **p50/p95** (birkaç uzun bekleme ortalamada kaybolur), incelemedeki
+  siparişler / iptal satırlar / bonus kalemler / değişimle verilen taze anahtarlar hariç ve
+  **kaç tanesinin elendiği yanıtta yazılı**; tamamlanmamış siparişler `stillOpen` ile ayrı.
+- **`/reports/reorder` — yeniden sipariş önerisi.** Hız + o ürünün tedarikçisinin GERÇEKLEŞEN
+  tedarik süresi; formül ekranda açıkça yazılı. Tedarik süresi bilinmiyorsa **öneri üretilmez**
+  (varsayılan uydurulmaz), yalnız tükenme tahmini gösterilir.
+- **İki faktörlü giriş (TOTP).** RFC 6238 elle yazıldı — **sıfır yeni bağımlılık**. Sır
+  AES-256-GCM envelope + `admin_user:<id>` AAD ile şifreli; tekrar-oynatma defteri Redis
+  (`SET NX`, fail-closed); lockout parola denemeleriyle AYNI kovada; oturum çerezi YALNIZ
+  ikinci adımdan sonra (arada 5 dk'lık, ayrı anahtarla imzalanmış beklet-token'ı); owner
+  sıfırlaması açık oturumları da düşürür. Varsayılan KAPALI, hesap bazında açılır.
+- **Panelden yedek + geri-yükleme tatbikatı.** Dağıtımla aynı kuyruk (tek aktif iş garantisi),
+  ayrı runner + hedef filtresi; `/deployments`'ta yaş / boyut / **dış kopya** durumu ve
+  bayatlık bantları. Panel konteynerine Docker soketi verilmez — istek/çalıştırma ayrımı korundu.
+- **Kayıtlı görünümler + lisans envanteri dışa aktarma.** Görünümler artık `/orders`, `/stock`,
+  `/customers`, `/mappings`, `/quarantine/records` ekranlarında. Dışa aktarma ayrı sunucu ucu;
+  düz metin **yalnız owner** ve tek `reveal` audit kaydı, owner-olmayan maskeli dosya alır.
+- **Mağaza sessizlik alarmı** (`sites.last_seen_at`) — geçmişte bir kesinti tam da bu sinyal
+  olmadığı için günlerce fark edilmemişti. Damga imza doğrulandıktan SONRA yazılır.
+
+**Değişti**
+- `DataTable` opt-in **`syncUrl`**: arama/facet/sıralama adres çubuğuna yazılır
+  (`tq` / `tf.<kolon>` / `tsort`). Sayfanın kendi parametreleri korunur; facet listesinde
+  olmayan bir `tf.*` tabloya filtre enjekte edemez. `/orders`'ta kayıtlı görünüm menüsü
+  bağlıydı ama süzgeçler istemci state'inde durduğu için **BOŞ görünüm kaydediyordu**.
+- Güvenlik olayı etiketleri tek kaynağa (`labels.ts`) toplandı; ekrana özel yerel sözlük
+  kaldırıldı. Breadcrumb: `sla` / `reorder` / `costs`.
+
+**Düzeltildi**
+- **`/audit` tarih aralığı süzgeci her zaman 500 veriyordu**: ham `sql` fragmanına `Date`
+  nesnesi konmuştu, postgres.js bind aşamasında `ERR_INVALID_ARG_TYPE` atıyor. Projenin
+  mevcut deseni (ISO dize + açık `::timestamptz`) uygulandı. **Entegrasyon paketi yakaladı —
+  typecheck ve build temiz geçiyordu.**
+- TOTP entegrasyon testleri kurulum onayı ile girişte aynı 30 sn'lik adımı kullanıyordu;
+  tekrar-oynatma defteri bu ikisi arasında ORTAK (RFC 6238 §5.2, kasıtlı) → "geçerli kod
+  reddedildi" gibi görünen üç başarısızlık. Test düzeltildi, davranış açıkça kilitlendi.
+- Rehber: yeni beş ekran eklendi; "kayıtlı görünüm yalnız Siparişler'de" iddiası ve
+  "filtreler adres çubuğuna yansır" vaadi artık gerçeğe uyuyor.
+
 ### 5-lensli proje denetimi: 31 doğrulanmış bulgu + 3 sessiz regresyon (migration YOK)
 
 Kullanıcı isteğiyle proje beş lensten (regresyon · güvenlik · performans/DB · UI-UX/a11y ·
