@@ -68,6 +68,7 @@ export class ProductCategoriesService {
            AND (li.expires_at IS NULL OR li.expires_at > now())
           GROUP BY p.id, p.category_id, p.low_stock_threshold
         )
+        cards AS (
         SELECT
           c.id AS id,
           c.name AS name,
@@ -93,6 +94,8 @@ export class ProductCategoriesService {
         FROM stock s
         WHERE s.category_id IS NULL
         HAVING COUNT(*) > 0
+        )
+        SELECT * FROM cards
 
         /*
          * SIRALAMA (kullanıcı geri bildirimi: "stoğu fazla olan kategoriler en başta"):
@@ -106,6 +109,11 @@ export class ProductCategoriesService {
          *   4) Esitlikte ada gore -> sira deterministik (ayni veri hep ayni sirada).
          * NOT: bu blok bir sql-sablonunun ICINDE - ters tirnak KULLANILAMAZ (sablonu erken
          * kapatir; bu projede daha once uc kez yasandi, typecheck TS1005/TS2349 ile yakalar).
+         *
+         * UNION SARMALANDI (dev'de 500 ile olculdu, Postgres 0A000): bir UNION'in dogrudan
+         * ORDER BY'i YALNIZ cikti kolon ADI/sirasi kabul eder - "(id IS NULL)" gibi bir
+         * ifade "Only result column names can be used" hatasi verir. Bu yuzden iki dal
+         * "cards" CTE'sine alinip siralama disaridan yapilir.
          */
         ORDER BY
           (id IS NULL) ASC,
