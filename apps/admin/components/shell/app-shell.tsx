@@ -7,6 +7,7 @@ import { SiteHeader } from './site-header';
 import { CommandPalette } from './command-palette';
 import { AnnouncerProvider } from '../a11y/announcer';
 import { LiveProvider } from '../live/live-provider';
+import { LiveAlerts } from '../live/live-alerts';
 
 /**
  * Uygulama kabuğu. /login yolunda kabuğu (sidebar/header) GİZLER → giriş sayfası
@@ -33,6 +34,9 @@ export function AppShell({
           poll'u paylaşır (ekran başına ayrı istek yok). /login'de mount EDİLMEZ (yukarıda
           erken dönüş) → giriş sayfası hiçbir yetkili uca dokunmaz. */}
       <LiveProvider>
+      {/* Dikkat katmanı: sekme başlığı sayacı + yeni kayıt toast'ı. Görsel çıktısı yok,
+          kabukta bir kez mount edilir → hangi ekranda olursak olalım yeni sipariş duyurulur. */}
+      <LiveAlerts />
       {/* İçeriğe atla (WCAG 2.4.1) — klavye/okuyucu ilk odakta ~20 sidebar linkini
           atlayıp ana içeriğe geçer. Normalde gizli, odaklanınca görünür. */}
       <a

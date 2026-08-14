@@ -1680,3 +1680,35 @@ bekleniyor' yazıyor bunu da anlamadık; rehber niteliğinde açıklamalar."*
   yanıtı bekleniyor"), TEK arama kutusu + 4 facet, breadcrumb "Kusurlu Stok › Değişim Fişleri › Detay",
   0034 backfill 18/18 · prod deploy (rollback'li) → `/health` 200 v1.0.0, migration tracking 35, api ERROR 0.
   migration 0000-0034.
+
+**CANLI AKIŞ: YENİ SİPARİŞ FARK EDİLİRLİĞİ (admin-only, migration YOK):** Kullanıcı ekran görüntüsüyle
+bildirdi: *"anlık sipariş düşüyor ama yeni sipariş olup olmadığı ekranda pek ayırt edilemiyor"*. Kök neden
+KODDAN ÖLÇÜLDÜ (tahmin değil): (a) yeni kayıt vurgusu **12 sn sonra siliniyordu** (`live-provider` freshTimer)
+→ 15 sn başka yere bakan operatör siparişi tamamen kaçırıyor, ekranda hiçbir kalıcı iz kalmıyordu; (b) vurgunun
+tamamı 2px sol şerit + soluk zemindi, "Yeni" kelimesi yalnız `sr-only` ile ekran okuyucuya gidiyordu; (c) sekme
+arkadayken poll TAMAMEN duruyordu → başka sekmedeyken gelen sipariş ne sayaçta ne başlıkta görünüyordu;
+(d) kart başlığındaki sayaç toplam satırdı ("kaçı yeni" yok); (e) akıştaki siparişlerin çoğu yeşil "Teslim
+edildi" olduğu için işlem bekleyen (sıcak) sipariş göze batmıyordu.
+- **Kalıcı `unseen` kümesi (asıl düzeltme):** sönen `fresh` (12 sn) KORUNDU ama artık yalnız GİRİŞ
+  animasyonunu sürüyor; kalıcı "görülmedi" işareti ayrı bir kümede. Satıra tıklanınca (`onOpen`) ya da
+  "Okundu" düğmesiyle kalkar; **her turda budanır** (pencereden düşen id sayaçta kalıp listeyle çelişmesin).
+  Satırda görünür `YENİ` pill'i (dolu `primary` — durum dilinin BEŞ hue'suna yeni renk EKLENMEDİ, çünkü
+  "yeni olmak" bir durum değil okunmamışlık işaretidir), kart başlığında "N yeni" + "Okundu",
+  okunmuş/okunmamış **sınır çizgisi** (yalnız yeni kayıtlar listenin BAŞINDA kesintisizse çizilir — yanlış
+  yerde duran sınır, hiç olmamasından yanıltıcıdır).
+- **`components/live/live-alerts.tsx` (yeni, kabukta TEK mount, render'ı yok):** sekme başlığına `(N)` öneki
+  (Next gezinmede `<title>`'ı kendi effect'inde ezdiği ve sıra garantili olmadığı için **MutationObserver**
+  ile yeniden basılır) + yeni kayıt **toast**'ı (tek kayıt → doğrudan siparişe "Aç"; çok kayıt → TEK özet
+  toast, satır başına değil → sel yok). Kabukta olduğu için /stock, /support… her ekranda çalışır.
+- **Arka plan poll'u (kullanıcı kararı):** durmak yerine **15 sn → 60 sn** seyreliyor; koşullu (ETag → 304)
+  olduğu için gövde taşınmaz. Görünür sekmenin ~1/4'ü yük karşılığında arkadayken de sayaç ilerler.
+- **Sıcak sipariş ayrımı:** akış kartında "Tümü / İşlem bekleyen" filtre çipi (`held` + eşlemesiz +
+  `pending`/`partial`) + bekleyen satırda **5 dakikayı geçen sürenin uyarı tonuna** dönmesi (teslim edilmiş
+  satırda ton HİÇ değişmez — yaşlı olması normaldir).
+- **Doğrulama (tarayıcıda, canlı API'ye bağlı yerel dev; canlı yanıta sentetik sipariş enjekte edilerek):**
+  sekme gizliyken **87 sn'de tam 1 poll (t=60 sn)** — eskiden 0 · başlık `(1)`→`(2)`→"Okundu" sonrası temiz ·
+  satır `YENİ | az önce | #9002 | … | Bekliyor` · #9001 eklendikten ~40 sn sonra HÂLÂ `YENİ` (eski davranışta
+  12 sn'de silinirdi) · toast `Yeni sipariş #9002 … [Aç]` · filtre "İşlem bekleyen 2" → teslim edilmiş sipariş
+  listeden düştü · 1 ayraç + 1 `animate-feed-in`. typecheck 4/4 + check-use-server temiz + admin production
+  build (`/dashboard` 9.53→10.5 kB). **Ölçülen sınır:** sekme GERÇEKTEN gizliyken sonner toast'ı DOM'a
+  basmıyor (zaten görünmezdi) — o senaryoyu sekme başlığı sayacı karşılar.

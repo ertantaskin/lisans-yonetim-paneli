@@ -278,3 +278,31 @@
     transition: color-scheme 0.2s;
   }
 }
+
+/* ── Canlı akışa YENİ düşen satırın giriş hareketi ────────────────────────────
+ *
+ * Neden hareket: liste 15 sn'de bir tazeleniyor ve satırlar yeniden sıralanabiliyor;
+ * "yeni geldi" ile "yer değiştirdi" statik ekranda ayırt edilemiyordu. Kısa bir giriş
+ * animasyonu bu ikisini ayırır. TEK ATIMLIK — sürekli yanıp sönen bir şey YOK (gün boyu
+ * açık kalan ekranda dikkat yorulur); kalıcı iz "Yeni" rozetiyle verilir.
+ *
+ * `prefers-reduced-motion` açıkken animasyon tamamen kapanır (satır yerinde belirir).
+ */
+@keyframes feed-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-feed-in {
+  animation: feed-row-in 0.45s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-feed-in {
+    animation: none;
+  }
+}

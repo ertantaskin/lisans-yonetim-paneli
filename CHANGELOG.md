@@ -14,6 +14,26 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Genel Bakış: yeni sipariş artık gözden kaçmıyor (migration YOK)
+
+Kullanıcı geri bildirimi: *"anlık sipariş düşüyor ama yeni sipariş olup olmadığı ekranda pek
+ayırt edilemiyor"*. Koddan ölçülen kök neden: yeni kayıt vurgusu **12 sn sonra siliniyordu**
+(`live-provider`), vurgunun tamamı 2px sol şerit + soluk zemindi, "Yeni" kelimesi yalnız ekran
+okuyucuya gidiyordu ve **sekme arkadayken poll tamamen duruyordu** → başka sekmedeyken gelen
+sipariş hiçbir yerde görünmüyordu.
+
+- **Kalıcı "yeni" işareti:** sönen `fresh` kümesinin yanına sönmeyen `unseen` kümesi eklendi —
+  satıra tıklanana ya da "Okundu" denene kadar durur. Listeden kayan kayıt her turda budanır
+  (sayaç listeyle çelişmez). Satırda görünür `YENİ` rozeti + kart başlığında "N yeni" +
+  okunmuş/okunmamış sınır çizgisi (yalnız yeni kayıtlar listenin başında kesintisizse çizilir).
+- **Sekme başlığı sayacı** `(3) Lisans Paneli…` ve **tıklanabilir toast** (tek kayıt → doğrudan
+  siparişe, çok kayıt → tek özet toast). Kabukta tek mount → her ekranda çalışır.
+- **Arka plan poll'u durmak yerine seyreliyor:** 15 sn → **60 sn** koşullu (ETag) istek.
+- **Sıcak sipariş ayrımı:** akış kartında "Tümü / İşlem bekleyen" filtresi (`held` + eşlemesiz +
+  `pending`/`partial`) ve bekleyen satırda 5 dakikayı geçen sürenin uyarı tonuna dönmesi.
+- **Giriş animasyonu:** yeni satır tek atımlık kayarak girer (`prefers-reduced-motion`'da kapalı)
+  → "yeni geldi" ile "yeniden sıralandı" ayrışır.
+
 ### Admin arayüzü: uyum denetimi — 43 doğrulanmış bulgu düzeltildi (migration YOK)
 
 1.1.0 ile gelen tema uyarlaması, kullanıcı geri bildirimi üzerine ("referanslardan çok alakasız,

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import {
   ArrowRight,
   Ban,
+  Check,
   CheckCircle2,
   ClipboardCheck,
   Clock,
@@ -85,15 +86,61 @@ function clockLabel(iso: string): string {
   });
 }
 
-function TimeCell({ iso, mounted }: { iso: string; mounted: boolean }) {
+/**
+ * Zaman hücresi. `waiting` = satır operatör/stok bekliyor demektir; bu durumda geçen süre
+ * NÖTR bir bilgi değil, işin YAŞIdır → 5 dakikayı geçince uyarı tonuna döner. Teslim edilmiş
+ * satırlarda ton hiç değişmez (yaşlı olması normaldir).
+ */
+const STALE_MS = 5 * 60_000;
+
+function TimeCell({
+  iso,
+  mounted,
+  waiting = false,
+}: {
+  iso: string;
+  mounted: boolean;
+  waiting?: boolean;
+}) {
+  const t = Date.parse(iso);
+  const stale = waiting && Number.isFinite(t) && Date.now() - t >= STALE_MS;
   return (
     <time
       dateTime={iso}
-      title={fmtDateTime(iso)}
-      className="w-[3.25rem] shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground"
+      title={stale ? `${fmtDateTime(iso)} — bu satır hâlâ bekliyor` : fmtDateTime(iso)}
+      className={cn(
+        'w-[3.25rem] shrink-0 whitespace-nowrap text-[11px] tabular-nums',
+        stale ? 'font-semibold text-warning' : 'text-muted-foreground',
+      )}
     >
       {mounted ? relLabel(iso) : clockLabel(iso)}
     </time>
+  );
+}
+
+/**
+ * Kalıcı "yeni kayıt" rozeti. Durum rozetleriyle AYNI hue ailesinden DEĞİL (yeni olmak bir
+ * durum değil, bir okunmamışlık işaretidir) → kenar menüdeki aktif pill diliyle aynı dolu
+ * `primary` kullanılır; durum dilinin beş hue'suna yeni renk eklenmez.
+ */
+function NewChip() {
+  return (
+    <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-primary-foreground">
+      Yeni
+    </span>
+  );
+}
+
+/** Okunmamış/okunmuş sınırı — sohbet uygulamalarındaki "buradan sonrası okundu" çizgisi. */
+function SeenDivider() {
+  return (
+    <li aria-hidden className="flex items-center gap-2 px-3 py-1">
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        daha önce görüldü
+      </span>
+      <span className="h-px flex-1 bg-border" />
+    </li>
   );
 }
 
@@ -177,58 +224,80 @@ function supportBadge(status: string): StatusMeta {
 }
 
 /**
- * Akış satırının ortak kabuğu. YENİ kayıt vurgusu: sol kenarda aksan şerit + hafif zemin,
- * CSS geçişiyle (sağlayıcı ~12 sn sonra `fresh` kümesini boşaltır → vurgu söner).
- * SÜREKLİ animasyon YOK; `prefers-reduced-motion` açıkken geçiş de kapanır.
+ * Akış satırının ortak kabuğu. İKİ AYRI "yenilik" sinyali vardır ve karıştırılmamalıdır:
  *
- * `alert` = operatör aksiyonu bekleyen satır (ör. eşlenmemiş sipariş): `fresh`ten farklı
- * olarak SÖNMEZ — iş yapılana kadar durur, bu yüzden `fresh`ten SONRA uygulanır (twMerge
- * son sınıfı kazandırır → sol şerit ve zemin uyarı tonuna sabitlenir).
+ *  • `fresh`  = son 12 sn içinde geldi → yalnız GİRİŞ animasyonu (satırın listeye yeni
+ *    düştüğünü hareketle söyler, yeniden sıralamayla karışmaz). Kendiliğinden söner.
+ *  • `isNew`  = operatör HENÜZ GÖRMEDİ → sol aksan şerit + hafif zemin + görünür "Yeni"
+ *    rozeti. SÖNMEZ; satıra tıklanınca ya da "Okundu" denince kalkar. Eskiden yalnız
+ *    12 sn'lik vurgu vardı ve başka yere bakan operatör siparişi tamamen kaçırıyordu.
+ *
+ * `alert` = operatör aksiyonu bekleyen satır (ör. eşlenmemiş sipariş): iş yapılana kadar
+ * durur, bu yüzden EN SON uygulanır (twMerge son sınıfı kazandırır → şerit ve zemin uyarı
+ * tonuna sabitlenir; "yeni" olması bu uyarıyı bastırmaz).
  */
 function FeedRow({
   href,
   fresh,
+  isNew = false,
   alert = false,
+  onOpen,
   children,
 }: {
   href: string;
   fresh: boolean;
+  isNew?: boolean;
   alert?: boolean;
+  onOpen?: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <li className="border-b border-border last:border-b-0">
+    <li className={cn('border-b border-border last:border-b-0', fresh && 'animate-feed-in')}>
       <Link
         href={href}
+        // Satırı açmak "gördüm" demektir → kalıcı yeni işareti kalkar (sayaç da düşer).
+        onClick={onOpen}
         className={cn(
           'flex items-center gap-2.5 border-l-2 border-l-transparent px-3 py-2 outline-none transition-colors duration-500 motion-reduce:transition-none',
           'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
-          fresh && 'border-l-primary bg-accent/60',
+          isNew && 'border-l-primary bg-accent/60',
           alert &&
             'border-l-destructive bg-[color-mix(in_oklch,var(--destructive)_8%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)]',
         )}
       >
-        {fresh && <span className="sr-only">Yeni: </span>}
+        {isNew && <NewChip />}
         {children}
       </Link>
     </li>
   );
 }
 
-/** Akış kartı kabuğu: başlık + sayaç + "Tümü" bağlantısı + yoğun liste gövdesi. */
+/**
+ * Akış kartı kabuğu: başlık + sayaç + "N yeni" + "Tümü" bağlantısı + yoğun liste gövdesi.
+ *
+ * `newCount` kart başlığında DOLU pill olarak durur (satırdaki rozetle aynı dil) ve yanında
+ * "Okundu" düğmesi çıkar: operatör listeye bakmadan da "kaç tane yeni var" bilgisini alır,
+ * tek tıkla temizler. `toolbar` = başlığın altındaki isteğe bağlı filtre şeridi.
+ */
 function FeedCard({
   title,
   icon: Icon,
   count,
+  newCount = 0,
+  onMarkSeen,
   href,
   hrefLabel,
+  toolbar,
   children,
 }: {
   title: string;
   icon: LucideIcon;
   count: number;
+  newCount?: number;
+  onMarkSeen?: () => void;
   href: string;
   hrefLabel: string;
+  toolbar?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -241,15 +310,65 @@ function FeedCard({
               {count}
             </span>
           )}
+          {newCount > 0 && (
+            <span className="rounded-full bg-primary px-1.5 py-0.5 text-[11px] font-semibold tabular-nums leading-none text-primary-foreground">
+              {newCount} yeni
+            </span>
+          )}
         </CardTitle>
-        <Button asChild variant="ghost" size="sm" className="-mr-1 h-7 px-2 text-[11px]">
-          <Link href={href}>
-            {hrefLabel} <ArrowRight className="size-3.5" />
-          </Link>
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          {newCount > 0 && onMarkSeen && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={onMarkSeen}
+              title="Yeni işaretlerini kaldır"
+            >
+              <Check className="size-3.5" /> Okundu
+            </Button>
+          )}
+          <Button asChild variant="ghost" size="sm" className="-mr-1 h-7 px-2 text-[11px]">
+            <Link href={href}>
+              {hrefLabel} <ArrowRight className="size-3.5" />
+            </Link>
+          </Button>
+        </div>
       </CardHeader>
+      {toolbar && (
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-border px-3.5 py-1.5">
+          {toolbar}
+        </div>
+      )}
       <CardContent className="border-t border-border p-0">{children}</CardContent>
     </Card>
+  );
+}
+
+/** Kart içi filtre çipi (yalnız akış kartlarında; DataTable faceti ile karıştırılmamalı). */
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors',
+        active
+          ? 'bg-primary text-primary-foreground'
+          : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -531,17 +650,53 @@ export function LiveKpiStrip({ initialStats }: { initialStats?: Partial<LiveStat
  * `null` tohum = "sunucu da veremedi" → iskelet gösterilir (yanıltıcı "kayıt yok" yazılmaz).
  */
 export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveOrder[] | null }) {
-  const { data, updatedAt, errorCount, fresh } = useLive();
+  const { data, updatedAt, errorCount, fresh, unseen, markSeen } = useLive();
   const mounted = useMounted();
   const hasLive = updatedAt > 0;
-  const orders = hasLive ? data.orders : (initialOrders ?? []);
+  const allOrders = hasLive ? data.orders : (initialOrders ?? []);
   const seeded = hasLive || initialOrders !== null;
 
+  // "İşlem bekleyen" (sıcak) süzgeci: teslim edilmiş siparişler akışın çoğunu kaplayınca
+  // yapılacak iş görünmez oluyordu (operatör şikâyeti: "hepsi yeşil, hangisi sıcak?").
+  const [onlyAction, setOnlyAction] = React.useState(false);
+  const actionCount = allOrders.filter(needsAction).length;
+  // Süzgeç açıkken iş biterse liste boşalır ve ekran "sipariş yok" gibi görünür → süzgeci
+  // otomatik kapatmayız (operatörün seçimi), ama boş durum metni bunu açıkça söyler.
+  const orders = onlyAction ? allOrders.filter(needsAction) : allOrders;
+
+  const newIds = orders.filter((o) => unseen.has(`o:${o.id}`)).map((o) => `o:${o.id}`);
+  // Ayraç: listenin BAŞINDAKİ kesintisiz yeni kayıt serisinin bittiği yer. Yeni kayıtlar
+  // araya serpilmişse (durum değişimiyle sıra kaydıysa) çizgi hiç çizilmez — yanlış yerde
+  // duran bir sınır çizgisi, hiç olmamasından daha yanıltıcı olur.
+  let leadingNew = 0;
+  while (leadingNew < orders.length && unseen.has(`o:${orders[leadingNew].id}`)) leadingNew += 1;
+  const dividerAt = leadingNew > 0 && leadingNew < orders.length ? leadingNew : -1;
+
   return (
-    <FeedCard title="Son Siparişler" icon={ShoppingCart} count={orders.length} href="/orders" hrefLabel="Tümü">
+    <FeedCard
+      title="Son Siparişler"
+      icon={ShoppingCart}
+      count={orders.length}
+      newCount={newIds.length}
+      onMarkSeen={() => markSeen(newIds)}
+      href="/orders"
+      hrefLabel="Tümü"
+      toolbar={
+        <>
+          <FilterChip active={!onlyAction} onClick={() => setOnlyAction(false)}>
+            Tümü {allOrders.length}
+          </FilterChip>
+          <FilterChip active={onlyAction} onClick={() => setOnlyAction(true)}>
+            İşlem bekleyen {actionCount}
+          </FilterChip>
+        </>
+      }
+    >
       {orders.length === 0 ? (
         seeded ? (
-          <EmptyRow text="Henüz sipariş yok." />
+          <EmptyRow
+            text={onlyAction ? 'İşlem bekleyen sipariş yok.' : 'Henüz sipariş yok.'}
+          />
         ) : errorCount > 0 ? (
           <EmptyRow text="Canlı veri alınamadı, yeniden deneniyor…" />
         ) : (
@@ -549,7 +704,7 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
         )
       ) : (
         <ul>
-          {orders.map((o) => {
+          {orders.map((o, i) => {
             const meta = orderBadge(o);
             const Icon = meta.icon;
             // Eşleme bekleyen sipariş akışta KAYBOLMAMALI (operatör şikâyeti): satır kalıcı
@@ -565,13 +720,16 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
             // davranış bugünküyle birebir aynı kalır (yalnız durum='unmapped' işaretlenir).
             const unmapped = o.status === 'unmapped' || (o.hasUnmappedLine ?? false);
             return (
+              <React.Fragment key={o.id}>
+                {i === dividerAt && <SeenDivider />}
               <FeedRow
-                key={o.id}
                 href={`/orders/${o.id}`}
                 fresh={fresh.has(`o:${o.id}`)}
+                isNew={unseen.has(`o:${o.id}`)}
                 alert={unmapped}
+                onOpen={() => markSeen([`o:${o.id}`])}
               >
-                <TimeCell iso={o.createdAt} mounted={mounted} />
+                <TimeCell iso={o.createdAt} mounted={mounted} waiting={needsAction(o)} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-1.5">
                     <span className="shrink-0 text-sm font-semibold tabular-nums text-foreground">
@@ -609,12 +767,24 @@ export function LiveOrdersCard({ initialOrders = null }: { initialOrders?: LiveO
                   {meta.label}
                 </Badge>
               </FeedRow>
+              </React.Fragment>
             );
           })}
         </ul>
       )}
     </FeedCard>
   );
+}
+
+/**
+ * "İşlem bekleyen" (sıcak) sipariş — operatörün ya da motorun hâlâ bir şey yapması gereken
+ * satır. Teslim edilmiş/iptal/geri alınmış siparişler kapsam DIŞI: akışta yer kaplarlar ama
+ * yapılacak iş taşımazlar. `held` = insan kararı bekliyor (§8), eşlemesiz = teslim edilemez.
+ */
+function needsAction(o: LiveOrder): boolean {
+  if (o.held) return true;
+  if (o.status === 'unmapped' || (o.hasUnmappedLine ?? false)) return true;
+  return o.status === 'pending' || o.status === 'partial';
 }
 
 // ── Son destek talepleri ─────────────────────────────────────────────────────
@@ -629,17 +799,25 @@ export function LiveSupportCard({
 }: {
   initialSupports?: LiveSupport[] | null;
 }) {
-  const { data, updatedAt, errorCount, fresh } = useLive();
+  const { data, updatedAt, errorCount, fresh, unseen, markSeen } = useLive();
   const mounted = useMounted();
   const hasLive = updatedAt > 0;
   const supports: LiveSupport[] = hasLive ? data.supports : (initialSupports ?? []);
   const seeded = hasLive || initialSupports !== null;
+
+  // Sipariş kartıyla AYNI desen (tek dil): görülmemiş sayacı + "Okundu" + sınır çizgisi.
+  const newIds = supports.filter((r) => unseen.has(`s:${r.id}`)).map((r) => `s:${r.id}`);
+  let leadingNew = 0;
+  while (leadingNew < supports.length && unseen.has(`s:${supports[leadingNew].id}`)) leadingNew += 1;
+  const dividerAt = leadingNew > 0 && leadingNew < supports.length ? leadingNew : -1;
 
   return (
     <FeedCard
       title="Son Destek Talepleri"
       icon={LifeBuoy}
       count={supports.length}
+      newCount={newIds.length}
+      onMarkSeen={() => markSeen(newIds)}
       href="/support"
       hrefLabel="Tümü"
     >
@@ -653,17 +831,22 @@ export function LiveSupportCard({
         )
       ) : (
         <ul>
-          {supports.map((r) => {
+          {supports.map((r, i) => {
             const meta = supportBadge(r.status);
             const Icon = meta.icon;
             const reason = r.reasonExcerpt?.trim() || 'Gerekçe belirtilmemiş.';
+            // Açık talep = cevap bekliyor → zaman hücresi yaşlandıkça uyarıya döner.
+            const waiting = r.status === 'open' || r.status === 'info_requested';
             return (
+              <React.Fragment key={r.id}>
+                {i === dividerAt && <SeenDivider />}
               <FeedRow
-                key={r.id}
                 href={r.orderId ? `/orders/${r.orderId}` : '/support'}
                 fresh={fresh.has(`s:${r.id}`)}
+                isNew={unseen.has(`s:${r.id}`)}
+                onOpen={() => markSeen([`s:${r.id}`])}
               >
-                <TimeCell iso={r.createdAt} mounted={mounted} />
+                <TimeCell iso={r.createdAt} mounted={mounted} waiting={waiting} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-1.5">
                     <span className="truncate text-sm font-medium text-foreground" title={r.customerEmail}>
@@ -703,6 +886,7 @@ export function LiveSupportCard({
                   </span>
                 </span>
               </FeedRow>
+              </React.Fragment>
             );
           })}
         </ul>

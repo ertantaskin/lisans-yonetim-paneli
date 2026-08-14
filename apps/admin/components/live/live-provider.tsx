@@ -1,10 +1,26 @@
 'use client';
 import * as React from 'react';
-import { EMPTY_LIVE, type LivePayload } from '../../lib/live-types';
+import { EMPTY_LIVE, type LiveOrder, type LivePayload, type LiveSupport } from '../../lib/live-types';
 
 const POLL_MS = 15_000;
+/**
+ * Sekme ARKA PLANDAYKEN poll aralığı (kullanıcı kararı). Eskiden arkada hiç istek
+ * atılmıyordu; operatör başka sekmedeyken gelen sipariş için ne sekme başlığındaki sayaç
+ * ne de çan güncelleniyordu — "sipariş düştü ama fark edilmiyor" şikâyetinin yarısı buydu.
+ * Dakikada 1 KOŞULLU istek (ETag → değişmediyse 304, gövde taşınmaz): görünür sekmenin
+ * dörtte biri yük, karşılığında arkadayken de sayaç ilerler.
+ */
+const HIDDEN_POLL_MS = 60_000;
 const MAX_BACKOFF_MS = 120_000;
 const SOUND_KEY = 'lisans.live.sound';
+
+/** Yeni gelen kayıtların partisi — toast/duyuru bu partiden üretilir. */
+export interface LiveBatch {
+  orders: LiveOrder[];
+  supports: LiveSupport[];
+  /** Parti damgası (epoch ms) — tüketiciler bunu izleyerek "yeni parti geldi" der. */
+  at: number;
+}
 
 interface LiveContextValue {
   data: LivePayload;
@@ -14,14 +30,25 @@ interface LiveContextValue {
   errorCount: number;
   /** Son BAŞARILI güncelleme (epoch ms) — 0 ise hiç veri alınmadı. */
   updatedAt: number;
-  /** Bu oturumda YENİ görülen kayıt id'leri (vurgulama için). */
+  /** Son 12 sn içinde gelen kayıt id'leri — GİRİŞ animasyonu/anlık vurgu için (söner). */
   fresh: ReadonlySet<string>;
-  /** Sekme görünür mü (poll duraklatıldı mı). */
+  /**
+   * Operatörün HENÜZ GÖRMEDİĞİ kayıt id'leri — `fresh`ten farklı olarak KENDİLİĞİNDEN
+   * SÖNMEZ: okundu işaretlenene ya da satıra tıklanana kadar durur. `fresh` 12 sn'de
+   * silindiği için başka yere bakan operatör yeni siparişi tamamen kaçırıyordu.
+   * Yalnız EKRANDA duran kayıtları taşır (pencereden düşen id budanır → sayaç şişmez).
+   */
+  unseen: ReadonlySet<string>;
+  /** Son turda EKLENEN kayıtlar (toast için). İlk yükte null kalır. */
+  lastBatch: LiveBatch | null;
+  /** Sekme görünür mü (arkadayken poll seyrekleşir). */
   active: boolean;
   soundEnabled: boolean;
   setSoundEnabled: (on: boolean) => void;
   refresh: () => void;
   markRead: (ids?: string[]) => Promise<void>;
+  /** "Yeni" işaretini kaldır (ids verilmezse tümü). Sunucuya YAZMAZ — görsel durum. */
+  markSeen: (ids?: string[]) => void;
 }
 
 const LiveContext = React.createContext<LiveContextValue | null>(null);
@@ -31,7 +58,8 @@ const LiveContext = React.createContext<LiveContextValue | null>(null);
  *
  * Tasarım kararları (kullanıcı: "tarayıcımda gün boyu açık kalacak, gereksiz yük olmasın"):
  *  - TEK poller: çan + genel bakış aynı veriyi paylaşır (ekran başına ayrı istek YOK).
- *  - Sekme gizliyken poll DURUR (`document.hidden`), görünür olunca ANINDA tazelenir.
+ *  - Sekme gizliyken poll SEYREKLEŞİR (15 sn → 60 sn), görünür olunca ANINDA tazelenir.
+ *    (Eskiden tamamen dururdu; o zaman arka planda gelen sipariş hiçbir yerde görünmüyordu.)
  *  - Koşullu istek: ETag eşleşirse sunucu 304 döner, gövde hiç taşınmaz.
  *  - Hata olursa üstel geri çekilme (15s → 120s tavan) — API kapalıyken saniyede istek yağmuru olmaz.
  *  - SSE/WebSocket bilinçli TERCİH EDİLMEDİ: Caddy arkasında kalıcı bağlantı + sekme başına
@@ -44,6 +72,8 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
   const [errorCount, setErrorCount] = React.useState(0);
   const [updatedAt, setUpdatedAt] = React.useState(0);
   const [fresh, setFresh] = React.useState<ReadonlySet<string>>(new Set());
+  const [unseen, setUnseen] = React.useState<ReadonlySet<string>>(new Set());
+  const [lastBatch, setLastBatch] = React.useState<LiveBatch | null>(null);
   const [active, setActive] = React.useState(true);
   const [soundEnabled, setSoundEnabledState] = React.useState(false);
 
@@ -55,6 +85,8 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
   const soundRef = React.useRef(false);
   const freshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const expired = React.useRef(false);
+  /** Kalıcı "yeni" kümesinin ref aynası — tick içinde state okumadan güncellenebilsin. */
+  const unseenRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
     try {
@@ -123,6 +155,23 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
           if (freshTimer.current) clearTimeout(freshTimer.current);
           freshTimer.current = setTimeout(() => setFresh(new Set()), 12_000);
           if (soundRef.current) beep();
+          // Toast/duyuru partisi: EKLENEN kayıtların kendisi (id değil, kaydın tamamı).
+          setLastBatch({
+            orders: next.orders.filter((o) => added.has(`o:${o.id}`)),
+            supports: next.supports.filter((s) => added.has(`s:${s.id}`)),
+            at: Date.now(),
+          });
+        }
+
+        // Kalıcı "yeni" kümesi: eklenenler girer, PENCEREDEN DÜŞENLER çıkar. Budama her
+        // turda yapılır (yalnız ekleme olan turda değil) — aksi halde listeden kayan bir
+        // kayıt "3 yeni" sayacında sonsuza dek kalır ve sayaç listeyle çelişirdi.
+        const nextUnseen = new Set<string>();
+        for (const id of unseenRef.current) if (ids.has(id)) nextUnseen.add(id);
+        for (const id of added) nextUnseen.add(id);
+        if (!sameSet(nextUnseen, unseenRef.current)) {
+          unseenRef.current = nextUnseen;
+          setUnseen(nextUnseen);
         }
       }
 
@@ -140,25 +189,24 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
     }
   }, [limit]);
 
-  // Poll döngüsü — gizli sekmede DURUR, görünür olunca anında tazelenir.
+  // Poll döngüsü — gizli sekmede SEYREKLEŞİR (durmaz), görünür olunca anında tazelenir.
   React.useEffect(() => {
     let stopped = false;
 
     const schedule = () => {
       if (stopped) return;
       if (timer.current) clearTimeout(timer.current);
+      // Taban aralık sekmenin durumuna göre seçilir; geri çekilme ikisinin de üstüne biner.
+      const base =
+        typeof document !== 'undefined' && document.hidden ? HIDDEN_POLL_MS : POLL_MS;
       const delay =
         failures.current > 0
-          ? Math.min(POLL_MS * 2 ** Math.min(failures.current, 4), MAX_BACKOFF_MS)
-          : POLL_MS;
+          ? Math.min(base * 2 ** Math.min(failures.current, 4), MAX_BACKOFF_MS)
+          : base;
       timer.current = setTimeout(run, delay);
     };
 
     const run = async () => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        schedule();
-        return;
-      }
       await tick();
       schedule();
     };
@@ -166,7 +214,11 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
     const onVisibility = () => {
       const visible = !document.hidden;
       setActive(visible);
+      // Görünür olunca ANINDA tazele; gizlenince bekleyen 15 sn'lik zamanlayıcıyı
+      // 60 sn'lik aralığa yeniden kur (aksi halde arka plana geçişten hemen sonra
+      // bir kez daha görünür-sekme temposunda vururduk).
       if (visible) void run();
+      else schedule();
     };
 
     void run();
@@ -183,6 +235,20 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
     failures.current = 0;
     void tick();
   }, [tick]);
+
+  /**
+   * "Yeni" işaretini kaldır. Yalnız GÖRSEL durumdur (sunucuya yazılmaz): kayıtların
+   * kendisi zaten kalıcı ekranlarda duruyor, burada takip edilen şey "operatör bu satırı
+   * gördü mü". `markRead` ile karıştırılmamalı — o, bildirim tablosuna yazan ayrı akıştır.
+   */
+  const markSeen = React.useCallback((ids?: string[]) => {
+    const next = new Set(unseenRef.current);
+    if (!ids) next.clear();
+    else for (const id of ids) next.delete(id);
+    if (sameSet(next, unseenRef.current)) return;
+    unseenRef.current = next;
+    setUnseen(next);
+  }, []);
 
   const markRead = React.useCallback(
     async (ids?: string[]) => {
@@ -217,11 +283,14 @@ export function LiveProvider({ children, limit = 15 }: { children: React.ReactNo
     errorCount,
     updatedAt,
     fresh,
+    unseen,
+    lastBatch,
     active,
     soundEnabled,
     setSoundEnabled,
     refresh,
     markRead,
+    markSeen,
   };
 
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>;
@@ -242,12 +311,22 @@ const FALLBACK: LiveContextValue = {
   errorCount: 0,
   updatedAt: 0,
   fresh: new Set(),
+  unseen: new Set(),
+  lastBatch: null,
   active: false,
   soundEnabled: false,
   setSoundEnabled: () => {},
   refresh: () => {},
   markRead: async () => {},
+  markSeen: () => {},
 };
+
+/** İki kümenin aynı elemanları taşıyıp taşımadığı — gereksiz re-render'ı önler. */
+function sameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const v of a) if (!b.has(v)) return false;
+  return true;
+}
 
 /** Yanıttaki tüm kayıt id'leri — "yeni geldi mi" karşılaştırması için. */
 function collectIds(p: LivePayload): Set<string> {
