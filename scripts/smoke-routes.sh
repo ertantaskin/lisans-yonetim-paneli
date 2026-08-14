@@ -22,8 +22,8 @@ BASE="${1:-http://127.0.0.1:3006}"
 # taranmıyordu); `login` bilinçli dışarıda (kimlik doğrulama akışı, hata sınırı testi değil).
 ROUTES=(
   dashboard pending review orders stock stock/import categories mappings quarantine quarantine/claims quarantine/records sites
-  suppliers purchase-orders batches support customers reports ai notifications
-  ops security admins templates releases deployments settings guide products
+  suppliers purchase-orders batches support customers reports reports/costs reports/sla reports/reorder ai notifications
+  ops security audit admins admins/security templates releases deployments settings guide products
 )
 
 fail=0
