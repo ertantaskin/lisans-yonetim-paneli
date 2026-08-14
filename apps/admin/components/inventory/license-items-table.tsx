@@ -776,7 +776,7 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
 
-                  <TableCell className="hidden max-w-64 xl:table-cell">
+                  <TableCell className="hidden max-w-56 xl:table-cell">
                     <DeliveryCell row={row} />
                   </TableCell>
 
