@@ -1741,3 +1741,28 @@ Panelin durum dili tablolarda okunmak zorunda olduğu için canlılık **yüzeye
   **4.77** · info #d1eafb/#0065b0 **4.84** · warning #fdedd3/#935a00 **4.92** · attention #eee0ff/#7935c6 **5.34** ·
   danger #fdd7da/#c50721 **4.64**; koyu tema **5.35–7.27**. Hepsi AA üstü. /stock'ta 6 rozetin tamamı **20px**
   (tek yükseklik), 375px mobilde taşma **0** ve yatay kayma **0**. typecheck 4/4 + check-use-server + production build.
+
+**MÜŞTERİLER: MAĞAZA → MÜŞTERİ HİYERARŞİSİ (migration YOK):** Kullanıcı: *"customers bölümünde direkt
+müşteriler çıkıyor; genel aramada yapılabilir ama onun haricinde sitelere bölünmeli, kategori gibi —
+sitenin içine girip müşterileri görebilmek daha sağlıklı, karışıklık olmasın"*. Önceki turda site
+süzgeci EKLENMİŞTİ ama giriş ekranı hâlâ düz müşteri listesiydi; hiyerarşi opsiyoneldi, varsayılan değildi.
+- **Üç hâl, hepsi paylaşılabilir URL:** `/customers` → **mağaza kartları** (domain + tip + müşteri/sipariş
+  sayacı + son sipariş) · `/customers?q=` → **sunucu-taraflı arama** (hiyerarşiyi ATLAR) · `/customers?site=`
+  → o mağazanın müşterileri (mevcut davranış birebir korundu, "Siteler" kolonu gizli).
+- **Arama site süzgecini bilinçli EZER:** mağaza içindeyken yapılan arama o mağazayla sınırlı kalsaydı
+  operatör "aradığım müşteri yok" sanardı (bu panelde sessiz-kırpma sınıfı hatanın aynısı). Arama native
+  `<form method=get>` — JS'siz çalışır, sonuç adres çubuğunda paylaşılabilir.
+- **Yeni uç `GET /v1/admin/customers/site-summary`** (site başına DISTINCT e-posta + sipariş + son sipariş).
+  **Rota `:email`ten ÖNCE tanımlandı** — Nest rotaları tanımlanma sırasına göre eşler; altta kalsaydı adres
+  `email="site-summary"` olarak DETAY ucuna düşerdi (sessiz 404). **LEFT JOIN**: siparişi olmayan mağaza da
+  listede kalır (yeni bağlanan mağaza görünmezse operatör "bağlantı kurulmadı mı?" diye arar).
+- **Veri modeli DEĞİŞMEDİ:** müşteri kaydı hâlâ e-posta bazlı GLOBAL (etiket/not tek kayıt), hiyerarşi yalnız
+  sunumda. Aynı e-posta iki mağazadan alışveriş yaptıysa her iki mağazada da sayılır → site sayaçlarının
+  toplamı global müşteri sayısından büyük olabilir (kod yorumunda yazılı).
+- **Dağıtım sapmasına dayanıklı:** `site-summary` eski API'de yoksa ekran hata kartına DÜŞMEZ — eski düz
+  listeye geri döner + görünür bilgi bandı (admin ve api ayrı imajlar, biri önce dağıtılabiliyor).
+- **Dev'de gerçek veriyle E2E:** mağaza kartı (1 müşteri · 7 sipariş · son sipariş 14.08) → siteye giriş
+  (müşteri satırı, "Siteler" kolonu gizli) → `?q=admin` (tüm mağazalarda bulundu, "Siteler" kolonu görünür) →
+  `?q=zzzyok` (boş sonuç). **Boş sonuçta tablo çizilmiyor:** ilk denemede "Sonuç yok" uyarısının altında boş
+  tablo + "0 kayıt · Sayfa 1/1" duruyor ve mesajı gölgeliyordu → tek boş durum + mağaza listesine dönüş.
+  typecheck 4/4 + admin production build.

@@ -14,6 +14,23 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Müşteriler: mağaza → müşteri hiyerarşisi (migration YOK)
+
+Kullanıcı: *"direkt müşteriler çıkıyor; sitelere bölünmeli, sitenin içine girip müşterileri
+görmek daha sağlıklı — genel arama yine yapılabilsin"*. Ekran artık üç hâlli, hepsi
+paylaşılabilir URL:
+
+- `/customers` → **mağaza kartları** (müşteri / sipariş / son sipariş sayaçları). Siparişi
+  olmayan mağaza da listede kalır (LEFT JOIN) — sıfır, yokluk değil bilgidir.
+- `/customers?q=<terim>` → **sunucu-taraflı arama**, hiyerarşiyi atlar (tüm mağazalar).
+  Arama site süzgecini bilinçli ezer: mağaza içindeyken sonuç o mağazayla sınırlı kalsaydı
+  "müşteri yok" yanılgısı doğardı.
+- `/customers?site=<id>` → o mağazanın müşterileri (mevcut davranış korundu).
+
+Yeni uç `GET /v1/admin/customers/site-summary` (rota `:email`ten ÖNCE tanımlandı — Nest sıraya
+göre eşler). Müşteri kaydı hâlâ e-posta bazlı **global**dir (etiket/not tek kayıt); hiyerarşi
+yalnız sunum katmanındadır. API eski sürümdeyse ekran hata vermez, eski düz listeye döner.
+
 ### Rozet dili: canlı yüzey + okunur metin (migration YOK)
 
 Kullanıcı: *"tüm badge'lerin renkleri ve tasarımları daha canlı olmalı"* (referans:
