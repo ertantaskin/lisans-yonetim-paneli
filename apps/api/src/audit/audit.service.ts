@@ -83,6 +83,13 @@ interface AuditRawRow {
   created_at: Date;
 }
 
+/** Ayrıştırılabilir tarihi ISO dizeye çevirir; boş/bozuk değerde null (süzgeç uygulanmaz). */
+function toIsoOrNull(value: string | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 /** LIKE joker karakterlerini kaçırır (aktör aramasında '%'/'_' joker gibi davranmasın). */
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -155,12 +162,21 @@ export class AuditService {
     if (params.targetId) conds.push(sql`target_id = ${params.targetId}`);
     if (params.traceId) conds.push(sql`trace_id = ${params.traceId}`);
 
-    // Tarih sınırları DAHİL (>=, <=). Controller yalnız "ayrıştırılabilir mi" diye bakar;
-    // Date'e çevirme burada — geçersiz değer buraya HİÇ ulaşmaz.
-    const from = params.from ? new Date(params.from) : null;
-    const to = params.to ? new Date(params.to) : null;
-    if (from && !Number.isNaN(from.getTime())) conds.push(sql`created_at >= ${from}`);
-    if (to && !Number.isNaN(to.getTime())) conds.push(sql`created_at <= ${to}`);
+    /*
+     * Tarih sınırları DAHİL (>=, <=). Controller yalnız "ayrıştırılabilir mi" diye bakar;
+     * normalleştirme burada — geçersiz değer buraya HİÇ ulaşmaz.
+     *
+     * ISO DİZE + AÇIK `::timestamptz` (Date NESNESİ DEĞİL): bu fragman ham `sql` şablonuyla
+     * kuruluyor ve `rawRows` üzerinden sürücüye gidiyor; oraya bir `Date` konduğunda postgres.js
+     * bind aşamasında ERR_INVALID_ARG_TYPE ile patlıyor (drizzle'ın kolon-farkında yolu değil).
+     * Projede tarih süzgeci olan diğer yer (`admin-orders.service`) de tam olarak bu deseni
+     * kullanıyor — tek yazım biçimi. Cast ŞART: cast'siz parametre `text` olarak bind edilir ve
+     * `timestamptz` ile karşılaştırma 42883 verir.
+     */
+    const fromIso = toIsoOrNull(params.from);
+    const toIso = toIsoOrNull(params.to);
+    if (fromIso) conds.push(sql`created_at >= ${fromIso}::timestamptz`);
+    if (toIso) conds.push(sql`created_at <= ${toIso}::timestamptz`);
 
     const where = sql.join(conds, sql` AND `);
 

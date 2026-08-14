@@ -50,10 +50,19 @@ async function mkUser(password = 'CorrectHorse9!') {
   return { ...created, email, password, actor: `admin:${email}` };
 }
 
-/** Kurulum + onay: kullanıcıyı TOTP açık hâle getirir ve sırrı döndürür. */
+/**
+ * Kurulum + onay: kullanıcıyı TOTP açık hâle getirir ve sırrı döndürür.
+ *
+ * ÖNCEKİ ADIMIN KODU KULLANILIR (`totpStep() - 1`) — bilerek. Tekrar-oynatma defteri kurulum
+ * onayı ile GİRİŞ arasında ORTAKTIR (ikisi de `checkCode` → `verifyTotpOnce`): aynı 30 sn'lik
+ * adımın kodu ikinci kez kabul edilmez (RFC 6238 §5.2, kasıtlı davranış). Yardımcı geçerli
+ * adımı tüketseydi, hemen ardından giriş deneyen testler "geçerli kod reddedildi" gibi
+ * görünen ama aslında DOĞRU çalışan bir replay reddine takılırdı. Önceki adım ±1 penceresi
+ * içinde olduğu için onay geçerlidir ve geçerli adımı testlere serbest bırakır.
+ */
 async function enableTotp(user: { id: string; actor: string }): Promise<string> {
   const { secret } = await totp.beginSetup(user.id, user.actor, '');
-  const step = totpStep();
+  const step = totpStep() - 1;
   redisKeys.add(`totp:used:${user.id}:${step}`);
   await totp.confirmSetup(user.id, totpCodeForStep(secret, step), user.actor, '');
   return secret;
@@ -214,6 +223,30 @@ describe('Admin TOTP (kurulum / giriş / lockout / replay / kurtarma)', () => {
     // Kod hâlâ zaman penceresinde ama defterde işaretli → REDDEDİLİR.
     expect(await users.verifyTotpLogin(u.id, code)).toBeNull();
     expect(Number(await redis.get(`authfail:id:${u.id}`))).toBe(1);
+  });
+
+  /**
+   * (d2) DEFTER KURULUM ↔ GİRİŞ ARASINDA ORTAKTIR. Kurulumu onaylarken kullanılan kod, aynı
+   * 30 sn'lik adım içinde giriş için TEKRAR KULLANILAMAZ. Kasıtlı (RFC 6238 §5.2): ekranda
+   * görünen kodu yakalayan biri onu ikinci bir oturum açmak için kullanamaz.
+   *
+   * Bu davranış entegrasyon koşusunda "geçerli kod reddedildi" gibi görünen üç başarısızlık
+   * olarak ortaya çıktı ve yardımcı fonksiyon düzeltildi; garantiyi burada AÇIKÇA kilitliyoruz
+   * ki ileride "kolaylık olsun" diye gevşetilirse test kırmızıya dönsün.
+   */
+  it('(d2) kurulumda tüketilen kod aynı adımda GİRİŞ için kabul edilmez', async () => {
+    const u = await mkUser();
+    const { secret } = await totp.beginSetup(u.id, u.actor, '');
+    const step = totpStep();
+    redisKeys.add(`totp:used:${u.id}:${step}`);
+    const code = totpCodeForStep(secret, step);
+    await totp.confirmSetup(u.id, code, u.actor, '');
+
+    expect(await users.verifyTotpLogin(u.id, code)).toBeNull();
+    // Aynı sırla BAŞKA bir adımın kodu ise sorunsuz çalışır (sır/kurulum sağlam).
+    const next = step + 1;
+    redisKeys.add(`totp:used:${u.id}:${next}`);
+    expect(await users.verifyTotpLogin(u.id, totpCodeForStep(secret, next))).not.toBeNull();
   });
 
   it('(e) owner sıfırlaması: sır silinir + token_version +1 → açık oturumlar düşer', async () => {
