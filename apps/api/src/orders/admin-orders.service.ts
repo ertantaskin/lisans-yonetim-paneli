@@ -173,6 +173,18 @@ export interface QuarantineQuery {
    * envanter maskesiyle simetrik. reveal audit'i YALNIZ gerçek düz-metin döndüğünde (reveal=true) yazılır.
    */
   reveal?: boolean;
+  /**
+   * ANAHTAR ÖNİZLEMESİ ÜRETİLSİN Mİ? **Varsayılan `true`** — parametresiz/eski çağrılar
+   * (fiş kesme, dışa aktarma) davranışını birebir korur.
+   *
+   * PERF (denetim): `keyPreview` satır BAŞINA bir AES-GCM `decrypt` demektir ve bu tek Node
+   * event loop'unda SENKRON koşar (login scrypt'inde düzeltilen sınıfın aynısı — AYNI süreç
+   * sipariş teslimatını servis ediyor). Havuz ekranı listeyi `limit=5000` ile açtığında bu
+   * on binlerce çözme işlemi eder; oysa o ekran anahtarın kendisini GÖSTERMEZ (yalnız sayar
+   * ve gruplar). `preview=false` verildiğinde çözme HİÇ koşmaz ve alan `null` döner —
+   * satırların SAYISI, SIRASI ve diğer TÜM alanları birebir aynı kalır.
+   */
+  preview?: boolean;
 }
 
 @Injectable()
@@ -1961,6 +1973,10 @@ export class AdminOrdersService {
    * account → yalnız secret-OLMAYAN alanlar (parola HİÇ dönmez). TAM değer yalnız kaynak siparişin loglu
    * reveal yolunda görülür. Yazma yok — salt-okunur.
    *
+   * PERF: `preview=false` verilirse `keyPreview` (ve dolayısıyla satır başına AES-GCM çözme)
+   * HİÇ üretilmez, alan `null` döner — anahtarı göstermeyen ekranlar (havuz sayımı/gruplama)
+   * için. Satır sayısı/sırası/diğer alanlar birebir aynıdır.
+   *
    * DÖNÜŞ (DÜRÜSTLÜK): düz dizi DEĞİL, `{ rows, truncated, limit }`. `truncated`, JS süzgecinden
    * SONRAKİ satır sayısına değil SQL'in döndürdüğü HAM satır sayısının fetch üst sınırına dayanır —
    * aksi halde tarih süzgeci satırları kırptığında liste EKSİKKEN uyarı `false` çıkıyordu (G6).
@@ -1970,6 +1986,8 @@ export class AdminOrdersService {
     // varsayılanı true (geriye dönük: reveal geçmeyen iç çağrılar — CSV export vb. — tam metin alır;
     // export owner-only rota; owner-olmayan gate controller'da). owner-OLMAYAN admin → maskeli.
     const reveal = params.reveal ?? true;
+    // Önizleme (dolayısıyla satır başına AES-GCM çözme) varsayılan AÇIK — eski çağrılar aynen çalışır.
+    const preview = params.preview ?? true;
     const limit = Math.min(Math.max(Math.trunc(params.limit ?? 500), 1), 5000);
     // Satır çoğalması (leftJoin fan-out: aynı ölü key'in birden çok atama/soyağacı satırı) SQL
     // LIMIT'i tüketebildiği için lisans-satırı bazında dedupe'tan ÖNCE daha geniş çekilir, sonra
@@ -2181,7 +2199,11 @@ export class AdminOrdersService {
       // former atama/order/customer: revoke sonrası assignment satırı kalır, licenseItemId hâlâ
       // eski key'i işaret eder.
       .leftJoin(assignments, eq(assignments.licenseItemId, licenseItems.id))
-      .leftJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      // NOT (PERF, denetim): burada bir `order_lines` LEFT JOIN'i vardı ve HİÇBİR kolonu
+      // seçilmiyor, hiçbir koşulda kullanılmıyordu (ölü join). Kaldırıldı; DAVRANIŞ BİREBİR
+      // AYNI: birincil anahtar (`order_lines.id`) üzerinden LEFT JOIN olduğu için satır
+      // ÇOĞALTMIYOR ve LEFT olduğu için satır DÜŞÜRMÜYORDU — yani sonuç kümesi değişmez,
+      // yalnız her okuma yolundan bir tablo erişimi kalkar.
       .leftJoin(orders, eq(assignments.orderId, orders.id))
       .leftJoin(sites, eq(orders.siteId, sites.id))
       // Tedarik zinciri (§12): parti → satın alma emri → tedarikçi. batch_id FK'siz plain uuid.
@@ -2298,13 +2320,17 @@ export class AdminOrdersService {
           sku: r.productSku,
           productKind: r.productKind,
           status: r.status,
-          keyPreview: this.quarantineKeyPreview(
-            r.payloadEnc,
-            r.licenseItemId,
-            r.productKind,
-            r.payloadSchema,
-            reveal,
-          ),
+          // preview=false → çözme HİÇ koşmaz (PERF). Alan yine DÖNER ama `null`'dır: tüketici
+          // "alan yok" ile "önizleme istenmedi" arasını ayırt edebilsin (sessiz boş string yok).
+          keyPreview: preview
+            ? this.quarantineKeyPreview(
+                r.payloadEnc,
+                r.licenseItemId,
+                r.productKind,
+                r.payloadSchema,
+                reveal,
+              )
+            : null,
           // Tedarik izi (§12) — tedarikçiye "şu partiden şu anahtarlar bozuk" diye iletilebilsin.
           batchId: r.batchId ?? null,
           batchCode: r.batchCode ?? null,
@@ -2391,7 +2417,10 @@ export class AdminOrdersService {
     // best-effort: audit yazımı bu OKUMA yolunu bozmamalı (yazım hatasında liste yine döner).
     // (Denetim M1) Audit YALNIZ gerçek düz-metin döndüğünde (reveal=true) yazılır — maskeli
     // liste (owner-olmayan) hiçbir sır ifşa etmez, dolayısıyla reveal kaydı üretmez.
-    if (reveal && out.length > 0) {
+    // `preview` de ŞART: önizleme kapalıyken payload HİÇ çözülmez, yani ortada görüntülenen
+    // bir sır yoktur — kayıt yazmak denetim izini YALAN sayımlarla kirletir (operatör
+    // "5000 anahtar görüntülendi" görür, oysa hiçbiri gösterilmedi).
+    if (reveal && preview && out.length > 0) {
       try {
         await this.db.insert(auditLog).values({
           action: 'reveal',
@@ -2451,11 +2480,24 @@ export class AdminOrdersService {
 
   // ─── İnceleme Kuyruğu (§8 held_for_review — dinamik kota) ──────────────────────────
   /**
+   * İnceleme kuyruğunda tek çağrıda dönen azami sipariş. Kırpma SESSİZ DEĞİL: `truncated`
+   * ile raporlanır (aşağıdaki nota bakınız).
+   */
+  private static readonly HELD_LIST_LIMIT = 200;
+
+  /**
    * İnceleme kuyruğu listesi (§8): dinamik kota eşiğini aşıp held_for_review'e alınmış
    * siparişler (en yeni önce). Site domain + satır sayısı özetiyle — PAYLOAD/KEY YOK.
+   *
+   * DÖNÜŞ (DÜRÜSTLÜK): düz dizi DEĞİL, `{ items, truncated, limit }`. Eskiden yalnız
+   * `limit(200)` vardı ve kırpılma HİÇBİR YERDE söylenmiyordu; sıralama `heldAt DESC`
+   * olduğu için pencereden düşenler EN ESKİ held siparişlerdi — yani müşterinin ÖDEDİĞİ
+   * ama teslim edilmemiş, en uzun süredir bekleyen kayıtlar. Operatör kuyruğu boşalttığını
+   * sanıp o siparişleri kalıcı beklemede bırakabiliyordu (projenin savaştığı "sessiz kırpma"
+   * sınıfı). Desen: TAVAN+1 çek, JS'te kırp — tam TAVAN kadar kayıtta yanlış alarm basılmaz.
    */
   async listHeldOrders() {
-    return this.db
+    const rows = await this.db
       .select({
         id: orders.id,
         remoteOrderId: orders.remoteOrderId,
@@ -2471,8 +2513,22 @@ export class AdminOrdersService {
       .from(orders)
       .leftJoin(sites, eq(orders.siteId, sites.id))
       .where(eq(orders.heldForReview, true))
-      .orderBy(desc(orders.heldAt))
-      .limit(200);
+      // TIE-BREAK (id) ŞART: bu ORDER BY bir LIMIT ile çalışıyor — eşit `heldAt` damgalı
+      // siparişlerde (aynı saniyede beklemeye alınan toplu akış) pencereye hangilerinin
+      // gireceği tie-break olmadan KEYFİ olurdu; iki koşu farklı liste döndürebilirdi
+      // (proje kuralı: LIMIT'li her ORDER BY'ın tie-break'i olmalı). Birincil anahtar ve
+      // NULLS sırası DEĞİŞMEDİ (desc → NULLS FIRST, eski davranış).
+      .orderBy(desc(orders.heldAt), desc(orders.id))
+      .limit(AdminOrdersService.HELD_LIST_LIMIT + 1);
+
+    // Sinyal HAM SQL satır sayısından: TAVAN+1 çekildiği için `>` KESİN kırpma demektir.
+    const truncated = rows.length > AdminOrdersService.HELD_LIST_LIMIT;
+    // Tespit için çekilen fazladan satır YANITA GİRMEZ (sözleşme: en fazla TAVAN satır).
+    return {
+      items: rows.slice(0, AdminOrdersService.HELD_LIST_LIMIT),
+      truncated,
+      limit: AdminOrdersService.HELD_LIST_LIMIT,
+    };
   }
 
   /**

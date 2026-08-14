@@ -100,6 +100,27 @@ export function Wizard() {
   const [testing, startTest] = React.useTransition();
   const [test, setTest] = React.useState<TestConnectionResult | null>(null);
 
+  /**
+   * "Eklenti bağlantısı" kontrolü (API `ConnectionCheck.key === 'plugin'`).
+   *
+   * NEDEN AYRI ELE ALINIYOR: bu kontrol dışındaki tüm kontroller panelin KENDİ kaydına bakar ve
+   * yeni açılmış bir sitede zaten geçer; tek gerçek "mağaza bağlandı mı" kanıtı budur (site
+   * imzalı bir istek gönderdiğinde yazılan `sites.plugin_version`). Bu yüzden yalnız o düştüğünde
+   * "sorun var" demek yanıltıcı olur — doğru mesaj "sıradaki adım WordPress'te".
+   *
+   * `key` alanı API sözleşmesinde var ama paylaşılan `WizardCheck` tipi (app/sites/new/actions.ts,
+   * başka bir işçinin dosyası) henüz taşımıyor → burada savunmacı genişletme yapılır; alan
+   * gelmezse Türkçe ada göre geri düşülür (api ve admin ayrı imajlar, sürüm sapması olabilir).
+   */
+  const pluginCheck = test?.checks?.find(
+    (c) => (c as { key?: string }).key === 'plugin' || c.name === 'Eklenti bağlantısı',
+  );
+  /** Eklenti dışındaki her şey yolunda; tek eksik mağazanın panele bağlanması. */
+  const onlyPluginPending =
+    !!test?.checks?.length &&
+    pluginCheck?.ok === false &&
+    test.checks.every((c) => c.ok || c === pluginCheck);
+
   function onCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
@@ -394,7 +415,10 @@ export function Wizard() {
           <CardHeader>
             <CardTitle>Bağlantı testi</CardTitle>
             <CardDescription>
-              Site kaydı, durum, HMAC secret ve (varsa) webhook erişilebilirliğini doğrular.
+              Site kaydı, durum, HMAC secret, <strong>eklenti bağlantısı</strong> ve (varsa)
+              webhook erişilebilirliğini doğrular. Testi çalıştırmadan önce kodu WordPress’te
+              girin: “eklenti bağlantısı” yalnız mağaza panele imzalı bir istek gönderdiğinde
+              yeşile döner.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -415,8 +439,15 @@ export function Wizard() {
 
             {test && !test.error && test.checks && (
               <div className="space-y-3">
+                {/* DÜRÜSTLÜK: "Bağlantı sağlıklı" YALNIZ tüm kontroller geçtiğinde yazılır.
+                    Yalnız eklenti kontrolü düştüyse bu bir ARIZA değil, kurulumun devam eden
+                    adımıdır → ayrı (ve yönlendiren) bir cümle kullanılır. */}
                 <p className="text-sm font-medium text-foreground">
-                  {test.ok ? 'Bağlantı sağlıklı' : 'Bağlantıda sorun var'}
+                  {test.ok
+                    ? 'Bağlantı sağlıklı'
+                    : onlyPluginPending
+                      ? 'Panel tarafı hazır — mağaza henüz bağlanmadı'
+                      : 'Bağlantıda sorun var'}
                 </p>
                 <ul className="space-y-1.5">
                   {test.checks.map((c) => (
@@ -434,19 +465,43 @@ export function Wizard() {
                   ))}
                 </ul>
 
-                {test.ok && (
+                {/* "Site bağlandı" ancak eklenti bağlantısı da doğrulandığında (test.ok) yazılır —
+                    eskiden bu bant mağaza WordPress'e hiç dokunulmadan da çıkıyor, operatör
+                    kurulumu bitmiş sanıp sihirbazı kapatıyordu (sipariş/katalog hiç gelmiyordu). */}
+                {test.ok ? (
                   <Alert variant="success">
                     <CircleCheck />
                     <div className="min-w-0 flex-1">
                       <AlertTitle>Site bağlandı</AlertTitle>
                       <AlertDescription>
+                        Mağaza panele imzalı istek gönderdi — kurulum tamam.{' '}
                         <Button asChild variant="link" className="h-auto p-0">
                           <Link href={`/sites/${created.siteId}`}>Site detayına git →</Link>
                         </Button>
                       </AlertDescription>
                     </div>
                   </Alert>
-                )}
+                ) : onlyPluginPending ? (
+                  <Alert variant="warning">
+                    <TriangleAlert />
+                    <div className="min-w-0 flex-1">
+                      <AlertTitle>Eklenti henüz bağlanmadı</AlertTitle>
+                      <AlertDescription>
+                        Site kaydı hazır ama mağaza panele hiç imzalı istek göndermedi. WordPress
+                        yönetici panelinde{' '}
+                        <span className="font-medium text-foreground">
+                          Ayarlar &rsaquo; Teslimat Eklentisi &rsaquo; Panele Bağlan
+                        </span>{' '}
+                        ekranından yukarıdaki bağlan kodunu girin, ardından bu testi tekrar
+                        çalıştırın. Bağlanana kadar bu siteden sipariş gelmez ve mağaza katalogu
+                        panele düşmez.{' '}
+                        <Button asChild variant="link" className="h-auto p-0">
+                          <Link href={`/sites/${created.siteId}`}>Site detayına git →</Link>
+                        </Button>
+                      </AlertDescription>
+                    </div>
+                  </Alert>
+                ) : null}
               </div>
             )}
           </CardContent>

@@ -1,14 +1,13 @@
 import { Link2, Store, PackageSearch, Clock } from 'lucide-react';
 import {
   apiGet,
-  type UnmappedRow,
   type ProductRow,
   type CatalogSummaryRow,
   type PendingLinesSummary,
 } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card } from '../../components/ui/card';
-import { UnmappedTable } from '../../components/unmapped-table';
+import { UnmappedTable, type UnmappedRowView } from '../../components/unmapped-table';
 import { CatalogTable, type CatalogRowView } from '../../components/catalog-table';
 import { PendingLinesPanel } from '../../components/pending-lines-panel';
 
@@ -35,7 +34,8 @@ export default async function MappingsPage({
     !!site && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(site);
 
   let summary: CatalogSummaryRow[] = [];
-  let rows: UnmappedRow[] = [];
+  // UnmappedRowView = UnmappedRow + PASİF eşleme alanları (API zaten döndürüyor).
+  let rows: UnmappedRowView[] = [];
   let products: ProductRow[] = [];
   // CatalogRowView = CatalogRow + varyasyon sunum bayrakları (API zaten döndürüyor).
   let catalog: CatalogRowView[] = [];
@@ -46,7 +46,7 @@ export default async function MappingsPage({
   try {
     [summary, rows, products] = await Promise.all([
       apiGet<CatalogSummaryRow[]>('/v1/admin/catalog/summary'),
-      apiGet<UnmappedRow[]>('/v1/admin/mappings/unmapped'),
+      apiGet<UnmappedRowView[]>('/v1/admin/mappings/unmapped'),
       apiGet<ProductRow[]>('/v1/admin/products'),
     ]);
   } catch (e) {
@@ -123,9 +123,13 @@ export default async function MappingsPage({
                 Eşlenmemiş Gelen Ürünler
               </h2>
             </div>
+            {/* PASİF eşleme: satır burada kalır (teslimat yapılamıyor) ama doğru eylem yeni eşleme
+                kurmak DEĞİL — aynı anahtara ikinci eşleme kurulamaz (409). Satır "Eşleme pasif"
+                rozetiyle işaretlenir ve tek eylem "Etkinleştir" olur. */}
             <p className="max-w-2xl text-sm text-muted-foreground">
-              Gerçek siparişlerde gelmiş ama panelde bir ürüne eşlenmemiş mağaza ürünleri. Tek tıkla
-              eşleyin.
+              Gerçek siparişlerde gelmiş ama panelde teslim edilebilir bir ürüne bağlı olmayan
+              mağaza ürünleri. Tek tıkla eşleyin. <strong>“Eşleme pasif”</strong> rozetli satırlarda
+              eşleme zaten kuruludur ama kapalıdır — yeni eşleme eklenemez, “Etkinleştir” deyin.
             </p>
             <UnmappedTable rows={rows} products={products} />
           </section>

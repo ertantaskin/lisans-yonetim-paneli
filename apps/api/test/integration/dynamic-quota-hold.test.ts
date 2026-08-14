@@ -260,8 +260,10 @@ describe('§8 dinamik kota → held_for_review + İnceleme Kuyruğu', () => {
     const held = await orders.createOrder(siteObj, makeDto(remoteProductId));
     expect(held.body.held).toBe(true);
 
+    // Sözleşme (denetim L2-1): düz dizi DEĞİL — `{ items, truncated, limit }`. Kırpma artık
+    // görünür (eskiden sessiz `limit(200)` idi; en ESKİ held siparişler sessizce düşüyordu).
     const queue = await admin.listHeldOrders();
-    const found = queue.find((o) => o.id === held.body.orderId);
+    const found = queue.items.find((o) => o.id === held.body.orderId);
     expect(found).toBeDefined();
     expect(found!.siteDomain).toBe(siteObj.domain);
   });

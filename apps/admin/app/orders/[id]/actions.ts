@@ -1,7 +1,25 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiGet, apiPost, type RevealResult } from '../../../lib/api';
+import { apiGet, apiPost, isUuid, type RevealResult } from '../../../lib/api';
 import { getActor, isOwner } from '../../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU (bu dosya bulgunun ÖRNEĞİYDİ):
+ * `completeLineAction(lineId, orderId)` gibi aksiyonlar kimliği doğrudan API YOLUNA gömüyordu
+ * ve yalnız "boş mu" diye bakıyordu. Sunucu aksiyonları TS tiplerini ÇALIŞMA ANINDA ZORLAMAZ:
+ * action uç noktası dışarıdan, serileştirilmiş argümanlarla çağrılabilir. WHATWG URL
+ * normalizasyonu `..` segmentlerini çözdüğü için
+ * `completeLineAction('../sites/<id>/rotate-secret?x=', '1')` çağrısı BAŞKA bir admin ucuna
+ * düşüyordu; Next sunucusu isteği kendi ADMIN_TOKEN'ı ile yaptığından owner-only kapılar
+ * (rotate-secret, deployments, admin CRUD) sıradan bir 'admin' hesabınca ATLANABİLİRDİ.
+ *
+ * Bu yüzden yola gömülen HER kimlik `isUuid()` ile çalışma anında doğrulanır (şemadaki tüm
+ * kayıt kimlikleri uuid). `lib/api` içindeki merkezî `assertSafePath` kapısı ikinci savunma
+ * hattıdır — biri atlanırsa diğeri isteği yaptırmaz.
+ *
+ * Aksiyonlar FIRLATMAZ: mevcut `{ ok, error }` / `RevealState` sözleşmesi korunur.
+ */
+const INVALID_ID = 'Geçersiz kayıt kimliği — sayfa yenilenip tekrar denenmeli.';
 
 /**
  * Tanı ucunun ('GET /v1/admin/pending-lines/diagnose/:orderId') yanıt şekli — YEREL (export
@@ -47,6 +65,7 @@ export async function revealAction(_prev: RevealState, formData: FormData): Prom
   if (!(await isOwner())) {
     return { assignmentId, error: 'Düz metni göstermek için yalnız owner yetkili.' };
   }
+  if (!isUuid(assignmentId)) return { assignmentId, error: INVALID_ID };
   try {
     const actor = await getActor();
     const result = await apiPost<RevealResult>(
@@ -80,7 +99,7 @@ export interface MutationState {
  * yok diyor ama neden olduğunu anlamıyorum"). Tanı erişilemezse eski genel mesaja düşülür.
  */
 export async function completeLineAction(lineId: string, orderId: string): Promise<MutationState> {
-  if (!lineId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(lineId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   try {
     const actor = await getActor();
     const res = await apiPost<{ added?: number }>(
@@ -132,7 +151,10 @@ export async function resolvePendingAction(
   orderId: string,
   lineId?: string,
 ): Promise<MutationState> {
-  if (!orderId) return { ok: false, error: 'Geçersiz istek' };
+  // lineId opsiyoneldir; verilmişse o da doğrulanır (gövdeye gider ama kimlik şekli tektir).
+  if (!isUuid(orderId) || (lineId !== undefined && !isUuid(lineId))) {
+    return { ok: false, error: INVALID_ID };
+  }
   try {
     const actor = await getActor();
     const res = await apiPost<ResolveResponse>(
@@ -185,7 +207,7 @@ export async function revokeAction(
   orderId: string,
   reason?: string,
 ): Promise<MutationState> {
-  if (!assignmentId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(assignmentId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   try {
     const actor = await getActor();
     await apiPost(
@@ -210,7 +232,7 @@ export async function replaceAction(
   orderId: string,
   reason: string,
 ): Promise<MutationState> {
-  if (!assignmentId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(assignmentId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   if (!reason?.trim()) return { ok: false, error: 'Değişim sebebi zorunlu.' };
   try {
     const actor = await getActor();
@@ -231,7 +253,7 @@ export async function replaceAction(
  * 400 döner → kullanıcıya "çok sık" olarak yüzeye çıkarılır (artık sessiz değil).
  */
 export async function resendAction(orderId: string): Promise<MutationState> {
-  if (!orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(orderId)) return { ok: false, error: INVALID_ID };
   try {
     const actor = await getActor();
     await apiPost(`/v1/admin/orders/${orderId}/resend`, undefined, actor);
@@ -252,7 +274,7 @@ export async function suspendAction(
   assignmentId: string,
   orderId: string,
 ): Promise<MutationState> {
-  if (!assignmentId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(assignmentId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   try {
     const actor = await getActor();
     await apiPost(`/v1/admin/assignments/${assignmentId}/suspend`, undefined, actor);
@@ -268,7 +290,7 @@ export async function unsuspendAction(
   assignmentId: string,
   orderId: string,
 ): Promise<MutationState> {
-  if (!assignmentId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(assignmentId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   try {
     const actor = await getActor();
     await apiPost(`/v1/admin/assignments/${assignmentId}/unsuspend`, undefined, actor);
@@ -288,7 +310,7 @@ export async function approveReplacementForOrderAction(
   replacementId: string,
   orderId: string,
 ): Promise<MutationState> {
-  if (!replacementId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(replacementId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   try {
     const actor = await getActor();
     await apiPost(`/v1/admin/replacements/${replacementId}/approve`, {}, actor);
@@ -306,7 +328,7 @@ export async function rejectReplacementForOrderAction(
   orderId: string,
   note: string,
 ): Promise<MutationState> {
-  if (!replacementId || !orderId) return { ok: false, error: 'Geçersiz istek' };
+  if (!isUuid(replacementId) || !isUuid(orderId)) return { ok: false, error: INVALID_ID };
   if (!note?.trim()) return { ok: false, error: 'Red gerekçesi zorunlu.' };
   try {
     const actor = await getActor();

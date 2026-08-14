@@ -18,6 +18,21 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('tr-TR', { dateStyle: 'medium' });
 }
 
+/**
+ * "Tamamlanma" hücresinin metni — DURUMDAN türetilir.
+ *
+ * NEDEN (denetim bulgusu, düşük): emir elle "Teslim alındı" işaretlendiğinde `receivedAt` boş
+ * kalıyor (tarih yalnız gerçek teslim-al akışında yazılır) ama ekran koşulsuz "— (henüz
+ * tamamlanmadı)" basıyordu → aynı ekranda rozet "Teslim alındı" derken bu satır aksini
+ * söylüyordu. Tarih uydurulmaz; boşluğun SEBEBİ yazılır.
+ */
+function completionText(status: string, receivedAt: string | null): string {
+  if (receivedAt) return fmtDate(receivedAt);
+  if (status === 'received') return '— (elle kapatıldı)';
+  if (status === 'cancelled' || status === 'canceled') return '— (iptal edildi)';
+  return '— (henüz tamamlanmadı)';
+}
+
 /** Kuruş → para birimi metni (ör. 12000 TRY → "120,00 TRY"). */
 function fmtCost(cents: number | null, currency: string): string {
   if (cents == null) return '—';
@@ -138,10 +153,11 @@ export default async function PurchaseOrderDetailPage({
                 ve her kısmi teslimde güncelleniyordu; "son sevkiyat" ile "emir tamamlandı"
                 aynı alanda karışıyordu.
               */}
+              {/* Tarih YOKSA sebebi yazılır (`completionText`): elle "Teslim alındı"
+                  işaretlenen emirde bu alan boş kalıyor ve "henüz tamamlanmadı" demek
+                  başlıktaki rozetle ÇELİŞİYORDU. */}
               <dt className="text-muted-foreground">Tamamlanma</dt>
-              <dd className="text-foreground">
-                {po.receivedAt ? fmtDate(po.receivedAt) : '— (henüz tamamlanmadı)'}
-              </dd>
+              <dd className="text-foreground">{completionText(po.status, po.receivedAt)}</dd>
               <dt className="text-muted-foreground">Oluşturma</dt>
               <dd className="text-foreground">{fmtDate(po.createdAt)}</dd>
             </dl>

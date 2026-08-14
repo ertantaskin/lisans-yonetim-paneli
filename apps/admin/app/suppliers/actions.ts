@@ -1,7 +1,15 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, apiSend } from '@/lib/api';
+import { apiPost, apiSend, isUuid } from '@/lib/api';
 import { getActor } from '@/lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: tedarikçi kimliği doğrudan API YOLUNA gömülür ve sunucu
+ * aksiyonları TS tiplerini ÇALIŞMA ANINDA zorlamaz (uç dışarıdan serileştirilmiş argümanla
+ * çağrılabilir) → boş OLMAYAN ama `..` taşıyan bir değer owner-only başka bir uca düşerdi.
+ * Kimlik UUID kalıbına bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
+const INVALID_SUPPLIER_ID = 'Geçersiz tedarikçi kimliği — liste yenilenip tekrar denenmeli.';
 
 /**
  * DİKKAT: Bu dosya 'use server' modülüdür — Next 15 SWC buraya
@@ -48,7 +56,7 @@ export async function updateSupplierAction(
   formData: FormData,
 ): Promise<SupplierFormState> {
   const id = String(formData.get('id') || '').trim();
-  if (!id) return { ok: false, error: 'Tedarikçi id zorunlu' };
+  if (!isUuid(id)) return { ok: false, error: INVALID_SUPPLIER_ID };
   const name = String(formData.get('name') || '').trim();
   if (!name) return { ok: false, error: 'Ad zorunlu' };
   const contact = String(formData.get('contact') || '').trim();
@@ -73,7 +81,7 @@ export async function updateSupplierAction(
 
 /** Aktif/pasif durumunu değiştir (pasifleştirme = active:false). */
 export async function setSupplierActiveAction(id: string, active: boolean): Promise<SupplierFormState> {
-  if (!id) return { ok: false, error: 'Tedarikçi id zorunlu' };
+  if (!isUuid(id)) return { ok: false, error: INVALID_SUPPLIER_ID };
   try {
     await apiSend('PATCH', `/v1/admin/suppliers/${id}`, { active }, await getActor());
     revalidatePath('/suppliers');

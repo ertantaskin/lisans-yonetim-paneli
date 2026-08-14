@@ -1,7 +1,16 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, apiSend } from '../../lib/api';
+import { apiPost, apiSend, isUuid } from '../../lib/api';
 import { getActor, isOwner } from '../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: site kimliği API YOLUNA gömülür ve bu dosyadaki uçlar arasında
+ * `rotate-secret` gibi OWNER-ONLY olanlar vardır. Sunucu aksiyonları TS tiplerini ÇALIŞMA
+ * ANINDA zorlamaz (uç dışarıdan serileştirilmiş argümanla çağrılabilir) ve `!siteId` kontrolü
+ * `'../sites/<id>/rotate-secret?x='` gibi bir değeri GEÇİRİYORDU. Kimlik UUID kalıbına
+ * bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
+const INVALID_SITE_ID = 'Geçersiz site kimliği — liste yenilenip tekrar denenmeli.';
 
 export interface CreateSiteState {
   ok: boolean;
@@ -64,7 +73,7 @@ export async function updateSiteAction(
   formData: FormData,
 ): Promise<UpdateSiteState> {
   const siteId = String(formData.get('siteId') || '').trim();
-  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     // Günlük satış kotası — boş = limitsiz (null). Negatif/0 reddedilir.
     const quotaRaw = String(formData.get('salesDailyQuota') || '').trim();
@@ -152,7 +161,7 @@ export async function setSiteStatusAction(
 ): Promise<SetSiteStatusState> {
   // RBAC (§8): askıya alma HMAC auth'u kesip sipariş push'unu durdurur → yalnız owner.
   if (!(await isOwner())) return { ok: false, error: 'Bu işlem için owner yetkisi gerekir.' };
-  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     const actor = await getActor();
     await apiSend('PATCH', `/v1/admin/sites/${encodeURIComponent(siteId)}`, { status }, actor);
@@ -194,7 +203,7 @@ export interface TestConnectionState {
  * döndürür. SIR göstermez. Salt-okunur teşhis (mutation değil); actor tutarlılık için geçilir.
  */
 export async function testConnectionAction(siteId: string): Promise<TestConnectionState> {
-  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     const actor = await getActor();
     const result = await apiPost<{ ok: boolean; checks: ConnectionCheck[] }>(
@@ -215,7 +224,7 @@ export async function testConnectionAction(siteId: string): Promise<TestConnecti
 export async function rotateSecretAction(siteId: string): Promise<RotateSecretState> {
   // RBAC (§8): HMAC sır rotasyonu güven kökünü değiştirir → yalnız owner.
   if (!(await isOwner())) return { ok: false, error: 'Bu işlem için owner yetkisi gerekir.' };
-  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     const actor = await getActor();
     const { hmacSecret } = await apiPost<{ hmacSecret: string }>(

@@ -1,7 +1,15 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost } from '../../lib/api';
+import { apiPost, isUuid } from '../../lib/api';
 import { getActor } from '../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: parti kimliği doğrudan API YOLUNA gömülür ve sunucu aksiyonları
+ * TS tiplerini ÇALIŞMA ANINDA zorlamaz (uç dışarıdan serileştirilmiş argümanla çağrılabilir).
+ * `!id` kontrolü boşluğu kapatmıyordu: `'../sites/<id>/rotate-secret?x='` gibi bir değer boş
+ * DEĞİL ama WHATWG URL normalizasyonuyla BAŞKA (owner-only) bir uca düşerdi. Kimlik artık
+ * UUID kalıbına bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
 
 export interface ActionState {
   ok: boolean;
@@ -22,7 +30,7 @@ export interface RecallResult extends ActionState {
  * + stock_adjustments('recall') + audit_log. Satılmış adet değişim gerektirir (uyarı döner).
  */
 export async function recallBatchAction(id: string, reason: string): Promise<RecallResult> {
-  if (!id) return { ok: false, error: 'Parti id zorunlu' };
+  if (!isUuid(id)) return { ok: false, error: 'Geçersiz parti kimliği — liste yenilenmeli.' };
   if (!reason.trim()) return { ok: false, error: 'Sebep zorunlu' };
   try {
     const res = await apiPost<{
@@ -59,7 +67,7 @@ export interface BulkReplaceResult extends ActionState {
  * Dön: { total, replaced, skippedNoStock }.
  */
 export async function bulkReplaceBatchAction(id: string): Promise<BulkReplaceResult> {
-  if (!id) return { ok: false, error: 'Parti id zorunlu' };
+  if (!isUuid(id)) return { ok: false, error: 'Geçersiz parti kimliği — liste yenilenmeli.' };
   try {
     const res = await apiPost<{ total: number; replaced: number; skippedNoStock: number }>(
       `/v1/admin/batches/${id}/bulk-replace`,

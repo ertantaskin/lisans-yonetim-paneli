@@ -1,7 +1,15 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost } from '../../lib/api';
+import { apiPost, isUuid } from '../../lib/api';
 import { getActor } from '../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: sipariş kimliği doğrudan API YOLUNA gömülür ve sunucu aksiyonları
+ * TS tiplerini ÇALIŞMA ANINDA zorlamaz (uç dışarıdan serileştirilmiş argümanla çağrılabilir).
+ * `!orderId` kontrolü yetmiyordu: `'../sites/<id>/rotate-secret?x='` boş DEĞİL ama WHATWG URL
+ * normalizasyonuyla owner-only bir uca düşerdi. `lib/api` merkezî kapısı ikinci savunma hattı.
+ */
+const INVALID_ORDER_ID = 'Geçersiz sipariş kimliği — kuyruk yenilenip tekrar denenmeli.';
 
 /**
  * Aksiyon sonucu. `message` YALNIZ gerçekleşeni anlatır: onay sonrası hiçbir lisans
@@ -29,7 +37,7 @@ export interface ActionState {
  * müşteri bekliyordu).
  */
 export async function releaseAction(orderId: string): Promise<ActionState> {
-  if (!orderId) return { ok: false, error: 'Sipariş id zorunlu' };
+  if (!isUuid(orderId)) return { ok: false, error: INVALID_ORDER_ID };
   try {
     const res = await apiPost<{ orderId?: string; released?: boolean; status?: string }>(
       `/v1/admin/orders/${orderId}/release`,
@@ -89,7 +97,7 @@ export async function releaseAction(orderId: string): Promise<ActionState> {
  * POST /v1/admin/orders/:id/reject body { reason } — audit'e düşer (actor).
  */
 export async function rejectAction(orderId: string, reason: string): Promise<ActionState> {
-  if (!orderId) return { ok: false, error: 'Sipariş id zorunlu' };
+  if (!isUuid(orderId)) return { ok: false, error: INVALID_ORDER_ID };
   if (!reason.trim()) return { ok: false, error: 'Sebep zorunlu' };
   try {
     await apiPost(`/v1/admin/orders/${orderId}/reject`, { reason: reason.trim() }, await getActor());

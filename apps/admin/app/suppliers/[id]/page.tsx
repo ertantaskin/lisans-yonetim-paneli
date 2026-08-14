@@ -11,7 +11,9 @@ import {
   RotateCcw,
   Wallet,
   Layers,
+  TriangleAlert,
 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatStrip } from '../../../components/ui/stat-tile';
 import { Badge, SupplyStatusBadge } from '../../../components/ui/badge';
@@ -56,6 +58,36 @@ function formatCost(cents: number, currency: string): string {
 // Yüksek geri-çekilme oranı işareti (tedarikçi kalite sinyali).
 const RECALL_THRESHOLD = 0.1;
 
+/**
+ * Parti listesinin KAPSAMI — savunmacı okunur.
+ *
+ * NEDEN: karne partileri sunucuda artık bir üst sınırla çekiliyor (uzun ömürlü tedarikçide
+ * liste binlerce satıra çıkıyordu). İki tuzak var:
+ *  1. Kırpılmış listeyi UYARISIZ göstermek → "bu tedarikçinin partileri bunlar" YALAN olur.
+ *  2. "Parti" sayacını `batches.length`ten türetmek → kırpılmış listede sayaç da yanlış olur;
+ *     üstelik geri-çekilme oranı sunucudaki TAM sayımdan geliyor, yani ekranda iki farklı
+ *     "parti sayısı" tanımı çelişirdi (bu projede "satılmış 6 birim" hatasının kaynağı buydu).
+ * Bu yüzden sayaç ÖNCELİKLE API'nin bildirdiği gerçek sayımdan (`batchCount`) okunur; alan
+ * yoksa (eski api dağıtımı) liste uzunluğuna düşer ve kırpma varsa "N+" ile dürüstçe yazılır.
+ *
+ * Alanlar `SupplierScorecard` tipinde YOK (tip `app/suppliers/queries.ts`'te ve bu partide
+ * o dosyaya dokunulmuyor) → dar bir cast ile okunur; gelmezse bugünkü davranış aynen korunur.
+ */
+function batchScope(data: SupplierScorecard): {
+  count: number;
+  exact: boolean;
+  truncated: boolean;
+} {
+  const d = data as unknown as { batchCount?: unknown; batchesTruncated?: unknown };
+  const raw = Number(d.batchCount);
+  const exact = Number.isFinite(raw) && raw >= 0;
+  return {
+    count: exact ? Math.trunc(raw) : data.batches.length,
+    exact,
+    truncated: d.batchesTruncated === true,
+  };
+}
+
 export default async function SupplierScorecardPage({
   params,
 }: {
@@ -88,7 +120,8 @@ export default async function SupplierScorecardPage({
   }
 
   const { supplier, batches } = data;
-  const highRecall = data.recallRate > RECALL_THRESHOLD && batches.length > 0;
+  const scope = batchScope(data);
+  const highRecall = data.recallRate > RECALL_THRESHOLD && scope.count > 0;
 
   return (
     <div className="space-y-6">
@@ -154,7 +187,18 @@ export default async function SupplierScorecardPage({
               tone: highRecall ? 'danger' : undefined,
               hint: highRecall ? 'kalite işareti' : undefined,
             },
-            { icon: Layers, label: 'Parti', value: batches.length },
+            {
+              icon: Layers,
+              label: 'Parti',
+              // Gerçek sayım API'den; alan yoksa liste uzunluğu + kırpma varsa "N+" (dürüst
+              // belirsizlik) — kırpılmış listeyi kesin sayı gibi göstermek yanlış bilgidir.
+              value: scope.exact
+                ? scope.count
+                : scope.truncated
+                  ? `${scope.count}+`
+                  : scope.count,
+              hint: !scope.exact && scope.truncated ? 'liste kırpıldı' : undefined,
+            },
           ]}
         />
         {data.totalCostCents.length > 0 && (
@@ -186,6 +230,31 @@ export default async function SupplierScorecardPage({
             <Layers className="size-4 text-muted-foreground" /> Partiler
           </CardTitle>
         </CardHeader>
+        {/* Sessiz kırpma YOK: liste sunucu penceresine dayandıysa kaç satırın gösterildiği ve
+            tamamının nerede olduğu yazılır (bant kartın İÇİNDE — kırpılan şey bu listedir). */}
+        {scope.truncated && (
+          <div className="px-6 pb-2">
+            <Alert variant="warning">
+              <TriangleAlert />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>
+                  Liste eksik — en yeni {batches.length.toLocaleString('tr-TR')} parti
+                  gösteriliyor
+                </AlertTitle>
+                <AlertDescription>
+                  Bu tedarikçinin{' '}
+                  {scope.exact ? `${scope.count.toLocaleString('tr-TR')} partisi var` : 'daha fazla partisi var'}
+                  ; eski partiler burada görünmüyor. Yukarıdaki sayaçlar ve geri-çekilme oranı
+                  TÜM partiler üzerinden hesaplanır (yalnız bu liste kırpılmıştır). Tam liste{' '}
+                  <Link href="/batches" className="font-medium underline underline-offset-4">
+                    Partiler
+                  </Link>{' '}
+                  ekranında.
+                </AlertDescription>
+              </div>
+            </Alert>
+          </div>
+        )}
         <CardContent className={batches.length === 0 ? '' : 'p-0'}>
           {batches.length === 0 ? (
             <EmptyState icon={Layers} title="Parti yok" />

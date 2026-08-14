@@ -288,12 +288,22 @@ export function LicenseItemsTable({
 
   // Seçim SAYFA/SÜZGEÇ değişiminde bilerek sıfırlanır (yukarıdaki kapsam notu): toplu işlem
   // yalnız görünen sayfayı işlediği için seçimin sayfalar arası birikmesi VAAT EDİLMEYEN bir
-  // davranıştı ve sessiz kayba yol açıyordu. `bulkNote` da temizlenir — önceki sonucun
-  // (özellikle hata notunun) yeni bir seçimin üstünde asılı kalması yanıltıcıdır.
+  // davranıştı ve sessiz kayba yol açıyordu.
+  //
+  // SONUÇ NOTU BURADA TEMİZLENMEZ (denetim bulgusu, düşük): toplu geçersiz kılmadan sonra liste
+  // daralıyor, son sayfa boşalıyor ve aşağıdaki OTOMATİK sayfa düzeltmesi (`page > pageCount`)
+  // `page`i değiştiriyordu → bu effect notu siliyor, operatör "kaç kalem düştü, kaçı atlandı"
+  // sonucunu HİÇ göremiyordu (özellikle hata/uyarı tonunu). Not artık yalnız KULLANICI kaynaklı
+  // değişimde (`clearBulkNote`: arama/süzgeç/sıralama/sayfa düğmeleri) temizlenir.
   React.useEffect(() => {
     setSelected(new Set());
-    setBulkNote(null);
   }, [page, term, status, holder, sort, pageSize]);
+
+  /**
+   * Toplu işlem sonucunu temizler — YALNIZ kullanıcı listeyi kendi değiştirdiğinde çağrılır.
+   * Otomatik tazeleme/sayfa düzeltmesi notu silmez (yukarıdaki not).
+   */
+  const clearBulkNote = React.useCallback(() => setBulkNote(null), []);
 
   // Yarışan yanıtlar: yalnız EN SON isteğin sonucu ekrana yazılır (eski yanıt üzerine binmez).
   const reqId = React.useRef(0);
@@ -512,7 +522,12 @@ export function LicenseItemsTable({
           <SearchInput
             id={`${uid}-search`}
             value={search}
-            onValueChange={setSearch}
+            // Kullanıcı listeyi değiştiriyor → önceki toplu işlem sonucu artık bu listeye ait
+            // değil, temizlenir (otomatik tazelemede temizlenmez — bkz. clearBulkNote notu).
+            onValueChange={(v) => {
+              setSearch(v);
+              clearBulkNote();
+            }}
             placeholder="Tam anahtar veya son 5 hane, ürün, e-posta, sipariş no…"
             ariaLabel="Lisans ara"
             className="w-full"
@@ -522,7 +537,10 @@ export function LicenseItemsTable({
           id={`${uid}-status`}
           label="Durum"
           value={status}
-          onChange={setStatus}
+          onChange={(v) => {
+            setStatus(v);
+            clearBulkNote();
+          }}
           options={STATUS_OPTIONS}
         />
         {/* Kapsam kontrolü yalnız KİLİTLİ DEĞİLKEN gösterilir: kilitli kullanımda
@@ -533,7 +551,10 @@ export function LicenseItemsTable({
             id={`${uid}-holder`}
             label="Kim tutuyor"
             value={holder}
-            onChange={setHolder}
+            onChange={(v) => {
+              setHolder(v);
+              clearBulkNote();
+            }}
             options={HOLDER_OPTIONS}
           />
         )}
@@ -541,14 +562,20 @@ export function LicenseItemsTable({
           id={`${uid}-sort`}
           label="Sıralama"
           value={sort}
-          onChange={setSort}
+          onChange={(v) => {
+            setSort(v);
+            clearBulkNote();
+          }}
           options={SORT_OPTIONS}
         />
         <ToolbarSelect
           id={`${uid}-size`}
           label="Sayfada"
           value={String(pageSize)}
-          onChange={(v) => setPageSize(Number(v))}
+          onChange={(v) => {
+            setPageSize(Number(v));
+            clearBulkNote();
+          }}
           options={PAGE_SIZES.map((n) => ({ value: String(n), label: `${n} kayıt` }))}
         />
         <Button
@@ -921,7 +948,10 @@ export function LicenseItemsTable({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => {
+              setPage((p) => Math.max(1, p - 1));
+              clearBulkNote();
+            }}
             disabled={loading || page <= 1}
             aria-label="Önceki sayfa"
           >
@@ -930,7 +960,10 @@ export function LicenseItemsTable({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            onClick={() => {
+              setPage((p) => Math.min(pageCount, p + 1));
+              clearBulkNote();
+            }}
             disabled={loading || page >= pageCount}
             aria-label="Sonraki sayfa"
           >

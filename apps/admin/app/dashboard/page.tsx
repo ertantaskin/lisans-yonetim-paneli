@@ -50,8 +50,10 @@ const QUICK_LINKS: Array<{ label: string; href: string; icon: typeof Inbox }> = 
  *
  *  1. Sunucu, canlı akışın İLK KARESİNİ de çeker (`/v1/admin/live`) → sayaçlar ve iki liste
  *     ilk boyamada DOLU gelir; ekran asla boş/iskelet açılmaz.
- *  2. Sonrasını `useLive()` devralır: panel genelinde TEK poll (15 sn, ETag'li, sekme
- *     arkadayken duraklar) — bu ekran kendi isteğini AÇMAZ. Yeni kayıtlar kısa süre vurgulanır.
+ *  2. Sonrasını `useLive()` devralır: panel genelinde TEK poll (15 sn, ETag'li; sekme
+ *     arkadayken DURMAZ, 60 sn'ye seyrelir — arka plandayken gelen sipariş de sayılsın diye)
+ *     — bu ekran kendi isteğini AÇMAZ. Yeni kayıtlar "YENİ" işaretiyle KALICI olarak durur
+ *     (işaret satır açılınca ya da "Okundu" ile kalkar).
  *  3. Canlı akışta olmayan yavaş metrikler (bugünkü sipariş / stok / güvenlik) altta ince
  *     bir şeritte sunucu özetiyle durur — gürültü yapmadan bağlam verir.
  *

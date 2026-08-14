@@ -26,7 +26,19 @@ export interface SupplierScorecard {
   avgLeadDays: number | null;
   /** Henüz tamamlanmamış PO sayısı (draft/ordered/partial). */
   openPoCount: number;
+  /** Parti listesi — EN FAZLA `SCORECARD_BATCH_LIMIT` satır (bkz. `batchesTruncated`). */
   batches: ScorecardBatchRow[];
+  /**
+   * Liste üst sınıra dayandı mı? true ise EKRANDAKİ liste EKSİKTİR (daha eski partiler var).
+   * Sessiz kırpma bu projede yasak: operatör "bu tedarikçinin tüm partileri bu kadar" sanıp
+   * eksik karar veremesin.
+   */
+  batchesTruncated: boolean;
+  /**
+   * Tedarikçinin GERÇEK parti sayısı — `batches.length` DEĞİL. Kırpılmış listede uzunluktan
+   * sayaç türetmek, kırpma uyarısının yanına YANLIŞ bir toplam koyardı.
+   */
+  batchCount: number;
   /** Geri çekilen parti / toplam parti (0..1); parti yoksa 0. */
   recallRate: number;
   /**
@@ -81,6 +93,13 @@ export interface SupplierCostByCurrency {
  */
 @Injectable()
 export class SuppliersService {
+  /**
+   * Karnedeki parti listesinin üst sınırı. HER STOK GİRİŞİ bir parti üretir → bu liste
+   * sınırsız büyür ve karne ekranı zamanla tüm geçmişi çekmeye başlardı. Kırpma SESSİZ
+   * DEĞİL: `batchesTruncated` ile raporlanır, sayaç ise ayrı `count(*)`tan gelir.
+   */
+  private static readonly SCORECARD_BATCH_LIMIT = 200;
+
   constructor(@Inject(DB) private readonly db: Database) {}
 
   async create(input: { name: string; contact?: string; notes?: string }): Promise<Supplier> {
@@ -175,7 +194,10 @@ export class SuppliersService {
     const batchTotal = Number(bAgg.total ?? 0);
     const recalled = Number(bAgg.recalled ?? 0);
 
-    // Parti listesi (en yeni önce).
+    // Parti listesi (en yeni önce). LIMIT = TAVAN + 1 (proje deseni: supply-ops.listBatches /
+    // pending-lines — "tavan+1 çek, JS'te kırp"): tam TAVAN kadar parti varken YANLIŞ kırpma
+    // alarmı basılmaz. TIE-BREAK (id) ŞART — eşit `created_at` damgalı partilerde (aynı
+    // transaction'da açılan partiler AYNI damgayı taşır) pencere sınırı aksi halde keyfi olurdu.
     const batchRows = await rawRows<{
       id: string;
       label: string;
@@ -186,21 +208,25 @@ export class SuppliersService {
       SELECT id, label, status, qty_received, created_at
       FROM batches
       WHERE supplier_id = ${id}
-      ORDER BY created_at DESC;
+      ORDER BY created_at DESC, id DESC
+      LIMIT ${SuppliersService.SCORECARD_BATCH_LIMIT + 1};
     `);
-    const batches: ScorecardBatchRow[] = batchRows.map((b) => {
-      // created_at pg sürücüde Date olarak gelebilir; ISO string'e normalize et.
-      const created = b.created_at;
-      const createdAt =
-        created instanceof Date ? created.toISOString() : String(created);
-      return {
-        id: b.id,
-        label: b.label,
-        status: b.status,
-        qtyReceived: Number(b.qty_received),
-        createdAt,
-      };
-    });
+    // Sinyal HAM SQL satır sayısından türer; tespit için çekilen fazladan satır YANITA GİRMEZ.
+    const batchesTruncated = batchRows.length > SuppliersService.SCORECARD_BATCH_LIMIT;
+    const batches: ScorecardBatchRow[] = batchRows
+      .slice(0, SuppliersService.SCORECARD_BATCH_LIMIT)
+      .map((b) => {
+        // created_at pg sürücüde Date olarak gelebilir; ISO string'e normalize et.
+        const created = b.created_at;
+        const createdAt = created instanceof Date ? created.toISOString() : String(created);
+        return {
+          id: b.id,
+          label: b.label,
+          status: b.status,
+          qtyReceived: Number(b.qty_received),
+          createdAt,
+        };
+      });
 
     const avgLeadRaw = agg['avg_lead_days'];
     const avgLeadDays =
@@ -272,6 +298,12 @@ export class SuppliersService {
       avgLeadDays,
       openPoCount: Number(agg['open_po_count'] ?? 0),
       batches,
+      batchesTruncated,
+      // GERÇEK sayım (`batchAgg`) — liste uzunluğu DEĞİL. Liste kırpılmış olabilir; iki kaynak
+      // ayrışırsa ekrandaki "Parti" sayacı da kırpma uyarısıyla birlikte yanıltırdı.
+      // Sayım ile listenin YÜKLEMİ birebir aynı (`batches.supplier_id = id`) — farklı olsaydı
+      // "201 parti" deyip 200'den azını listeleyen bir ekran çıkardı.
+      batchCount: batchTotal,
       recallRate: batchTotal > 0 ? recalled / batchTotal : 0,
       totalCostCents: costRows.map((r) => ({
         currency: r.currency,

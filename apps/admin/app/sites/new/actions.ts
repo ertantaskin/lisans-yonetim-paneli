@@ -1,6 +1,15 @@
 'use server';
-import { apiPost } from '../../../lib/api';
+import { apiPost, isUuid } from '../../../lib/api';
 import { getActor } from '../../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: site kimliği API YOLUNA gömülür. Sunucu aksiyonları TS tiplerini
+ * ÇALIŞMA ANINDA zorlamaz (uç dışarıdan serileştirilmiş argümanla çağrılabilir); `!siteId`
+ * kontrolü `'../sites/<id>/rotate-secret?x='` gibi bir değeri geçiriyordu ve istek Next
+ * sunucusunun ADMIN_TOKEN'ı ile yapıldığı için owner-only uçlara düşebilirdi. Kimlik UUID
+ * kalıbına bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
+const INVALID_SITE_ID = 'Geçersiz site kimliği — sihirbaz baştan başlatılmalı.';
 
 /** Sihirbaz Adım 1 girdisi — site oluşturma alanları (plain object, FormData değil). */
 export interface IssueCodeInput {
@@ -132,7 +141,7 @@ export async function createSiteAndIssueCode(input: IssueCodeInput): Promise<Iss
  * ile connect-code üretir. Server action ASLA fırlatmaz.
  */
 export async function issueCodeForSite(siteId: string): Promise<IssueCodeResult> {
-  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     const actor = await getActor();
     const { code, expiresAt } = await issueCode(siteId, actor);
@@ -161,7 +170,7 @@ export interface TestConnectionResult {
  * Salt-okunur; SIR göstermez. Hata durumunda ok=false + Türkçe mesaj (fırlatmaz).
  */
 export async function testConnectionAction(siteId: string): Promise<TestConnectionResult> {
-  if (!siteId) return { ok: false, error: 'Site id zorunlu' };
+  if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     const actor = await getActor();
     const result = await apiPost<{ ok: boolean; checks: WizardCheck[] }>(

@@ -1,6 +1,7 @@
 'use client';
 import * as React from 'react';
 import { Ban, CheckCircle2, KeyRound, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import type { AdminUser } from '@/lib/api';
 import { adminRoleLabel } from '@/lib/labels';
 import { formatDate } from '@/lib/utils';
@@ -29,6 +30,10 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
    * Parola sıfırlama. Eskiden `window.prompt` idi: parola DÜZ METİN görünüyordu, kısa
    * parola bir `alert()` ile reddediliyordu ve kutunun dili tarayıcıya aitti. Artık panelin
    * kendi modali + MASKELİ alan; 8 karakter altındayken onay düğmesi kilitli kalır.
+   *
+   * SONUÇ ARTIK GÖRÜNÜR (denetim bulgusu): action `await` edilir ve sonucu toast'a yazılır.
+   * Bu işlemin tabloda hiçbir yan etkisi yok — başarısızlık görünmezse operatör yeni parolayı
+   * kullanıcıya iletir ve giriş denemesi başarısız olana kadar kimse fark etmez.
    */
   const resetPassword = async (id: string, name: string) => {
     const res = await confirm({
@@ -49,7 +54,9 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
     const fd = new FormData();
     fd.set('id', id);
     fd.set('password', res.reason);
-    void resetAdminPasswordAction(fd);
+    const out = await resetAdminPasswordAction(fd);
+    if (out?.error) toast.error(`${name}: ${out.error}`);
+    else toast.success(`${name} için parola değiştirildi — açık oturumları kapandı.`);
   };
 
   /** Silme onayı — form submit'i modal cevabına bağlanır. */
@@ -109,7 +116,14 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-1">
-                    <form action={toggleAdminAction}>
+                    {/* Sonuç bekleniyor: "son aktif yönetici pasifleştirilemez" (400) eskiden
+                        SESSİZCE yutuluyordu → rozet değişmiyor, sebebi de yazmıyordu. */}
+                    <form
+                      action={async (fd) => {
+                        const out = await toggleAdminAction(fd);
+                        if (out?.error) toast.error(`${a.name}: ${out.error}`);
+                      }}
+                    >
                       <input type="hidden" name="id" value={a.id} />
                       <input type="hidden" name="disabled" value={String(!a.disabled)} />
                       <Button
@@ -133,10 +147,13 @@ export function AdminsTable({ admins }: { admins: AdminUser[] }) {
                       <KeyRound />
                     </Button>
                     <form
-                      // Modal cevabı beklenir: "hayır"da hiçbir istek gitmez.
+                      // Modal cevabı beklenir: "hayır"da hiçbir istek gitmez. Silme başarısız
+                      // olursa (son aktif yönetici koruması) satır yerinde kalır — sebebi
+                      // söylenmezse operatör "tıklamam işlemedi mi?" diye tekrar dener.
                       action={async (fd) => {
                         if (!(await confirmDelete(a.name))) return;
-                        await deleteAdminAction(fd);
+                        const out = await deleteAdminAction(fd);
+                        if (out?.error) toast.error(`${a.name}: ${out.error}`);
                       }}
                     >
                       <input type="hidden" name="id" value={a.id} />

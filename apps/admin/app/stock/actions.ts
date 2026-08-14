@@ -1,7 +1,16 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiGet, apiPost, apiSend, type CatalogRow } from '../../lib/api';
+import { apiGet, apiPost, apiSend, isUuid, type CatalogRow } from '../../lib/api';
 import { getActor } from '../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: ürün/eşleme kimlikleri API YOLUNA gömülür ve sunucu aksiyonları
+ * TS tiplerini ÇALIŞMA ANINDA zorlamaz (uç dışarıdan serileştirilmiş argümanla çağrılabilir)
+ * → `'../sites/<id>/rotate-secret?x='` gibi bir değer BOŞ DEĞİL ama WHATWG URL
+ * normalizasyonuyla owner-only bir uca düşerdi. Bu dosyada ZATEN iki yerde satır-içi UUID
+ * kalıbı vardı; hepsi paylaşılan `isUuid`'e bağlandı (iki ayrı kalıp tutmak sapma üretir).
+ * `lib/api` merkezî `assertSafePath` kapısı ikinci savunma hattıdır.
+ */
 import { MAX_IMPORT_ITEMS } from './import/limits';
 import { liraToCents, type ImportItemInput } from './import/parse';
 
@@ -264,7 +273,7 @@ export async function updateProductAction(
   formData: FormData,
 ): Promise<FormState> {
   const id = String(formData.get('id') || '');
-  if (!id) return { ok: false, error: 'Ürün ID eksik' };
+  if (!isUuid(id)) return { ok: false, error: 'Geçersiz ürün kimliği — sayfa yenilenmeli.' };
   try {
     await apiSend(
       'PATCH',
@@ -432,7 +441,7 @@ export async function fetchProductBatchesAction(productId: string): Promise<{
   error?: string;
 }> {
   const id = String(productId || '').trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+  if (!isUuid(id)) {
     return { ok: false, error: 'Geçersiz ürün' };
   }
   interface RawBatch {
@@ -628,7 +637,8 @@ export async function updateMappingAction(formData: FormData) {
   const id = String(formData.get('id') || '');
   const active = String(formData.get('active') || '') === 'true';
   const productId = String(formData.get('productId') || '').trim();
-  if (!id) return;
+  // SEC-1: kimlik yola gömülüyor → şekli doğrulanmadan istek YAPILMAZ.
+  if (!isUuid(id)) return;
   try {
     await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active }, await getActor());
   } catch {
@@ -652,7 +662,11 @@ export async function changeMappingAction(
 ): Promise<FormState> {
   const id = String(formData.get('mappingId') || '').trim();
   const productId = String(formData.get('productId') || '').trim();
-  if (!id || !productId) return { ok: false, error: 'Eşleme ve yeni ürün zorunlu' };
+  // SEC-1: `id` YOLA gömülüyor (kimlik doğrulaması şart); `productId` gövdeye gider ama
+  // kimlik şekli tektir → ikisi de aynı kalıpla kilitlenir.
+  if (!isUuid(id) || !isUuid(productId)) {
+    return { ok: false, error: 'Geçersiz eşleme veya ürün kimliği — liste yenilenmeli.' };
+  }
   const bundleQtyRaw = String(formData.get('bundleQty') || '').trim();
   const bundleQty = bundleQtyRaw ? Number(bundleQtyRaw) : undefined;
   try {
@@ -673,7 +687,8 @@ export async function changeMappingAction(
  *  productId taşınırsa ürün detayını tazeler (ürün-merkezli kutu); yoksa /mappings (katalog ekranı). */
 export async function removeMappingAction(formData: FormData) {
   const id = String(formData.get('mappingId') || '').trim();
-  if (!id) return;
+  // SEC-1: kimlik yola gömülüyor → şekli doğrulanmadan istek YAPILMAZ.
+  if (!isUuid(id)) return;
   const productId = String(formData.get('productId') || '').trim();
   try {
     await apiSend('DELETE', `/v1/admin/mappings/${id}`, undefined, await getActor());
@@ -692,7 +707,7 @@ export async function fetchSiteCatalogAction(
   siteId: string,
 ): Promise<{ ok: boolean; rows?: CatalogRow[]; error?: string }> {
   const id = String(siteId || '').trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+  if (!isUuid(id)) {
     return { ok: false, error: 'Geçersiz site' };
   }
   try {

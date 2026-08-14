@@ -1,16 +1,17 @@
-import { ClipboardCheck } from 'lucide-react';
+import { ClipboardCheck, TriangleAlert } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Card } from '../../components/ui/card';
 import { ReviewTable } from '../../components/review-table';
-import { getReviewQueue, type ReviewRow } from './queries';
+import { getReviewQueue, type ReviewQueueData } from './queries';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ReviewPage() {
-  let items: ReviewRow[] = [];
+  let queue: ReviewQueueData | null = null;
   let error: string | null = null;
   try {
-    items = await getReviewQueue();
+    queue = await getReviewQueue();
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -27,7 +28,27 @@ export default async function ReviewPage() {
           <p className="text-sm text-destructive">API'ye ulaşılamadı: {error}</p>
         </Card>
       ) : (
-        <ReviewTable items={items} />
+        <div className="space-y-4">
+          {/* Liste sunucu üst sınırına dayandıysa DÜRÜSTÇE söyle (/support deseni): sessiz
+              kırpma burada "onaylanacak başka sipariş yok" izlenimi verir ve müşteri
+              beklemede kalır. Uyarı, kaç kayıt gösterildiğini ve ne yapılması gerektiğini
+              söyler; cümle tek kaynakta (`queries.notice`) üretilir. */}
+          {queue?.notice && (
+            <Alert variant="warning">
+              <TriangleAlert />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>
+                  Liste eksik olabilir — {queue.rows.length.toLocaleString('tr-TR')} sipariş
+                  gösteriliyor
+                </AlertTitle>
+                <AlertDescription>{queue.notice}</AlertDescription>
+              </div>
+            </Alert>
+          )}
+          {/* Eski API düz dizi döndürürse `rows` yine dolar, `notice` null kalır → ekran
+              bugünkü davranışıyla aynen çalışır. */}
+          <ReviewTable items={queue?.rows ?? []} />
+        </div>
       )}
     </div>
   );

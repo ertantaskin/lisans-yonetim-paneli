@@ -1,6 +1,12 @@
 import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { getSessionRole, getActorAndRole } from './session';
+import { assertSafePath } from './api-path';
+
+// Yol kapısı + kimlik yardımcıları TEK KAYNAK: `lib/api-path.ts`. Buradan yeniden export
+// edilir ki sunucu aksiyonları/queries tek bir yerden import etsin (kapı ile çağrı yeri
+// doğrulaması aynı kuralı kullanır — iki farklı UUID kalıbı tutmak sapma üretirdi).
+export { assertSafePath, isUuid, uuidSegment, UnsafeApiPathError, UUID_RE } from './api-path';
 
 /**
  * Sunucu-taraflı API istemcisi. ADMIN_TOKEN yalnız Next sunucusunda kalır,
@@ -66,6 +72,8 @@ async function toApiError(method: string, path: string, res: Response): Promise<
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
+  // YOL KAPISI (SEC-1): istek YAPILMADAN önce doğrula — bkz. lib/api-path.ts.
+  assertSafePath(path);
   // Okuma çağrıları da aktör + rol iletir: (A2) en hassas görüntüleme (sipariş detayı düz-metin)
   // gerçek admin'e attribute edilir; (A1) API rol'e göre maskeli/düz döndürebilir (owner-only düz metin).
   const { actor, role } = await getActorAndRole();
@@ -78,6 +86,9 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body?: unknown, actor?: string): Promise<T> {
+  // YOL KAPISI (SEC-1) — YAZMA yolu: enjekte edilen bir segment owner-only bir uca
+  // düşerse ADMIN_TOKEN ile çalıştırılırdı; bu yüzden fetch'ten ÖNCE reddedilir.
+  assertSafePath(path);
   const role = await getSessionRole();
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
@@ -95,6 +106,8 @@ export async function apiSend<T>(
   body?: unknown,
   actor?: string,
 ): Promise<T> {
+  // YOL KAPISI (SEC-1) — PATCH/DELETE de yazma yoludur (bkz. apiPost).
+  assertSafePath(path);
   const role = await getSessionRole();
   const res = await fetch(`${API_URL}${path}`, {
     method,
@@ -119,6 +132,9 @@ export async function apiRaw(
   path: string,
   opts?: { body?: unknown; actor?: string; ifNoneMatch?: string },
 ): Promise<Response> {
+  // YOL KAPISI (SEC-1): apiRaw da aynı kapıdan geçer — proxy route'ları (ör. /api/risk/[email])
+  // dinamik segmentleri buraya taşır, kapı DIŞINDA kalsaydı merkezî koruma delinirdi.
+  assertSafePath(path);
   const withBody = opts?.body !== undefined;
   // (Denetim H2) apiRaw da oturum rolünü İLETİR: apiPost/apiGet gibi. Aksi halde reveal-gate'li
   // uçlar (ör. envanter /license-items — @AdminRole → canRevealPlaintext) apiRaw üzerinden

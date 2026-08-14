@@ -658,7 +658,7 @@ export class ProductsService {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
       const existing = await tx
-        .select({ id: siteProductMappings.id })
+        .select({ id: siteProductMappings.id, active: siteProductMappings.active })
         .from(siteProductMappings)
         .where(
           and(
@@ -671,7 +671,17 @@ export class ProductsService {
         )
         .limit(1);
       if (existing.length) {
-        throw new ConflictException('Bu site + mağaza ürün/varyasyon eşlemesi zaten kayıtlı');
+        // Ön-kontrol BİLEREK `active` koşulu TAŞIMAZ: aynı (site, ürün, varyasyon) için ikinci bir
+        // satır açmak sessiz mükerrer üretir (resolveMapping "en eski"i seçer → hangi eşlemenin
+        // teslimat yaptığı belirsizleşir). Ama okuma yolları eşlemeyi yalnız `active` iken saydığı
+        // için operatör satırı "eşlenmemiş" görüp buraya geliyor ve anlamsız bir 409 alıyordu.
+        // Kayıt PASİF ise mesaj doğru çıkışı SÖYLER (yeni eşleme değil, mevcut olanı etkinleştir).
+        throw new ConflictException(
+          existing[0]!.active
+            ? 'Bu site + mağaza ürün/varyasyon eşlemesi zaten kayıtlı'
+            : 'Bu mağaza ürününün eşlemesi zaten var ama PASİF durumda — yeni eşleme eklemek ' +
+              'yerine mevcut eşlemeyi "Etkinleştir" ile açın (ya da kaldırıp yeniden eşleyin).',
+        );
       }
       try {
         const [row] = await tx
@@ -700,6 +710,12 @@ export class ProductsService {
    * mağaza ürünleri — (site, mağaza ürün, varyasyon) bazında gruplanır, en son gelen ad + adet +
    * son görülme ile. Operatör buradan ELLE ID yazmadan tek-tıkla eşler (typo riski biter).
    * Yalnız 0022 sonrası siparişlerde remote_product_id dolu; öncekiler görünmez (geriye dönük zararsız).
+   *
+   * [P] PASİF EŞLEME: satırın listeye girme koşulu DEĞİŞMEDİ — "AKTİF eşlemesi yok" (teslimat
+   * yapılamıyor). Ama pasif bir eşleme VARSA artık satırla birlikte döner (`mappingId` +
+   * `mappingActive=false`): eskiden bu satır "Eşlenmemiş" görünüyor, operatör "Eşle" deyince
+   * `createMapping` 409 veriyor ve çıkış yolu kalmıyordu. UI artık "Eşleme pasif" + "Etkinleştir"
+   * gösterir. `resolveMapping` davranışı DEĞİŞMEZ (pasif eşleme teslimat yapmaz — bilinçli).
    */
   async listUnmapped() {
     const rows = await rawRows<{
@@ -711,37 +727,58 @@ export class ProductsService {
       line_count: number;
       order_count: number;
       last_seen: string;
+      mapping_id: string | null;
+      mapped_product_id: string | null;
+      mapped_product_name: string | null;
     }>(
       this.db,
       sql`
-        SELECT o.site_id,
-               s.domain,
-               ol.remote_product_id,
-               NULLIF(NULLIF(ol.remote_variation_id, '0'), '') AS remote_variation_id,
-               MAX(ol.remote_name) AS name,
-               COUNT(*)::int AS line_count,
-               COUNT(DISTINCT o.id)::int AS order_count,
-               MAX(o.created_at) AS last_seen
-        FROM order_lines ol
-        JOIN orders o ON ol.order_id = o.id
-        JOIN sites s ON o.site_id = s.id
-        WHERE ol.product_id IS NULL
-          AND ol.canceled = false
-          AND ol.remote_product_id IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM site_product_mappings m
-            WHERE m.site_id = o.site_id
-              AND m.remote_product_id = ol.remote_product_id
-              AND m.active = true
-              AND (
-                m.remote_variation_id IS NULL
-                OR m.remote_variation_id = NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
-              )
-          )
-        GROUP BY o.site_id, s.domain, ol.remote_product_id,
-                 NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
-        ORDER BY last_seen DESC
-        LIMIT 500
+        WITH g AS (
+          SELECT o.site_id,
+                 s.domain,
+                 ol.remote_product_id,
+                 NULLIF(NULLIF(ol.remote_variation_id, '0'), '') AS remote_variation_id,
+                 MAX(ol.remote_name) AS name,
+                 COUNT(*)::int AS line_count,
+                 COUNT(DISTINCT o.id)::int AS order_count,
+                 MAX(o.created_at) AS last_seen
+          FROM order_lines ol
+          JOIN orders o ON ol.order_id = o.id
+          JOIN sites s ON o.site_id = s.id
+          WHERE ol.product_id IS NULL
+            AND ol.canceled = false
+            AND ol.remote_product_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM site_product_mappings m
+              WHERE m.site_id = o.site_id
+                AND m.remote_product_id = ol.remote_product_id
+                AND m.active = true
+                AND (
+                  m.remote_variation_id IS NULL
+                  OR m.remote_variation_id = NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
+                )
+            )
+          GROUP BY o.site_id, s.domain, ol.remote_product_id,
+                   NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
+          ORDER BY last_seen DESC
+          LIMIT 500
+        )
+        SELECT g.*, pm.id AS mapping_id, pm.product_id AS mapped_product_id, p.name AS mapped_product_name
+        FROM g
+        -- Bu satırın PASİF eşlemesi (varsa). Aktif eşleme olamaz — g'nin NOT EXISTS'i onu eler.
+        -- Seçim resolveMapping'in tercih sırasını taklit eder: varyasyon-özel > ürün-seviyesi, en eski.
+        LEFT JOIN LATERAL (
+          SELECT m.id, m.product_id
+          FROM site_product_mappings m
+          WHERE m.site_id = g.site_id
+            AND m.remote_product_id = g.remote_product_id
+            AND m.active = false
+            AND (m.remote_variation_id IS NULL OR m.remote_variation_id = g.remote_variation_id)
+          ORDER BY (m.remote_variation_id IS NOT NULL) DESC, m.created_at
+          LIMIT 1
+        ) pm ON true
+        LEFT JOIN products p ON p.id = pm.product_id
+        ORDER BY g.last_seen DESC
       `,
     );
     return rows.map((r) => ({
@@ -753,6 +790,16 @@ export class ProductsService {
       lineCount: Number(r.line_count),
       orderCount: Number(r.order_count),
       lastSeen: r.last_seen,
+      /** Pasif eşlemenin id'si (varsa) — UI "Etkinleştir" için kullanır; yoksa null. */
+      mappingId: r.mapping_id,
+      mappedProductId: r.mapped_product_id,
+      mappedProductName: r.mapped_product_name,
+      /**
+       * `null` = hiç eşleme yok (gerçekten eşlenmemiş) · `false` = eşleme VAR ama pasif.
+       * `true` HİÇ dönmez: aktif eşlemesi olan satır bu listeye zaten girmez (listCatalog ile
+       * aynı alan adı bilinçli — UI tek bir dala göre karar verir).
+       */
+      mappingActive: r.mapping_id === null ? null : false,
     }));
   }
 
@@ -1022,6 +1069,7 @@ export class ProductsService {
       kind: string | null;
       synced_at: string;
       mapping_id: string | null;
+      mapping_active: boolean | null;
       mapped_product_id: string | null;
       bundle_qty: number | null;
       mapped_product_name: string | null;
@@ -1035,22 +1083,30 @@ export class ProductsService {
           SELECT DISTINCT ON (rp.id)
                  rp.id,
                  rp.remote_product_id, rp.remote_variation_id, rp.name, rp.sku, rp.kind, rp.synced_at,
-                 m.id AS mapping_id, m.product_id AS mapped_product_id, m.bundle_qty, p.name AS mapped_product_name
+                 m.id AS mapping_id, m.active AS mapping_active,
+                 m.product_id AS mapped_product_id, m.bundle_qty, p.name AS mapped_product_name
           FROM site_remote_products rp
+          -- PASİF EŞLEME DE GÖRÜNÜR (denetim bulgusu, aşağıdaki [P] notu): join'den m.active=true
+          -- KALDIRILDI. Öncelik sırası resolveMapping ile BİREBİR aynı kalır: önce AKTİF eşlemeler,
+          -- aktifler içinde varyasyon-özel; pasif satır ancak HİÇ aktif eşleme yokken kazanır (o zaman
+          -- da mapping_active=false ile döner, "mapped" YANLIŞLIKLA true olmaz).
+          -- NOT: bu blok bir sql şablonunun İÇİ — TERS TIRNAK KULLANMA (şablonu erken kapatır).
           LEFT JOIN site_product_mappings m
             ON m.site_id = rp.site_id
            AND m.remote_product_id = rp.remote_product_id
-           AND m.active = true
            AND (m.remote_variation_id IS NULL OR m.remote_variation_id = rp.remote_variation_id)
           LEFT JOIN products p ON p.id = m.product_id
           WHERE rp.site_id = ${siteId} AND rp.active = true
-          ORDER BY rp.id, (m.remote_variation_id IS NOT NULL) DESC
+          ORDER BY rp.id, m.active DESC NULLS LAST, (m.remote_variation_id IS NOT NULL) DESC
         ), variation_stats AS (
           -- Aynı mağaza ürününün VARYASYON satırları (ebeveyn hariç): kaçı eşli? Yalnız SUNUM için
           -- (ebeveyn satırında "N/M eşli" yazabilmek); eşleme kararına HİÇ karışmaz.
+          -- mapping_active şartı ŞART: pasif eşleme teslimat YAPMAZ → "eşli" sayılmamalı.
           SELECT remote_product_id,
                  count(*)::int AS variation_count,
-                 (count(*) FILTER (WHERE mapped_product_id IS NOT NULL))::int AS mapped_variation_count
+                 (count(*) FILTER (
+                    WHERE mapped_product_id IS NOT NULL AND mapping_active IS TRUE
+                  ))::int AS mapped_variation_count
           FROM base
           WHERE remote_variation_id IS NOT NULL
           GROUP BY remote_product_id
@@ -1063,9 +1119,9 @@ export class ProductsService {
                coalesce(v.mapped_variation_count, 0) AS mapped_variation_count
         FROM base b
         LEFT JOIN variation_stats v ON v.remote_product_id = b.remote_product_id
-        -- Sıralama: gerçekten eşlenmemiş SOMUT satırlar üstte; ebeveyn satırı (bilgi amaçlı) ve
-        -- eşli satırlar altta, ad'a göre (varyasyonlar zaten ebeveyn adıyla aynı öbekte toplanır).
-        ORDER BY (b.mapped_product_id IS NOT NULL
+        -- Sıralama: İŞ GEREKTİREN satırlar üstte — gerçekten eşlenmemişler VE eşlemesi PASİF olanlar
+        -- (ikisi de teslimat yapmaz). AKTİF eşli satırlar ve ebeveyn satırı (bilgi amaçlı) altta.
+        ORDER BY (b.mapping_active IS TRUE
                   OR (coalesce(b.kind, '') = 'variable' AND b.remote_variation_id IS NULL)), b.name
         LIMIT 5000
       `,
@@ -1077,8 +1133,19 @@ export class ProductsService {
       sku: r.sku,
       kind: r.kind,
       syncedAt: r.synced_at,
-      mapped: r.mapped_product_id !== null,
+      // `mapped` ANLAMI DEĞİŞMEDİ: "teslimat yapacak AKTİF eşleme var mı". Pasif eşlemeli satırda
+      // false kalır (mevcut tüketiciler korunur) — ayrımı `mappingActive` taşır.
+      mapped: r.mapped_product_id !== null && r.mapping_active === true,
       mappingId: r.mapping_id,
+      /**
+       * [P] ÜÇÜNCÜ DURUM: `null` = hiç eşleme yok · `true` = aktif eşleme · `false` = eşleme VAR
+       * ama PASİF. Pasif eşleme resolveMapping tarafından yok sayılır (teslimat yapılmaz, bu
+       * BİLİNÇLİ) ama `createMapping` mükerrer ön-kontrolü `active` koşulu taşımadığı için yeni
+       * eşleme de kurulamıyordu (409) → operatör satırı "Eşlenmemiş" görüp "Eşle" diyor, 409 alıyor
+       * ve hiçbir çıkış yolu göremiyordu (siparişler /pending'de birikiyordu). UI bu alanı görüp
+       * "Eşleme pasif" + "Etkinleştir" gösterir.
+       */
+      mappingActive: r.mapped_product_id === null ? null : r.mapping_active === true,
       mappedProductId: r.mapped_product_id,
       mappedProductName: r.mapped_product_name,
       bundleQty: r.bundle_qty,

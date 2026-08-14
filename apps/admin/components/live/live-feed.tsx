@@ -434,7 +434,7 @@ export function LiveStatus({ className }: { className?: string }) {
         title={
           problem
             ? 'Canlı bağlantı kesildi, otomatik yeniden deneniyor.'
-            : 'Veriler arka planda otomatik tazelenir (sekme arkada kaldığında duraklar).'
+            : 'Veriler arka planda otomatik tazelenir (sekme arkadayken daha seyrek: 60 sn).'
         }
       >
         <span

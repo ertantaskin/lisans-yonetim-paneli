@@ -198,7 +198,10 @@ export const licenseItemStatusLabel = (s: string) => lookup(LICENSE_ITEM_STATUS,
 
 // ── Satır neden bekliyor? (sipariş detayı tanısı) ────────────────────────────
 const PENDING_REASON: Record<string, string> = {
-  unmapped: 'Mağaza ürünü panelde eşlenmemiş',
+  // "eşlenmemiş" TEK BAŞINA yanıltıcıydı: eşleme kurulu ama PASİF olduğunda da backend bu nedeni
+  // üretir (okuma/çözüm yolları eşlemeyi yalnız `active` iken sayar). Operatör "ama ben eşledim"
+  // deyip Ürün Eşleştirme ekranında 409 alıyordu → iki durum tek cümlede adlandırılır.
+  unmapped: 'Mağaza ürünü panelde eşlenmemiş (ya da eşlemesi pasif)',
   no_stock: 'Stok yok',
   held: 'Sipariş incelemede',
   canceled: 'Satır iptal/iade edilmiş',
@@ -209,7 +212,9 @@ export const pendingReasonLabel = (r: string) => lookup(PENDING_REASON, r);
 
 /** Bekleme nedeni için operatörün atması gereken adım (tek cümle). */
 const PENDING_REASON_ACTION: Record<string, string> = {
-  unmapped: 'Ürün Eşleştirme ekranından bu mağaza ürününü panel ürününe eşleyin, sonra “Eşlemeyi uygula” deyin.',
+  unmapped:
+    'Ürün Eşleştirme ekranından bu mağaza ürününü panel ürününe eşleyin — eşleme zaten kuruluysa ' +
+    '“Eşleme pasif” rozetine bakıp “Etkinleştir” deyin — sonra “Eşlemeyi uygula” ile bu siparişe uygulayın.',
   no_stock: 'Ürüne stok girin; stok gelince bekleyen satır otomatik tamamlanır.',
   held: 'İnceleme Kuyruğu’ndan siparişi onaylayın ya da reddedin.',
   canceled: 'İşlem gerekmiyor — iade/iptal edilen satır yeniden teslim edilmez.',
@@ -227,7 +232,10 @@ const DIAGNOSIS_REASON: Record<string, string> = {
   ok: 'Teslim edildi',
   ready: 'Teslime hazır',
   'mapping-available': 'Eşleme hazır — satıra uygulanmayı bekliyor',
-  unmapped: 'Mağaza ürünü panelde eşlenmemiş',
+  // Bkz. PENDING_REASON.unmapped notu: pasif (kapalı) eşleme de bu nedeni üretir; tanı ucu
+  // ikisini ayırt eden bir kod DÖNDÜRMEZ (`resolveMapping` yalnız aktif eşlemeye bakar) →
+  // etiket her iki hâli de dürüstçe kapsar, operatör "eşledim ama" çıkmazına düşmez.
+  unmapped: 'Mağaza ürünü panelde eşlenmemiş (ya da eşlemesi pasif)',
   'no-remote-id': 'Mağaza ürün kimliği kayıtlı değil',
   held: 'Sipariş güvenlik incelemesinde',
   'out-of-stock': 'Stok yetersiz',
@@ -373,6 +381,23 @@ const BADGE_STATUS: Record<string, string> = {
 };
 export const badgeStatusLabel = (s: string) => lookup(BADGE_STATUS, s);
 
+// ── Eşleme durumu (site_product_mappings.active) ─────────────────────────────
+/**
+ * Ürün eşlemesi AÇIK mı? Pasif eşleme teslimat YAPMAZ (`resolveMapping` yalnız `active` olanı
+ * görür) — yani "pasif" bir ayar tercihi değil, o mağaza ürününün siparişlerinin BEKLEMESİ
+ * demektir. Etiket bu yüzden nötr "Pasif" değil, sonucu söyleyen "Eşleme pasif"tir.
+ *
+ * TEK KAYNAK: /mappings katalog + "Eşlenmemiş Gelen Ürünler" tabloları ile ürün detayındaki
+ * eşleme kutusu AYNI durumu gösteriyordu ama biri küçük harfli ham metin (`aktif`/`pasif`),
+ * diğeri rozet kullanıyordu — aynı işlem iki ekranda iki farklı dilde görünüyordu.
+ */
+const MAPPING_STATE: Record<string, string> = {
+  active: 'Aktif',
+  inactive: 'Eşleme pasif',
+};
+export const mappingStateLabel = (active: boolean) =>
+  lookup(MAPPING_STATE, active ? 'active' : 'inactive');
+
 // ── Site tipi ────────────────────────────────────────────────────────────────
 const SITE_TYPE: Record<string, string> = {
   woocommerce: 'WooCommerce',
@@ -415,9 +440,15 @@ export const aiPriorityLabel = (p: string) => lookup(AI_PRIORITY, p);
 
 // ── Zaman çizelgesi olay tipi ────────────────────────────────────────────────
 // Anahtarlar GERÇEK `fulfillment_events.type` değerleridir (kaynak: apps/api/src/orders/
-// {orders,admin-orders,fulfillment}.service.ts — sipariş detayı bu tabloyu ham döndürür).
-// Bilinmeyen anahtar → ham değer (regresyonsuz geri düşüş); hedef: hiçbir ham snake_case
-// string (ör. `assignment_created`) operatöre çıplak görünmesin.
+// {orders,admin-orders,fulfillment,pending-lines}.service.ts — sipariş detayı bu tabloyu ham
+// döndürür). Bilinmeyen anahtar → ham değer (regresyonsuz geri düşüş); hedef: hiçbir ham
+// snake_case string (ör. `assignment_created`) operatöre çıplak görünmesin.
+//
+// DENETİM (bu sözlük API'ye karşı doğrulandı — `insert(fulfillmentEvents)` çağrılarının tamamı
+// tarandı). API'nin ÜRETTİĞİ tam küme 13 değerdir; aşağıda "ölü" diye işaretlenenler HİÇBİR
+// yerde üretilmiyor. Ölü anahtarlar SİLİNMEDİ: zararsızlar ve eski kayıtlarda (ya da ileride
+// eklenecek olaylarda) karşılığı hazır dursun — ama yenisini eklerken bu listeye güvenme,
+// kaynağı grep'le.
 const EVENT_TYPE: Record<string, string> = {
   order_received: 'Sipariş alındı',
   held_for_review: 'İncelemeye alındı',
@@ -431,11 +462,18 @@ const EVENT_TYPE: Record<string, string> = {
   review_rejected: 'İnceleme reddedildi',
   // Eşleme sonradan yapıldı → eski bekleyen satır geriye dönük bağlandı (§3).
   mapping_resolved: 'Eşleme uygulandı',
+  bonus_assigned: 'Bonus lisans eklendi',
+  // GERÇEK anahtar `mail_resent` (admin-orders.service `resendDelivery`). Sözlükte yalnız
+  // `resent` vardı → zaman çizelgesinde ham `mail_resent` görünüyordu (yanlış anahtar).
+  mail_resent: 'Mail yeniden gönderildi',
+  // ── ÖLÜ ANAHTARLAR (API bu tiplerde olay YAZMIYOR) ────────────────────────
+  // `assignment_created` / `replaced` / `suspended` / `unsuspended`: bu eylemler `audit_log`'a
+  // ve atama durumuna yazılır, `fulfillment_events`'e DEĞİL.
   assignment_created: 'Lisans atandı',
   replaced: 'Lisans değiştirildi',
-  bonus_assigned: 'Bonus lisans eklendi',
   suspended: 'Askıya alındı',
   unsuspended: 'Askı kaldırıldı',
+  // `resent`: `mail_resent`'in eski/yanlış adı — üretilmiyor (yukarıdaki doğru anahtara bak).
   resent: 'Mail yeniden gönderildi',
 };
 export const eventTypeLabel = (t: string) => lookup(EVENT_TYPE, t);

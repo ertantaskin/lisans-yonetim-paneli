@@ -11,6 +11,7 @@ import {
   type FormState,
 } from '../app/stock/actions';
 import type { CatalogRow, SiteRow } from '../lib/api';
+import { mappingStateLabel } from '../lib/labels';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
@@ -128,14 +129,26 @@ export function MappingsManager({
               onValueChange={setStore}
               disabled={!siteId || loading || catalog.length === 0}
               ariaLabel="Mağaza ürünü"
-              items={catalog.map((c) => ({
-                value: `${c.remoteProductId}${SEP}${c.remoteVariationId ?? ''}`,
-                label: c.name,
-                hint: `#${c.remoteProductId}${c.remoteVariationId ? ` · var ${c.remoteVariationId}` : ''}${
-                  c.mapped ? ` · eşli: ${c.mappedProductName ?? ''}` : ''
-                }`,
-                keywords: [c.sku ?? '', c.remoteProductId],
-              }))}
+              items={catalog.map((c) => {
+                // Pasif eşleme uyarısı: API `mappingActive` döndürüyor ama paylaşılan `CatalogRow`
+                // tipi henüz taşımıyor → savunmacı okuma (alan gelmezse eski davranış). Uyarı ŞART:
+                // pasif eşlemeli ürün burada "eşsiz" görünüyor ama "Eşle" 409 verir (aynı anahtara
+                // ikinci eşleme kurulamaz) — operatör nedenini bilmeden çıkmaza giriyordu.
+                const passive = (c as CatalogRow & { mappingActive?: boolean | null })
+                  .mappingActive === false;
+                return {
+                  value: `${c.remoteProductId}${SEP}${c.remoteVariationId ?? ''}`,
+                  label: c.name,
+                  hint: `#${c.remoteProductId}${c.remoteVariationId ? ` · var ${c.remoteVariationId}` : ''}${
+                    c.mapped
+                      ? ` · eşli: ${c.mappedProductName ?? ''}`
+                      : passive
+                        ? ` · eşleme PASİF: ${c.mappedProductName ?? ''} (aşağıdan etkinleştirin)`
+                        : ''
+                  }`,
+                  keywords: [c.sku ?? '', c.remoteProductId],
+                };
+              })}
               placeholder="— mağaza ürünü seçin —"
               searchPlaceholder="Ürün adı / SKU / ID ara…"
               emptyText="Ürün bulunamadı"
@@ -221,8 +234,17 @@ export function MappingsManager({
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{m.bundleQty}</TableCell>
                     <TableCell>
-                      <Badge variant={m.active ? 'success' : 'neutral'}>
-                        {m.active ? 'aktif' : 'pasif'}
+                      {/* TERİM + HARF DÜZENİ TEKLİĞİ (denetim bulgusu): burada ham küçük harf
+                          (`aktif`/`pasif`) yazılıyordu; /mappings ekranları aynı durumu cümle
+                          düzeninde rozetle gösteriyor. Metin artık `labels.ts` TEK kaynağından
+                          (mappingStateLabel), ton da /mappings ile aynı: attention (mor) =
+                          İNSAN KARARI bekliyor ("Askıda" sınıfı). Pasif eşleme teslimat YAPMAZ,
+                          bu yüzden nötr "kapanmış kayıt" tonu yanlıştı.
+                          NOT: `StatusBadge` kullanılmadı — 'inactive' anahtarının ton/ikon
+                          eşlemesi `components/ui/badge.tsx`'te yok (o dosya bu partinin
+                          kapsamı dışında); etiket yine de tek kaynaktan okunuyor. */}
+                      <Badge variant={m.active ? 'success' : 'attention'}>
+                        {mappingStateLabel(m.active)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">

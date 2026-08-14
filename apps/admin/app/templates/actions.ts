@@ -1,8 +1,17 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { apiPost, apiSend } from '../../lib/api';
+import { apiPost, apiSend, isUuid } from '../../lib/api';
 import { getActor } from '../../lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: şablon kimliği API YOLUNA (ve `revalidatePath`/`redirect` yoluna)
+ * gömülür. Sunucu aksiyonları TS tiplerini ÇALIŞMA ANINDA zorlamaz — action uç noktası
+ * dışarıdan, serileştirilmiş argümanlarla çağrılabilir → `'../sites/<id>/rotate-secret?x='`
+ * gibi bir değer WHATWG URL normalizasyonuyla owner-only bir uca düşerdi. Kimlik UUID
+ * kalıbına bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
+const INVALID_TEMPLATE_ID = 'Geçersiz şablon kimliği — liste yenilenip tekrar denenmeli.';
 
 export interface TemplateFormState {
   ok: boolean;
@@ -55,6 +64,7 @@ export async function updateTemplateAction(
 ): Promise<TemplateFormState> {
   const subject = String(formData.get('subject') || '').trim();
   const body = String(formData.get('body') || '').trim();
+  if (!isUuid(id)) return { ok: false, error: INVALID_TEMPLATE_ID };
   if (!subject || !body) return { ok: false, error: 'Konu ve gövde zorunlu' };
   try {
     await apiSend(
@@ -78,6 +88,7 @@ export async function updateTemplateAction(
 
 /** Şablon sil → listeye döner. */
 export async function deleteTemplateAction(id: string): Promise<TemplateFormState> {
+  if (!isUuid(id)) return { ok: false, error: INVALID_TEMPLATE_ID };
   try {
     await apiSend('DELETE', `/v1/admin/templates/${id}`, undefined, await getActor());
     revalidatePath('/templates');
@@ -98,6 +109,7 @@ export interface PreviewState {
 
 /** Sunucu-taraflı önizleme (örnek değişkenlerle render, gönderim yok). */
 export async function previewTemplateAction(id: string): Promise<PreviewState> {
+  if (!isUuid(id)) return { ok: false, error: INVALID_TEMPLATE_ID };
   try {
     const res = await apiPost<{ subject: string; body: string; unknownVars: string[] }>(
       `/v1/admin/templates/${id}/preview`,
@@ -117,7 +129,8 @@ export interface TestMailState {
 
 /** Test maili gönder (örnek verilerle). */
 export async function testTemplateAction(id: string, toEmail: string): Promise<TestMailState> {
-  const email = toEmail.trim();
+  const email = String(toEmail ?? '').trim();
+  if (!isUuid(id)) return { ok: false, error: INVALID_TEMPLATE_ID };
   if (!email) return { ok: false, error: 'E-posta zorunlu' };
   try {
     const res = await apiPost<{ ok: boolean; error?: string }>(

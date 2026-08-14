@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import { stdSerializers } from 'pino';
 import { SentryExceptionFilter } from './observability/sentry-exception.filter';
+import { sanitizeLogUrl } from './observability/log-redact';
 import { validateEnv } from './config/env.validation';
 import { DbModule } from './db/db.module';
 import { RedisModule } from './redis/redis.module';
@@ -74,16 +75,20 @@ import { RateLimitModule } from './common/rate-limit.module';
           ],
           remove: true,
         },
-        // PII maskeleme (§9/KVKK, denetim bulgusu): müşteri e-postası bazı uçlarda URL path/query'de
-        // taşınır (GET /admin/customers/:email, GET /admin/search?q=). pino-http varsayılan req
-        // serializer'ı req.url'i loglar → e-posta uygulama erişim loglarına düşer (anonymize/retention
-        // KAPSAMI DIŞI → silme garantisi log tarihçesinde eksik kalırdı). std serializer'ı sarıp
-        // URL'deki e-posta benzeri desenleri maskele; diğer alanlar (method/headers) korunur.
+        // URL redaksiyonu (§9/KVKK + SEC-2): pino-http varsayılan req serializer'ı req.url'i
+        // olduğu gibi loglar. İki değer oraya düşüyordu:
+        //   • müşteri e-postası (GET /admin/customers/:email) → PII; anonymize/retention log
+        //     tarihçesini KAPSAMAZ, yani silme garantisi delik kalırdı;
+        //   • TAM lisans anahtarı (GET /admin/license-items?search=…) → SIR. Envanter araması
+        //     bu hafta tam anahtar kabul edecek şekilde genişletildi; `redact.paths` YALNIZ
+        //     gövdeyi kapsadığı için anahtar erişim logunda DÜZ METİN duruyordu — payload'lar
+        //     AES-256-GCM ile şifreliyken bu, projenin kendi ilkesiyle çelişir.
+        // Kural + gerekçe TEK KAYNAK: observability/log-redact.ts (birim testli).
         serializers: {
           req: stdSerializers.wrapRequestSerializer((r) => {
             const rec = r as { url?: unknown };
             if (typeof rec.url === 'string') {
-              rec.url = rec.url.replace(/[^/?&=\s]+(?:@|%40)[^/?&=\s]+/gi, '[email]');
+              rec.url = sanitizeLogUrl(rec.url);
             }
             return r;
           }),

@@ -280,8 +280,12 @@ export function LineDiagnosisStrip({
           </Button>
         )}
         {diagnosis.action === 'stock' && diagnosis.productId && (
+          // Panelin standart "stok gir" derin bağlantısı `/stock/import?product=<id>`
+          // (bkz. app/pending/page.tsx, app/products/[id]/page.tsx, components/batches-table.tsx).
+          // Eskiden ürün DETAY sayfasına gidiyordu: operatör "Stok Gir" deyip stok formu yerine
+          // ürün özetine düşüyor, tek tık vaadi bozuluyordu.
           <Button asChild size="sm" variant="outline">
-            <Link href={`/products/${diagnosis.productId}`}>
+            <Link href={`/stock/import?product=${diagnosis.productId}`}>
               <PackagePlus aria-hidden /> Stok Gir
             </Link>
           </Button>

@@ -7,7 +7,7 @@ import {
   fetchQuarantine,
   hasQuarantineServerFilters,
   parseQuarantineFilters,
-  QUARANTINE_LIMIT,
+  QUARANTINE_POOL_LIMIT,
 } from './queries';
 import { fetchClaims, fetchSuppliersLite } from './claims-queries';
 import { itemCount } from '../../lib/labels';
@@ -39,7 +39,10 @@ export default async function QuarantinePage({
   const filters = parseQuarantineFilters(await searchParams);
   const [{ rows, error, truncated }, claims, suppliers] = await Promise.all([
     // Havuz = "henüz hiçbir açık fişte olmayan" kusurlu kalemler. Yüklem SUNUCUDA (`claimed=none`).
-    fetchQuarantine({ ...filters, claimed: 'none' }),
+    // PENCERE DAR (perf): bu ekran satırları yalnız sayaç + parti başına ilk 50 kalem için
+    // kullanıyor; 5000 kayıt çekmek sunucuda binlerce gereksiz şifre çözümü demekti. Kırpma
+    // gizlenmez — `truncated` uyarısı aşağıdaki panelde bu sayıyla yazılır.
+    fetchQuarantine({ ...filters, claimed: 'none' }, { limit: QUARANTINE_POOL_LIMIT }),
     // Fiş listesi YALNIZ "son kesilen fiş: KOD · tarih" damgası için (kullanıcı isteğiydi:
     // "gün sonunda son raporun tarihini göreyim"). API'de tek-satır ucu yok; liste zaten
     // `createdAt desc` sıralı ve snapshot taşımaz (hafif) — yalnız `rows[0]` okunur.
@@ -74,7 +77,7 @@ export default async function QuarantinePage({
           lastClaim={claims.rows[0] ?? null}
           serverFiltered={serverFiltered}
           truncated={truncated}
-          limit={QUARANTINE_LIMIT}
+          limit={QUARANTINE_POOL_LIMIT}
         />
       )}
     </div>

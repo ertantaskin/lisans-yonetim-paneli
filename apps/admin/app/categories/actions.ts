@@ -1,7 +1,15 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, apiSend } from '@/lib/api';
+import { apiPost, apiSend, isUuid } from '@/lib/api';
 import { getActor } from '@/lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: kategori kimliği doğrudan API YOLUNA gömülür. Sunucu aksiyonları
+ * TS tiplerini ÇALIŞMA ANINDA zorlamaz (uç dışarıdan, serileştirilmiş argümanlarla
+ * çağrılabilir) → `'../sites/<id>/rotate-secret?x='` gibi bir değer BOŞ DEĞİL ama WHATWG URL
+ * normalizasyonuyla owner-only başka bir uca düşerdi. Kimlik UUID kalıbına bağlanır;
+ * `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
 
 /**
  * DİKKAT: 'use server' modülü — YALNIZ `export async function` ve `export type/interface`
@@ -52,7 +60,7 @@ export async function updateCategoryAction(
 ): Promise<CategoryFormState> {
   const id = String(formData.get('id') || '');
   const name = String(formData.get('name') || '').trim();
-  if (!id) return { ok: false, error: 'Kategori seçilmedi' };
+  if (!isUuid(id)) return { ok: false, error: 'Kategori seçilmedi (geçersiz kayıt kimliği).' };
   if (!name) return { ok: false, error: 'Kategori adı zorunlu' };
   const description = String(formData.get('description') || '').trim();
   const sortRaw = String(formData.get('sortOrder') || '').trim();
@@ -79,6 +87,7 @@ export async function updateCategoryAction(
  * Kaç ürünün etkilendiği yanıttan okunup operatöre söylenir (sessiz yan etki yok).
  */
 export async function deleteCategoryAction(id: string): Promise<CategoryFormState> {
+  if (!isUuid(id)) return { ok: false, error: 'Geçersiz kategori kimliği — liste yenilenmeli.' };
   try {
     const res = await apiSend<{ uncategorizedProducts?: number }>(
       'DELETE',

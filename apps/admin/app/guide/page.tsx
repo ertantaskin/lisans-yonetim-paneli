@@ -7,6 +7,8 @@ import {
   Workflow,
   Plug,
   Boxes,
+  FolderTree,
+  LayoutDashboard,
   PackagePlus,
   Link2,
   ShoppingCart,
@@ -34,7 +36,9 @@ export const dynamic = 'force-static';
 
 const TOC: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'genel', label: 'Panel nasıl çalışır', icon: Workflow },
+  { id: 'dashboard', label: 'Genel Bakış (canlı iş istasyonu)', icon: LayoutDashboard },
   { id: 'kurulum', label: 'İlk kurulum: site bağlama', icon: Plug },
+  { id: 'kategori', label: 'Kategoriler', icon: FolderTree },
   { id: 'urunler', label: 'Ürünler', icon: Boxes },
   { id: 'stokgiris', label: 'Stok girişi', icon: PackagePlus },
   { id: 'esleme', label: 'Ürün eşleştirme', icon: Link2 },
@@ -172,6 +176,62 @@ export default function GuidePage() {
       </Section>
 
       <Section
+        id="dashboard"
+        icon={LayoutDashboard}
+        title="Genel Bakış (canlı iş istasyonu)"
+        description="Sol menünün ilk girdisi — gün boyu açık tutulmak için tasarlanmıştır."
+      >
+        <p>
+          <R href="/dashboard">Genel Bakış</R> gelen siparişleri ve destek taleplerini{' '}
+          <strong>canlı</strong> gösterir: iki liste kendi kendine tazelenir (yaklaşık{' '}
+          <strong>15 saniyede bir</strong>; sekme arka plandayken <strong>dakikada bir</strong>).
+          Sayfayı yenilemenize gerek yoktur; başlıktaki <strong>&quot;Yenile&quot;</strong> düğmesi
+          yalnızca hemen görmek istediğinizde gerekir.
+        </p>
+        <p className="font-medium text-foreground">Yeni siparişi kaçırmamak için:</p>
+        <Bullets>
+          <li>
+            Yeni gelen satır <strong>&quot;Yeni&quot;</strong> rozeti ve renkli sol şeritle
+            işaretlenir. Bu işaret <strong>kendiliğinden kaybolmaz</strong>: siz satıra tıklayana
+            ya da kart başlığındaki <strong>&quot;Okundu&quot;</strong> düğmesine basana kadar
+            durur. Kart başlığında ayrıca <strong>&quot;N yeni&quot;</strong> yazar.
+          </li>
+          <li>
+            Sipariş kartının altındaki <strong>&quot;Tümü&quot; / &quot;İşlem bekleyen&quot;</strong>{' '}
+            düğmeleriyle listeyi daraltabilirsiniz. <em>İşlem bekleyen</em> = sizin ya da sistemin
+            hâlâ bir şey yapması gereken sipariş (incelemede bekleyen, mağaza ürünü eşlenmemiş,
+            teslimatı eksik). Teslim edilmiş siparişler bu görünümde yer kaplamaz.
+          </li>
+          <li>
+            Görülmemiş kayıt varken <strong>tarayıcı sekmesinin başlığında (3) gibi bir sayaç</strong>{' '}
+            belirir — başka bir sekmedeyken bile artar.
+          </li>
+          <li>
+            Yeni kayıt düştüğü anda <strong>sağ alt köşede bildirim</strong> çıkar ve doğrudan
+            siparişe götürür. Panelin hangi ekranında olursanız olun görünür.
+          </li>
+          <li>
+            Üst bardaki <strong>zil simgesi</strong> okunmamış bildirim sayısını taşır; açınca son
+            bildirimleri görür, <strong>&quot;Tümünü okundu işaretle&quot;</strong> diyebilir ve{' '}
+            <strong>&quot;Bildirim sesi&quot;</strong> tercihini açabilirsiniz (varsayılan kapalı).
+            Tamamı için <R href="/notifications">Bildirimler</R>.
+          </li>
+        </Bullets>
+        <p>
+          Sayfanın üstünde kırmızı bir bant görürseniz, <strong>eşleme bekleyen sipariş</strong> var
+          demektir: o satırlar siz mağaza ürününü panel ürününe bağlayana kadar teslim edilemez.
+          Bant, iş bitince kendiliğinden söner. Altta ince bir şeritte bugünkü sipariş sayısı,
+          atanabilir stok, güvenlik olayı ve <em>panelde eşlenmemiş mağaza ürünü</em> sayısı durur —
+          sonuncusu bir uyarı değil, bilgidir (mağazanızdaki her ürünün eşlenmesi gerekmez, yalnız
+          lisans teslim edilenler eşlenir).
+        </p>
+        <Tip>
+          Aynı sipariş üzerinde başka bir operatör çalışıyorsa panel sizi uyarır. Listeye tıklamak
+          hem siparişi açar hem de o satırın &quot;Yeni&quot; işaretini kaldırır.
+        </Tip>
+      </Section>
+
+      <Section
         id="kurulum"
         icon={Plug}
         title="İlk kurulum: site bağlama"
@@ -202,17 +262,60 @@ export default function GuidePage() {
       </Section>
 
       <Section
+        id="kategori"
+        icon={FolderTree}
+        title="Kategoriler"
+        description="Ürünleri gruplayan kovalar — Stok & Ürünler ekranı bunlara göre açılır."
+      >
+        <p>
+          Ürün sayısı arttıkça düz bir liste okunmaz olur. <R href="/categories">Kategoriler</R>{' '}
+          ekranından grup açarsınız (ör. <em>Windows lisansları</em>, <em>Office lisansları</em>,{' '}
+          <em>Oyun hesapları</em>) ve <R href="/stock">Stok &amp; Ürünler</R> bu gruplarla açılır.
+          Sol menüde <strong>Envanter</strong> altındadır; Stok &amp; Ürünler başlığındaki{' '}
+          <strong>&quot;Kategoriler&quot;</strong> düğmesi de buraya götürür.
+        </p>
+        <Bullets>
+          <li>
+            <strong>Kategori bir kovadır, etiket değil:</strong> bir ürün <strong>en fazla bir</strong>{' '}
+            kategoriye girer. Böylece &quot;kaç ürün&quot; sayaçları çakışmaz.
+          </li>
+          <li>
+            <strong>Alanlar:</strong> <em>Kategori adı</em> (karta başlık olur),{' '}
+            <em>Sabitleme sırası</em> (0 = otomatik: stoğu çok olan kategori üstte; bir grubu hep en
+            üstte tutmak isterseniz 1, 2, 3… verin) ve <em>Açıklama</em> (kartın altında görünür,
+            isteğe bağlı).
+          </li>
+          <li>
+            <strong>Silmek ürünleri silmez:</strong> kategori kaldırılınca içindeki ürünler{' '}
+            <strong>&quot;Kategorisiz&quot;</strong> olur; stokları ve siparişleri etkilenmez. Onay
+            kutusu kaç ürünün etkileneceğini yazar.
+          </li>
+          <li>
+            Kategori adı ürün formunda <strong>serbest yazılamaz</strong>, yalnız buradaki listeden
+            seçilir — böylece ikiz kategori (&quot;Office&quot; / &quot;office&quot;) oluşmaz ve adı
+            değiştirdiğinizde her yerde birden değişir.
+          </li>
+        </Bullets>
+        <Tip>
+          Kategori zorunlu değildir. Hiç kategori açmasanız da ürünleriniz{' '}
+          <strong>&quot;Kategorisiz&quot;</strong> kartında toplanır — hiçbir ürün kaybolmaz.
+        </Tip>
+      </Section>
+
+      <Section
         id="urunler"
         icon={Boxes}
         title="Ürünler"
         description="Ürün tanımlama ve ürün detay sayfasının ne işe yaradığı."
       >
         <p>
-          <R href="/stock">Stok &amp; Ürünler</R> ekranı ürün listesidir. Sağ üstteki{' '}
+          <R href="/stock">Stok &amp; Ürünler</R> ekranı <strong>kategori kartlarıyla</strong> açılır:
+          bir karta girince o grubun ürün tablosu gelir, üstteki arama kutusu ise{' '}
+          <strong>tüm kategorilerde</strong> arar (ürün adı, SKU, kategori adı). Sağ üstteki{' '}
           <strong>&quot;Yeni Ürün&quot;</strong> ile ürün oluşturursunuz. Formdaki alanlar 4 bölümde toplanır:
         </p>
         <Bullets>
-          <li><strong>Temel bilgiler:</strong> SKU, ad, ürün tipi (lisans anahtarı / hesap / kod / özel), kullanım modu, teslimat politikası.</li>
+          <li><strong>Temel bilgiler:</strong> SKU, ad, <strong>kategori</strong> (listeden seçilir; boş bırakılırsa ürün &quot;Kategorisiz&quot; olur), ürün tipi (lisans anahtarı / hesap / kod / özel), kullanım modu, teslimat politikası.</li>
           <li><strong>Kullanım modu:</strong> <em>Tek kullanımlık</em> (1 key = 1 müşteri) veya <em>Çok kullanımlık (MAK)</em> (1 key = N teslim, kapasite).</li>
           <li><strong>Teslimat politikası:</strong> stok siparişe yetmezse ne olacağı — kısmi otomatik, kısmi onaylı, ya da ya hep ya hiç.</li>
           <li><strong>Hesap alanları:</strong> hesap ürünlerinde müşteriye teslim edilecek alanlar (ör. kullanıcı adı, parola). &quot;Gizli&quot; işaretli alanlar panelde maskelenir; &quot;Zorunlu&quot; kaldırılırsa alan opsiyonel olur.</li>
@@ -220,9 +323,20 @@ export default function GuidePage() {
           <li><strong>Stok &amp; gelişmiş:</strong> stoksuz/ön sipariş + yayın tarihi, key format doğrulaması (regex).</li>
         </Bullets>
         <p>
-          Listedeki <strong>Detay</strong> bağlantısı o ürünün <strong>yönetim merkezini</strong> açar:
-          stok kırılımı, satış hızı/tükenme tahmini, site eşlemeleri, ürünün partileri ve satın alma
-          emirleri, stok düzeltmeleri ve <strong>lisans envanteri</strong> (tek tek anahtar/hesap kalemleri).
+          Listedeki <strong>Detay</strong> bağlantısı o ürünün <strong>yönetim merkezini</strong> açar.
+          Üstte stok kırılımı ve satış hızı/tükenme tahmini, altında dört sekme:
+        </p>
+        <Bullets>
+          <li><strong>Envanter:</strong> o ürünün tek tek anahtar/hesap kalemleri (varsayılan sekme). Buradan arama yapabilir, duruma göre süzebilir, satırları işaretleyip <strong>topluca stoktan düşebilirsiniz</strong> (bkz. &quot;Stok düzeltmeleri&quot; bölümü).</li>
+          <li><strong>Eşlemeler:</strong> o ürünün mağaza eşlemeleri (ekleme, pasifleştirme, kaldırma).</li>
+          <li><strong>Tedarik:</strong> ürünün partileri ve satın alma emirleri.</li>
+          <li><strong>Hareketler:</strong> defter kayıtları — geçmiş stok düzeltmeleri ve yeni kayıt formu.</li>
+        </Bullets>
+        <p>
+          Envanterde arama <strong>anahtarın tamamıyla</strong> ya da <strong>son 5 hanesiyle</strong>{' '}
+          yapılabilir; ayrıca ürün adı/SKU, müşteri e-postası, mağaza sipariş numarası ve parti kodu
+          aranır. Anahtarlar şifreli saklandığı için ortadan birkaç hane ile arama yapılamaz; büyük/küçük
+          harf ve boşluk farkı sorun değildir.
         </p>
         <p>
           Anahtar/hesap eklemek ayrı bir ekranda yapılır: <R href="/stock/import">Stok Girişi</R>. Ürün
@@ -305,10 +419,18 @@ export default function GuidePage() {
           &quot;Otomatik&quot; düğmesiyle geri dönersiniz.
         </Tip>
         <p>
-          <strong>Sınırlar:</strong> tek seferde en çok <strong>10.000 satır</strong> (~700 KB)
+          <strong>Sınırlar:</strong> tek seferde en çok <strong>10.000 kayıt</strong> (~700 KB)
           girilebilir; girdi alanının altındaki sayaç kaç kayıt gideceğini, kaç boş satırın atlandığını
           ve mükerrer görüneni canlı gösterir. Çok kullanımlık (MAK) üründe sayaç ayrıca{' '}
           <strong>kullanım hakkını</strong> hesaplar: 3 anahtar × 500 kullanım = 1.500 birim.
+        </p>
+        <p>
+          Hesap ürünlerinde girdi varsayılan olarak <strong>&quot;Tablo&quot;</strong> biçimindedir
+          (Excel&apos;den doğrudan yapıştırılabilir) ve bu biçimde tek seferde en çok{' '}
+          <strong>500 satır</strong> tutulur — daha fazlası ekranı yavaşlatacağı için sessizce
+          kırpılmaz, uyarılırsınız. Daha büyük listeler için aynı adımdaki{' '}
+          <strong>&quot;JSON (gelişmiş)&quot;</strong> biçimini kullanın: orada tek sınır 10.000
+          kayıt / ~700 KB&apos;dır.
         </p>
       </Section>
 
@@ -327,7 +449,11 @@ export default function GuidePage() {
         <Bullets>
           <li>
             <strong><R href="/mappings">Ürün Eşleştirme</R> ekranı:</strong> site seçersiniz, mağazanın
-            ürün kataloğunu <strong>adıyla</strong> görüp sipariş beklemeden eşlersiniz. Aynı ekranda
+            ürün kataloğunu <strong>adıyla</strong> görüp sipariş beklemeden eşlersiniz. Katalog
+            mağazadan gelir: WordPress&apos;te <strong>Ayarlar &rsaquo; Teslimat Eklentisi &rsaquo;
+            &quot;Ürünleri Panele Aktar&quot;</strong> düğmesiyle hemen gönderilir; ürün eklendiğinde
+            veya değiştirildiğinde kendiliğinden de gider. Liste boş görünüyorsa önce bu düğmeye basın.
+            Aynı ekranda
             &quot;siparişte geldi ama eşlenmemiş&quot; ürünler ve <strong>eşleme bekleyen sipariş
             satırları</strong> listelenir; eşlemeyi kurduğunuzda bu eski satırlar geriye dönük çözülür.
           </li>
@@ -373,6 +499,42 @@ export default function GuidePage() {
         <Tip>
           Kısmi teslimat birinci sınıf bir akıştır: <em>kısmi otomatik</em> ürünlerde eldeki kadar teslim
           edilir, kalanı stok gelince tamamlanır. <em>Ya hep ya hiç</em> ürünlerde ya tamamı teslim edilir ya hiçbiri.
+        </Tip>
+
+        <p className="font-medium text-foreground">İade ve iptal:</p>
+        <p>
+          İade <strong>mağazada</strong> yapılır — panelde iade/para iadesi düğmesi yoktur. Siparişi
+          mağazada iade ettiğinizde mağaza panele imzalı bir bildirim gönderir ve panel o birimlerin
+          lisansını <strong>geri alır</strong>.
+        </p>
+        <Bullets>
+          <li>
+            <strong>Tam iade:</strong> siparişin tüm kalemleri kapanır ve o siparişe verilmiş bütün
+            lisanslar geri alınır — <em>askıya alınmış</em> olanlar dahil (askıdaki bir lisans sonradan
+            &quot;Geri aç&quot; ile canlanabilirdi).
+          </li>
+          <li>
+            <strong>Kısmi iade:</strong> yalnız iade edilen adet kadar lisans geri alınır. Aynı kalemdeki
+            diğer lisanslar <strong>müşterinin elinde geçerli kalır</strong>.
+          </li>
+          <li>
+            <strong>İade edilen birim geri gelmez:</strong> o birim kapanmış sayılır; sonradan stok
+            girseniz bile teslimat motoru oraya yeni bir lisans koymaz. Müşteri yeniden satın almalıdır.
+          </li>
+          <li>
+            <strong>Çok kullanımlık (MAK) üründe kapasite havuza dönmez:</strong> iade edilen bir
+            kullanım hakkı yeniden satılabilir stoğa eklenmez — hak bir kez harcanmıştır.
+          </li>
+          <li>
+            <R href="/review">İnceleme Kuyruğu</R>&apos;nda bekleyen bir sipariş iade edilirse kuyruktan
+            da düşer; sonradan yanlışlıkla &quot;Onayla&quot; denip lisans verilmesi mümkün değildir.
+          </li>
+        </Bullets>
+        <Tip>
+          Sipariş detayındaki <strong>&quot;İptal&quot;</strong> panel tarafında tekil bir lisansı geri
+          alır; <strong>mağazada para iadesi yapmaz</strong>. Geri alınan anahtar silinmez, karantinaya
+          düşer ve <R href="/quarantine/records">Kusurlu Stok &rsaquo; Tüm Kayıtlar</R> bölümünde
+          sebebiyle listelenir.
         </Tip>
       </Section>
 
@@ -438,7 +600,13 @@ export default function GuidePage() {
         <p className="font-medium text-foreground">Ekranlar:</p>
         <Bullets>
           <li><strong><R href="/suppliers">Tedarikçiler</R>:</strong> tedarikçi kartı + karne (teslim performansı, geri-çekilme oranı, para birimi başına maliyet).</li>
-          <li><strong><R href="/purchase-orders">Satın Alma</R>:</strong> açık/kapalı emirler ve teslim alma. &quot;Otomatik&quot; rozetli emirlerde teslim alma adımı yoktur (mal zaten girilmiştir).</li>
+          <li>
+            <strong><R href="/purchase-orders">Satın Alma</R>:</strong> açık/kapalı emirler ve teslim
+            alma. &quot;Otomatik&quot; rozetli emirlerde teslim alma adımı yoktur (mal zaten
+            girilmiştir). Emir detayındaki <strong>&quot;Tamamlanma&quot;</strong> tarihi, emrin{' '}
+            <em>tamamı</em> teslim alındığında dolar — kısmi teslim almalarda boş kalır; her
+            sevkiyatın kendi tarihi aynı sayfadaki parti listesinde durur.
+          </li>
           <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi kalem hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> kalemler geçersiz kılınır. <strong>Müşterilerdekiler KORUNUR</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yenisiyle değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır (askıya alınmış atamalar buna dahil değildir, onlar elle işlenir).</li>
         </Bullets>
 
@@ -497,19 +665,63 @@ export default function GuidePage() {
         id="duzeltme"
         icon={Wrench}
         title="Stok düzeltmeleri"
-        description="Manuel, sebepli ve denetlenen stok müdahaleleri."
+        description="Bozuk kalemleri stoktan düşmek ile deftere not yazmak iki AYRI işlemdir."
       >
         <p>
-          Ürün detayındaki <strong>Stok Düzeltme Ekle</strong> ile elle müdahale yaparsınız:{' '}
-          <em>düzeltme</em>, <em>geçersiz kıl (void)</em>, <em>hasarlı</em> veya <em>geri çekme</em>. Sebep
-          zorunludur ve her kayıt <strong>denetim (audit) günlüğüne</strong> yazılır.
+          Elle stok müdahalesinin <strong>iki ayrı yolu</strong> vardır ve ikisi aynı şey değildir.
+          Birini seçmeden önce sorun şu: <em>gerçekten satılabilir stoğu mu düşürüyorum, yoksa
+          sadece kayıt mı bırakıyorum?</em>
+        </p>
+
+        <p className="font-medium text-foreground">1) Gerçekten stoktan düşmek (bozuk kalemler):</p>
+        <Steps>
+          <li>
+            Ürün detayına girin (<R href="/stock">Stok &amp; Ürünler</R> &rsaquo; ürün &rsaquo;{' '}
+            <strong>Detay</strong>) ve <strong>Envanter</strong> sekmesinde kalın.
+          </li>
+          <li>
+            Düşeceğiniz kalemleri bulun — arama, <strong>Durum</strong> ve sıralama süzgeçleri
+            (ör. parti kodu ya da tedarikçi adıyla arayarak) bu iş için vardır.
+          </li>
+          <li>
+            Satır başındaki kutucukları işaretleyin. Yalnız <strong>&quot;Stokta&quot;</strong> olan
+            kalemler seçilebilir; teslim edilmiş bir lisans buradan düşülemez (o akış sipariş
+            detayındaki <strong>&quot;Değiştir&quot;</strong>dir).
+          </li>
+          <li>
+            Üstte beliren çubuktan <strong>&quot;Geçersiz kıl&quot;</strong> ya da{' '}
+            <strong>&quot;Hasarlı işaretle&quot;</strong> deyin. Açılan onay kutusu ne düşüleceğini
+            listeler ve <strong>sebep ister (zorunlu)</strong>.
+          </li>
+        </Steps>
+        <p>
+          Onaylanan kalemler artık teslim edilmez ve <R href="/quarantine">Kusurlu Stok</R> ekranına
+          sebebiyle düşer: tedarikçiye henüz bildirilmemişse{' '}
+          <R href="/quarantine">Bildirilecekler</R> havuzunda, her hâlükârda{' '}
+          <R href="/quarantine/records">Tüm Kayıtlar</R> defterinde. İşlem <strong>geri alınamaz</strong>.
         </p>
         <Tip>
-          Stokun <strong>gerçekten</strong> düşmesi için &quot;Stoktan düşülecek lisans&quot; alanında ilgili
-          kalemi seçmelisiniz; boş bırakırsanız kayıt yalnız deftere yazılır, stok değişmez (ekran bunu
-          satır satır belirtir). Düşülen kalemler Kusurlu Stok ekranının{' '}
-          <R href="/quarantine/records">Tüm Kayıtlar</R> bölümünde görünür (tedarikçiye
-          bildirilmemişse <R href="/quarantine">Bildirilecekler</R> havuzunda da).
+          Seçim <strong>yalnız o an görünen sayfaya</strong> aittir: sayfa değiştirir ya da süzgeci
+          değiştirirseniz seçim sıfırlanır (bu, farklı sayfalardaki seçimlerin sessizce kaybolmasını
+          önler). Sonuç kutusu kaç kalemin düşüldüğünü, kaçının atlandığını dürüstçe yazar — yeşil
+          onay yalnız istediğiniz her kalem işlendiyse çıkar.
+        </Tip>
+
+        <p className="font-medium text-foreground">2) Yalnız deftere not yazmak:</p>
+        <p>
+          Ürün detayının <strong>Hareketler</strong> sekmesindeki <strong>Stok Düzeltme Ekle</strong>{' '}
+          formu <strong>satılabilir stoğu değiştirmez</strong>. Yalnızca kayıt bırakır: <em>Kayıt türü</em>{' '}
+          (<strong>Düzeltme</strong> veya <strong>Geri çekme</strong>), <em>Adet</em> ve zorunlu{' '}
+          <em>Sebep</em> girip <strong>&quot;Deftere Yaz&quot;</strong> dersiniz. Sayım farkı, tedarikçiyle
+          yapılan yazışma gibi izini bırakmak istediğiniz olaylar içindir; kaydedince ekran da
+          &quot;satılabilir stok DEĞİŞMEDİ&quot; diye uyarır. Geçmiş kayıtlar aynı sekmedeki{' '}
+          <strong>Stok Düzeltmeleri</strong> kartında listelenir.
+        </p>
+        <Tip>
+          Bir tedarikçi partisinin tamamı bozuksa tek tek işaretlemek yerine{' '}
+          <R href="/batches">Partiler</R> ekranından o partiyi <strong>geri çekin</strong>: stoktaki
+          kalemler topluca geçersiz kılınır (müşterilerdekiler korunur — bkz. &quot;Tedarik zinciri&quot;).
+          Her düzeltme, kim yaptıysa onun adıyla denetim kaydına yazılır.
         </Tip>
       </Section>
 
@@ -598,7 +810,15 @@ export default function GuidePage() {
         <Bullets>
           <li><strong>Ctrl / ⌘ + K</strong> — her yerden global arama (sipariş no, e-posta, key son 5 hane). Hassas veri sonuçta gösterilmez.</li>
           <li><strong>Ctrl / ⌘ + B</strong> — sol menüyü aç/kapat (tercih hatırlanır).</li>
-          <li>Liste ekranlarında filtre + kolon görünürlüğünü ayarlayıp <strong>kayıtlı görünüm</strong> olarak saklayabilirsiniz.</li>
+          <li>
+            <strong>Kayıtlı görünüm</strong> şu an yalnız <R href="/orders">Siparişler</R> ekranındadır:
+            filtre/aramayı ayarlayıp başlıktaki menüden adlandırarak saklarsınız, sonra tek tıkla geri
+            yüklersiniz (görünümler kişiseldir — yalnız siz görürsünüz).
+          </li>
+          <li>
+            Diğer ekranlarda filtreler <strong>adres çubuğuna yansır</strong>: sık kullandığınız bir
+            görünümü tarayıcı yer imlerine ekleyip aynı yerden geri dönebilirsiniz.
+          </li>
           <li>Sağ üstten <strong>açık/koyu tema</strong> arasında geçiş yapabilirsiniz.</li>
         </Bullets>
         <Tip>

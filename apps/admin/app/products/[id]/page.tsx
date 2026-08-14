@@ -433,9 +433,18 @@ export default async function ProductDetailPage({
           <div className="grid gap-6 [&>*]:min-w-0 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle icon={Wrench}>Stok Düzeltme Ekle</CardTitle>
+              <CardTitle icon={Wrench}>Deftere Kayıt Ekle</CardTitle>
+              {/*
+                METİN GERÇEĞE HİZALANDI (rehber denetimi bulgusu): burada "void/hasar" YOK —
+                o iki işlem bilerek Envanter sekmesindeki toplu seçime taşındı (tek tek combobox'tan
+                lisans seçtirmek operasyonel olarak kullanılamıyordu). Bu form yalnız DEFTER
+                kaydıdır ve satılabilir stoğu DEĞİŞTİRMEZ; başlık da onu söylemeli, yoksa operatör
+                bozuk kalemleri buradan düştüğünü sanır.
+              */}
               <CardDescription>
-                Manuel stok düzeltmesi (void/hasar/geri çekme) — sebep zorunlu, denetime yazılır.
+                Sayım farkı / geri çekme notu — <strong>satılabilir stok değişmez</strong>. Bozuk
+                kalemleri gerçekten düşmek için <strong>Envanter</strong> sekmesinden satırları
+                seçip “Geçersiz kıl” / “Hasarlı işaretle” kullanın. Sebep zorunlu, denetime yazılır.
               </CardDescription>
             </CardHeader>
             <CardContent>

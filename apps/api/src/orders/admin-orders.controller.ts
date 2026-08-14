@@ -51,6 +51,15 @@ const QuarantineQuerySchema = z.object({
   ),
   // Sayı biçimi burada, aralık kırpması serviste (1..5000) — çift doğrulama yerine tek kaynak.
   limit: blankOr((s) => /^\d{1,5}$/.test(s), 'limit bir sayı olmalı'),
+  /**
+   * Anahtar ÖNİZLEMESİ istensin mi (varsayılan: evet).
+   *
+   * NEDEN VAR: önizleme üretmek satır başına bir AES-GCM çözme demektir ve bu senkron iş,
+   * sipariş teslimatını da servis eden tek Node event loop'unda koşar. Yalnız sayaç/gruplama
+   * için liste çeken bir çağıran `preview=0` diyerek çözmeyi TAMAMEN atlayabilir (alan `null`
+   * döner). Kapalıyken görüntülenen bir sır olmadığı için reveal denetim kaydı da YAZILMAZ.
+   */
+  preview: blankOr((s) => /^(0|1|true|false)$/i.test(s), 'preview 0|1 olmalı'),
 });
 type QuarantineQueryInput = z.infer<typeof QuarantineQuerySchema>;
 
@@ -174,6 +183,8 @@ export class AdminOrdersController {
       limit: limit ? Number(limit) : undefined,
       // (Denetim A1/M1) owner (veya auth KAPALI) → TAM anahtar; owner-OLMAYAN admin → maskeli.
       reveal: canRevealPlaintext(role),
+      // Yalnız AÇIKÇA kapatılırsa kapanır — parametre gelmezse eski davranış (önizleme var).
+      preview: !['0', 'false'].includes((trimmed(q.preview) ?? '').toLowerCase()),
     });
   }
 

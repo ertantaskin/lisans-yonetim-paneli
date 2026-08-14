@@ -40,6 +40,26 @@ import { apiGet, type QuarantineRow } from '../../lib/api';
  */
 export const QUARANTINE_LIMIT = 5000;
 
+/**
+ * BİLDİRİLECEKLER (havuz) penceresi — defterden AYRI ve daha DAR.
+ *
+ * NEDEN AYRI (denetim bulgusu, orta): havuz sayfası her açılışta 5000 kaydı çekiyordu, ama o
+ * veriyi yalnız (a) tedarikçi/parti sayaçları ve (b) parti başına İLK 50 satır için kullanıyor
+ * (`claims-panel.BATCH_ROW_CAP`). Sunucu tarafında her satırın değeri ŞİFRE ÇÖZÜLEREK üretiliyor
+ * → binlerce gereksiz çözüm + gereksiz gövde, hiç görüntülenmeyen satırlar için.
+ *
+ * NEDEN `preview=false` DEĞİL: havuz DÜZ DEĞERİ GÖSTERİYOR — parti satırı açıldığında kalemler
+ * `keyPreview` ile listeleniyor (`claims-panel.BatchDisclosure`, "bu partiden tam olarak neler
+ * bozuk" sorusunun cevabı). Önizlemeyi kapatmak o listeyi "—" dolu hale getirirdi. Bu yüzden
+ * yalnız TAVAN düşürüldü: çözülen satır sayısı 5000 → 1000.
+ *
+ * NEDEN 1000: gerçek bir günün/haftanın kusur havuzunun çok üstünde (fiş kesme ekranı zaten
+ * tarih penceresiyle çalışıyor), ama sayfa maliyetini 5 kat düşürüyor. Sınıra dayanılırsa
+ * SESSİZ KALINMAZ: `truncated` uyarısı bu sayıyı yazar ve fişin sunucuda TAZEDEN okunduğunu
+ * (yani eksik kesilmediğini) söyler. Defter ("Tüm Kayıtlar") tam pencerede (5000) kalır.
+ */
+export const QUARANTINE_POOL_LIMIT = 1000;
+
 /** Sunucunun kabul ettiği durum süzgeci ('' = tümü). */
 export type QuarantineStatusFilter = '' | 'quarantined' | 'voided';
 /** Tarih aralığı ön ayarı — YALNIZ arayüz durumu (hangi düğme aktif); süzme `from`/`to` ile yapılır. */
@@ -148,11 +168,17 @@ type QuarantineResponse =
 /**
  * Listeyi çeker. Süzgeçler API'ye AYNEN geçirilir (durum/tarih/arama sunucuda uygulanır);
  * boş alanlar hiç gönderilmez → parametresiz çağrı eski davranışı korur.
+ *
+ * `limit` çağırana bırakılır: defter tam pencereyi (`QUARANTINE_LIMIT`), havuz dar pencereyi
+ * (`QUARANTINE_POOL_LIMIT`) ister. Kırpma bayrağı EFEKTİF sınıra göre hesaplanır — sabit
+ * `QUARANTINE_LIMIT` ile karşılaştırmak dar pencerede uyarıyı ASLA yakmaz (sessiz eksik liste).
  */
 export async function fetchQuarantine(
   filters: QuarantineFilterState = EMPTY_QUARANTINE_FILTERS,
+  opts: { limit?: number } = {},
 ): Promise<QuarantineData> {
-  const params = new URLSearchParams({ limit: String(QUARANTINE_LIMIT) });
+  const limit = opts.limit ?? QUARANTINE_LIMIT;
+  const params = new URLSearchParams({ limit: String(limit) });
   if (filters.status) params.set('status', filters.status);
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
@@ -170,9 +196,7 @@ export async function fetchQuarantine(
     // döndürülen satır sayısına bakmak YANILTICIYDI: tarih süzgeci satırları kırptığında liste
     // eksikken uyarı `false` çıkıyordu (G6). Eski (dizi) API'de tek elde edilebilen sinyal
     // satır sayısıdır → yalnız orada ona düşülür.
-    const truncated = Array.isArray(raw)
-      ? rows.length >= QUARANTINE_LIMIT
-      : raw?.truncated === true;
+    const truncated = Array.isArray(raw) ? rows.length >= limit : raw?.truncated === true;
     return { rows, error: null, truncated };
   } catch (e) {
     return {

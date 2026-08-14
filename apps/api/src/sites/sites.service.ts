@@ -64,6 +64,13 @@ export interface SiteDetail {
 
 /** Bağlantı sağlık teşhisi (onboarding) — tek bir kontrol satırı. SIR İÇERMEZ. */
 export interface ConnectionCheck {
+  /**
+   * Makine-okur kontrol kimliği. UI hangi kontrolün düştüğüne göre farklı yönlendirme
+   * yapabilsin diye vardır (ör. yalnız 'plugin' düştüyse "eklenti henüz bağlanmadı"
+   * rehberi). Türkçe `name` metnine göre dallanmak kırılgandı — metin değişince UI
+   * sessizce yanlış dala düşerdi.
+   */
+  key: 'site' | 'status' | 'hmac' | 'plugin' | 'webhook';
   /** Kontrolün adı (ör. 'HMAC secret'). */
   name: string;
   /** Kontrol geçti mi. */
@@ -80,6 +87,17 @@ export interface ConnectionTestResult {
 
 /** Webhook erişilebilirlik probe'u için kısa timeout — teşhis akışını bekletmemek için. */
 const WEBHOOK_PROBE_TIMEOUT_MS = 4000;
+
+/**
+ * Teşhis metnindeki tarih biçimi: `GG.AA.YYYY SS:dd` (Europe/Istanbul — compose'ta TZ ayarlı).
+ * ELLE biçimlendirilir: `toLocaleString('tr-TR')` çalışma ortamının ICU verisine bağlıdır ve
+ * ICU'suz bir runtime'da sessizce İngilizce/ISO'ya düşerdi. Bu satır operatöre "mağaza en son
+ * ne zaman ses verdi" bilgisini verir → okunabilirliği ortama bağlı olmamalı.
+ */
+function trDateTime(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
 
 /** API anahtarı hash'i — sabit sha256 (DB'de düz anahtar durmaz). */
 export function hashApiKey(apiKey: string): string {
@@ -483,19 +501,29 @@ export class SitesService {
    *   - Site kaydı var mı (getById 404 atarsa uç zaten 404 döner)
    *   - Site durumu 'active' mi (suspended → findForAuth HMAC auth reddeder, §8)
    *   - HMAC secret çözülebiliyor + beklenen uzunlukta mı (secret'ın kendisi DÖNMEZ)
+   *   - **Eklenti bağlantısı**: mağaza panele hiç imzalı istek gönderdi mi (aşağıya bak)
    *   - (varsa) webhookUrl erişilebilir mi — kısa timeout ile probe, hata YUTULUR
    * Genel `ok` = tüm check'ler geçti. Teşhisin kendisi hiç patlamaz (ağ hatası yutulur).
+   *
+   * DENETİM BULGUSU (neden "Eklenti bağlantısı" kontrolü eklendi): diğer DÖRT kontrol de
+   * YENİ oluşturulmuş bir sitede zaten doğrudur — kayıt vardır (getById geçti), durum şema
+   * varsayılanı 'active'tir, HMAC secret saniyeler önce üretilmiştir, webhook boşsa "beklemede"
+   * denip ok=true sayılır. Yani operatör WordPress'e HİÇ gitmeden "Bağlantıyı Test Et" deyip
+   * yemyeşil bir sonuç alıyor, kurulumun bittiğine inanıp sihirbazı kapatıyordu; mağaza panele
+   * tek bir imzalı istek bile göndermiyor (katalog boş, sipariş gelmiyor). Bu kontrol testi
+   * panelin KENDİ kaydına değil, MAĞAZANIN fiilî davranışına bağlar.
    */
   async testConnection(id: string): Promise<ConnectionTestResult> {
     const site = await this.getById(id); // yoksa 404
     const checks: ConnectionCheck[] = [];
 
     // 1) Site kaydı — getById geçtiyse kayıt mevcut.
-    checks.push({ name: 'Site kaydı', ok: true, detail: site.domain });
+    checks.push({ key: 'site', name: 'Site kaydı', ok: true, detail: site.domain });
 
     // 2) Site durumu — 'suspended' ise HMAC auth reddedilir (findForAuth active şartı).
     const active = site.status === 'active';
     checks.push({
+      key: 'status',
       name: 'Site durumu',
       ok: active,
       detail: active ? 'aktif' : 'askıya alınmış — sipariş push reddedilir',
@@ -506,19 +534,38 @@ export class SitesService {
       const secret = this.crypto.decrypt(site.hmacSecretEnc, CryptoService.siteSecretAad(site.id));
       const valid = secret.length >= 32;
       checks.push({
+        key: 'hmac',
         name: 'HMAC secret',
         ok: valid,
         detail: valid ? 'geçerli (şifreli saklı)' : 'beklenmeyen biçim',
       });
     } catch {
       checks.push({
+        key: 'hmac',
         name: 'HMAC secret',
         ok: false,
         detail: 'çözülemedi — master key uyumsuz olabilir',
       });
     }
 
-    // 4) Geri kanal webhook — yapılandırılmışsa erişilebilirlik probe'u; değilse devre dışı (sorun değil).
+    // 4) Eklenti bağlantısı — mağaza panele GERÇEKTEN bağlandı mı?
+    //    Tek kanıt: HmacGuard imzayı doğruladıktan SONRA yazılan `plugin_version` (0028). Bu kolon
+    //    yalnız site GEÇERLİ İMZALI bir istek gönderdiğinde dolar → "hiç istek gelmedi"i kesin ayırt
+    //    eder. Metin site detayındaki ("Bağlantı" kartı) ifadeyle BİLİNÇLİ aynı: iki ekran aynı
+    //    durumu iki farklı cümleyle anlatırsa operatör hangisine güveneceğini bilemez.
+    const pluginConnected = !!site.pluginVersion;
+    checks.push({
+      key: 'plugin',
+      name: 'Eklenti bağlantısı',
+      ok: pluginConnected,
+      detail: pluginConnected
+        ? `v${site.pluginVersion}` +
+          (site.pluginVersionAt ? ` · son bildirim ${trDateTime(site.pluginVersionAt)}` : '')
+        : 'mağaza panele hiç imzalı istek göndermedi — eklenti kurulmamış ya da bağlan kodu ' +
+          'WordPress tarafında hiç girilmemiş olabilir',
+    });
+
+    // 5) Geri kanal webhook — yapılandırılmışsa erişilebilirlik probe'u; değilse devre dışı (sorun değil).
     if (site.webhookUrl) {
       checks.push(await this.probeWebhook(site.webhookUrl));
     } else {
@@ -526,6 +573,7 @@ export class SitesService {
       // (onboarding.claim, host doğrulamalı). "Yanlış-yeşil" olmasın diye 'beklemede' bilgisi ver
       // — hata değildir (opsiyonel + otomatik bağlanır) ama "tam yapılandırıldı" da demez.
       checks.push({
+        key: 'webhook',
         name: 'Geri kanal webhook',
         ok: true,
         detail: 'beklemede — eklenti panele bağlanınca otomatik ayarlanır',
@@ -546,7 +594,7 @@ export class SitesService {
     try {
       host = new URL(url).host;
     } catch {
-      return { name: 'Geri kanal webhook', ok: false, detail: 'geçersiz URL' };
+      return { key: 'webhook', name: 'Geri kanal webhook', ok: false, detail: 'geçersiz URL' };
     }
     try {
       const res = await fetch(url, {
@@ -555,13 +603,14 @@ export class SitesService {
         signal: AbortSignal.timeout(WEBHOOK_PROBE_TIMEOUT_MS),
       });
       return {
+        key: 'webhook',
         name: 'Geri kanal webhook',
         ok: true,
         detail: `${host} erişilebilir (HTTP ${res.status})`,
       };
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
-      return { name: 'Geri kanal webhook', ok: false, detail: `${host} erişilemedi: ${reason}` };
+      return { key: 'webhook', name: 'Geri kanal webhook', ok:false, detail: `${host} erişilemedi: ${reason}` };
     }
   }
 }

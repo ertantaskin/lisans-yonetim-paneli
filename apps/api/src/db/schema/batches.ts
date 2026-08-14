@@ -38,7 +38,20 @@ export const batches = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [index('batches_product_idx').on(t.productId), index('batches_status_idx').on(t.status)],
+  (t) => [
+    index('batches_product_idx').on(t.productId),
+    index('batches_status_idx').on(t.status),
+    // FK KISITI İNDEKS YARATMAZ (Postgres yalnız REFERANS EDİLEN tarafta unique arar; referans
+    // EDEN kolon indekssiz kalır). `supplier_id` tedarikçi karnesinin parti listesi/agregası ve
+    // maliyet raporlarının (CostsService.bySupplier/wastage) süzgeç kolonu → indekssiz her sorgu
+    // tam tablo taramasıydı ve her stok girişi bir parti ürettiği için tablo sürekli büyüyor.
+    index('batches_supplier_idx').on(t.supplierId),
+    // Parti listesinin sıralaması (`received_at DESC, id DESC` — supply-ops.listBatches penceresi)
+    // indekssizdi → LIMIT'li sorgu bile tam sıralama yapıyordu. Yön indekste de DESC olmalı:
+    // planlayıcı ters tarama yapabilse de `id DESC` tie-break'i ancak aynı yönde karşılanır
+    // (0031 dersi: yönler ayna değildir).
+    index('batches_received_idx').on(t.receivedAt.desc(), t.id.desc()),
+  ],
 );
 
 export type Batch = typeof batches.$inferSelect;

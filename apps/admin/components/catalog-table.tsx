@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation';
 import { Store, PackageSearch, Search, Trash2, TriangleAlert } from 'lucide-react';
 import type { CatalogRow, CatalogSummaryRow, ProductRow } from '../lib/api';
 import { removeMappingWithResult } from '../app/mappings/actions';
-import { storeProductKindLabel } from '../lib/labels';
+import { ActivateMappingButton } from '../app/mappings/activate-mapping-button';
+import { mappingStateLabel, storeProductKindLabel } from '../lib/labels';
 import { includesTr } from '../lib/utils';
 import { useAnnouncer } from './a11y/announcer';
 import { Badge } from './ui/badge';
@@ -31,6 +32,13 @@ export type CatalogRowView = CatalogRow & {
   variationCount?: number;
   /** Kaç varyasyonu panelde eşli. */
   mappedVariationCount?: number;
+  /**
+   * ÜÇÜNCÜ DURUM (denetim bulgusu): `null`/alan yok = hiç eşleme yok · `true` = aktif eşleme ·
+   * `false` = eşleme VAR ama PASİF. Pasif eşleme teslimat yapmaz (`resolveMapping` onu görmez —
+   * bilinçli) ama `createMapping` de aynı anahtara ikinci satır açtırmaz (409) → satır eskiden
+   * "Eşlenmemiş" görünüyor, "Eşle" 409 veriyor ve operatörün çıkış yolu kalmıyordu.
+   */
+  mappingActive?: boolean | null;
 };
 
 /**
@@ -229,6 +237,9 @@ export function CatalogTable({
                     const variableParent = row.isVariableParent === true && !row.mapped;
                     const mappedVar = row.mappedVariationCount ?? 0;
                     const totalVar = row.variationCount ?? 0;
+                    // Eşleme VAR ama PASİF: teslimat yapmaz, üstelik üstüne yeni eşleme de
+                    // kurulamaz (409) → "Eşlenmemiş" demek yanlış, doğru eylem "Etkinleştir".
+                    const passiveMapping = row.mappingActive === false && !!row.mappingId;
                     return (
                     <TableRow key={rowKey(row)}>
                       <TableCell>
@@ -252,6 +263,21 @@ export function CatalogTable({
                             {row.mappedProductName ?? 'Eşli'}
                             {row.bundleQty && row.bundleQty > 1 ? ` · paket ${row.bundleQty}` : ''}
                           </Badge>
+                        ) : passiveMapping ? (
+                          <span className="flex flex-col items-start gap-0.5">
+                            {/* Ton kuralı (ui/badge.tsx): attention (mor) = İNSAN KARARI bekliyor,
+                                hata değil — "Askıda" ile aynı anlam sınıfı. warning DEĞİL: pasif
+                                eşleme kendiliğinden ilerlemez, operatör açmadan hiçbir şey olmaz.
+                                Yeni hue EKLENMEZ. */}
+                            <Badge variant="attention">{mappingStateLabel(false)}</Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {row.mappedProductName
+                                ? `“${row.mappedProductName}” eşlemesi kapalı — `
+                                : 'Eşleme kapalı — '}
+                              bu ürünün siparişleri teslim edilmez. Etkinleştirin ya da kaldırıp
+                              başka bir ürüne eşleyin.
+                            </span>
+                          </span>
                         ) : variableParent ? (
                           <span className="flex flex-col items-start gap-0.5">
                             <Badge variant="neutral">
@@ -269,7 +295,20 @@ export function CatalogTable({
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        {row.mapped && row.mappingId ? (
+                        {passiveMapping ? (
+                          // Pasif eşlemede "Eşle" sheet'i 409 üretirdi (çıkmaz sokak) →
+                          // yalnız gerçekten işe yarayan iki eylem: geri aç ya da kaldır.
+                          <div className="flex items-center justify-end gap-1">
+                            <ActivateMappingButton
+                              mappingId={row.mappingId!}
+                              label={row.name}
+                              siteId={selected.siteId}
+                              remoteProductId={row.remoteProductId}
+                              remoteVariationId={row.remoteVariationId}
+                            />
+                            <RemoveMappingButton mappingId={row.mappingId!} productLabel={row.name} />
+                          </div>
+                        ) : row.mapped && row.mappingId ? (
                           <div className="flex items-center justify-end gap-1">
                             <MapProductSheet
                               mode="edit"

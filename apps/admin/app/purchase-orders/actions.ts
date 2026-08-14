@@ -1,7 +1,16 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, apiSend } from '@/lib/api';
+import { apiPost, apiSend, isUuid } from '@/lib/api';
 import { getActor } from '@/lib/session';
+
+/**
+ * SEC-1 — YOL ENJEKSİYONU: satın alma emri kimliği hem API YOLUNA hem `revalidatePath`'e
+ * gömülür; sunucu aksiyonları TS tiplerini ÇALIŞMA ANINDA zorlamaz (uç dışarıdan
+ * serileştirilmiş argümanla çağrılabilir) → boş OLMAYAN ama `..` taşıyan bir değer
+ * WHATWG URL normalizasyonuyla owner-only başka bir uca düşerdi. Kimlik UUID kalıbına
+ * bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
+ */
+const INVALID_PO_ID = 'Geçersiz emir kimliği — liste yenilenip tekrar denenmeli.';
 
 /**
  * DİKKAT: Bu dosya 'use server' modülüdür — Next 15 SWC buraya
@@ -77,7 +86,7 @@ export async function updatePurchaseOrderAction(
   formData: FormData,
 ): Promise<POFormState> {
   const id = String(formData.get('id') || '').trim();
-  if (!id) return { ok: false, error: 'Emir id zorunlu' };
+  if (!isUuid(id)) return { ok: false, error: INVALID_PO_ID };
   const status = String(formData.get('status') || '').trim();
   const eta = etaToIso(String(formData.get('eta') || ''));
   const etaRaw = String(formData.get('eta') || '').trim();
@@ -111,7 +120,7 @@ export async function receivePurchaseOrderAction(
   formData: FormData,
 ): Promise<POFormState> {
   const id = String(formData.get('id') || '').trim();
-  if (!id) return { ok: false, error: 'Emir id zorunlu' };
+  if (!isUuid(id)) return { ok: false, error: INVALID_PO_ID };
   const qty = Number(formData.get('qty'));
   if (!Number.isInteger(qty) || qty <= 0)
     return { ok: false, error: 'Teslim adedi pozitif tam sayı olmalı' };
