@@ -36,7 +36,17 @@ export function PageHeader({
           )}
         </div>
       </div>
-      {children && <div className="flex shrink-0 items-center gap-2">{children}</div>}
+      {/*
+        Eylemler: `flex-wrap` ŞART — üç düğmeli başlıkta (ör. /stock: Kategoriler · Stok
+        Girişi · Yeni Ürün) 375px'te blok 388px'e çıkıp viewport'tan TAŞIYORDU (ölçüldü:
+        düğmenin sağ kenarı 404 > 375). Sarma açıkken düğmeler ikinci satıra iner; geniş
+        ekranda davranış birebir aynı (tek satır, sağa yaslı).
+      */}
+      {children && (
+        <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          {children}
+        </div>
+      )}
     </header>
   );
 }

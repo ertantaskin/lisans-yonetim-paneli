@@ -575,13 +575,15 @@ export function LicenseItemsTable({
                     </div>
                   )}
                 </div>
-              </div>
-              <div className="mt-2 flex justify-end border-t border-border pt-2">
-                <LicenseItemActions
-                  row={row}
-                  payloadSchema={productId ? payloadSchema : undefined}
-                  onDone={reloadAfterMutation}
-                />
+                {/* Aksiyonlar kartın SAĞ ÜSTÜNDE: ayrı bir alt satır + ayraç, kart başına
+                    ~40px ekliyordu ve 10 kartta bu 400px demekti (şikâyet zaten yükseklikti). */}
+                <div className="shrink-0">
+                  <LicenseItemActions
+                    row={row}
+                    payloadSchema={productId ? payloadSchema : undefined}
+                    onDone={reloadAfterMutation}
+                  />
+                </div>
               </div>
             </div>
           ))
