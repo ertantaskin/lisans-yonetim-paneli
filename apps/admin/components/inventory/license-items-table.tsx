@@ -781,7 +781,9 @@ export function LicenseItemsTable({
                   </TableCell>
 
                   <TableCell className="hidden whitespace-nowrap tabular-nums text-xs text-muted-foreground 2xl:table-cell">
-                    {fmtDateTime(row.createdAt)}
+                    <span title={fmtDateTime(row.createdAt)}>
+                      {new Date(row.createdAt).toLocaleDateString("tr-TR", { dateStyle: "short" })}
+                    </span>
                   </TableCell>
 
                   <TableCell className="text-right">
@@ -1081,7 +1083,7 @@ function DeliveryCell({ row }: { row: LicenseInventoryRow }) {
           {d.customerEmail}
         </div>
       )}
-      <div className="truncate text-muted-foreground" title={d.siteDomain}>
+      <div className="max-w-40 truncate text-muted-foreground" title={d.siteDomain}>
         {d.siteDomain || '—'}
       </div>
       <div className="tabular-nums text-muted-foreground">
