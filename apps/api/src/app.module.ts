@@ -45,6 +45,23 @@ import { RiskScoreModule } from './security/risk-score.module';
 import { ChannelModule } from './channel/channel-catalog.module';
 import { RateLimitModule } from './common/rate-limit.module';
 
+/**
+ * Geliştirmede okunabilir log (pino-pretty), üretimde ham JSON.
+ *
+ * `pino-pretty` bir devDependency'dir ve prod imajında BULUNMAZ. Yalnız NODE_ENV'e bakmak
+ * yetmez: prod imajı NODE_ENV=production dışında bir değerle koşturulduğunda pino transport'u
+ * çözemeyip uygulamayı BOOT ETTİRMİYORDU. Modülü gerçekten çözebiliyor muyuz — onu sorarız.
+ */
+function prettyTransport() {
+  if (process.env.NODE_ENV === 'production') return undefined;
+  try {
+    require.resolve('pino-pretty');
+    return { target: 'pino-pretty', options: { singleLine: true } };
+  } catch {
+    return undefined; // kurulu değil → JSON log; servis AYAKTA kalır
+  }
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -54,10 +71,13 @@ import { RateLimitModule } from './common/rate-limit.module';
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.NODE_ENV === 'production' ? 'info' : 'debug',
-        transport:
-          process.env.NODE_ENV === 'production'
-            ? undefined
-            : { target: 'pino-pretty', options: { singleLine: true } },
+        // `pino-pretty` bir GELİŞTİRME kolaylığıdır ve devDependency'dir. Prod imajı artık
+        // prod-only bağımlılıklarla kurulduğu için orada YOKTUR — dolayısıyla varlığı
+        // ÇALIŞMA ZAMANINDA denetlenir. Eskiden yalnız NODE_ENV'e bakılıyordu: prod imajı
+        // NODE_ENV=production DIŞINDA bir değerle koşturulduğunda (dev/staging stack'i) API
+        // "unable to determine transport target for pino-pretty" ile BOOT EDEMİYORDU.
+        // Bir log biçimlendiricisinin yokluğu servisi düşürmemeli — yoksa sessizce JSON'a düş.
+        transport: prettyTransport(),
         // Trace-Id uçtan uca (§4/§16): genReqId'i main.ts'teki Fastify adapter belirler
         // (gelen x-trace-id → req.id). pino kendi genReqId'i olmadığında Fastify req.id'sini
         // kullanır → log iz-kimliği = yanıt x-trace-id başlığı = tek uçtan uca iz.

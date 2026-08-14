@@ -1386,6 +1386,21 @@ export class StockService {
     if (typeof payload !== 'string') {
       throw new Error('Bu ürün tipi için payload düz string olmalı');
     }
+    // BAŞ/SON BOŞLUK KIRPILIR — iki yazma yolu AYNI kuralı uygulasın diye (denetim bulgusu).
+    // `updateLicenseItemPayload` (kalem düzenleme) girdiyi `.trim()`liyordu, içe aktarma
+    // yolu HİÇBİR dönüşüm yapmıyordu. Aynı anahtarın iki farklı yolda iki farklı
+    // `payload_hash`i olması, mükerrer denetiminin (UNIQUE payload_hash) KAÇMASI demektir:
+    // tedarikçi listesinden sondaki boşlukla gelen bir anahtar ikinci kez stoğa girer ve
+    // İKİ MÜŞTERİYE satılabilir. Baştaki/sondaki boşluk hiçbir lisans biçiminin parçası
+    // değildir, dolayısıyla bu "sessiz veri değişikliği" değil normalizasyondur.
+    //
+    // ORTADAKİ görünmez karakterler (sıfır-genişlik vb.) BİLEREK dokunulmadan bırakılır:
+    // stok girişi ekranı onları sayar ve tek tıkla temizletir ("temizlemeyiz, GÖSTERİRİZ"
+    // kararı) — burada sessizce silmek operatörün gördüğü veriyle kaydedileni ayırırdı.
+    payload = payload.trim();
+    if (!payload) {
+      throw new Error('Payload boş olamaz');
+    }
     if (keyRegex) {
       // GÜVENLİK (3. katman — ÇALIŞMA ZAMANI TAVANI): regex'in üzerinde çalışacağı girdi
       // boyu SABİTLENİR. Statik sezgi (checkKeyFormatSafety) tam değildir; onu atlatan bir
