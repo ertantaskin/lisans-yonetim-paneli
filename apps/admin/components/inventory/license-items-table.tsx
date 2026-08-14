@@ -569,21 +569,26 @@ export function LicenseItemsTable({
                     {row.usageMode === 'multi' && (
                       <span className="tabular-nums">kalan {row.remainingUses}</span>
                     )}
+                    {/*
+                      Aksiyonlar DURUM SATIRINDA (sağa yaslı) — ayrı bir alt satır kart
+                      başına ~36px eklerdi (şikâyet zaten yükseklikti). Kartın SAĞ ÜSTÜNDE
+                      de duramaz: orada `shrink-0` ile 165px yiyor ve anahtara 58px kalıyordu
+                      → 29 karakterlik anahtar BEŞ satıra sarıyordu (ölçüldü, 375px). Burada
+                      anahtar kartın tam genişliğini alır (~223px → en fazla iki satır).
+                    */}
+                    <div className="ml-auto shrink-0">
+                      <LicenseItemActions
+                        row={row}
+                        payloadSchema={productId ? payloadSchema : undefined}
+                        onDone={reloadAfterMutation}
+                      />
+                    </div>
                   </div>
                   {row.delivered && (
                     <div className="mt-1.5">
                       <DeliveryCell row={row} />
                     </div>
                   )}
-                </div>
-                {/* Aksiyonlar kartın SAĞ ÜSTÜNDE: ayrı bir alt satır + ayraç, kart başına
-                    ~40px ekliyordu ve 10 kartta bu 400px demekti (şikâyet zaten yükseklikti). */}
-                <div className="shrink-0">
-                  <LicenseItemActions
-                    row={row}
-                    payloadSchema={productId ? payloadSchema : undefined}
-                    onDone={reloadAfterMutation}
-                  />
                 </div>
               </div>
             </div>
@@ -976,8 +981,16 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
   if (!row.value) {
     return <span className="text-xs text-muted-foreground">Lisans okunamadı</span>;
   }
+  /*
+   * İKİ MOD (ölçüldü):
+   * • lg ALTI (kart) — flex DEĞİL, akış: anahtar `inline` sarar, kopyala düğmesi son
+   *   harfin HEMEN ardından gelir. Burada flex kullanmak KIRIYORDU: `break-all` ile
+   *   min-content 1 karakter olduğu için flex item 20px'e eziliyor ve anahtar dikey
+   *   harf sütununa dönüşüyordu (ölçüldü: 20px genişlik / 289px yükseklik).
+   * • lg ÜSTÜ (tablo) — flex + tek satır; düğme metnin 6px sağında.
+   */
   return (
-    <div className="flex items-start gap-1">
+    <div className="lg:flex lg:items-center lg:gap-1.5">
       {/*
         KIRPMA YOK (kullanıcı: "lisans tamamen görünmüyor, son haneleri"): anahtar
         `truncate` ile tek satıra sıkıştırılıp sonu "…" oluyordu ve dar ekranda kalemi
@@ -990,18 +1003,38 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
         // kaybolmaz. md ÜSTÜ (tablo): TEK SATIR — `break-all` tabloda min-content'i tek
         // karaktere indirip kolonu 140px'e eziyordu (1440px'te bile iki satır; ölçüldü).
         // Kolonun `min-w-[19rem]` tabanıyla 29 karakterlik anahtar tek satıra sığar.
-        className="block flex-1 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90 lg:whitespace-nowrap lg:break-normal"
+        //
+        // `flex-1` YOK (kullanıcı: "copy ikonu çok alakasız yerde, çok mesafe var"):
+        // büyütücü verilince metin hücrenin TAMAMINI kaplıyor ve kopyala düğmesi kolonun
+        // sağ ucuna itiliyordu (ölçüldü: kısa anahtarda ~330px uzakta). Şimdi metin
+        // içeriği kadar yer kaplar, düğme hemen yanında durur; `min-w-0` uzun anahtarın
+        // gerektiğinde sarmasını korur.
+        className="inline min-w-0 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90 lg:block lg:whitespace-nowrap lg:break-normal"
         title={row.value}
       >
         {row.value}
       </code>
-      <CopyButton text={row.value} label="Lisans/hesap değerini kopyala" />
+      <CopyButton
+        text={row.value}
+        label="Lisans/hesap değerini kopyala"
+        // Kart modunda akışta olduğu için kendi boşluğunu kendi verir (tabloda boşluk
+        // konteynerin `gap`'inden gelir).
+        className="ml-1 align-middle lg:ml-0"
+      />
     </div>
   );
 }
 
 /** Panoya kopyala + kısa geri bildirim (izin yoksa dürüst uyarı). */
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({
+  text,
+  label,
+  className,
+}: {
+  text: string;
+  label: string;
+  className?: string;
+}) {
   const [state, setState] = React.useState<'idle' | 'ok' | 'fail'>('idle');
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1021,7 +1054,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className={cn('inline-flex items-center gap-1', className)}>
       <Button
         variant="ghost"
         size="icon-sm"
