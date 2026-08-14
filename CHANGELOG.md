@@ -14,6 +14,68 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### 5-lensli proje denetimi: 31 doğrulanmış bulgu + 3 sessiz regresyon (migration YOK)
+
+Kullanıcı isteğiyle proje beş lensten (regresyon · güvenlik · performans/DB · UI-UX/a11y ·
+test kapsamı) çekişmeli-doğrulamalı bir workflow ile denetlendi; her bulgu **çürütme**
+denemesinden geçirildi. Düzeltmeler altı paralel işçiye ayrık dosya kümeleriyle dağıtıldı.
+
+**Güvenlik**
+- **[YÜKSEK] keyFormat ReDoS.** Ürünün "anahtar biçimi" alanı sınırsız serbest metindi ve stok
+  girişinde 10.000 payload'a karşı senkron çalıştırılıyordu; Node'da regex zaman aşımı yoktur →
+  `^(a+)+$` gibi tek bir desen sipariş teslimatı dahil **tüm API'yi** üstel süre dondururdu.
+  Üç katmanlı kapı: kayıt anında uzunluk + derleme + katastrofik kalıp sezgisi (create ve update),
+  kullanım anında aynı kapı (denetimden önce kaydedilmiş desenler için), payload uzunluk tavanı.
+  Yeni bağımlılık eklenmedi; sezgi 25 vakayla sınandı.
+- `/ops` sunucu aksiyonu yol parçalarını doğrulamadan API yoluna gömüyordu (server action'lar TS
+  tiplerini çalışma anında zorlamaz) → beyaz liste + UUID + `encodeURIComponent`.
+- Müşteri kaynaklı `reason` üst sınırsızdı; `?siteId=` doğrulanmıyordu (22P02 → 500).
+
+**Bağımlılıklar** — `pnpm audit --prod` 11 açık (9 high + 2 moderate) → **0**. drizzle-orm
+0.38→0.45, nodemailer 8→9, geçişli overrides (postcss/nanoid/fast-uri/find-my-way/sharp).
+
+**Yükseltmenin ortaya çıkardığı sessiz regresyonlar** (hepsi test tarafından yakalandı)
+- drizzle 0.45 sürücü hatalarını `DrizzleQueryError` içine sarıyor → `e.code === '23505'` ve
+  `String(e).includes('unique')` desenleri devre dışı kaldı; **409 dönmesi gereken beş yol ham 500**
+  dönüyordu (kategori ikizi, admin e-posta, eşleme). Yeni `db/pg-error.ts` tek kaynak + 8 birim testi.
+- `clampPageSize` varsayılanı sabit listesinin İLK elemanıydı; listeye 10 eklenince "pageSize
+  göndermeyen" her çağrı sessizce 25 → 10 satıra düştü → `DEFAULT_LICENSE_PAGE_SIZE` açıkça yazıldı.
+- Test dosyaları hiçbir tip denetiminden geçmiyordu (derleme config'i `*.test.ts`'i dışlıyor, vitest
+  tip kontrol etmiyor) → 5 dosyada bayat imza. `tsconfig.tests.json` eklendi, `typecheck` ona bağlandı.
+
+**Doğruluk / kullanım**
+- Müşteriye giden teslimat maili sipariş detayında **"Tedarikçiye gönderildi"** yazıyordu.
+- Ürün detayındaki "Düzenle" kategori listesini almıyordu → ürünü kategoriye taşımak imkânsızdı.
+- Stok girişinde büyük harfli İngilizce başlıklar (`EMAIL`, `LOGIN`, `PIN`, `ID`) başlık sayılmıyor,
+  **veri satırı olarak içe aktarılıyordu** (tr-TR katlamasında ASCII `I` → `ı`).
+- `includesTr` matrisinin 5 hücresi eşleşmiyordu ("isik" → "IŞIK" bulunamıyordu) → üçüncü katlama
+  geçişi (İ/I/ı/i → i), veritabanındaki kategori ikiz kuralıyla aynı dil.
+- Toplu geçersiz kılma **başarısız olduğunda yeşil ✓** kutusunda gösteriliyor ve seçim temizleniyordu.
+- Çok sayfalı seçim sessizce kayboluyordu → sıfırlama artık bilinçli ve **yazılı**.
+
+**Performans**
+- Envanter aramasında hash eşitliği (UNIQUE index) ILIKE'lar ve korele EXISTS ile aynı OR'daydı →
+  tam anahtar aramasında bile tam tablo taraması + satır başına 3-join alt-plan. Aday kümesi
+  UNION ALL'a ayrıldı, **davranış birebir korunarak**.
+- `/stock` giriş ekranı hiç render edilmeyen ürün agregasyonunu her açılışta çekiyordu.
+- `/customers` site özeti önbeleksiz tam tablo taramasıydı (60 sn TTL + tek-uçuş eklendi).
+
+**Erişilebilirlik** — CollapsiblePanel açılınca klavye odağı `<body>`'ye düşüyordu; Kusurlu Stok
+araması `includesTr`'yi atlıyordu; dar ekran kart görünümünde boş-durum çizilmiyordu.
+
+**Test kapsamı** — 5 yeni entegrasyon dosyası (kategoriler · envanter araması · lisans mutasyonları ·
+müşteri site özeti · süre/holder süzgeçleri); `apps/admin`'de **test koşucusu yoktu** → vitest + 74
+test; `fill-target` ve `pg-error` birim testleri. quota.guard testi hiçbir rotaya bağlı olmayan bir
+guard'ı doğruluyordu (yanlış güvence) → dürüstleştirildi. `smoke-routes.sh` `/categories`'i taramıyordu.
+
+**Migration 0038 sertleştirmesi** — yalnız DROP+CREATE UNIQUE idi: 0037 uygulanmış ve arada Türkçe
+ikiz kategori oluşmuş bir veritabanında CREATE patlar ve migration boot'ta koştuğu için **API hiç
+açılmazdı**. Ön temizlik eklendi (ikizler deterministik yeniden adlandırılır, ürün silinmez); gerçek
+Postgres'te kirli veriyle doğrulandı, ikinci koşu idempotent. Uygulanmış veritabanları etkilenmez.
+
+**Doğrulama:** typecheck 4/4 (artık test dosyaları dahil) · check-use-server 23/77 · admin 74/74 ·
+api birim 94/94 · VPS izole test DB: **entegrasyon 240/240 + yarış 3/3** · build 3/3 · `pnpm audit --prod` temiz.
+
 ### Ürün kategorileri: kart tabanlı Stok & Ürünler + Kategoriler ekranı (migration 0037, 0038)
 
 Kullanıcı: *"panel ürünleri direkt görünüyor; office/windows/yapay zekâ lisansları, oyun
