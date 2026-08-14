@@ -178,6 +178,12 @@ export class RetentionService implements OnModuleInit {
     // Maskeleme: yerel-kısmın ilk 2 hanesi + '***@' + domain (compliance.service.ts ile tutarlı yön).
     // İdempotans: zaten maskeli satır ('***@' içeren) atlanır → batch döngüsü sonlanır (maske sonrası
     // satır artık NOT LIKE '%***@%' yüklemine girmez) ve tekrar koşularda gereksiz yazma olmaz.
+    //
+    // KVKK anonimleştirmesi (compliance.service.anonymize) HARİÇ tutulur: o yol e-postayı
+    // `anon-<sha256[0..12]>@redacted.invalid` DETERMİNİSTİK takma adına çevirir ve bunu bilinçli
+    // yapar ("aynı kişi = aynı maske → satır ilişkisi izlenebilir kalır"). O satır zaten PII
+    // TAŞIMAZ; buradaki maske onu `an***@redacted.invalid`e çevirip takma ad bağını (ve dolayısıyla
+    // unutulma-hakkı sonrası kalan operasyonel izlenebilirliği) GERİ DÖNÜŞSÜZ yok ederdi.
     const emailMasked = await this.pruneBatched(
       'email_log(mask)',
       sql`
@@ -187,6 +193,7 @@ export class RetentionService implements OnModuleInit {
           SELECT ctid FROM email_log
           WHERE created_at < now() - (${emailMaskDays} * interval '1 day')
             AND to_email NOT LIKE '%***@%'
+            AND to_email NOT LIKE '%@redacted.invalid'
           LIMIT ${BATCH_SIZE}
         )
         RETURNING id;

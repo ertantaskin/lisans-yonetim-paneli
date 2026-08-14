@@ -143,6 +143,13 @@ export class CostsService {
    * Tedarikçi × para birimi bazında gerçekleşen harcama. spentCents = teslim alınan
    * miktar × birim maliyet (qty_received × coalesce(unit_cost_cents, 0)). Para birimi
    * karışımı ayrı satırlar (GROUP BY currency).
+   *
+   * `::bigint` ÇARPANLARDA, sonuçta DEĞİL (bu dosyadaki üç sorguda da): Postgres'te
+   * `int4 * int4` yine int4'tür ve TOPLAMAYA GİRMEDEN taşar (22003) — sum sonucuna
+   * uygulanan cast çok geç kalır. Denetim sınırları bu değerlere izin veriyor
+   * (`unitCostCents ≤ 2e9`, `qtyOrdered ≤ 1e6`), yani 500 adet × 43.000 ₺ gibi GERÇEKÇİ
+   * bir alım raporu ham 500'e düşürebilirdi. Aynı kusur tedarikçi karnesinde bulundu
+   * (`procurement/suppliers.service.ts`) ve orada bir regresyon testiyle kilitlendi.
    */
   private async bySupplier(): Promise<CostBySupplier[]> {
     const list = await rawRows<{
@@ -156,7 +163,7 @@ export class CostsService {
         po.supplier_id AS supplier_id,
         s.name AS supplier,
         po.currency AS currency,
-        coalesce(sum(po.qty_received * coalesce(po.unit_cost_cents, 0)), 0)::bigint AS spent_cents,
+        coalesce(sum(po.qty_received::bigint * coalesce(po.unit_cost_cents, 0)::bigint), 0)::bigint AS spent_cents,
         count(*)::int AS po_count
       FROM purchase_orders po
       JOIN suppliers s ON s.id = po.supplier_id
@@ -187,7 +194,7 @@ export class CostsService {
       SELECT
         to_char(b.received_at, 'YYYY-MM') AS month,
         po.currency AS currency,
-        coalesce(sum(b.qty_received * coalesce(po.unit_cost_cents, 0)), 0)::bigint AS spent_cents
+        coalesce(sum(b.qty_received::bigint * coalesce(po.unit_cost_cents, 0)::bigint), 0)::bigint AS spent_cents
       FROM batches b
       JOIN purchase_orders po ON po.id = b.purchase_order_id
       WHERE b.received_at IS NOT NULL
@@ -217,7 +224,7 @@ export class CostsService {
         po.product_id AS product_id,
         p.name AS product,
         po.currency AS currency,
-        coalesce(sum(po.qty_received * coalesce(po.unit_cost_cents, 0)), 0)::bigint AS spent_cents,
+        coalesce(sum(po.qty_received::bigint * coalesce(po.unit_cost_cents, 0)::bigint), 0)::bigint AS spent_cents,
         coalesce(sum(po.qty_received), 0)::int AS qty_received
       FROM purchase_orders po
       JOIN products p ON p.id = po.product_id

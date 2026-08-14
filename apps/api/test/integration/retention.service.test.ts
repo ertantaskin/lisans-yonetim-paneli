@@ -1,0 +1,324 @@
+import { randomUUID } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
+import { afterAll, describe, expect, it } from 'vitest';
+import { RetentionService } from '../../src/maintenance/retention.service';
+import * as schema from '../../src/db/schema';
+import {
+  cleanupByTag,
+  createOrderWithLine,
+  createProduct,
+  createSite,
+  makeCrypto,
+  makeDb,
+  tagPrefix,
+} from './_helpers';
+
+/**
+ * ENTEGRASYON — saklama/budama motoru (RetentionService), gerçek PostgreSQL'e karşı.
+ *
+ * NEDEN BU TESTLER VAR: bu servis CANLI veriye karşı GÜNLÜK `DELETE` koşar ve denetimde
+ * "SIFIR test" olarak işaretlendi. Bir yüklem kayması (ör. audit budamasının `meta->>'auto'`
+ * koşulunu kaybetmesi) GERİ DÖNÜŞSÜZ uyum kaydı kaybı demektir — build/typecheck bunu
+ * yakalayamaz, yalnız gerçek DB'ye karşı koşan bir test yakalar.
+ *
+ * İZOLASYON STRATEJİSİ (önemli): runRetention() tag'e göre daraltılamaz — TÜM tabloyu tarar.
+ * Bu yüzden testler kendi satırlarını EŞİĞİN İKİ TARAFINA (ör. 200 gün önce / 10 gün önce)
+ * yerleştirir ve YALNIZ kendi id'leri üzerinden doğrular. Diğer test dosyalarının satırları
+ * `now()` damgalıdır → hiçbir pencereye girmez, bu koşudan etkilenmez (vitest.integration
+ * `fileParallelism:false` ile dosyalar seri koşar).
+ *
+ * Nest ayağa KALDIRILMAZ: servis elle new'lenir. BullMQ Queue yalnız onModuleInit'te
+ * kullanılır (çağrılmıyor → {} stub); ConfigService stub'ı boş döner → VARSAYILAN pencereler
+ * (180/30/365/365/730/90 gün, audit-tam budama KAPALI) sınanır — üretimde koşan yol budur.
+ */
+
+const { db, end } = makeDb();
+const crypto = makeCrypto();
+
+/** Boş ConfigService: her anahtar undefined → servis varsayılan pencerelere düşer. */
+const emptyConfig = { get: () => undefined } as never;
+const retention = new RetentionService(db as never, {} as never, emptyConfig);
+
+const tag = randomUUID().slice(0, 8);
+const like = `${tagPrefix(tag)}-%`;
+
+/** n gün önceki zaman damgası (created_at'i elle kurmak için). */
+const daysAgo = (n: number): Date => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+afterAll(async () => {
+  // FK'siz/SET NULL'lı tablolar cleanupByTag kapsamında DEĞİL → tag'li satırları elle sil.
+  // (fulfillment_events orders'a CASCADE, outbox_events sites'a CASCADE → onlar cleanupByTag'de.)
+  await db.execute(sql`DELETE FROM email_log WHERE subject LIKE ${like}`);
+  await db.execute(sql`DELETE FROM security_events WHERE detail LIKE ${like}`);
+  await db.execute(sql`DELETE FROM audit_log WHERE actor LIKE ${like}`);
+  await cleanupByTag(db, tag);
+  await end();
+});
+
+/** Bir tabloda verilen id'nin hâlâ var olup olmadığı. */
+async function exists(table: string, id: string): Promise<boolean> {
+  const rows = await db.execute<{ n: number }>(
+    sql`SELECT count(*)::int AS n FROM ${sql.raw(table)} WHERE id = ${id}`,
+  );
+  return Number((rows as unknown as Array<{ n: number }>)[0]?.n ?? 0) > 0;
+}
+
+describe('RetentionService.runRetention — fulfillment_events / outbox / security', () => {
+  it('fulfillment_events: 180g eşiğinin ESKİ tarafı silinir, YENİ tarafı durur', async () => {
+    // REGRESYON: pencere yüklemi kayarsa (ör. `<` yerine `>` ya da yanlış birim) ya AKTİF
+    // siparişlerin timeline'ı silinir ya da tablo hiç budanmaz (sınırsız büyüme).
+    const site = await createSite(db, crypto, { tag });
+    const product = await createProduct(db, { tag });
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: 1,
+      tag,
+    });
+
+    const [oldEv] = await db
+      .insert(schema.fulfillmentEvents)
+      .values({
+        orderId: order.orderId,
+        type: 'order_received',
+        message: `${tagPrefix(tag)}-eski`,
+        createdAt: daysAgo(200), // 180g penceresinin DIŞI → silinmeli
+      })
+      .returning({ id: schema.fulfillmentEvents.id });
+    const [freshEv] = await db
+      .insert(schema.fulfillmentEvents)
+      .values({
+        orderId: order.orderId,
+        type: 'fulfilled',
+        message: `${tagPrefix(tag)}-taze`,
+        createdAt: daysAgo(10), // pencere İÇİ → durmalı
+      })
+      .returning({ id: schema.fulfillmentEvents.id });
+
+    await retention.runRetention();
+
+    expect(await exists('fulfillment_events', oldEv!.id)).toBe(false);
+    expect(await exists('fulfillment_events', freshEv!.id)).toBe(true);
+  });
+
+  it("outbox_events: yalnız 'delivered' budanır — eski 'failed'/'pending' REPLAY için DURUR", async () => {
+    // REGRESYON: status koşulu düşerse teslim EDİLEMEMİŞ webhook'lar silinir → /ops dead-letter
+    // ekranından replay edilemez hâle gelir (kalıcı, sessiz veri kaybı — §16).
+    const site = await createSite(db, crypto, { tag });
+
+    const mk = async (status: string, days: number): Promise<string> => {
+      const [row] = await db
+        .insert(schema.outboxEvents)
+        .values({
+          siteId: site.id,
+          eventType: `${tagPrefix(tag)}-evt`,
+          payload: { tag },
+          status,
+          createdAt: daysAgo(days),
+        })
+        .returning({ id: schema.outboxEvents.id });
+      return row!.id;
+    };
+
+    const oldDelivered = await mk('delivered', 60); // 30g dışı + delivered → silinmeli
+    const freshDelivered = await mk('delivered', 5); // pencere içi → durmalı
+    const oldFailed = await mk('failed', 60); // eski AMA teslim edilememiş → DURMALI
+    const oldPending = await mk('pending', 60); // eski AMA askıda → DURMALI
+
+    await retention.runRetention();
+
+    expect(await exists('outbox_events', oldDelivered)).toBe(false);
+    expect(await exists('outbox_events', freshDelivered)).toBe(true);
+    expect(await exists('outbox_events', oldFailed)).toBe(true);
+    expect(await exists('outbox_events', oldPending)).toBe(true);
+  });
+
+  it('security_events: 365g eşiğinin ESKİ tarafı silinir, YENİ tarafı durur', async () => {
+    // REGRESYON: güvenlik izi penceresi daralırsa anomali/kota geçmişi beklenenden erken silinir.
+    const [oldEv] = await db
+      .insert(schema.securityEvents)
+      .values({
+        type: 'velocity',
+        severity: 'warning',
+        detail: `${tagPrefix(tag)}-eski güvenlik olayı`,
+        createdAt: daysAgo(400),
+      })
+      .returning({ id: schema.securityEvents.id });
+    const [freshEv] = await db
+      .insert(schema.securityEvents)
+      .values({
+        type: 'velocity',
+        severity: 'warning',
+        detail: `${tagPrefix(tag)}-taze güvenlik olayı`,
+        createdAt: daysAgo(100),
+      })
+      .returning({ id: schema.securityEvents.id });
+
+    await retention.runRetention();
+
+    expect(await exists('security_events', oldEv!.id)).toBe(false);
+    expect(await exists('security_events', freshEv!.id)).toBe(true);
+  });
+});
+
+describe('RetentionService.runRetention — email_log (KVKK: maskele ≠ sil)', () => {
+  /** email_log satırı ekler ve id'sini döndürür. */
+  async function insertEmail(days: number, toEmail: string, label: string): Promise<string> {
+    const [row] = await db
+      .insert(schema.emailLog)
+      .values({
+        toEmail,
+        subject: `${tagPrefix(tag)}-${label}`,
+        status: 'sent',
+        createdAt: daysAgo(days),
+      })
+      .returning({ id: schema.emailLog.id });
+    return row!.id;
+  }
+
+  /** Satırın güncel to_email değeri (satır yoksa null). */
+  async function toEmailOf(id: string): Promise<string | null> {
+    const [row] = await db
+      .select({ toEmail: schema.emailLog.toEmail })
+      .from(schema.emailLog)
+      .where(eq(schema.emailLog.id, id));
+    return row?.toEmail ?? null;
+  }
+
+  it('365g: to_email MASKELENİR ama SATIR SİLİNMEZ; 730g: satır silinir; taze satır dokunulmaz', async () => {
+    // REGRESYON: bu iki pencere karışırsa ya PII 365g sonra düz metin kalır (KVKK ihlali) ya da
+    // maskeleme yerine SİLME yapılır (gönderim/bounce operasyon izi kaybolur, §6).
+    const veryOld = await insertEmail(800, 'silinecek@example.test', 'cok-eski');
+    const toMask = await insertEmail(400, 'maskelenecek@example.test', 'maskelenecek');
+    const fresh = await insertEmail(10, 'taze@example.test', 'taze');
+
+    await retention.runRetention();
+
+    // 730g+ → satır komple gitti.
+    expect(await exists('email_log', veryOld)).toBe(false);
+
+    // 365g+ → satır DURUYOR, yalnız adres maskeli (yerel kısmın ilk 2 hanesi + domain).
+    expect(await exists('email_log', toMask)).toBe(true);
+    expect(await toEmailOf(toMask)).toBe('ma***@example.test');
+
+    // Pencere içi → hiç dokunulmadı.
+    expect(await toEmailOf(fresh)).toBe('taze@example.test');
+  });
+
+  it('maskeleme idempotenttir: ikinci koşu zaten maskeli adresi TEKRAR maskelemez', async () => {
+    // REGRESYON: `NOT LIKE '%***@%'` guard'ı düşerse her koşu maskeyi maskeler
+    // ('ma***@x' → 'ma***@x' değil 'ma***@…' zincirlenir) VE batch döngüsü hiç tükenmez
+    // (aynı satırlar her turda tekrar seçilir → sonsuz/tavan-dolduran koşu).
+    const id = await insertEmail(400, 'tekrar@example.test', 'idempotent');
+
+    await retention.runRetention();
+    const first = await toEmailOf(id);
+    expect(first).toBe('te***@example.test');
+
+    await retention.runRetention();
+    expect(await toEmailOf(id)).toBe(first);
+  });
+
+  it('KVKK ile anonimleştirilmiş adres (@redacted.invalid) YENİDEN maskelenmez', async () => {
+    // REGRESYON (bu turda düzeltildi): compliance.anonymize adresi DETERMİNİSTİK takma ada
+    // çevirir (`anon-<hash>@redacted.invalid`) — "aynı kişi = aynı maske" bilinçli tasarımdır.
+    // Retention maskesi bunu `an***@redacted.invalid` yapıp takma ad bağını GERİ DÖNÜŞSÜZ
+    // yok ediyordu (satır zaten PII taşımıyordu, kazanç sıfır; kayıp kalıcı).
+    const anon = 'anon-0123456789ab@redacted.invalid';
+    const id = await insertEmail(400, anon, 'anonim');
+
+    await retention.runRetention();
+
+    expect(await exists('email_log', id)).toBe(true);
+    expect(await toEmailOf(id)).toBe(anon);
+  });
+});
+
+describe('RetentionService.runRetention — audit_log (uyum kaydı KORUNUR)', () => {
+  /** audit_log satırı ekler ve id'sini döndürür. */
+  async function insertAudit(opts: {
+    action: (typeof schema.auditLog.$inferInsert)['action'];
+    meta: Record<string, unknown> | null;
+    days: number;
+  }): Promise<string> {
+    const [row] = await db
+      .insert(schema.auditLog)
+      .values({
+        action: opts.action,
+        actor: `${tagPrefix(tag)}-actor`,
+        targetType: 'test',
+        meta: opts.meta,
+        createdAt: daysAgo(opts.days),
+      })
+      .returning({ id: schema.auditLog.id });
+    return row!.id;
+  }
+
+  it('yalnız GÜRÜLTÜ (auto-reveal) budanır; GERÇEK denetim kaydı SİLİNMEZ', async () => {
+    // REGRESYON — bu dosyanın en kritik testi: yüklem `action='reveal' AND meta->>'auto'='true'`
+    // dar tutulmalı. Yüklem kayarsa (ör. yalnız `action='reveal'` kalırsa ya da meta koşulu
+    // NULL-güvenli olmayan bir biçime dönerse) OPERATÖRÜN ELLE yaptığı ifşa kayıtları ve/veya
+    // revoke/import/login gibi uyum kayıtları GERİ DÖNÜŞSÜZ silinir (§8 append-only denetim izi).
+    const noiseOld = await insertAudit({ action: 'reveal', meta: { auto: true }, days: 200 });
+    const noiseFresh = await insertAudit({ action: 'reveal', meta: { auto: true }, days: 10 });
+    // Elle ifşa: admin bir anahtarı bilinçli gösterdi → meta'da 'auto' YOK (NULL karşılaştırması).
+    const manualReveal = await insertAudit({
+      action: 'reveal',
+      meta: { licenseItemId: 'x', kind: 'key' },
+      days: 200,
+    });
+    // Açıkça auto=false yazılmış bir kayıt da gürültü değildir.
+    const explicitFalse = await insertAudit({ action: 'reveal', meta: { auto: false }, days: 200 });
+    // meta tamamen NULL → `meta->>'auto'` NULL → yükleme GİRMEMELİ.
+    const nullMeta = await insertAudit({ action: 'reveal', meta: null, days: 200 });
+    // Başka aksiyonlar: auto bayrağı taşısalar bile action 'reveal' değil → DURMALI.
+    const revoke = await insertAudit({ action: 'revoke', meta: { auto: true }, days: 200 });
+    const importAudit = await insertAudit({ action: 'import', meta: { rows: 5 }, days: 200 });
+    const login = await insertAudit({ action: 'login', meta: null, days: 200 });
+
+    await retention.runRetention();
+
+    // Silinen TEK küme: eski auto-reveal gürültüsü.
+    expect(await exists('audit_log', noiseOld)).toBe(false);
+
+    // Geri kalan HER ŞEY duruyor.
+    expect(await exists('audit_log', noiseFresh)).toBe(true);
+    expect(await exists('audit_log', manualReveal)).toBe(true);
+    expect(await exists('audit_log', explicitFalse)).toBe(true);
+    expect(await exists('audit_log', nullMeta)).toBe(true);
+    expect(await exists('audit_log', revoke)).toBe(true);
+    expect(await exists('audit_log', importAudit)).toBe(true);
+    expect(await exists('audit_log', login)).toBe(true);
+  });
+
+  it('RETENTION_AUDIT_ALL_DAYS set DEĞİLKEN tam budama KAPALI kalır (auditAllDeleted = 0)', async () => {
+    // REGRESYON: "tehlikeli" budamanın varsayılanı KAPALI olmalı. optionalDays() yanlışlıkla
+    // bir varsayılana düşerse (days() ile karıştırılırsa) tüm denetim izi sessizce budanır.
+    const old = await insertAudit({ action: 'assign', meta: { k: 1 }, days: 3000 });
+
+    const report = await retention.runRetention();
+
+    expect(report.auditAllDeleted).toBe(0);
+    expect(await exists('audit_log', old)).toBe(true);
+  });
+});
+
+describe('RetentionService.runRetention — idempotans', () => {
+  it('silinecek/maskelenecek bir şey yoksa TÜM sayaçlar 0 döner ve hata atmaz', async () => {
+    // REGRESYON: batch döngüsünün bitiş koşulu (n < BATCH_SIZE) bozulursa ya da bir yüklem
+    // kendi yazdığı satırı tekrar seçerse (maskeleme guard'ı gibi) ikinci koşu ASLA sıfırlanmaz
+    // ve günlük iş sonsuza dek dönmeye çalışır.
+    await retention.runRetention(); // 1. koşu: ne kaldıysa temizler
+    const second = await retention.runRetention(); // 2. koşu: yapacak iş yok
+
+    expect(second).toEqual({
+      fulfillmentEventsDeleted: 0,
+      outboxDeleted: 0,
+      securityEventsDeleted: 0,
+      emailMasked: 0,
+      emailDeleted: 0,
+      auditRevealDeleted: 0,
+      auditAllDeleted: 0,
+    });
+  });
+});
