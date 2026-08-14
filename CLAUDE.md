@@ -1766,3 +1766,37 @@ süzgeci EKLENMİŞTİ ama giriş ekranı hâlâ düz müşteri listesiydi; hiye
   `?q=zzzyok` (boş sonuç). **Boş sonuçta tablo çizilmiyor:** ilk denemede "Sonuç yok" uyarısının altında boş
   tablo + "0 kayıt · Sayfa 1/1" duruyor ve mesajı gölgeliyordu → tek boş durum + mağaza listesine dönüş.
   typecheck 4/4 + admin production build.
+
+**ÜRÜN KATEGORİLERİ + KART TABANLI STOK EKRANI (migration 0037+0038):** Kullanıcı: *"panel ürünleri direkt
+görünüyor ya, karışıklığı gidermek için kategorizasyon yapsak? office lisansları, windows lisansları, yapay
+zeka lisansları, oyun hesapları gibi ayrıştırabilsek; card tarzı UI/UX açısından daha kullanışlı; ayrıca
+rehber niteliğinde daha açıklayıcı anlatımlar iyi olur — panel ürünü ekleniyor sonra sitelerdeki ürünlerle
+eşleştiriliyor, bunlar kolaylaştırılmalı"*. **KULLANICI KARARI (soruldu, "anlamadım" dedi → sade dille tekrar
+soruldu): AYRI "Kategoriler" ekranı** — ürün formunda serbest metin YOK, yalnız listeden seçim (ad tek kayıt,
+ikiz kategori olmaz, ad değişince her yerde değişir).
+- **0037 (additive):** `product_categories` (name/description/sort_order) + `products.category_id`
+  **ON DELETE SET NULL** — kategori silinince ÜRÜN SİLİNMEZ, "Kategorisiz" olur (RESTRICT olsaydı operatör
+  önce her ürünü elle taşımak zorunda kalırdı; ürünü silmek ise stok/sipariş taşıdığı için felaket olurdu).
+  Silme yanıtı `uncategorizedProducts` döner → onay modali ve sonuç mesajı kaç ürünün etkilendiğini SÖYLER.
+- **0038 — TÜRKÇE İKİZ AÇIĞI (dev'de ÖLÇÜLDÜ, kendi ilk sürümümün kusuru):** düz `lower()` unique index'i
+  `"WINDOWS LİSANSLARI"`yı kabul ediyordu (201) çünkü en_US.utf8'de `lower('LİSANSLARI')`="lisanslari" ama
+  `lower('lisansları')`="lisansları" — İ/I/ı/i dört varyantı farklı sayılıyor. Index artık
+  `lower(translate(name,'İIı','iii'))`. Bilinçli yan etki: "Sıra"/"Sira" da çakışır (Türkçe panelde zaten
+  karıştırılacak iki ad). Ş/Ğ/Ç/Ö/Ü'yü Unicode `lower()` doğru çeviriyor (ölçüldü).
+- **`/stock` ÜÇ HÂLLİ** (müşteriler ekranıyla BİREBİR aynı gezinme dili — tek desen): kategori kartları ·
+  `?q=` tüm ürünlerde arama (hiyerarşiyi atlar) · `?category=` kategori listesi ('none' = Kategorisiz).
+  Kart: ürün sayısı + **atanabilir KAPASİTE** (Σ max_uses−use_count, satır sayısı DEĞİL — MAK'ta 1 anahtar
+  500 kullanım taşır) + düşük stok rozeti. Süresi geçmiş kalem sayılmaz (assign.ts yüklemiyle aynı).
+  "Son Eklenen Lisanslar" YALNIZ giriş ekranında (kategori içindeyken bağlamsız veri çelişki yaratırdı).
+- **Yeni `/categories`**: ekle/yeniden adlandır/açıklama/sıra/sil + 3 adımlı rehber şerit. Menüde Envanter
+  altında. Ürün formuna kategori alanı, tabloya kategori kolonu + faceti (yalnız >1 grup varsa).
+- **SESSİZ VERİ KAYBI KORUMASI:** ürünün MEVCUT kategorisi seçenek listesinde yoksa (çağıran listeyi
+  geçirmemişse) tarayıcı ilk seçeneği ("Kategorisiz") seçer ve "Kaydet" ürünü sessizce kategorisinden
+  çıkarırdı → form mevcut kategoriyi her hâlükârda seçenek olarak basar.
+- **BUILD TUZAĞI (yaşandı):** `UNCATEGORIZED` sabiti 'server-only' `queries.ts` içindeydi ve istemci
+  bileşenleri onu ÇALIŞMA ZAMANI değeri olarak import ediyordu → `next build` "server-only in a Client
+  Component" ile kırıldı (typecheck yakalamaz). Ortak sabit/tip `lib/categories.ts`'e taşındı.
+- **Doğrulama (dev, gerçek veri):** migration boot'ta uygulandı · kartlar "Windows lisansları 1 ürün/0 stok"
+  + "Kategorisiz 1 ürün/2 stok" (gerçek stokla birebir) · kategoriye giriş listesi · geçersiz kategori id
+  **404** (FK 500 değil) · Türkçe ikiz **409**, farklı ad **201** · silme → `uncategorizedProducts:1` ve ürün
+  Kategorisiz kovaya döndü. typecheck 4/4 + check-use-server 23/77 + admin production build.

@@ -14,6 +14,28 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Ürün kategorileri: kart tabanlı Stok & Ürünler + Kategoriler ekranı (migration 0037, 0038)
+
+Kullanıcı: *"panel ürünleri direkt görünüyor; office/windows/yapay zekâ lisansları, oyun
+hesapları gibi ayrıştırabilsek; kart tarzı daha kullanışlı; ayrıca rehber niteliğinde
+açıklamalar iyi olur"*. Kategoriler **ayrı ekrandan** yönetilir (kullanıcı kararı) — ürün
+formunda serbest metin yoktur, yalnız listeden seçilir.
+
+- **0037:** `product_categories` (ad/açıklama/sıra) + `products.category_id`
+  (**ON DELETE SET NULL** → kategori silinince ürün silinmez, "Kategorisiz" olur).
+- **0038:** ad benzersizliği **Türkçe-duyarlı** — dev'de ölçüldü: `lower()` tek başına
+  `"WINDOWS LİSANSLARI"` ile `"windows lisansları"`yı FARKLI sayıyor ve ikizi kabul ediyordu;
+  index artık `lower(translate(name,'İIı','iii'))`.
+- **`/stock` üç hâlli** (müşteriler ekranıyla aynı gezinme dili): kategori kartları ·
+  `?q=` tüm ürünlerde arama · `?category=` kategori listesi. Kart: ürün sayısı + atanabilir
+  kapasite + düşük stok uyarısı.
+- **Yeni `/categories`** ekranı: ekle / yeniden adlandır / açıklama / sıra / sil. Silme
+  onayında kaç ürünün "Kategorisiz" olacağı yazılı.
+- **Rehber şeritler**: `/stock` ve `/categories` üstünde 3 adımlı akış (panel ürünü → stok
+  girişi → mağaza eşlemesi).
+- Ürünün mevcut kategorisi seçenek listesinde yoksa form onu yine de basar — aksi halde
+  "Kaydet" ürünü sessizce kategorisinden çıkarırdı.
+
 ### Müşteriler: mağaza → müşteri hiyerarşisi (migration YOK)
 
 Kullanıcı: *"direkt müşteriler çıkıyor; sitelere bölünmeli, sitenin içine girip müşterileri
