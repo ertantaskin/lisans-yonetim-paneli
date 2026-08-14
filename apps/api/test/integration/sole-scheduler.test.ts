@@ -89,6 +89,7 @@ describe('upsertSoleJobScheduler — yetim tekrarlı zamanlayıcı temizliği', 
     expect(after).toHaveLength(1);
     expect(after[0]!.key).toBe('sweep-v3');
     // Periyot da gerçekten güncellendi (upsert çalıştı, yalnız temizlik değil).
-    expect(after[0]!.every).toBe('120000');
+    // `every` sürücü sürümüne göre sayı ya da dize dönebilir → değere göre karşılaştır.
+    expect(Number(after[0]!.every)).toBe(120_000);
   });
 });
