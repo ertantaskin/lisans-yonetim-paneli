@@ -6,6 +6,7 @@ import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { notExpiredCond } from '../assignment/assign';
 import { NotificationsService } from './notifications.service';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const LOW_STOCK_QUEUE = 'low-stock';
 /** Düşük stok taraması periyodu (ms). Anlık kritik değil → 30 dk yeterli (§12). */
@@ -43,10 +44,12 @@ export class LowStockService implements OnModuleInit {
    * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       'low-stock-sweep',
       { every: SWEEP_EVERY_MS },
       { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 

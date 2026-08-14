@@ -6,6 +6,7 @@ import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { securityEvents, type SecurityEvent } from '../db/schema/securityEvents';
 import { sites } from '../db/schema/sites';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const SECURITY_QUEUE = 'security';
 
@@ -52,10 +53,12 @@ export class SecurityService implements OnModuleInit {
    * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       'security-scan',
       { every: SCAN_EVERY_MS },
       { name: 'scan', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 

@@ -8,6 +8,7 @@ import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SweepAlarmService } from './sweep-alarm.service';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const RECONCILE_QUEUE = 'reconcile';
 
@@ -148,10 +149,12 @@ export class ReconcileService implements OnModuleInit {
    * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       'reconcile-sweep',
       { every: SWEEP_EVERY_MS },
       { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 

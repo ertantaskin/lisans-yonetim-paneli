@@ -6,6 +6,7 @@ import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { SweepAlarmService } from './sweep-alarm.service';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const RETENTION_QUEUE = 'retention';
 
@@ -73,10 +74,12 @@ export class RetentionService implements OnModuleInit {
    * expiry/reconcile ile aynı desen.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       'retention-sweep',
       { every: SWEEP_EVERY_MS },
       { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 

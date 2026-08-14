@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AiSummaryService, type DailyMetrics, type DailySummary } from './ai-summary.service';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const DAILY_DIGEST_QUEUE = 'daily-digest';
 /** Günlük özetin gönderileceği zaman — cron: her gün 08:00 (sunucu saati). §16. */
@@ -59,10 +60,12 @@ export class DailyDigestService implements OnModuleInit {
    * digest/kritik alarm olmaz. NON-idempotent olduğu için bu servis en kritik olanı.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       DIGEST_SCHEDULER_ID,
       { pattern: DIGEST_CRON },
       { name: 'digest', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 

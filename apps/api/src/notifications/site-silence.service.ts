@@ -6,6 +6,7 @@ import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { NotificationsService } from './notifications.service';
 import { resolveSilenceHours } from './site-silence.constants';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const SITE_SILENCE_QUEUE = 'site-silence';
 
@@ -64,10 +65,12 @@ export class SiteSilenceService implements OnModuleInit {
    * periyot değişirse eski zamanlama atomik değiştirilir, yetim (mükerrer) schedule kalmaz.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       'site-silence-sweep',
       { every: SWEEP_EVERY_MS },
       { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 

@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
 export const EXPIRY_QUEUE = 'expiry';
 /** Süre-bitişi taraması periyodu (ms). Boşluk savunma amaçlı getDeliveries filtresiyle kapalı. */
@@ -33,10 +34,12 @@ export class ExpiryService implements OnModuleInit {
    * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
    */
   async onModuleInit(): Promise<void> {
-    await this.queue.upsertJobScheduler(
+    await upsertSoleJobScheduler(
+      this.queue,
       'expiry-sweep',
       { every: SWEEP_EVERY_MS },
       { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      this.logger,
     );
   }
 
