@@ -38,6 +38,14 @@ const LABELS: Record<string, string> = {
   claims: 'Değişim Fişleri',
   // '/quarantine/records' (kusurlu stok defteri) — aynı gerekçe: ham "records" görünürdü.
   records: 'Tüm Kayıtlar',
+  // '/reports/*' alt raporları. `costs` uzun süredir ham "costs" gösteriyordu; yeni iki rapor
+  // eklenirken aynı boşluk üçe çıkacaktı → üçü birden karşılandı.
+  costs: 'Maliyet Raporu',
+  sla: 'Teslimat Süresi',
+  reorder: 'Yeniden Sipariş',
+  // NOT: buraya 'security' EKLENMEZ — bu sözlük NAV'ın ÜSTÜNE yazar ve `/security`
+  // (Güvenlik) ekranının breadcrumb'ını da değiştirirdi. '/admins/security' zaten
+  // "Yöneticiler › Güvenlik" olarak okunuyor.
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

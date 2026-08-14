@@ -187,6 +187,9 @@ export function OrdersTable({ orders }: { orders: OrdersTableRow[] }) {
         searchPlaceholder="Sipariş no, e-posta veya site…"
         facets={facets}
         initialSorting={[{ id: 'createdAt', desc: true }]}
+        /* Süzgeçler adres çubuğuna yazılır: bu ekrandaki "Görünümler" menüsü (§14) URL query'sini
+           saklar — sync olmadan kaydedilen görünüm BOŞ olur ve geri yükleme hiçbir şey yapmaz. */
+        syncUrl
         emptyLabel={
           truncated
             ? `Bu pencerede kayıt yok — yalnız en yeni ${SERVER_LIMIT} sipariş yüklendi, daha eskisi listede değil.`

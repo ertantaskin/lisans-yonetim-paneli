@@ -1,6 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { adminLogin } from '@/lib/api';
+import { apiRaw } from '@/lib/api';
 import { authEnabled, createSession, SESSION_COOKIE, SESSION_TTL_SEC } from '@/lib/auth';
+import {
+  PENDING_COOKIE,
+  PENDING_TTL_SEC,
+  createPendingToken,
+  verifyPendingToken,
+} from '@/app/login/pending';
 
 /**
  * CSRF/login-CSRF koruması: tarayıcı cross-site bir POST navigasyonunda Origin gönderir.
@@ -86,9 +92,40 @@ function seeOther(path: string): NextResponse {
   return new NextResponse(null, { status: 303, headers: { location: path } });
 }
 
+/** API'nin döndürdüğü admin kaydı (yalnız oturuma yazılan alanlar). */
+interface LoginUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  tokenVersion: number;
+}
+
+/**
+ * Oturum çerezini basıp hedefe yönlendirir + beklet-çerezini SİLER.
+ * ÇEREZ YALNIZ BURADAN verilir → "parolayı geçti ama kodu girmedi" durumunda oturum oluşmaz.
+ */
+function grantSession(to: string, token: string): NextResponse {
+  const res = seeOther(to);
+  res.cookies.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SESSION_TTL_SEC, // token exp ile aynı → "geçerli görünen ama dolmuş" cookie yok
+  });
+  // Ara durum tüketildi; kalırsa ikinci adım yeniden oynatılabilirdi.
+  res.cookies.set(PENDING_COOKIE, '', { httpOnly: true, path: '/', maxAge: 0 });
+  return res;
+}
+
 /**
  * Login — native form POST. Kimlik+parola API'de (admin_users) doğrulanır; başarılıysa
  * imzalı oturum cookie'si set edilir + 303 (göreli) redirect. Standart HTTP (RSC quirk'i yok).
+ *
+ * İKİ ADIM (TOTP): 1) kimlik+parola → API `totpRequired` derse OTURUM AÇILMAZ, yalnız kısa
+ * ömürlü imzalı beklet-çerezi kurulur ve `/login?step=totp`e yönlendirilir; 2) kod → API
+ * `/auth/login/totp`. Oturum çerezi yalnız 2. adım başarılıysa verilir.
  */
 export async function POST(req: NextRequest) {
   if (!sameOrigin(req)) return new NextResponse('forbidden', { status: 403 });
@@ -121,6 +158,36 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ── 2. ADIM: doğrulama kodu ────────────────────────────────────────────────
+  if (String(form.get('step') ?? '') === 'totp') {
+    const pending = verifyPendingToken(req.cookies.get(PENDING_COOKIE)?.value);
+    if (!pending) {
+      // Süre doldu / çerez yok → 1. adıma dön (sayfa kendi mesajını gösterir).
+      return seeOther(`/login?step=totp&from=${encodeURIComponent(to)}`);
+    }
+    const code = String(form.get('code') ?? '').trim();
+    if (code.length === 0 || code.length > 24) {
+      return seeOther(`/login?step=totp&error=totp&from=${encodeURIComponent(to)}`);
+    }
+    let user: LoginUser | null = null;
+    try {
+      const res = await apiRaw('POST', '/v1/admin/auth/login/totp', {
+        body: { sub: pending.sub, code },
+      });
+      if (res.ok) {
+        user = ((await res.json()) as { user: LoginUser }).user;
+      } else if (res.status !== 401 && res.status !== 429) {
+        return seeOther(`/login?step=totp&error=api&from=${encodeURIComponent(to)}`);
+      }
+    } catch {
+      return seeOther(`/login?step=totp&error=api&from=${encodeURIComponent(to)}`);
+    }
+    // 401/429 → aynı generik mesaj (kilitli mi yanlış mı ayırt edilmez; kova zaten API'de).
+    if (!user) return seeOther(`/login?step=totp&error=totp&from=${encodeURIComponent(to)}`);
+    return grantSession(to, await createSession({ ...toSession(user) }));
+  }
+
+  // ── 1. ADIM: kimlik + parola ───────────────────────────────────────────────
   const identifier = String(form.get('identifier') ?? '').trim();
   const password = String(form.get('password') ?? '');
 
@@ -130,30 +197,55 @@ export async function POST(req: NextRequest) {
     return seeOther(`/login?error=1&from=${encodeURIComponent(to)}`);
   }
 
-  let user = null;
+  let user: LoginUser | null = null;
+  let totpSub: string | null = null;
   try {
-    user = await adminLogin(identifier, password);
+    const res = await apiRaw('POST', '/v1/admin/auth/login', {
+      body: { identifier, password },
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        user?: LoginUser;
+        totpRequired?: boolean;
+        sub?: string;
+      };
+      if (data.totpRequired && data.sub) totpSub = data.sub;
+      else if (data.user) user = data.user;
+    } else if (res.status !== 401 && res.status !== 429) {
+      // 401/429 dışı (5xx, ağ, gövde hatası) → "sunucuya ulaşılamadı".
+      return seeOther(`/login?error=api&from=${encodeURIComponent(to)}`);
+    }
   } catch {
     return seeOther(`/login?error=api&from=${encodeURIComponent(to)}`);
   }
+
+  // TOTP açık: OTURUM YOK. Yalnız hangi hesabın kod beklediğini taşıyan imzalı ara çerez.
+  if (totpSub) {
+    const res = seeOther(`/login?step=totp&from=${encodeURIComponent(to)}`);
+    res.cookies.set(PENDING_COOKIE, createPendingToken(totpSub), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/',
+      maxAge: PENDING_TTL_SEC,
+    });
+    return res;
+  }
+
   if (!user) {
     return seeOther(`/login?error=1&from=${encodeURIComponent(to)}`);
   }
 
-  const token = await createSession({
+  return grantSession(to, await createSession({ ...toSession(user) }));
+}
+
+/** API kullanıcı kaydı → oturum payload'ı (tek yerde; iki giriş yolu da bunu kullanır). */
+function toSession(user: LoginUser) {
+  return {
     sub: user.id,
     email: user.email,
     name: user.name,
     role: user.role,
     ver: user.tokenVersion,
-  });
-  const res = seeOther(to);
-  res.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    path: '/',
-    maxAge: SESSION_TTL_SEC, // token exp ile aynı → "geçerli görünen ama dolmuş" cookie yok
-  });
-  return res;
+  };
 }

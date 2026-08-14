@@ -5,6 +5,7 @@ import { QuarantineNav } from '../../../components/claims/quarantine-nav';
 import { QuarantineTable } from '../../../components/quarantine-table';
 import { fetchQuarantine, parseQuarantineFilters, QUARANTINE_LIMIT } from '../queries';
 import { itemCount } from '../../../lib/labels';
+import { SavedViewsMenu } from '../../../components/saved-views-menu';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +39,13 @@ export default async function QuarantineRecordsPage({
             ? 'Arızalı bildirilen, değiştirilen veya geçersiz kılınan tüm kalemlerin değişmez defteri.'
             : `Arızalı bildirilen, değiştirilen veya geçersiz kılınan ${itemCount(rows.length, kinds)} — bildirilmiş olsun olmasın. Bu kalemler müşteriye TEKRAR TESLİM EDİLMEZ.`
         }
-      />
+      >
+        {/* Kayıtlı görünümler (§14): SUNUCU süzgeçleri (`?status=&range=&from=&to=&q=`) adreste
+            yaşıyor → "son 30 gün, geçersiz kılınanlar" gibi bir denetim görünümü tek tıkla
+            geri gelir. Tablo İÇİ hızlı süzgeçler (ürün/tedarikçi facet'i) adrese yazılmıyor,
+            onlar kaydedilmez — menü bunu boş query'de açıkça söyler. KİŞİSEL kayıt. */}
+        <SavedViewsMenu page="quarantine" />
+      </PageHeader>
       <QuarantineNav />
       {error ? (
         <Card className="p-6">

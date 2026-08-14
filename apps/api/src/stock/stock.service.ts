@@ -535,6 +535,56 @@ export interface LicenseInventoryPage {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * Bu yanıttaki lisans/hesap değerleri MASKELİ mi (A1: düz metin yalnız owner'a)?
+   * İstemci bunu bilmek ZORUNDA: dışa aktarılan dosyaya "değerler maskeli" uyarısını
+   * basabilmesi için. Alan additive'dir — eski istemci görmezden gelir.
+   */
+  masked: boolean;
+}
+
+/**
+ * Envanter DIŞA AKTARMA yanıtı — sayfalı listeden farkı: tek istekte `limit` kadar satır
+ * döner ve kırpılma DÜRÜSTÇE raporlanır (`truncated` + `total`).
+ */
+export interface LicenseInventoryExport {
+  rows: LicenseInventoryRow[];
+  /** Süzgece uyan TOPLAM kayıt (kırpılmadan önceki gerçek sayı). */
+  total: number;
+  /** Sunucu üst sınırı (LICENSE_EXPORT_LIMIT). */
+  limit: number;
+  /** total > limit → dosyada eksik kayıt var; istemci bunu GÖRÜNÜR yazmak zorunda. */
+  truncated: boolean;
+  /** Değerler maskeli mi (owner-olmayan admin). */
+  masked: boolean;
+}
+
+/**
+ * Dışa aktarmanın SUNUCU TAVANI.
+ *
+ * NEDEN 5000 (ve neden "sınırsız" değil): her satırın payload'ı AES-256-GCM ile TEK TEK
+ * çözülür — yani maliyet satır başına CPU'dur, sorgu değil. 5000 satır ≈ 2-3 MB JSON ve
+ * tek istekte ölçülebilir bir iş; üstü hem Next sunucusunda hem tarayıcıda belleğe alınır.
+ * Sayı BİLEREK karantina dışa aktarmasıyla (QUARANTINE_LIMIT) AYNI: operatör panelde tek bir
+ * "5.000" sınırı öğrenir, ekrandan ekrana değişen tavanlarla uğraşmaz.
+ *
+ * SESSİZ KIRPMA YASAK: tavana dayanıldığında `truncated` döner ve UI hem panelde hem DOSYANIN
+ * İÇİNDE bunu yazar (dosya yeniden adlandırılıp iletilebilir — uyarı sadece ekranda kalamaz).
+ */
+export const LICENSE_EXPORT_LIMIT = 5_000;
+
+/** `listLicenseItems` iç ayarları — dışa aktarma yolu için (dış sözleşme değişmez). */
+interface ListLicenseItemsOptions {
+  /**
+   * Sayfa boyunu izinli küme (10/25/50/100) YERİNE bu değere ayarlar. YALNIZ dışa aktarma
+   * kullanır; `LICENSE_EXPORT_LIMIT` ile tavanlanır (uç, keyfi büyük sayfa açamaz).
+   */
+  pageSizeOverride?: number;
+  /**
+   * false → bu çağrı 'reveal' audit'i YAZMAZ. Dışa aktarma kendi TEK kaydını yazar
+   * (`meta.op='export'`); aksi halde aynı işlem için iki kayıt düşerdi.
+   */
+  audit?: boolean;
 }
 
 export interface ListLicenseItemsParams {
@@ -1431,9 +1481,16 @@ export class StockService {
     actor = 'panel:admin',
     // A1: düz-metin lisans YALNIZ owner'a. owner-olmayan 'admin' maskeli görür (sipariş detayıyla aynı politika).
     reveal = true,
+    // Dışa aktarma yolu için iç ayarlar (varsayılanlar mevcut davranışı BİREBİR korur).
+    opts: ListLicenseItemsOptions = {},
   ): Promise<LicenseInventoryPage> {
     const page = params.page && params.page > 0 ? Math.floor(params.page) : 1;
-    const pageSize = clampPageSize(params.pageSize);
+    // Sayfa boyu normalde izinli kümeye (10/25/50/100) çekilir; dışa aktarma tek istekte
+    // tavana kadar satır ister → override yine LICENSE_EXPORT_LIMIT ile tavanlanır.
+    const pageSize =
+      opts.pageSizeOverride && opts.pageSizeOverride > 0
+        ? Math.min(Math.floor(opts.pageSizeOverride), LICENSE_EXPORT_LIMIT)
+        : clampPageSize(params.pageSize);
     const offset = (page - 1) * pageSize;
     const { productId, batchId, siteId, status } = params;
 
@@ -1752,7 +1809,8 @@ export class StockService {
 
     // Görüntüleme audit'i (§8 "reveal audit'e düşer"): YALNIZ düz-metin gerçekten gösterildiğinde
     // (owner, reveal=true) yazılır — owner-olmayan 'admin' maskeli gördüğünden reveal değildir (A1).
-    if (reveal && mapped.length > 0) {
+    // `audit: false` → çağıran kendi TEK kaydını yazar (dışa aktarma) — çift kayıt olmasın.
+    if (reveal && opts.audit !== false && mapped.length > 0) {
       try {
         await this.db.insert(auditLog).values({
           action: 'reveal',
@@ -1779,7 +1837,70 @@ export class StockService {
       }
     }
 
-    return { rows: mapped, total, page, pageSize };
+    // `masked` = "bu yanıttaki değerler düz metin DEĞİL". İstemci dosyaya uyarı basmak için
+    // bunu bilmek zorunda (kendi başına maske gövdesini aramak kırılgan bir tahmindir).
+    return { rows: mapped, total, page, pageSize, masked: !reveal };
+  }
+
+  /**
+   * Lisans envanteri DIŞA AKTARMA (§12/§13) — mutabakat/muhasebe için tek istekte liste.
+   *
+   * NEDEN AYRI UÇ (sayfaları istemcide döngüyle toplamak yerine):
+   *  · Sayfalı ucu 50 kez çağırmak 50 ayrı derin-OFFSET sorgusu + 50 ayrı 'reveal' audit kaydı
+   *    demekti; denetim izi "kim neyi dışa aktardı" sorusunu cevaplayamaz hâle gelirdi.
+   *  · Sayfalar arasında veri DEĞİŞEBİLİR (aynı anda import/atama) → dosyada mükerrer ya da
+   *    atlanmış satır oluşurdu. Tek sorgu tutarlı bir anlık görüntü verir.
+   *  · Tavan SUNUCUDA uygulanır; istemcinin "ne kadar isterse o kadar" çekme yolu YOK.
+   *
+   * Süzgeç/sıralama/maskeleme mantığı TEKRARLANMAZ: `listLicenseItems` aynen çağrılır
+   * (tek doğruluk kaynağı — liste ile dosya asla farklı kayıt kümesi gösteremez).
+   */
+  async exportLicenseItems(
+    params: ListLicenseItemsParams = {},
+    actor = 'panel:admin',
+    reveal = true,
+  ): Promise<LicenseInventoryExport> {
+    const limit = LICENSE_EXPORT_LIMIT;
+    const page = await this.listLicenseItems({ ...params, page: 1 }, actor, reveal, {
+      pageSizeOverride: limit,
+      audit: false,
+    });
+    // `total` süzgece uyan GERÇEK sayıdır (count(*) OVER) → kırpılma buradan kesin bilinir.
+    const truncated = page.total > page.rows.length;
+
+    // §8 DEĞİŞMEZ KURAL: "reveal audit'e düşer". Dosyaya düz metin YAZILDIĞINDA tek bir kayıt
+    // düşer; owner-olmayan admin maskeli dosya indirdiğinde reveal GERÇEKLEŞMEZ (A1) → yazılmaz.
+    // Anahtarın KENDİSİ meta'ya ASLA girmez; yalnız kapsam (kaç kalem, hangi süzgeç) yazılır.
+    if (reveal && page.rows.length > 0) {
+      try {
+        await this.db.insert(auditLog).values({
+          action: 'reveal',
+          actor,
+          targetType: 'license_item_list',
+          targetId: params.productId ?? 'all',
+          meta: {
+            op: 'export',
+            view: 'license_inventory',
+            count: page.rows.length,
+            total: page.total,
+            truncated,
+            limit,
+            productId: params.productId ?? null,
+            siteId: params.siteId ?? null,
+            batchId: params.batchId ?? null,
+            status: params.status ?? null,
+            holder: params.holder ?? null,
+            sort: params.sort ?? null,
+            // Arama METNİ yazılmaz: kısmi/tam anahtar olabilir (audit meta'ya payload girmez).
+            hasSearch: (params.search ?? '').trim().length >= 2,
+          },
+        });
+      } catch {
+        /* audit yazımı başarısız → dışa aktarma yine de döner (okuma yolu düşmez) */
+      }
+    }
+
+    return { rows: page.rows, total: page.total, limit, truncated, masked: page.masked };
   }
 
   /**

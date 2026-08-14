@@ -81,6 +81,18 @@ export const sites = pgTable('sites', {
   pluginVersion: text('plugin_version'),
   /** `plugin_version` en son ne zaman değişti (aynı sürüm tekrar gelirse YAZILMAZ). */
   pluginVersionAt: timestamp('plugin_version_at', { withTimezone: true }),
+  /**
+   * Mağazadan gelen SON İMZALI isteğin zamanı — "bu mağaza hâlâ konuşuyor mu?" (canlılık).
+   *
+   * NEDEN AYRI KOLON: `plugin_version_at` yalnız SÜRÜM DEĞİŞİNCE yazılır, katalog `synced_at`
+   * ise içerik hash'i değişmediyse hiç güncellenmez → ikisi de canlılık ölçmez. Geçmişte gerçek
+   * bir kesinti (eklenti panele hiç istek göndermiyordu) GÜNLERCE fark edilmedi; panel "sağlıklı"
+   * görünüyordu çünkü sessizliği ölçen hiçbir sinyal yoktu.
+   *
+   * YAZAN: HmacGuard, imza DOĞRULANDIKTAN sonra (best-effort, throttle'lı) — yani değer
+   * istemci beyanı değil, kanıtlanmış bir imzanın yan ürünüdür.
+   */
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()

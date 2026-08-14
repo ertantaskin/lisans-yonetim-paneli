@@ -43,6 +43,20 @@ export interface SiteDetail {
      */
     pluginVersion?: string | null;
     pluginVersionAt?: string | null;
+    /**
+     * CANLILIK (0040): mağazadan gelen SON imzalı isteğin zamanı. Sürüm/katalog damgalarının
+     * aksine her istekte (60 sn throttle) tazelenir → "mağaza HÂLÂ konuşuyor mu?" sorusunu
+     * yalnız bu yanıtlar. null = hiç bağlanmadı (kurulum aşaması, kesinti DEĞİL).
+     */
+    lastSeenAt?: string | null;
+    /**
+     * Sessizlik eşiği aşıldı mı — SUNUCUDA, periyodik alarmın SQL yüklemiyle BİREBİR aynı
+     * kuraldan hesaplanır. Panelde "sessiz" görünen küme ile alarm üretilen küme ayrışmasın
+     * diye burada YENİDEN hesaplanmaz. Opsiyonel: eski API sürümü döndürmeyebilir.
+     */
+    silent?: boolean;
+    /** Kararın dayandığı eşik (saat) — ekran metni uydurmasın diye sunucudan gelir. */
+    silenceThresholdHours?: number;
     createdAt: string;
   };
   mappingCount: number;

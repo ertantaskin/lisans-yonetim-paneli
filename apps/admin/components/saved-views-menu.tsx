@@ -1,6 +1,6 @@
 'use client';
 import * as React from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { Bookmark, BookmarkPlus, Loader2, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
@@ -23,12 +23,48 @@ interface SavedView {
 
 /**
  * Kayıtlı görünümler menüsü (§14). Operatör mevcut tablo filtre/arama durumunu (URL query)
- * adlandırıp kaydeder, sonra tek tıkla geri yükler. Actor bazlıdır (API tarafı x-admin-actor
- * ile her admin'in yalnız kendi görünümlerini döndürür); self-contained + yeniden kullanılabilir.
- * `page` bu tablonun kimliğidir (ör. 'orders'); orders sayfası orkestrator tarafından bağlanır.
+ * adlandırıp kaydeder, sonra tek tıkla geri yükler.
+ *
+ * SERİLEŞTİRME SÖZLEŞMESİ (bağlamadan ÖNCE okunmalı): kaydedilen şey ADRES ÇUBUĞUNDAKİ query
+ * string'in TAMAMIDIR. Yani bu bileşen YALNIZ süzgeçleri URL'de yaşayan ekranlarda anlamlıdır.
+ * İki yol da geçerlidir:
+ *   (a) sayfanın KENDİ sunucu parametreleri (`?site=`, `?status=`… — /stock, /customers,
+ *       /mappings, /quarantine/records),
+ *   (b) `DataTable syncUrl` — arama/facet/sıralamayı `tq`/`tf.<kolon>`/`tsort` anahtarlarıyla
+ *       adrese yazar (bkz. data-table/url-state.ts; /orders bunu kullanır).
+ * Süzgeçlerini yalnız istemci state'inde tutan (syncUrl KAPALI) bir tabloya bağlanırsa
+ * kaydedilen görünüm BOŞ olur ve geri yükleme hiçbir şey yapmaz. Bu yüzden menü boş query'de
+ * SUSMAZ, açıkça uyarır (aşağıya bkz.) — sessizce işe yaramaz bir kayıt üretmek, bu panelde
+ * en tehlikeli kusur sınıfıdır ("yaptım sanıp yapmamak").
+ *
+ * KİŞİSEL: kayıtlar actor bazlıdır (API `x-admin-actor` ile yalnız isteği yapan admin'in
+ * satırlarını döndürür/siler) — menüde de böyle yazar, operatör görünümünü "takıma bıraktım"
+ * sanmasın.
+ *
+ * `page` bu ekranın kimliğidir (ör. 'orders', 'stock'): görünümler ekranlar arası karışmaz.
  */
 export function SavedViewsMenu({ page }: { page: string }) {
-  const router = useRouter();
+  /*
+   * SUSPENSE SINIRI: `useSearchParams()` bir CSR-bailout kancasıdır; sarmalanmadığında
+   * statik prerender edilen bir rotada `next build` HATA verir. Bu menü artık birden çok
+   * ekrana bağlanıyor ve hepsinin `force-dynamic` kalacağının garantisi yok → sınır burada,
+   * bileşenin İÇİNDE kuruldu (her çağıranın hatırlaması gereken bir kural bırakmamak için).
+   */
+  return (
+    <React.Suspense
+      fallback={
+        <Button variant="outline" size="sm" disabled>
+          <Bookmark />
+          Görünümler
+        </Button>
+      }
+    >
+      <SavedViewsMenuInner page={page} />
+    </React.Suspense>
+  );
+}
+
+function SavedViewsMenuInner({ page }: { page: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -61,10 +97,19 @@ export function SavedViewsMenu({ page }: { page: string }) {
     if (open) void load();
   }, [open, load]);
 
-  // Görünümü uygula: filtreleri kaydedilen query ile değiştir.
+  /*
+   * Görünümü uygula: filtreleri kaydedilen query ile değiştir.
+   *
+   * TAM GEZİNME (router.push DEĞİL) — bilinçli: bazı ekranlarda süzgeçler sunucu
+   * parametresidir, bazılarında `DataTable`ın URL senkronudur (bkz. data-table/url-state.ts).
+   * İkincisi durumu YALNIZ mount'ta okur; yumuşak gezinme aynı rotada bileşeni yeniden
+   * kurmadığı için adres değişir ama tablo süzgeçleri UYGULANMAZDI ("geri yükledim sanıp
+   * yüklememek"). Tam gezinme her iki sınıfta da tek bir doğru davranış verir; görünüm
+   * yükleme nadir ve bilinçli bir işlem olduğu için ek sayfa yüklemesi kabul edilebilir.
+   */
   const restore = (view: SavedView) => {
     setOpen(false);
-    router.push(`${pathname}${view.query}`);
+    window.location.assign(`${pathname}${view.query}`);
   };
 
   // Mevcut durumu adlandırıp kaydet.
@@ -73,8 +118,12 @@ export function SavedViewsMenu({ page }: { page: string }) {
     setOpen(false);
     const answer = await confirm({
       title: 'Bu görünümü kaydet',
-      description:
-        'Ekrandaki süzgeç/sıralama durumu bu adla kaydedilir; menüden tek tıkla geri dönebilirsiniz.',
+      description: currentQuery
+        ? 'Adres çubuğundaki süzgeç durumu bu adla kaydedilir; menüden tek tıkla geri dönebilirsiniz. Görünüm yalnız size görünür.'
+        : // DÜRÜSTLÜK: adres çubuğunda hiç süzgeç yokken kaydedilen görünüm sayfayı SÜZGEÇSİZ
+          // açar. Kaydı engellemiyoruz (bir ekranın "varsayılan hâli" de meşru bir görünümdür),
+          // ama operatör ne kaydettiğini bilerek onaylasın.
+          'DİKKAT: Adres çubuğunda şu an hiçbir süzgeç yok — bu görünüm sayfayı süzgeçsiz açar. Bu ekranın bazı süzgeçleri (tablo içi arama/facet) adrese yazılmadığı için kaydedilemez.',
       confirmLabel: 'Kaydet',
       reason: {
         label: 'Görünüm adı',
@@ -127,6 +176,10 @@ export function SavedViewsMenu({ page }: { page: string }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel>Kayıtlı görünümler</DropdownMenuLabel>
+        {/* KİŞİSEL KAPSAM görünür yazılır: kayıtlar actor bazlı, başka admin'ler göremez. */}
+        <p className="px-2.5 pb-1.5 text-xs leading-snug text-muted-foreground">
+          Yalnız size görünür — bu ekrandaki süzgeçlerin adres çubuğuna yazılan hâlini saklar.
+        </p>
 
         {loading ? (
           <div className="flex items-center gap-2 px-2.5 py-2 text-sm text-muted-foreground">

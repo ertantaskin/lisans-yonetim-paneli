@@ -22,7 +22,7 @@ import {
 import { CryptoService } from '../crypto/crypto.service';
 import { RateLimitService } from '../common/rate-limit.service';
 import { REDIS } from '../redis/redis.module';
-import { SitesService } from '../sites/sites.service';
+import { SITE_LAST_SEEN_THROTTLE_SEC, SitesService } from '../sites/sites.service';
 import type { Site } from '../db/schema';
 
 /** Kurulu WP eklenti sürümü — İMZA KAPSAMI DIŞINDA (bkz. HmacGuard.recordPluginVersion). */
@@ -153,6 +153,10 @@ export class HmacGuard implements CanActivate {
     //    doğrulandıktan SONRA). Best-effort telemetri; istek yolunu bloklamaz.
     this.recordPluginVersion(auth.site, str(h[PLUGIN_VERSION_HEADER]));
 
+    // 6) CANLILIK damgası (0040) — "bu mağaza hâlâ konuşuyor mu?". Aynı sınıf best-effort
+    //    telemetri; İMZA DOĞRULANDIKTAN SONRA yazılır (aşağıdaki gerekçeye bak).
+    this.recordLastSeen(auth.site);
+
     req.site = auth.site;
     return true;
   }
@@ -178,6 +182,34 @@ export class HmacGuard implements CanActivate {
       if (!version || !PLUGIN_VERSION_RE.test(version)) return;
       if (site.pluginVersion === version) return;
       void this.sites.recordPluginVersion(site.id, version).catch(() => {});
+    } catch {
+      // Telemetri hiçbir koşulda kimlik doğrulamayı bozmaz.
+    }
+  }
+
+  /**
+   * Sitenin CANLILIK damgasını (`sites.last_seen_at`, 0040) tazeler → "mağaza sessiz mi?"
+   * alarmının ve panel rozetlerinin TEK veri kaynağı.
+   *
+   * NEDEN İMZADAN SONRA (güvenlik): bu çağrı adım 3-4'ten (imza + nonce) SONRA yapılır.
+   * Doğrulanmamış bir istek canlılık üretebilseydi, sitenin api_key'ini bilen (ya da yalnız
+   * uydurma imza gönderen) herhangi biri ölü bir mağazayı "canlı" gösterip alarmı susturabilirdi
+   * — yani sinyalin saldırgan tarafından kapatılabilir olması, hiç sinyal olmamasından beterdi
+   * (operatör artık "alarm yok" diye güvenirdi).
+   *
+   * THROTTLE: `SITE_LAST_SEEN_THROTTLE_SEC` (60 sn) içinde yeniden yazılmaz. Burada bayat
+   * `req.site` anlık görüntüsüyle ÖN eleme yapılır (UPDATE hiç gönderilmez); asıl güvence
+   * SQL'deki aynı koşuldur (`SitesService.recordLastSeen`) — eşzamanlı istekler aynı bayat
+   * görüntüyü paylaşabilir.
+   *
+   * Fire-and-forget: await EDİLMEZ (istek beklemez) ama `.catch` ile yutulur → unhandled
+   * rejection bırakmaz ve DB hatası isteği ASLA düşürmez (recordPluginVersion deseni).
+   */
+  private recordLastSeen(site: Site): void {
+    try {
+      const last = site.lastSeenAt ? site.lastSeenAt.getTime() : 0;
+      if (Date.now() - last < SITE_LAST_SEEN_THROTTLE_SEC * 1000) return;
+      void this.sites.recordLastSeen(site.id).catch(() => {});
     } catch {
       // Telemetri hiçbir koşulda kimlik doğrulamayı bozmaz.
     }

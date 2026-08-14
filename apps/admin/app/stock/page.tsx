@@ -14,6 +14,7 @@ import { LicenseItemsTable } from '../../components/inventory/license-items-tabl
 import { getCategories } from '../categories/queries';
 import { UNCATEGORIZED, type CategoryRow } from '../../lib/categories';
 import { includesTr } from '../../lib/utils';
+import { SavedViewsMenu } from '../../components/saved-views-menu';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,6 +113,10 @@ export default async function StockPage({
   return (
     <div className="space-y-5">
       <PageHeader icon={Boxes} title="Stok & Ürünler" description={description}>
+        {/* Kayıtlı görünümler (§14): bu ekranın süzgeçleri (`?category=`, `?q=`) ADRESTE
+            yaşadığı için menü gerçekten çalışır — kaydedilen görünüm aynı kategoriyi/aramayı
+            geri getirir. Görünümler KİŞİSELDİR (actor bazlı). */}
+        <SavedViewsMenu page="stock" />
         <Button asChild variant="outline">
           <Link href="/categories">
             <FolderTree className="size-4" /> Kategoriler

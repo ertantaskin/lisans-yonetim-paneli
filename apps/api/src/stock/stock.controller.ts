@@ -136,6 +136,13 @@ const ListLicenseItemsQuery = z.object({
 });
 type ListLicenseItemsQuery = z.infer<typeof ListLicenseItemsQuery>;
 
+/**
+ * Dışa aktarma süzgeçleri — listeyle BİREBİR aynı, yalnız sayfalama alanları YOK: tavan
+ * sunucudadır (`LICENSE_EXPORT_LIMIT`) ve istemci "kaç satır istediğini" seçemez.
+ */
+const ExportLicenseItemsQuery = ListLicenseItemsQuery.omit({ page: true, pageSize: true });
+type ExportLicenseItemsQuery = z.infer<typeof ExportLicenseItemsQuery>;
+
 /** Tekil iptal: sebep ZORUNLU (§12 "sebepsiz stok değişikliği yok"). */
 const VoidLicenseItemBody = z.object({ reason: z.string().trim().min(1).max(500) });
 type VoidLicenseItemBody = z.infer<typeof VoidLicenseItemBody>;
@@ -192,6 +199,37 @@ export class StockController {
    * Arama + durum/site/parti süzgeci + sayfalama. TAM lisans döner (admin) → her
    * görüntüleme TEK 'reveal' audit kaydına düşer.
    */
+  /**
+   * Envanter DIŞA AKTARMA (mutabakat/muhasebe) — tek istekte tavan kadar satır.
+   *
+   * ROTA SIRASI: statik 'license-items/export' bilerek listeden ÖNCE tanımlıdır. Bugün bir
+   * `@Get('license-items/:id')` YOK; eklenirse bu satır altta kalsaydı 'export' kelimesi
+   * id sanılıp sessizce 400/404'e düşerdi (Nest rotaları tanım sırasına göre eşler).
+   *
+   * ROL (A1/M1): düz metin YALNIZ owner'a — owner-olmayan 'admin' maskeli dosya indirir.
+   * Düz-metin dosyası TEK 'reveal' audit kaydı üretir (serviste; anahtar değeri yazılmaz).
+   */
+  @Get('license-items/export')
+  exportLicenseItems(
+    @Query(new ZodBody(ExportLicenseItemsQuery)) query: ExportLicenseItemsQuery,
+    @AdminActor() actor: string,
+    @AdminRole() role: string,
+  ) {
+    return this.stock.exportLicenseItems(
+      {
+        productId: query.productId || undefined,
+        siteId: query.siteId || undefined,
+        batchId: query.batchId || undefined,
+        status: query.status || undefined,
+        holder: query.holder || undefined,
+        search: query.search || undefined,
+        sort: query.sort || undefined,
+      },
+      actor,
+      canRevealPlaintext(role),
+    );
+  }
+
   @Get('license-items')
   listLicenseItems(
     @Query(new ZodBody(ListLicenseItemsQuery)) query: ListLicenseItemsQuery,

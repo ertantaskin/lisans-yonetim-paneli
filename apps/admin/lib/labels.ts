@@ -498,6 +498,35 @@ const AUDIT_ACTION: Record<string, string> = {
 };
 export const auditActionLabel = (a: string) => lookup(AUDIT_ACTION, a);
 
+/**
+ * Denetim izi HEDEF TÜRÜ (`audit_log.target_type`) — "neye yapıldı".
+ *
+ * `auditActionLabel` ("ne yapıldı") ile ÇİFT: ikisi ayrı kolondur ve ekranda yan yana basılır.
+ * Sözlük ilk yazımda `/audit` ekranının kendi dosyasında yereldi; ham `license_item_list` /
+ * `order_line` gibi değerlerin operatöre çıkmaması bu projede TEK KAYNAK kuralına bağlı
+ * olduğu için buraya taşındı (yerel kopya kaldırıldı).
+ */
+const AUDIT_TARGET_TYPE: Record<string, string> = {
+  order: 'Sipariş',
+  order_line: 'Sipariş kalemi',
+  assignment: 'Atama',
+  license_item: 'Lisans kalemi',
+  license_item_list: 'Lisans envanteri',
+  product: 'Ürün',
+  site: 'Mağaza / kanal',
+  supplier: 'Tedarikçi',
+  supplier_claim: 'Tedarikçi değişim fişi',
+  purchase_order: 'Satın alma emri',
+  batch: 'Parti',
+  quarantine: 'Kusurlu stok listesi',
+  customer: 'Müşteri',
+};
+/** Boş/null hedef türü için BOŞ dize döner (bilinmeyen anahtarda ham değere düşer). */
+export const auditTargetTypeLabel = (t: string | null | undefined): string =>
+  t == null || t === '' ? '' : lookup(AUDIT_TARGET_TYPE, t);
+/** Süzgeç açılır listesinde sunulan hedef türleri. */
+export const AUDIT_TARGET_TYPE_OPTIONS = Object.keys(AUDIT_TARGET_TYPE);
+
 // ── Güvenlik olayı tipi ──────────────────────────────────────────────────────
 // Anahtarlar GERÇEK `security_events.type` değerleridir (kaynak: apps/api/src/security/
 // security.service.ts — velocity/anomaly/quota_exceeded/quota_review; blocklist şemada
@@ -508,6 +537,23 @@ const SECURITY_TYPE: Record<string, string> = {
   quota_review: 'Kota incelemesi',
   anomaly: 'Anomali',
   blocklist: 'Kara liste',
+  // Yönetici hesap/oturum yaşam döngüsü (admin-users.service). Bu anahtarlar bir dönem
+  // security-table.tsx içinde YEREL bir sözlükte duruyordu; aynı ekranda iki sözlük olması
+  // bu projede daha önce çelişen rozet/etiket üretmişti (SupplyStatusBadge dersi) → tek kaynak.
+  admin_login: 'Yönetici girişi',
+  admin_login_failed: 'Başarısız yönetici girişi',
+  admin_created: 'Yönetici oluşturuldu',
+  admin_disabled: 'Yönetici devre dışı bırakıldı',
+  admin_reactivated: 'Yönetici yeniden etkinleştirildi',
+  admin_password_reset: 'Yönetici parolası sıfırlandı',
+  admin_removed: 'Yönetici silindi',
+  // İki faktörlü giriş (totp.service + admin-users.service). `admin_totp_failed` brute-force
+  // sinyalidir: parolası bilinen bir hesapta kod deneniyor demektir.
+  admin_totp_setup_started: 'İki faktörlü kurulum başlatıldı',
+  admin_totp_enabled: 'İki faktörlü doğrulama açıldı',
+  admin_totp_disabled: 'İki faktörlü doğrulama kapatıldı',
+  admin_totp_reset: 'İki faktörlü doğrulama sıfırlandı',
+  admin_totp_failed: 'Başarısız iki faktörlü kod',
 };
 export const securityTypeLabel = (t: string) => lookup(SECURITY_TYPE, t);
 
@@ -527,6 +573,14 @@ const NOTIFICATION_TYPE: Record<string, string> = {
   digest_alert: 'Günlük özet uyarısı',
   reconcile_violation: 'Mutabakat ihlali',
   quota_review: 'Kota incelemesi',
+  /**
+   * Mağaza uzun süre imzalı istek göndermedi (canlılık taraması). Bu tür TAM da geçmişte
+   * günlerce fark edilmeyen sessiz kesintiyi görünür kılmak için var — etiketi eksik olsaydı
+   * operatör bildirim listesinde ham `site_silent` görürdü.
+   */
+  site_silent: 'Mağaza sessiz',
+  /** Tekrarlı bir süpürme işi patladı (SweepAlarmService) — "iş sessizce öldü" alarmı. */
+  sweep_failed: 'Arka plan işi başarısız',
 };
 export const notificationTypeLabel = (t: string) => lookup(NOTIFICATION_TYPE, t);
 

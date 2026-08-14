@@ -12,6 +12,7 @@ import {
   RadioTower,
   ScanSearch,
   ShieldAlert,
+  ShieldCheck,
   ShieldX,
   TriangleAlert,
   UserCheck,
@@ -51,30 +52,17 @@ const TYPE_ICON: Record<string, LucideIcon> = {
   admin_reactivated: UserCheck,
   admin_password_reset: KeyRound,
   admin_removed: UserX,
+  // İki faktörlü giriş (§8).
+  admin_totp_setup_started: ShieldCheck,
+  admin_totp_enabled: ShieldCheck,
+  admin_totp_disabled: ShieldX,
+  admin_totp_reset: KeyRound,
+  admin_totp_failed: KeyRound,
 };
 
-/**
- * Yönetici auth olaylarının Türkçe karşılıkları — bu ekrana ÖZEL yerel sözlük.
- * `securityTypeLabel` (labels.ts) bu anahtarları henüz tanımıyor ve bilinmeyen anahtarda HAM
- * değeri döndürüyor → operatöre `admin_login_failed` gibi ham İngilizce enum çıkıyordu.
- * Öncelik sırası: labels.ts BİLİYORSA o kazanır (tek kaynak korunur, sözlüğe eklenirse burası
- * kendiliğinden devre dışı kalır); bilmiyorsa buradaki karşılık kullanılır.
- */
-const ADMIN_AUTH_TYPE: Record<string, string> = {
-  admin_login: 'Yönetici girişi',
-  admin_login_failed: 'Başarısız yönetici girişi',
-  admin_created: 'Yönetici oluşturuldu',
-  admin_disabled: 'Yönetici devre dışı bırakıldı',
-  admin_reactivated: 'Yönetici yeniden etkinleştirildi',
-  admin_password_reset: 'Yönetici parolası sıfırlandı',
-  admin_removed: 'Yönetici silindi',
-};
-
-function typeLabel(type: string): string {
-  const known = securityTypeLabel(type);
-  // securityTypeLabel bilinmeyen anahtarda ham değeri geri verir → yerel sözlüğe düş.
-  return known !== type ? known : (ADMIN_AUTH_TYPE[type] ?? type);
-}
+// Etiketler TEK KAYNAK `labels.ts` → burada yerel sözlük YOK (bir dönem vardı; aynı ekranda
+// iki sözlük tutmak bu projede çelişen etiket üretmişti).
+const typeLabel = securityTypeLabel;
 
 // ── Severity → rozet varyant + ikon (etiket labels.ts severityLabel'dan) ──────
 const SEVERITY_META: Record<
@@ -174,12 +162,16 @@ const columns: ColumnDef<SecurityEventRow>[] = [
  */
 const TYPE_FACET_VALUES = [
   'admin_login_failed',
+  'admin_totp_failed',
   'admin_login',
   'admin_created',
   'admin_disabled',
   'admin_reactivated',
   'admin_password_reset',
   'admin_removed',
+  'admin_totp_enabled',
+  'admin_totp_disabled',
+  'admin_totp_reset',
   'velocity',
   'quota_exceeded',
   'quota_review',

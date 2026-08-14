@@ -747,9 +747,12 @@ export default function GuidePage() {
       >
         <Bullets>
           <li><strong><R href="/reports">Raporlar</R>:</strong> stok, satış hızı ve tükenme tahmini.</li>
+          <li><strong><R href="/reports/sla">Teslimat Süresi</R>:</strong> siparişin düşmesiyle son anahtarın teslim edilmesi arasında geçen süre. Stoktan anında karşılananlar ile <strong>beklemek zorunda kalanlar ayrı</strong> gösterilir; ortalamanın yanında <strong>ortanca ve p95</strong> vardır (birkaç uzun bekleme ortalamayı gizler). Hâlâ tamamlanmamış siparişler henüz süreye giremez — ekran bunu ayrıca uyarır. İncelemedeki siparişler, iptal satırlar, bonus kalemler ve değişimle verilen taze anahtarlar hesaba katılmaz (kaç tanesinin elendiği yazılır).</li>
+          <li><strong><R href="/reports/reorder">Yeniden Sipariş</R>:</strong> &quot;neyi, ne zaman, ne kadar sipariş etmeliyim&quot;. Son 30 günün hızı + o ürünün tedarikçisinin <strong>gerçekleşen tedarik süresi</strong> ile hesaplanır; formül ekranda açıkça yazılıdır. Tedarik süresi henüz bilinmiyorsa (kapanmış satın alma emri yoksa) <strong>miktar önerilmez</strong> — yalnız tükenme tahmini gösterilir.</li>
           <li><strong><R href="/reports/costs">Maliyet Raporu</R>:</strong> tedarik harcaması + stok değerleme + teslim edilen mal maliyeti. Satış fiyatı panelde yoktur (ödeme mağaza tarafında) → kâr değil <strong>maliyet</strong> gösterilir. Tedarikçi/maliyet bilgisi olmadan (partisiz) girilen stok burada <strong>&quot;kapsanamayan&quot;</strong> olarak dürüstçe ayrı gösterilir.</li>
           <li><strong><R href="/notifications">Bildirimler</R>:</strong> düşük stok ve kritik olaylar (Telegram tanımlıysa oraya da düşer).</li>
-          <li><strong><R href="/security">Güvenlik</R>:</strong> anomali/velocity tespiti ve güvenlik olayları (otomatik askıya alma yok).</li>
+          <li><strong><R href="/security">Güvenlik</R>:</strong> anomali/velocity tespiti, başarısız giriş denemeleri ve güvenlik olayları (otomatik askıya alma yok).</li>
+          <li><strong><R href="/audit">Denetim İzi</R>:</strong> &quot;kim, neyi, ne zaman yaptı&quot;. Güvenlik ekranından farkı: orası <em>tespit edilen riski</em>, burası <em>gerçekleşmiş insan eylemini</em> gösterir (anahtar görüntüleme, iade, iptal, stok girişi, giriş…). Kayıt silinmez ya da değiştirilemez; aktör, hedef, tarih ve iz kimliğine göre süzebilirsiniz.</li>
           <li><strong><R href="/ops">Başarısız İşler</R>:</strong> başarısız iş/webhook kuyruğu ve yeniden deneme (replay).</li>
           <li><strong><R href="/ai">AI Operasyon</R>:</strong> destek triyajı, doğal dilden rapor, günlük anomali özeti — <em>yalnızca öneri</em>, varsayılan kapalıdır.</li>
         </Bullets>
@@ -765,6 +768,7 @@ export default function GuidePage() {
           <li><strong><R href="/templates">Şablonlar</R>:</strong> teslimat maili şablonlarını düzenleyin, canlı önizleyin ve test maili gönderin. Şablonda kullandığınız desteklenmeyen bir değişken varsa uyarılırsınız (gönderimde boş çıkar).</li>
           <li><strong><R href="/settings">Ayarlar</R>:</strong> panel geneli durum ve yapılandırma.</li>
           <li><strong><R href="/admins">Yöneticiler</R>:</strong> (yalnız &quot;owner&quot; rolüne görünür) çoklu-admin yönetimi, rol ve erişim.</li>
+          <li><strong><R href="/admins/security">Hesap Güvenliğim</R>:</strong> kendi hesabınıza <strong>iki faktörlü giriş</strong> (doğrulama uygulaması) ekleyin. Açtıktan sonra girişte parolanın ardından 6 haneli kod sorulur. Telefonunuzu kaybederseniz &quot;owner&quot; rolündeki bir yönetici sıfırlayabilir; sıfırlama o hesabın açık oturumlarını da kapatır.</li>
         </Bullets>
       </Section>
 
@@ -779,7 +783,8 @@ export default function GuidePage() {
           <li><strong>Sitelerdeki kurulu sürüm:</strong> aynı sayfadaki tablo her mağazanın hangi eklenti sürümünü çalıştırdığını gösterir (&quot;güncel&quot; / &quot;eski&quot;). Bilgi, mağazanın panele yaptığı imzalı isteklerden gelir.</li>
           <li><strong>Mağaza tarafı:</strong> yayınlanan sürüm WordPress → Güncellemeler ekranında görünür. WordPress sürüm bilgisini 12 saat önbelleğe alır; hemen görmek için o ekrandaki <em>&quot;Tekrar denetle&quot;</em> bağlantısını kullanın.</li>
           <li><strong><R href="/deployments">Dağıtımlar</R>:</strong> panelin kendi sürümünü (API/Admin) canlıya alır ve dağıtım geçmişini gösterir. Sağlık kontrolü başarısız olursa dağıtım otomatik geri alınır.</li>
-          <li>Her iki işlem de yalnız &quot;owner&quot; rolüne açıktır ve aynı kuyruğu kullanır: aynı anda tek iş çalışır.</li>
+          <li><strong><R href="/deployments">Yedekleme</R>:</strong> aynı sayfadaki &quot;Son yedek&quot; ve &quot;Son tatbikat&quot; kartları veritabanı yedeğinin ne zaman alındığını, boyutunu ve <strong>dışarı kopyalanıp kopyalanmadığını</strong> gösterir. Gecelik yedek otomatiktir; &quot;Şimdi yedek al&quot; ile elle de tetikleyebilirsiniz. Yedek eskiyse kırmızı bant çıkar. <strong>Tatbikat</strong>, yedeği ayrı bir veritabanına geri yükleyip gerçekten açılabildiğini kanıtlar — hiç denenmemiş bir yedek, yedek sayılmaz.</li>
+          <li>Bu işlemlerin hepsi yalnız &quot;owner&quot; rolüne açıktır ve aynı kuyruğu kullanır: aynı anda tek iş çalışır (yedek sürerken dağıtım isteği reddedilir).</li>
         </Bullets>
         <Tip>
           Yayın ya da dağıtım isteği anında çalışmaz: sunucudaki görevli en geç bir dakika içinde
@@ -811,13 +816,17 @@ export default function GuidePage() {
           <li><strong>Ctrl / ⌘ + K</strong> — her yerden global arama (sipariş no, e-posta, key son 5 hane). Hassas veri sonuçta gösterilmez.</li>
           <li><strong>Ctrl / ⌘ + B</strong> — sol menüyü aç/kapat (tercih hatırlanır).</li>
           <li>
-            <strong>Kayıtlı görünüm</strong> şu an yalnız <R href="/orders">Siparişler</R> ekranındadır:
-            filtre/aramayı ayarlayıp başlıktaki menüden adlandırarak saklarsınız, sonra tek tıkla geri
-            yüklersiniz (görünümler kişiseldir — yalnız siz görürsünüz).
+            <strong>Kayıtlı görünüm</strong> — <R href="/orders">Siparişler</R>,{' '}
+            <R href="/stock">Stok</R>, <R href="/customers">Müşteriler</R>,{' '}
+            <R href="/mappings">Eşleştirme</R> ve <R href="/quarantine/records">Kusurlu stok kayıtları</R>{' '}
+            ekranlarında: filtre/aramayı ayarlayıp başlıktaki <strong>Görünümler</strong> menüsünden
+            adlandırarak saklarsınız, sonra tek tıkla geri yüklersiniz. Görünümler kişiseldir —
+            yalnız siz görürsünüz.
           </li>
           <li>
-            Diğer ekranlarda filtreler <strong>adres çubuğuna yansır</strong>: sık kullandığınız bir
-            görünümü tarayıcı yer imlerine ekleyip aynı yerden geri dönebilirsiniz.
+            Bu ekranlarda filtreler <strong>adres çubuğuna yansır</strong>: süzgeçli adresi yer
+            imlerine ekleyebilir ya da bir iş arkadaşınıza gönderebilirsiniz — aynı listeyi görür.
+            Kaydederken adres çubuğu boşsa menü sizi uyarır (boş bir görünüm kaydetmiş olmazsınız).
           </li>
           <li>Sağ üstten <strong>açık/koyu tema</strong> arasında geçiş yapabilirsiniz.</li>
         </Bullets>

@@ -23,7 +23,22 @@ export const auditLog = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [index('audit_log_created_idx').on(t.createdAt)],
+  /*
+   * İNDEKSLER — denetim izi EKRANININ (§8) süzgeçlerini karşılar.
+   *
+   * Tabloda yalnız `created_at` indeksi vardı; "bu admin ne yaptı" ve "bu kayda ne oldu"
+   * sorguları tam tablo taramasıydı. audit_log append-only ve en hızlı büyüyen tablolardan
+   * biri (her reveal/revoke/import bir satır) → ekran açılır açılmaz taranamaz hale gelirdi.
+   *
+   * Sıralama HER ZAMAN `created_at DESC` olduğu için bileşik indekslerin ikinci kolonu da
+   * DESC: yön ayna değildir (0031 dersi), tie-break ancak aynı yönde indeksten karşılanır.
+   */
+  (t) => [
+    index('audit_log_created_idx').on(t.createdAt),
+    index('audit_log_actor_idx').on(t.actor, t.createdAt.desc()),
+    index('audit_log_target_idx').on(t.targetType, t.targetId, t.createdAt.desc()),
+    index('audit_log_action_idx').on(t.action, t.createdAt.desc()),
+  ],
 );
 
 export type AuditLog = typeof auditLog.$inferSelect;

@@ -281,6 +281,13 @@
       "when": 1786731496429,
       "tag": "0039_batches_supplier_received_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786733119961,
+      "tag": "0040_totp_lastseen_audit_idx",
+      "breakpoints": true
     }
   ]
 }

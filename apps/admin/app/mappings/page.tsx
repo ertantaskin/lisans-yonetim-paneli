@@ -10,6 +10,7 @@ import { Card } from '../../components/ui/card';
 import { UnmappedTable, type UnmappedRowView } from '../../components/unmapped-table';
 import { CatalogTable, type CatalogRowView } from '../../components/catalog-table';
 import { PendingLinesPanel } from '../../components/pending-lines-panel';
+import { SavedViewsMenu } from '../../components/saved-views-menu';
 
 export const dynamic = 'force-dynamic';
 
@@ -76,7 +77,11 @@ export default async function MappingsPage({
         icon={Link2}
         title="Ürün Eşleştirme"
         description="Mağaza ürünlerini panel ürünlerine eşleyin. Site kataloğundan sipariş beklemeden proaktif eşleyin ya da siparişte gelmiş eşlenmemiş ürünleri tek tıkla eşleyin — mağaza ürün ID'si veriden gelir, elle yazmazsınız (typo riski yok)."
-      />
+      >
+        {/* Kayıtlı görünümler (§14): seçili site `?site=` ile adreste → çok mağazalı kurulumda
+            "her açılışta mağazayı yeniden seç" derdini bitirir. Görünümler KİŞİSELDİR. */}
+        <SavedViewsMenu page="mappings" />
+      </PageHeader>
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>

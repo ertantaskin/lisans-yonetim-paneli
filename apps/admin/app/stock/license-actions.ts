@@ -89,6 +89,30 @@ export interface LicenseInventoryPage {
   total: number;
   page: number;
   pageSize: number;
+  /**
+   * Değerler MASKELİ mi (A1: düz metin yalnız owner'a)? OPSİYONEL: api ve admin ayrı
+   * imajlar — eski API bu alanı göndermez. O durumda istemci satırlardan sezer
+   * (`looksMasked`), böylece maskeli dosyaya uyarı basma davranışı kaybolmaz.
+   */
+  masked?: boolean;
+}
+
+/** `GET /v1/admin/license-items/export` yanıtı — sayfalama YOK, sunucu tavanı var. */
+export interface LicenseInventoryExport {
+  rows: LicenseInventoryRow[];
+  /** Süzgece uyan GERÇEK toplam (kırpılmadan önce). */
+  total: number;
+  /** Sunucu üst sınırı. */
+  limit: number;
+  /** true → dosyada eksik kayıt var; UI bunu GÖRÜNÜR yazmak zorunda (sessiz kırpma yasak). */
+  truncated: boolean;
+  masked?: boolean;
+}
+
+export interface LicenseExportResult {
+  ok: boolean;
+  data?: LicenseInventoryExport;
+  error?: string;
 }
 
 export interface LicenseListParams {
@@ -131,6 +155,31 @@ async function messageOf(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+/**
+ * SÜZGEÇ fragmanı — liste ve dışa aktarma ucu BİREBİR aynısını kullanır.
+ *
+ * NEDEN TEK YERDE: iki çağıran kendi query'sini kurarsa dosya ile ekrandaki liste sessizce
+ * ayrışır (bu projede "toplam ile liste çelişiyor" sınıfı hata daha önce yaşandı). Sayfalama
+ * alanları BİLEREK burada değil: dışa aktarmada sayfa kavramı yok.
+ */
+function filterQuery(params: LicenseListParams): URLSearchParams {
+  const qs = new URLSearchParams();
+  if (params.productId && UUID_RE.test(params.productId)) qs.set('productId', params.productId);
+  if (params.siteId && UUID_RE.test(params.siteId)) qs.set('siteId', params.siteId);
+  if (params.batchId && UUID_RE.test(params.batchId)) qs.set('batchId', params.batchId);
+  if (params.status && STATUSES.includes(params.status)) qs.set('status', params.status);
+  // "Kim tutuyor" ekseni — envanter DURUMUNDAN ayrıdır (MAK anahtarı kısmen satılmışken
+  // hâlâ 'available' görünür). Geri çekilmiş partide "hangileri hâlâ müşterilerde" sorusu
+  // yalnız bununla cevaplanır.
+  if (params.holder === 'customer') qs.set('holder', 'customer');
+
+  const search = String(params.search ?? '').trim().slice(0, 120);
+  if (search) qs.set('search', search);
+
+  if (params.sort && SORTS.includes(params.sort)) qs.set('sort', params.sort);
+  return qs;
+}
+
 /** İşlem sonrası ilgili ekranları tazeler (ürün detayı + /stock stok kolonu). */
 function revalidateInventory(productId?: string) {
   if (productId && UUID_RE.test(productId)) revalidatePath(`/products/${productId}`);
@@ -145,18 +194,7 @@ function revalidateInventory(productId?: string) {
 export async function fetchLicenseItemsAction(
   params: LicenseListParams = {},
 ): Promise<LicenseListResult> {
-  const qs = new URLSearchParams();
-  if (params.productId && UUID_RE.test(params.productId)) qs.set('productId', params.productId);
-  if (params.siteId && UUID_RE.test(params.siteId)) qs.set('siteId', params.siteId);
-  if (params.batchId && UUID_RE.test(params.batchId)) qs.set('batchId', params.batchId);
-  if (params.status && STATUSES.includes(params.status)) qs.set('status', params.status);
-  // "Kim tutuyor" ekseni — envanter DURUMUNDAN ayrıdır (MAK anahtarı kısmen satılmışken
-  // hâlâ 'available' görünür). Geri çekilmiş partide "hangileri hâlâ müşterilerde" sorusu
-  // yalnız bununla cevaplanır.
-  if (params.holder === 'customer') qs.set('holder', 'customer');
-
-  const search = String(params.search ?? '').trim().slice(0, 120);
-  if (search) qs.set('search', search);
+  const qs = filterQuery(params);
 
   const rawPage = Number(params.page);
   const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.min(Math.floor(rawPage), MAX_PAGE) : 1;
@@ -167,8 +205,6 @@ export async function fetchLicenseItemsAction(
   // eklenince "pageSize gönderilmeyen" tüm çağrılar sessizce 10 satıra düşerdi.
   qs.set('pageSize', String(PAGE_SIZES.includes(rawSize) ? rawSize : 25));
 
-  if (params.sort && SORTS.includes(params.sort)) qs.set('sort', params.sort);
-
   try {
     const res = await apiRaw('GET', `/v1/admin/license-items?${qs.toString()}`, {
       actor: await getActor(),
@@ -176,6 +212,36 @@ export async function fetchLicenseItemsAction(
     if (!res.ok) return { ok: false, error: await messageOf(res, 'Lisans listesi alınamadı.') };
     const data = (await res.json()) as LicenseInventoryPage;
     return { ok: true, page: data };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Bağlantı hatası' };
+  }
+}
+
+/**
+ * Envanteri DIŞA AKTARMAK için TÜM süzgeç sonucunu çeker (mutabakat/muhasebe).
+ *
+ * NEDEN SUNUCU UCU (istemcide sayfa sayfa toplamak yerine):
+ *  · Tavan ve kırpılma bilgisi sunucudan gelir → dosya "eksik mi" sorusunu KESİN yanıtlar
+ *    (sayfa döngüsünde son sayfaya kadar bilinmez ve arada veri değişirse mükerrer/eksik olur).
+ *  · Düz metin dışa aktarımı TEK 'reveal' audit kaydı bırakır; sayfa döngüsü N kayıt yazardı.
+ *  · Rol kapısı (A1) tek noktada: owner değilse yanıt MASKELİ döner, istemcinin yapabileceği
+ *    bir şey yok.
+ * Tarayıcı belleği: satırlar zaten JSON olarak tek seferde iner ve dosyaya çevrilip bırakılır;
+ * tavan (sunucuda 5.000) bunu sınırlar.
+ */
+export async function exportLicenseItemsAction(
+  params: LicenseListParams = {},
+): Promise<LicenseExportResult> {
+  const qs = filterQuery(params);
+  try {
+    const res = await apiRaw('GET', `/v1/admin/license-items/export?${qs.toString()}`, {
+      actor: await getActor(),
+    });
+    if (!res.ok) {
+      return { ok: false, error: await messageOf(res, 'Dışa aktarma listesi alınamadı.') };
+    }
+    const data = (await res.json()) as LicenseInventoryExport;
+    return { ok: true, data };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Bağlantı hatası' };
   }

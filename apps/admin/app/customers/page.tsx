@@ -8,6 +8,7 @@ import { Input } from '../../components/ui/input';
 import { CustomersTable } from '../../components/customers-table';
 import { CustomerSiteFilter } from '../../components/customer-site-filter';
 import { CustomerSiteGrid } from '../../components/customer-site-grid';
+import { SavedViewsMenu } from '../../components/saved-views-menu';
 import {
   CUSTOMERS_FETCH_LIMIT,
   getCustomerSiteSummary,
@@ -98,6 +99,9 @@ export default async function CustomersPage({
         {/* Mağaza içindeyken hızlı geçiş için süzgeç kalır; giriş ekranında kartlar zaten
             aynı işi yapıyor, ikinci bir seçici gürültü olurdu. */}
         {mode === 'site' && <CustomerSiteFilter sites={sites} current={site} />}
+        {/* Kayıtlı görünümler (§14): `?site=` / `?q=` adreste yaşıyor → menü gerçekten çalışır
+            ("Acme mağazasının müşterileri" tek tıkla geri gelir). Görünümler KİŞİSELDİR. */}
+        <SavedViewsMenu page="customers" />
       </PageHeader>
 
       {/* Arama HER hâlde üstte: hiyerarşi bir kısıt değil, varsayılan yol olmalı.

@@ -28,7 +28,8 @@ import {
 } from '../../../components/ui/table';
 import { ApiError } from '../../../lib/api';
 import { siteTypeLabel } from '../../../lib/labels';
-import { formatDate } from '../../../lib/utils';
+import { fmtDateTime, formatDate, relativeTime } from '../../../lib/utils';
+import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
 import { getSite, type SiteDetail } from './queries';
 import { getCustomers, type CustomerRow } from '../../customers/queries';
 import { SiteConfigForm } from './site-config-form';
@@ -77,6 +78,18 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
     site.pluginVersion !== undefined || site.pluginVersionAt !== undefined;
   const pluginVersion = site.pluginVersion ?? null;
   const pluginVersionAt = site.pluginVersionAt ?? null;
+  // CANLILIK (0040) — "bir zamanlar bağlandı" ile "hâlâ konuşuyor" AYRI şeylerdir: sürüm damgası
+  // yalnız sürüm DEĞİŞİNCE yazılır, bu damga her imzalı istekte (60 sn throttle) tazelenir.
+  // `silent` kararı SUNUCUDAN gelir (alarm yüklemiyle birebir) — burada yeniden hesaplanmaz.
+  const lastSeenAt = site.lastSeenAt ?? null;
+  const silent = site.silent === true;
+  const silenceThresholdHours = site.silenceThresholdHours ?? null;
+  // relativeTime 'az önce' de dönebilir → "az önce önce" yazılmasın.
+  const lastSeenRel = lastSeenAt
+    ? relativeTime(lastSeenAt) === 'az önce'
+      ? 'az önce'
+      : `${relativeTime(lastSeenAt)} önce`
+    : null;
 
   // Bu sitenin müşterileri (site → müşteri hiyerarşisi). Best-effort: hata site sayfasını bozmaz.
   let siteCustomers: CustomerRow[] = [];
@@ -163,7 +176,48 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
           <CardTitle icon={Plug}>Bağlantı</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* SESSİZLİK UYARISI — panelin günlerce fark edemediği kesinti sınıfı. Rozet "aktif"
+              olsa, eklenti sürümü bilinse bile mağaza susmuş olabilir. */}
+          {silent && (
+            <Alert variant="warning">
+              <TriangleAlert />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>Bu mağaza sessiz — panele yeni imzalı istek göndermiyor</AlertTitle>
+                <AlertDescription>
+                  <p>
+                    Son görülme: {lastSeenRel}
+                    {lastSeenAt ? ` (${fmtDateTime(lastSeenAt)})` : ''}
+                    {silenceThresholdHours != null ? ` · eşik ${silenceThresholdHours} saat` : ''}.
+                    Eklenti devre dışı kalmış, panel adresi/anahtarı değişmiş ya da mağaza
+                    erişilemez olabilir; sipariş push ve katalog senkronu da durmuş olabilir.
+                  </p>
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
           <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            <div className="flex justify-between gap-4 sm:block">
+              <dt className="text-muted-foreground">Son görülme</dt>
+              <dd className="font-medium text-foreground">
+                {lastSeenAt ? (
+                  // Göreli süre okunur, TAM tarih ipucunda (title) — operatör "3 dk önce"yi
+                  // bir bakışta görür, kesin zamana ihtiyaç duyduğunda üzerine gelir.
+                  <span
+                    className={silent ? 'text-warning' : undefined}
+                    title={fmtDateTime(lastSeenAt)}
+                  >
+                    {lastSeenRel}
+                  </span>
+                ) : site.silent !== undefined ? (
+                  <Badge variant="warning">
+                    <TriangleAlert />
+                    hiç bağlanmadı
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </dd>
+            </div>
             <div className="flex justify-between gap-4 sm:block">
               <dt className="text-muted-foreground">Kurulu eklenti sürümü</dt>
               <dd className="font-medium text-foreground">
@@ -180,7 +234,9 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               </dd>
             </div>
             <div className="flex justify-between gap-4 sm:block">
-              <dt className="text-muted-foreground">Son bildirim</dt>
+              {/* "Son görülme" ile karışmasın: bu damga yalnız SÜRÜM DEĞİŞİNCE yazılır —
+                  canlılık ölçmez (aylardır aynı sürümde koşan sağlıklı bir mağazada da eskidir). */}
+              <dt className="text-muted-foreground">Sürüm bildirimi</dt>
               <dd className="font-medium tabular-nums text-foreground">
                 {pluginVersionAt ? formatDate(pluginVersionAt) : '—'}
               </dd>

@@ -3,6 +3,29 @@
 # Üretim: API_DOMAIN / ADMIN_DOMAIN gerçek alan adları → Caddy Let's Encrypt
 # sertifikasını otomatik alır ve yeniler.
 # Lokal: domainler "localhost" → Caddy iç TLS sertifikası üretir.
+#
+# ── ERİŞİM LOGU BİLEREK KAPALI (güvenlik) ───────────────────────────────────
+# Caddy v2'de site erişim logu `log` direktifi olmadan ÜRETİLMEZ; burada bilerek yok
+# (canlıda doğrulandı: trafik varken caddy container'ı 2 dakikada 0 istek satırı yazdı).
+#
+# NEDEN ÖNEMLİ: panelde lisans envanteri araması TAM anahtar kabul eder ve arama query
+# string'de taşınır (`?search=XXXXX-…`). API tarafı bunu pino serializer'ında maskeler
+# (`observability/log-redact.ts` → `search=[gizlendi]`), ama Caddy erişim logu AÇILIRSA
+# ham URL'i yazar ve maskeleme oraya UYGULANMAZ — payload'lar AES-256-GCM ile şifreli
+# dururken anahtar düz metin olarak log dosyasına düşer.
+#
+# Log açmak gerekirse (tanı/denetim): sorgu dizesini logdan ÇIKAR, ör.
+#   log {
+#     output stdout
+#     format filter {
+#       request>uri query {
+#         delete search
+#         delete q
+#         delete token
+#       }
+#     }
+#   }
+# ya da en azından `request>uri` alanını tamamen `delete` et.
 
 {$ADMIN_DOMAIN} {
 	encode gzip zstd

@@ -24,6 +24,7 @@ import { ProcurementModule } from './procurement/procurement.module';
 import { SupplierClaimsModule } from './supplier-claims/supplier-claims.module';
 import { SupplyOpsModule } from './supply-ops/supply-ops.module';
 import { SecurityModule } from './security/security.module';
+import { AuditModule } from './audit/audit.module';
 import { SearchModule } from './search/search.module';
 import { TemplatesModule } from './templates/templates.module';
 import { OpsModule } from './ops/ops.module';
@@ -113,6 +114,7 @@ import { RateLimitModule } from './common/rate-limit.module';
     SupplyOpsModule,
     SupplierClaimsModule,
     SecurityModule,
+    AuditModule,
     SearchModule,
     TemplatesModule,
     OpsModule,

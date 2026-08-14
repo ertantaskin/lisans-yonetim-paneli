@@ -95,6 +95,21 @@ Runner **iki hedef sınıfına** dallanır (claim yanıtındaki `target`):
 | `api`, `admin`, `api admin` | `scripts/deploy.sh <target>` | Paneli prod'a dağıtır (rollback'li) |
 | `plugin` | `scripts/publish-plugin.sh "<note>"` | WP eklentisini **HEAD'den** paketleyip panele yayınlar |
 
+**İKİNCİ RUNNER — yedek (`scripts/backup-runner.sh`).** Aynı kuyruğu bir de yedek runner'ı
+yoklar; `backup` / `backup-drill` hedeflerini alıp `scripts/backup-drill.sh`'ı çalıştırır.
+Kurulumu (cron satırları, offsite kancası, rotasyon) **`docs/RUNBOOK-DR.md` §4.3-4.4**'tedir —
+burada tekrarlanmaz, tek kaynak orasıdır.
+
+> **Neden claim'de `targets` filtresi var:** iki runner aynı kuyruğu yokluyor. Filtre olmasaydı
+> yedek runner'ı bir `api admin` isteğini kapar (ya da tersi) ve **claim geri alınamadığı için**
+> istek "çalıştı ama dağıtım olmadı" diye kaybolurdu. Her runner claim gövdesinde kendi hedef
+> listesini gönderir; alan API'de **opsiyoneldir** (gönderilmezse tüm hedefler) → eski runner
+> sürümü kırılmaz, ama **iki runner birlikte kullanılıyorsa ikisi de güncel olmalıdır.**
+>
+> **Tek aktif iş kuralı ORTAKTIR:** yedek alınırken dağıtım (ve tersi) 409 yer. Bu bilinçlidir —
+> `deploy.sh` servisleri yeniden başlatırsa süren `pg_dump` yarıda kalır. Uzun süren bir tatbikat
+> dağıtımı geciktirebilir; acele bir dağıtım için tatbikatın bitmesini bekle (ya da SSH+`deploy.sh`).
+
 `plugin` hedefinde istekteki **`note`** alanı changelog metni olarak betiğe geçer (boşsa
 `"Sürüm <VER>"` kullanılır). Her iki hedefte de `git rev-parse --short HEAD` sonucu kayda yazılır →
 eklenti yayınında "zip hangi commit'ten paketlendi" izlenebilir.

@@ -25,6 +25,7 @@ import {
 } from '../ui/table';
 import { DataTablePagination } from './data-table-pagination';
 import { DataTableToolbar, type FacetConfig } from './data-table-toolbar';
+import { buildTableUrlQuery, parseTableUrlState } from './url-state';
 
 /** Genel amaçlı, istemci-taraflı DataTable (sıralama/filtre/facet/sayfalama/görünürlük). */
 export function DataTable<TData, TValue>({
@@ -36,6 +37,7 @@ export function DataTable<TData, TValue>({
   initialSorting = [],
   pageSize = 10,
   emptyLabel = 'Kayıt yok.',
+  syncUrl = false,
 }: {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -45,10 +47,53 @@ export function DataTable<TData, TValue>({
   initialSorting?: SortingState;
   pageSize?: number;
   emptyLabel?: string;
+  /**
+   * Arama/facet/sıralama durumunu adres çubuğuna yaz (opt-in, bkz. `url-state.ts`).
+   * Açıldığında: süzgeçli adres paylaşılabilir/yer imine eklenebilir olur ve kayıtlı
+   * görünümler (§14) bu ekranda gerçekten çalışır.
+   */
+  syncUrl?: boolean;
 }) {
   const [sorting, setSorting] = React.useState<SortingState>(initialSorting);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({});
+
+  /*
+   * URL ↔ tablo durumu (yalnız `syncUrl`).
+   *
+   * `useSearchParams` KULLANILMIYOR: o kanca CSR-bailout'tur (her çağıran sayfa Suspense
+   * sınırı ister) ve `router.replace` her tuş vuruşunda sunucu bileşenini yeniden çalıştırıp
+   * veriyi yeniden çekerdi. Bunun yerine `window.history.replaceState` — Next 15'in query
+   * güncellemesi için önerdiği yol: yeniden render/fetch YOK, geri tuşu kirlenmez.
+   *
+   * OKUMA MOUNT SONRASI: ilk render sunucununkiyle BİREBİR aynı kalmalı (hydration uyuşmazlığı
+   * satırların farklı süzülmesiyle ortaya çıkardı) → URL durumu effect içinde uygulanır.
+   */
+  const facetColumnIds = React.useMemo(() => (facets ?? []).map((f) => f.columnId), [facets]);
+  const urlReadyRef = React.useRef(!syncUrl);
+
+  React.useEffect(() => {
+    if (!syncUrl) return;
+    const parsed = parseTableUrlState(window.location.search, searchColumnId, facetColumnIds);
+    if (parsed.columnFilters.length > 0) setColumnFilters(parsed.columnFilters);
+    if (parsed.sorting.length > 0) setSorting(parsed.sorting);
+    urlReadyRef.current = true;
+    // Yalnız mount'ta: sonraki değişikliklerin kaynağı tablonun kendisidir (tek yönlü akış).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncUrl]);
+
+  React.useEffect(() => {
+    // İlk okuma tamamlanmadan yazma: URL'i boş durumla EZERDİ (paylaşılan adres kaybolurdu).
+    if (!syncUrl || !urlReadyRef.current) return;
+    const next = buildTableUrlQuery(
+      window.location.search,
+      { sorting, columnFilters },
+      searchColumnId,
+      facetColumnIds,
+    );
+    if (next === window.location.search || (next === '' && window.location.search === '')) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${next}`);
+  }, [syncUrl, sorting, columnFilters, searchColumnId, facetColumnIds]);
 
   const table = useReactTable({
     // Savunma: veri (ör. beklenmeyen API şekli) undefined gelse bile tablo çökmez, boş gösterir.

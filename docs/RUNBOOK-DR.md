@@ -2,6 +2,7 @@
 
 > Lisans Yönetim Paneli Merkezi Lisans Paneli · MIMARI.md **§16** (Operasyon: test, sürüm, DR) + **§8** (Güvenlik).
 > Bu belge operasyoneldir: VPS'te elle uygulanır. Otomatik doğrulama scripti: `scripts/backup-drill.sh`.
+> **Yedek artık panelden tetiklenebilir ve son yedek/tatbikat panelde görünür** — bkz. §4.3.
 
 ---
 
@@ -23,9 +24,12 @@ sipariş/atama kaybı = çifte satış / müşteri mağduriyeti riski). §16 hed
 
 ### 2.1 Şu an (Faz 0/1 — tek VPS)
 - PostgreSQL 17 verisi tek Docker volume'da: **`pgdata`** (`docker-compose.yml`).
-- Ayrık, otomatik, offsite yedek **henüz kurulu değil** — volume host diskinde yaşar.
-- Bu, tek nokta arızasıdır: disk/host kaybı = veri kaybı. `backup-drill.sh` bu boşlukta
-  düzenli mantıksal yedek + doğrulama sağlar ama **PITR (RPO≤5dk) vermez.**
+- **Mantıksal yedek panelden tetiklenebilir + zamanlanabilir** (§4.3): `scripts/backup-runner.sh`
+  cron ile koşar, sonuç **/deployments** ekranında görünür ("Son yedek / Son tatbikat").
+- **Offsite yükleme kod tarafından YAPILMAZ** — kimlik bilgisi gerektirir. Betikte açık bir
+  **kanca** (`BACKUP_OFFSITE_CMD`) vardır; operatör kendi aracını bağlar (§4.4). Kanca
+  bağlanmadıysa yedek **yalnız bu host'ta** durur ve host kaybında işe yaramaz.
+- **PITR (RPO≤5dk) hâlâ YOK**: mantıksal dump anlıktır. §2.2 kurulana kadar RPO = son yedek anı.
 
 ### 2.2 Hedef (MIMARI.md §1 tasarımı) — **öneri, kurulacak**
 > §1: "Yedek: **pgBackRest** → offsite **S3** + sürekli **WAL** (PITR); master key AYRI saklanır."
@@ -83,6 +87,127 @@ arşivleme ile sağlanır. Kurulum §2.2'de.
 
 ---
 
+### 4.3 Panelden yedek alma (SSH'siz — `backup-runner.sh` ile) · **ÖNERİLEN**
+
+Panelde **Dağıtımlar (/deployments)** → *Yedekler* bölümü:
+
+| Düğme (owner-only) | Kuyruk hedefi | Host'ta koşan |
+|---|---|---|
+| **Şimdi yedek al** | `backup` | `BACKUP_ONLY=1 scripts/backup-drill.sh` — dump + arşiv bütünlüğü + offsite kancası + rotasyon |
+| **Tatbikat çalıştır** | `backup-drill` | `scripts/backup-drill.sh` — yukarıdakiler + ayrı `*_drill` DB'sine geri yükleme, satır sayıları, **çifte-atama=0**, RTO ölçümü |
+
+Aynı ekranda **"Son yedek"** ve **"Son tatbikat"** kartları: ne zaman, ne kadar sürdü, boyut,
+dış kopya durumu, tatbikatta geri-yükleme süresi (RTO). Yedek yoksa ya da eşiği aştıysa
+**kırmızı uyarı bandı** çıkar (yedek > **26 saat**, tatbikat > **35 gün**).
+
+**Mimari (değişmez kural):** panel **yalnız bir istek kaydeder**; `pg_dump`'ı host'taki runner
+çalıştırır. Panel konteynerine Docker soketi / DB kabuğu **VERİLMEZ** (konteynerden host'a tam
+erişim riski). Dağıtımdaki istek/çalıştırma ayrımının aynısıdır ve **aynı kuyruğu** kullanır:
+
+```
+panel (POST /v1/admin/deployments, target=backup)   →  status=pending
+host cron: backup-runner.sh → POST .../claim {"targets":["backup","backup-drill"]}
+                                                    →  status=running (FOR UPDATE SKIP LOCKED)
+           backup-drill.sh koşar
+           PATCH .../<id>/finish {status, log, gitSha}  →  success | failed
+```
+
+Sözleşmenin taşıdığı güvenceler (dağıtımla **ortak**, ayrı yol açılmadı):
+* **Aynı anda tek aktif iş** — yedek alınırken dağıtım (ya da tersi) başlatılamaz (409).
+  Nedeni yalnız yığılma değil: `deploy.sh` servisleri yeniden başlatırsa dump yarıda kalır.
+* **Zombi temizliği** — 30 dakikadan uzun süren `running` kayıt otomatik `failed` olur ve kilit
+  açılır. **SINIR:** tatbikat 30 dakikayı aşarsa panelde "başarısız" görünür (koşum sürer).
+  DB büyüdüğünde tatbikatı cron'dan/elle koş ve süreyi izle (`Toplam süre` satırı).
+* **Owner-only** — istek ucu Next `isOwner()` + API `OwnerGuard` ile korunur.
+
+**Runner kurulumu (VPS'te, bir kez):**
+```bash
+apt-get install -y jq                      # gerekli (JSON)
+crontab -e
+# 1) panelden tetiklenen yedek isteklerini dakikada bir yoklar:
+* * * * * /opt/lisans-yonetim-paneli/scripts/backup-runner.sh >> /var/log/backup-runner.log 2>&1
+# 2) GECELİK otomatik yedek (kendi isteğini kuyruğa yazar → panelde görünür):
+15 3 * * * /opt/lisans-yonetim-paneli/scripts/backup-runner.sh --nightly >> /var/log/backup-runner.log 2>&1
+# 3) AYLIK tatbikat (her ayın 1'i):
+45 3 1 * * /opt/lisans-yonetim-paneli/scripts/backup-runner.sh --enqueue backup-drill >> /var/log/backup-runner.log 2>&1
+```
+
+> **Cron satırına `flock` EKLEME.** Runner tek-örnek kilidini kendi alır
+> (`/tmp/wpteslimat-backup-runner.self.lock`). İkinci bir dış kilit katmanı eklenirse betik
+> kendi kendini kilitler ve iş **sessizce hiç koşmaz** (dağıtım runner'ında yaşanan hata).
+> Kilit dosyası `deploy-runner.sh`'ınkinden AYRIDIR: yedek ile dağıtım birbirini bloklamaz
+> (kuyruk zaten tek aktif işe izin verir), ama iki yedek asla üst üste binmez.
+
+Runner `ADMIN_TOKEN`'ı repo kökündeki `.env`'den okur (dağıtım runner'ıyla aynı). Ayarlar
+ortamdan **veya** `.env`'den okunur:
+
+| Değişken | Varsayılan | Anlamı |
+|---|---|---|
+| `BACKUP_DIR` | `<repo>/backups` | Dump dizini |
+| `BACKUP_KEEP_LAST` | **14** (runner) / 0 (elle koşum) | **ROTASYON**: en yeni N dump tutulur, eskiler silinir |
+| `BACKUP_OFFSITE_CMD` | — | **Offsite kancası** (§4.4) |
+| `BACKUP_OFFSITE_TIMEOUT` | 900 | Offsite komutu saniye sınırı |
+| `BACKUP_RUNNER_API` | prod API URL | Panel API tabanı |
+
+**Rotasyon (disk):** günlük yedek + rotasyon kapalı = disk **sessizce dolar** ve bir gün prod
+durur. Runner varsayılanı `BACKUP_KEEP_LAST=14` (≈2 hafta günlük yedek). Yalnız bu betiğin
+ürettiği `"<db>_YYYYmmdd-HHMMSS.dump"` dosyaları budanır; başka dosyalara dokunulmaz.
+Disk boyutunu hesapla: `14 × (bir dump boyutu)` — panelde "Boyut" satırı gerçek değeri gösterir.
+
+**MASTER_KEY (§3) — yedeğin İÇİNDE DEĞİL:** runner yalnız veritabanını dump eder; `.env`'e ve
+anahtar dosyalarına **dokunmaz**, offsite kancasına da **yalnız dump dosyasının yolunu** verir.
+Anahtar ayrı kasada saklanır (§3). Bu kural yedek otomatikleştiği için daha da kritiktir:
+otomatik yedek + yanına konmuş anahtar = tek dosyada tüm lisansların sızması.
+
+---
+
+### 4.4 OFFSITE kancası (`BACKUP_OFFSITE_CMD`) · **kurulması ŞART**
+
+Host diskinde duran yedek, **host kaybı** senaryosunda (§7.1) hiçbir işe yaramaz. Panel/betik
+içine sağlayıcıya özel bir entegrasyon **gömülmez** (kimlik bilgisi gerektirir, uydurulamaz):
+operatör kendi aracını bir kanca ile bağlar.
+
+**Sözleşme:** komut, dump alındıktan hemen sonra **dump dosyasının tam yolu tek argüman**
+olacak şekilde çalıştırılır:
+```
+<BACKUP_OFFSITE_CMD> /opt/lisans-yonetim-paneli/backups/lisanspanel_20260814-030000.dump
+```
+* Değer kelime bölmeli genişletilir (argümanlı komut yazılabilir); **`eval` KULLANILMAZ**,
+  kabuk metakarakteri (`;`, `|`, `$(…)`) yorumlanmaz.
+* Çıkış kodu 0 → panelde **"Dışarı kopyalandı"**; ≠0 → **"Dış kopya BAŞARISIZ"** (yedek yine de
+  host'ta durur, iş `failed` OLMAZ — dürüst uyarı verilir). Kanca tanımsızsa "Dış kopya yok".
+* `BACKUP_OFFSITE_TIMEOUT` (vars. 900 sn) ile sınırlanır → takılan yükleme runner'ı kilitlemez.
+
+**ÖNERİLEN: 3 satırlık bir sarmalayıcı betik.** `rclone`/`scp`/`rsync`/`aws s3` gibi araçlar
+**hedefi SON argüman** bekler; kanca ise dump yolunu son argüman olarak ekler. Bu yüzden onları
+doğrudan `BACKUP_OFFSITE_CMD`'ye yazma — kimlik bilgisi de sarmalayıcıda kalsın (`.env`'de
+parola tutma):
+
+```bash
+cat > /usr/local/bin/offsite-upload.sh <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+# $1 = dump dosyasının tam yolu. Aşağıdakilerden BİRİNİ seç:
+exec rclone copy --config /root/.config/rclone/rclone.conf "$1" uzak-depo:lisans-yedek/
+# exec aws s3 cp "$1" s3://benim-bucket/lisans-yedek/
+# exec scp -i /root/.ssh/offsite_key -o BatchMode=yes "$1" yedek@baska-sunucu:/backups/
+SH
+chmod 700 /usr/local/bin/offsite-upload.sh
+# .env'e ekle (ya da cron ortamında ver):
+echo 'BACKUP_OFFSITE_CMD=/usr/local/bin/offsite-upload.sh' >> /opt/lisans-yonetim-paneli/.env
+```
+
+> **Şifreleme:** offsite hedef senin tam kontrolünde değilse dump'ı yüklemeden ÖNCE şifrele
+> (ör. `age`/`gpg`, sarmalayıcının içinde) — yedek müşteri e-postalarını ve şifreli lisans
+> payload'larını içerir. Şifreleme anahtarı da `MASTER_KEY` gibi **AYRI kasada** saklanır.
+> **Uyarı:** kanca yalnız dump dosyasını alır; `.env` / `MASTER_KEY` offsite'a **gönderilmez**
+> ve gönderilmemelidir (§3).
+
+**Kurulumdan sonra doğrula:** panelden **Şimdi yedek al** → kart "Dış kopya: Dışarı kopyalandı"
+demeli; hedefte dosyayı gözle gör (boyut panelde yazan ile aynı mı).
+
+---
+
 ## 5. Geri-yükleme prosedürü (adım adım)
 
 > **Altın kural:** Prod veritabanı (`lisanspanel`) üzerine restore etmeden ÖNCE, mümkünse mevcut
@@ -128,15 +253,21 @@ pgbackrest --stanza=lisanspanel --delta --type=time \
 Her ayın ilk iş günü (öneri) uygulanır. Amaç: yedeğin gerçekten geri yüklenebilir + tutarlı
 olduğunu, RTO'nun hedefte kaldığını kanıtlamak.
 
-- [ ] **Çalıştır:** VPS'te repo kökünde
+- [ ] **Çalıştır:** panelde **/deployments → Yedekler → "Tatbikat çalıştır"** (owner).
+      SSH alternatifi (runner kurulu değilse ya da 30dk sınırını aşan büyük DB'de):
       ```bash
       bash scripts/backup-drill.sh
       ```
       (Docker'sız / uzak PG için: `PG_HOST=... PG_PORT=... PG_USER=... PG_DB=... PG_PASSWORD=... bash scripts/backup-drill.sh`)
-- [ ] **PASS doğrula:** çıktının son satırı `SONUC: PASS`, `FAIL=0`.
+- [ ] **PASS doğrula:** çıktının son satırı `SONUC: PASS`, `FAIL=0`. Panelden koştuysan
+      /deployments'ta iş **"Başarılı"** ve "Son tatbikat" kartı tazelenmiş olmalı (log da orada).
+- [ ] **Panel bandı söndü mü:** /deployments'ta kırmızı "yedek yok/bayat" ya da sarı "tatbikat
+      bayat" bandı kalmamalı. Bant duruyorsa eşik aşılmış demektir — sebebini kapat (cron?
+      runner? offsite?), sonraki aya erteleme.
 - [ ] **RTO gözlemi:** "Geri-yükleme (RTO): Ns" değeri hedefin (7200s) çok altında mı? Trend not et.
 - [ ] **Çifte-atama = 0** satırı PASS mı? (Değilse §7'ye eskale — veri bütünlüğü ihlali.)
-- [ ] **Offsite kopya** güncel mi? (En yeni `backups/*.dump` S3/dış bölgeye kopyalandı mı; pgBackRest repo erişilebilir mi.)
+- [ ] **Offsite kopya** güncel mi? Panelde "Dış kopya: **Dışarı kopyalandı**" yazmalı; hedefte
+      dosyayı gözle doğrula. "Dış kopya yok" görüyorsan kanca kurulmamıştır → §4.4.
 - [ ] **MASTER_KEY tatbikatı (§3):** çevrimdışı anahtar kopyasından tek kayıt reveal edilebildi mi? (Anahtar erişimini teyit; değeri yazma.)
 - [ ] **Sonucu kaydet:** aşağıdaki tabloya satır ekle.
 
@@ -187,7 +318,13 @@ olduğunu, RTO'nun hedefte kaldığını kanıtlamak.
 
 | İşlem | Komut |
 |---|---|
+| **Panelden yedek / tatbikat** | /deployments → *Yedekler* (owner) — kurulum §4.3 |
+| Yalnız yedek al (host) | `BACKUP_ONLY=1 bash scripts/backup-drill.sh` |
 | Aylık tatbikat | `bash scripts/backup-drill.sh` |
+| Yedek runner'ı elle koştur | `bash scripts/backup-runner.sh` (kuyruktaki isteği alır) |
+| Kuyruğa yedek yaz + koştur | `bash scripts/backup-runner.sh --nightly` |
+| Kuyruğa tatbikat yaz + koştur | `bash scripts/backup-runner.sh --enqueue backup-drill` |
+| Runner logu | `tail -f /var/log/backup-runner.log` |
 | Docker'sız tatbikat | `PG_HOST=.. PG_DB=.. PG_USER=.. PG_PASSWORD=.. bash scripts/backup-drill.sh` |
 | Elle dump | bkz. §4.1 |
 | Restore (yeni DB) | bkz. §5.2 |

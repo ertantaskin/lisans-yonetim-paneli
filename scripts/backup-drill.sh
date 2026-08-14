@@ -31,6 +31,21 @@
 #   PG_MAINT_DB          admin (CREATE/DROP DATABASE) için bağlanılan db (vars: postgres)
 #   BACKUP_DIR           dump hedef dizini         (vars: <repo>/backups)
 #   BACKUP_KEEP_LAST     >0 ise en yeni N dump'ı tut, eskileri sil (vars: 0 = hepsini tut)
+#   BACKUP_ONLY          1 ise YALNIZ yedek al (dump + arşiv bütünlüğü + rotasyon);
+#                        geri-yükleme/doğrulama adımları ATLANIR. Panelden 'backup' hedefi
+#                        bu modda koşar; 'backup-drill' hedefi tam tatbikatı koşar.
+#                        NEDEN ayrı mod: günlük yedek her gün gerekir, tam tatbikat AYLIK —
+#                        her yedekte restore koşmak prod diskini/CPU'sunu gereksiz yorar.
+#   BACKUP_OFFSITE_CMD   OFFSITE KANCASI (opsiyonel). Dump alındıktan SONRA çalıştırılan
+#                        komut; dump'ın tam yolu tek argüman olarak geçer ($1). Tanımsızsa
+#                        offsite adımı ATLANIR (skipped) — uydurma sağlayıcı entegrasyonu YOK,
+#                        kimlik bilgisi operatörün kendi aracında kalır. Örnekler:
+#                          BACKUP_OFFSITE_CMD='rclone copy --config /root/.rclone.conf'
+#                          BACKUP_OFFSITE_CMD='/usr/local/bin/offsite-upload.sh'
+#                        Komut "<CMD> <dump-yolu>" biçiminde çağrılır (kelime bölmeli, eval YOK).
+#                        Ayrıntı + güvenlik notu: docs/RUNBOOK-DR.md §4.4.
+#   BACKUP_OFFSITE_TIMEOUT  offsite komutu için saniye üst sınırı (vars: 900). `timeout` yoksa
+#                        sınırsız koşar (uyarı basılır) — takılan yükleme runner'ı kilitlemesin.
 #   STRICT_COUNTS        1 ise prod↔drill satır farkı FAIL (vars: 0 = WARN; canlı prod büyür)
 #   ENV_FILE             okunacak .env yolu        (vars: <repo>/.env)
 #   SKIP_ENV_FILE        1 ise .env okuma
@@ -76,6 +91,15 @@ MAINT_DB="${PG_MAINT_DB:-postgres}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 BACKUP_KEEP_LAST="${BACKUP_KEEP_LAST:-0}"
 STRICT_COUNTS="${STRICT_COUNTS:-0}"
+BACKUP_ONLY="${BACKUP_ONLY:-0}"
+BACKUP_OFFSITE_CMD="${BACKUP_OFFSITE_CMD:-}"
+BACKUP_OFFSITE_TIMEOUT="${BACKUP_OFFSITE_TIMEOUT:-900}"
+# Panel özetinde raporlanan offsite durumu: kanca tanımlı değilse 'skipped'.
+OFFSITE_STATUS="skipped"
+# BACKUP_ONLY modunda geri-yükleme hiç koşmaz → boş kalır (set -u altında tanımsız kalamaz).
+RESTORE_SECS=""
+# Mod'a göre adım sayısı (yalnız görsel ilerleme; mantığı etkilemez).
+if [[ "$BACKUP_ONLY" == "1" ]]; then TOTAL_STEPS=4; else TOTAL_STEPS=7; fi
 
 # Mod seçimi: PG_HOST verildiyse local, aksi halde docker.
 if [[ -n "${PG_HOST:-}" ]]; then
@@ -131,6 +155,9 @@ psql_admin() { # $1=sql
 
 # ── Temizlik: her çıkışta drill DB'yi düşür (guard'lı — asla prod'a dokunmaz) ──
 cleanup() {
+  # BACKUP_ONLY modunda drill DB'sine HİÇ dokunulmaz (oluşturulmadı) — "yalnız yedek al"
+  # denince beklenmedik bir DROP DATABASE çalıştırmak sürpriz olurdu.
+  [[ "$BACKUP_ONLY" == "1" ]] && return 0
   # DRILL_DB guard'dan geçtiği için burada düşürmek güvenli.
   psql_admin "DROP DATABASE IF EXISTS \"$DRILL_DB\" WITH (FORCE);" 2>/dev/null || true
 }
@@ -148,17 +175,37 @@ DRILL_START=$(date +%s)
 TS="$(date +%Y%m%d-%H%M%S)"
 
 line
-echo "Lisans Yönetim Paneli Yedek Tatbikatı — $(date '+%Y-%m-%d %H:%M:%S %z')"
+if [[ "$BACKUP_ONLY" == "1" ]]; then
+  echo "Lisans Yönetim Paneli YEDEK ALMA — $(date '+%Y-%m-%d %H:%M:%S %z')"
+else
+  echo "Lisans Yönetim Paneli Yedek Tatbikatı — $(date '+%Y-%m-%d %H:%M:%S %z')"
+fi
 echo "  Mod           : $MODE${MODE:+ (container=${PG_CONTAINER})}"
 echo "  Prod DB       : $DB_NAME   (kullanıcı: $DB_USER)"
-echo "  Doğrulama DB  : $DRILL_DB   (tatbikat sonunda düşürülür)"
+if [[ "$BACKUP_ONLY" == "1" ]]; then
+  echo "  Doğrulama     : ATLANDI (BACKUP_ONLY=1 — geri-yükleme tatbikatı için 'backup-drill')"
+else
+  echo "  Doğrulama DB  : $DRILL_DB   (tatbikat sonunda düşürülür)"
+fi
 echo "  Yedek dizini  : $BACKUP_DIR"
+if [[ "$BACKUP_KEEP_LAST" -gt 0 ]]; then
+  echo "  Rotasyon      : en yeni $BACKUP_KEEP_LAST dump tutulur, eskiler silinir"
+else
+  echo "  Rotasyon      : kapalı (tüm dumplar tutulur — disk dolabilir)"
+fi
+if [[ -n "$BACKUP_OFFSITE_CMD" ]]; then
+  echo "  Offsite kanca : tanımlı (BACKUP_OFFSITE_CMD)"
+else
+  echo "  Offsite kanca : YOK — yedek yalnız bu host'ta duruyor (host kaybı = veri kaybı)"
+fi
+# MASTER_KEY hatırlatması: yedek DB'yi içerir, anahtarı İÇERMEZ (§8 / RUNBOOK-DR §3).
+echo "  Not           : MASTER_KEY bu yedeğin İÇİNDE DEĞİL — ayrı kasada saklanmalı (§8)."
 line
 
 # ── 1) pg_dump — custom format, zaman-damgalı dosya ──────────────────────────
 mkdir -p "$BACKUP_DIR"
 DUMP_FILE="$BACKUP_DIR/${DB_NAME}_${TS}.dump"
-echo "[1/6] pg_dump (custom format) → $DUMP_FILE"
+echo "[1/$TOTAL_STEPS] pg_dump (custom format) → $DUMP_FILE"
 # -Fc: custom (sıkıştırılmış, pg_restore ile paralel/seçmeli). Stdout host dosyasına.
 if ! "${PGX[@]}" pg_dump -Fc --no-owner --no-privileges "${CONN[@]}" -d "$DB_NAME" > "$DUMP_FILE"; then
   bad "pg_dump başarısız."
@@ -173,7 +220,7 @@ else
 fi
 
 # ── 2) Arşiv okunabilirliği (pg_restore -l ile TOC listesi) ──────────────────
-echo "[2/6] Arşiv bütünlüğü (pg_restore -l)"
+echo "[2/$TOTAL_STEPS] Arşiv bütünlüğü (pg_restore -l)"
 TOC_COUNT=0
 if TOC_COUNT=$("${PGX_I[@]}" pg_restore -l < "$DUMP_FILE" 2>/dev/null | grep -c ';' || true); then :; fi
 if [[ "${TOC_COUNT:-0}" -gt 0 ]]; then
@@ -182,14 +229,50 @@ else
   bad "Arşiv okunamadı / boş TOC — yedek bozuk olabilir."
 fi
 
-# ── 3) Doğrulama DB'sini (yeniden) oluştur ───────────────────────────────────
-echo "[3/6] Doğrulama DB hazırlığı: $DRILL_DB"
+# ── 3) OFFSITE KANCASI (opsiyonel) ───────────────────────────────────────────
+# Yedeğin host'ta kalması, host kaybı senaryosunda (RUNBOOK-DR §7.1) HİÇBİR İŞE YARAMAZ.
+# Buraya sağlayıcıya özel bir entegrasyon GÖMÜLMEZ (kimlik bilgisi gerektirir, uydurulamaz):
+# operatör kendi aracını (rclone/aws s3/scp/restic…) BACKUP_OFFSITE_CMD ile bağlar.
+# Komut TIRNAKSIZ genişletilir (kelime bölme kasıtlı: "rclone copy --config X" gibi
+# argümanlı komutlar çalışsın) — `eval` KULLANILMAZ, kabuk metakarakteri yorumlanmaz.
+echo "[3/$TOTAL_STEPS] Offsite kopya"
+if [[ -z "$BACKUP_OFFSITE_CMD" ]]; then
+  OFFSITE_STATUS="skipped"
+  warn "Offsite kanca tanımsız (BACKUP_OFFSITE_CMD) — yedek yalnız bu host'ta. Bkz. RUNBOOK-DR §4.4."
+else
+  OFFSITE_RC=0
+  if command -v timeout >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    timeout "$BACKUP_OFFSITE_TIMEOUT" $BACKUP_OFFSITE_CMD "$DUMP_FILE" || OFFSITE_RC=$?
+  else
+    warn "'timeout' bulunamadı — offsite komutu süre sınırı olmadan koşuyor."
+    # shellcheck disable=SC2086
+    $BACKUP_OFFSITE_CMD "$DUMP_FILE" || OFFSITE_RC=$?
+  fi
+  if [[ "$OFFSITE_RC" -eq 0 ]]; then
+    OFFSITE_STATUS="ok"
+    ok "Offsite kopya gönderildi"
+  else
+    OFFSITE_STATUS="failed"
+    # Offsite hatası yedeğin kendisini geçersiz kılmaz (dump host'ta duruyor) → WARN.
+    # Panel özetinde 'failed' görünür; operatör kancayı onarır.
+    warn "Offsite komutu başarısız (çıkış kodu $OFFSITE_RC) — yedek yalnız bu host'ta."
+  fi
+fi
+
+if [[ "$BACKUP_ONLY" == "1" ]]; then
+  # BACKUP_ONLY: geri-yükleme + doğrulama ATLANIR (aylık tatbikat 'backup-drill' hedefinde).
+  echo "[4/$TOTAL_STEPS] Rotasyon + özet (BACKUP_ONLY=1 → geri-yükleme doğrulaması atlandı)"
+else
+
+# ── 4) Doğrulama DB'sini (yeniden) oluştur ───────────────────────────────────
+echo "[4/$TOTAL_STEPS] Doğrulama DB hazırlığı: $DRILL_DB"
 psql_admin "DROP DATABASE IF EXISTS \"$DRILL_DB\" WITH (FORCE);"
 psql_admin "CREATE DATABASE \"$DRILL_DB\";"
 ok "Boş $DRILL_DB oluşturuldu"
 
-# ── 4) Geri yükleme (RTO gözlemi burada başlar) ──────────────────────────────
-echo "[4/6] pg_restore → $DRILL_DB (RTO ölçümü)"
+# ── 5) Geri yükleme (RTO gözlemi burada başlar) ──────────────────────────────
+echo "[5/$TOTAL_STEPS] pg_restore → $DRILL_DB (RTO ölçümü)"
 RESTORE_START=$(date +%s)
 RESTORE_RC=0
 # --no-owner/--no-privileges: rol farkları sorun çıkarmasın. Uyarılar ölümcül değil;
@@ -204,8 +287,8 @@ else
   warn "pg_restore rc=$RESTORE_RC (uyarılar olabilir; doğrulamayla teyit ediliyor). Log: $BACKUP_DIR/.restore_${TS}.log"
 fi
 
-# ── 5) DOĞRULAMA ─────────────────────────────────────────────────────────────
-echo "[5/6] Doğrulama"
+# ── 6) DOĞRULAMA ─────────────────────────────────────────────────────────────
+echo "[6/$TOTAL_STEPS] Doğrulama"
 
 # 5a) Kritik tablo satır sayıları: prod ↔ drill.
 #     Not: prod CANLI olduğundan dump anından sonra artabilir. Fark varsayılan
@@ -257,11 +340,13 @@ else
   bad "çifte-atama = $DBL license_item birden çok ayakta atamaya bağlı — bütünlük ihlali"
 fi
 
-# ── 6) Temizlik + özet ───────────────────────────────────────────────────────
-echo "[6/6] Temizlik"
+# ── 7) Temizlik + özet ───────────────────────────────────────────────────────
+echo "[7/$TOTAL_STEPS] Temizlik"
 cleanup
 trap - EXIT
 ok "$DRILL_DB düşürüldü"
+
+fi  # /BACKUP_ONLY dallanması
 
 # Opsiyonel retention: yalnız bu script'in ürettiği dump'ları buda (guard'lı desen).
 if [[ "$BACKUP_KEEP_LAST" -gt 0 ]]; then
@@ -277,10 +362,27 @@ TOTAL_SECS=$((DRILL_END - DRILL_START))
 line
 echo "ÖZET"
 echo "  Yedek dosyası     : $DUMP_FILE (${DUMP_BYTES} bayt)"
-echo "  Geri-yükleme (RTO): ${RESTORE_SECS}s   [§16 hedef: RTO ≤ 2sa = 7200s]"
-echo "  Toplam tatbikat   : ${TOTAL_SECS}s"
+echo "  Offsite kopya     : $OFFSITE_STATUS"
+if [[ -n "$RESTORE_SECS" ]]; then
+  echo "  Geri-yükleme (RTO): ${RESTORE_SECS}s   [§16 hedef: RTO ≤ 2sa = 7200s]"
+else
+  echo "  Geri-yükleme (RTO): ölçülmedi (BACKUP_ONLY=1)"
+fi
+echo "  Toplam süre       : ${TOTAL_SECS}s"
 echo "  Uyarı / Hata      : WARN=$WARNS  FAIL=$FAILS"
 line
+
+# ── PANEL ÖZETİ (makine-okunur) ──────────────────────────────────────────────
+# Panel bu satırları `deployments.log`'dan ayrıştırır (API: parseBackupMeta) → /deployments
+# ekranındaki "Son yedek / Son tatbikat" kartı. EN SONDA basılır: runner log'un yalnız SON
+# 20000 karakterini gönderir, başa basılsa uzun çıktıda kırpılıp kaybolurdu.
+# Biçim sabittir (ANAHTAR=değer, satır başında) — değiştirirsen API tarafını da güncelle.
+echo "── PANEL ÖZETİ ──"
+echo "BACKUP_FILE=$DUMP_FILE"
+echo "BACKUP_BYTES=$DUMP_BYTES"
+echo "BACKUP_OFFSITE=$OFFSITE_STATUS"
+if [[ -n "$RESTORE_SECS" ]]; then echo "BACKUP_RESTORE_SECS=$RESTORE_SECS"; fi
+
 if [[ "$FAILS" -eq 0 ]]; then
   echo "SONUC: PASS  (docs/RUNBOOK-DR.md aylik kontrol listesine sonucu kaydedin)"
   exit 0

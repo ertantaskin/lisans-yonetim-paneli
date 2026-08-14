@@ -6,6 +6,7 @@ import { ZodBody } from '../common/zod-validation.pipe';
 import type { Notification } from '../db/schema/notifications';
 import { LowStockService } from './low-stock.service';
 import { NotificationsService } from './notifications.service';
+import { SiteSilenceService } from './site-silence.service';
 
 /**
  * Okundu işaretleme gövdesi (§17 çan). `ids` (seçili bildirimler) VEYA `all: true`
@@ -28,6 +29,7 @@ export class NotificationsController {
   constructor(
     private readonly notifications: NotificationsService,
     private readonly lowStock: LowStockService,
+    private readonly siteSilence: SiteSilenceService,
   ) {}
 
   /**
@@ -71,5 +73,14 @@ export class NotificationsController {
   @Post('check-low-stock')
   async checkLowStock(): Promise<{ created: number }> {
     return { created: await this.lowStock.checkLowStock() };
+  }
+
+  /**
+   * Mağaza sessizlik (canlılık) taramasını elle çalıştırır (§16 — ops + doğrulama).
+   * Tekrarlı iş 30 dakikada bir zaten koşar; bu uç "şimdi bak" içindir.
+   */
+  @Post('check-site-silence')
+  async checkSiteSilence(): Promise<{ created: number }> {
+    return { created: await this.siteSilence.checkSilence() };
   }
 }

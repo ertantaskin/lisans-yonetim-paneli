@@ -25,15 +25,29 @@ const FinishSchema = z.object({
 type FinishInput = z.infer<typeof FinishSchema>;
 
 /**
+ * Runner claim filtresi: her runner YALNIZ kendi hedef sınıfını alır (dağıtım runner'ı
+ * `deploy.sh` hedeflerini, yedek runner'ı `backup*` hedeflerini). Alan VERİLMEZSE eski
+ * davranış (tüm hedefler) sürer → eski `deploy-runner.sh` sürümü kırılmaz.
+ */
+const ClaimSchema = z.object({
+  targets: z.array(z.enum(DEPLOY_TARGETS)).min(1).max(DEPLOY_TARGETS.length).optional(),
+});
+type ClaimInput = z.infer<typeof ClaimSchema>;
+
+/**
  * Admin: panelden prod dağıtımı yönetimi (§16). Tüm uçlar X-Admin-Token korumalı.
  * - POST         → yeni dağıtım İSTEĞİ kaydeder (owner-only Next katmanında zorlanır).
  * - GET          → dağıtım geçmişi (salt-okunur görünüm).
  * - POST /claim  → VPS host runner'ının bekleyen isteği atomik alması.
  * - PATCH /:id/finish → runner'ın sonucu (success/failed + log/sha) geri yazması.
  *
+ * - GET /backup-summary → son yedek / son tatbikat özeti (§16 DR, salt-okunur).
+ *
  * Panel yalnız KAYIT tutar; gerçek `deploy.sh` çağrısını host'taki runner yapar
  * (API konteynerine Docker soketi VERİLMEZ — güvenlik). 'plugin' hedefinde runner
- * deploy.sh yerine eklenti zip'ini üretip panele publish eder (aynı istek/çalıştırma ayrımı).
+ * deploy.sh yerine eklenti zip'ini üretip panele publish eder; 'backup'/'backup-drill'
+ * hedeflerini AYRI bir cron runner (`scripts/backup-runner.sh`) alır ve `backup-drill.sh`'ı
+ * çalıştırır. Hepsi AYNI istek/çalıştırma ayrımı — panelden `pg_dump`/docker çalıştırılmaz.
  */
 @Controller('admin/deployments')
 @UseGuards(AdminGuard)
@@ -53,10 +67,24 @@ export class DeploymentsController {
     return this.deployments.list();
   }
 
-  /** Runner: bekleyen en eski isteği claim et (pending→running). Yoksa null. */
+  /**
+   * Yedek / tatbikat özeti (§16 DR) — "son yedek ne zaman, tatbikat geçti mi". Salt-okunur;
+   * `deployments` kayıtlarından türetilir (yeni tablo YOK). Rota `:id` içeren hiçbir GET ile
+   * çakışmaz ama yine de parametreli rotalardan ÖNCE tanımlandı (Nest sıraya göre eşler).
+   */
+  @Get('backup-summary')
+  async backupSummary() {
+    return this.deployments.backupSummary();
+  }
+
+  /**
+   * Runner: bekleyen en eski isteği claim et (pending→running). Yoksa null.
+   * Gövdedeki `targets` ile runner kendi hedef sınıfını süzer (yedek runner'ı dağıtım
+   * isteğini ASLA kapmasın — claim geri alınamaz).
+   */
   @Post('claim')
-  async claim() {
-    const row = await this.deployments.claimNext();
+  async claim(@Body(new ZodBody(ClaimSchema)) body: ClaimInput) {
+    const row = await this.deployments.claimNext(body.targets);
     return row ?? {};
   }
 

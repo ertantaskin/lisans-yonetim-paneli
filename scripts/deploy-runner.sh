@@ -58,7 +58,11 @@ api(){  # api METHOD PATH [json-body]
 }
 
 # 1) Bekleyen isteği ATOMİK al (pending→running). Yoksa {} döner → çık.
-claim="$(api POST /v1/admin/deployments/claim || echo '{}')"
+# `targets` filtresi ŞART: aynı kuyruğu `backup-runner.sh` de yokluyor (yedek/tatbikat
+# hedefleri). Filtre olmasaydı bu runner bir 'backup' isteğini kapıp `deploy.sh backup`
+# çalıştırmaya kalkardı; claim geri alınamadığı için istek boşa harcanır ve yedek hiç
+# alınmazdı. Alan API'de OPSİYONEL → eski panel sürümüyle de uyumlu (tüm hedefler).
+claim="$(api POST /v1/admin/deployments/claim '{"targets":["api","admin","api admin","plugin"]}' || echo '{}')"
 id="$(printf '%s' "$claim" | jq -r '.id // empty' 2>/dev/null)"
 [ -z "$id" ] && exit 0
 

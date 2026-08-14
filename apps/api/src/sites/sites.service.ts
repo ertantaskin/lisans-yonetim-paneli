@@ -5,6 +5,25 @@ import { HMAC_KEY_ROTATION_GRACE_SEC, type SiteType } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import { auditLog, orders, siteProductMappings, sites, type Site } from '../db/schema';
+import { isSiteSilent, resolveSilenceHours } from '../notifications/site-silence.constants';
+
+/**
+ * `last_seen_at` yazma THROTTLE penceresi (saniye) — canlılık sinyalinin çözünürlüğü.
+ *
+ * NEDEN: HmacGuard her imzalı istekte çağrılır. Yoğun bir mağaza dakikada onlarca istek
+ * gönderir (sipariş push + katalog senkronu + her sipariş ekranı render'ında okuma çağrıları);
+ * her istekte UPDATE atmak aynı satırı sürekli yeniden yazmak (WAL + satır şişmesi + autovacuum
+ * baskısı) demektir ve sıcak yola gereksiz bir DB yazımı ekler.
+ *
+ * NEDEN 60 SANİYE: ölçtüğümüz şey SAAT mertebesinde bir sessizlik (eşik varsayılanı 24 saat).
+ * Bir dakikalık çözünürlük bu kararı hiçbir şekilde değiştirmez, buna karşılık yazma sayısını
+ * mağaza hacminden BAĞIMSIZ hâle getirir (en fazla 60 UPDATE/saat/site). Panelde gösterilen
+ * "3 dk önce" gibi göreli değerlerde de 1 dakikalık sapma anlamsızdır.
+ *
+ * NOT: eşik SQL'de de uygulanır (`recordLastSeen`), yani eşzamanlı istekler bayat bir
+ * `req.site` anlık görüntüsüne baksa bile son sözü DB söyler.
+ */
+export const SITE_LAST_SEEN_THROTTLE_SEC = 60;
 
 export interface CreatedSite {
   id: string;
@@ -51,6 +70,19 @@ export interface SiteDetail {
      */
     pluginVersion: string | null;
     pluginVersionAt: string | null;
+    /**
+     * Mağazadan gelen SON İMZALI isteğin zamanı (canlılık, 0040). null = mağaza panele HİÇ
+     * imzalı istek göndermemiş (kurulum tamamlanmamış). Sürüm/katalog damgalarının aksine
+     * her istekte (throttle'lı) tazelenir → "hâlâ konuşuyor mu" sorusunu YALNIZ bu yanıtlar.
+     */
+    lastSeenAt: string | null;
+    /**
+     * Sessizlik eşiği aşıldı mı — periyodik alarmın SQL yüklemiyle BİREBİR aynı kural
+     * (`isSiteSilent`). Ekranda alarm üretilmiş bir site "sağlıklı" görünemez.
+     */
+    silent: boolean;
+    /** Eşik (saat) — ekran "N saattir sessiz" metnini uydurmasın diye sunucudan gelir. */
+    silenceThresholdHours: number;
     createdAt: string;
   };
   /** Aktif ürün eşleme sayısı (site_product_mappings). */
@@ -120,6 +152,21 @@ export type PublicSite = Omit<
   Site,
   'hmacSecretEnc' | 'hmacSecretPrevEnc' | 'apiKeyHash' | 'apiKeyHashPrev'
 >;
+
+/**
+ * Site listesi satırı: güvenli site kolonları + SUNUCUDA hesaplanmış canlılık kararı.
+ *
+ * `silent` neden istemcide hesaplanmıyor: eşik (`SITE_SILENCE_HOURS`) yalnız API tarafında
+ * tanımlı. Admin kendi env'inden okusaydı iki kaynak oluşur ve panelin "sessiz" dediği küme
+ * ile alarm üretilen küme sessizce ayrışırdı (bu projede "aynı kavramın iki tanımı" defalarca
+ * gerçek hataya yol açtı).
+ */
+export type SiteListEntry = PublicSite & {
+  /** Eşiği aşan sessizlik (yalnız 'active' + en az bir kez bağlanmış siteler için true). */
+  silent: boolean;
+  /** Kararın dayandığı eşik (saat) — ekran metni için. */
+  silenceThresholdHours: number;
+};
 
 export function toPublicSite(row: Site): PublicSite {
   const {
@@ -280,9 +327,20 @@ export class SitesService {
     }
   }
 
-  async list(): Promise<PublicSite[]> {
+  /**
+   * Site listesi (§14). Sır kolonları strip edilir; her satıra canlılık kararı (`silent`)
+   * SUNUCUDA eklenir → liste ekranı eşik bilgisini uydurmak zorunda kalmaz.
+   */
+  async list(): Promise<SiteListEntry[]> {
+    const hours = resolveSilenceHours();
     const rows = await this.db.select().from(sites);
-    return rows.map(toPublicSite);
+    // Tek `now` anlık görüntüsü: uzun listede satırlar farklı milisaniyelerle kıyaslanmasın.
+    const now = Date.now();
+    return rows.map((row) => ({
+      ...toPublicSite(row),
+      silent: isSiteSilent(row.lastSeenAt, row.status, hours, now),
+      silenceThresholdHours: hours,
+    }));
   }
 
   /**
@@ -347,6 +405,34 @@ export class SitesService {
       .set({ pluginVersion: version, pluginVersionAt: new Date() })
       .where(
         and(eq(sites.id, siteId), sql`${sites.pluginVersion} IS DISTINCT FROM ${version}`),
+      );
+  }
+
+  /**
+   * Sitenin CANLILIK damgasını (`last_seen_at`) tazeler (0040). HmacGuard imzayı
+   * DOĞRULADIKTAN sonra best-effort çağırır — yani bu değer istemci beyanı değil,
+   * kanıtlanmış bir imzanın yan ürünüdür (doğrulanmamış istek canlılık üretemez).
+   *
+   * THROTTLE SQL'DE: `last_seen_at IS NULL OR last_seen_at < now() - throttle` koşulu
+   * olmadan yoğun bir mağaza aynı satırı saniyede birçok kez yeniden yazardı. Guard ayrıca
+   * bayat `req.site` anlık görüntüsüne bakarak çoğu UPDATE'i hiç göndermez; SON SÖZ burasıdır
+   * (eşzamanlı istekler aynı bayat görüntüyü paylaşabilir). `recordPluginVersion`'daki
+   * `IS DISTINCT FROM` guard'ının aynı sınıf çözümü.
+   *
+   * `updated_at` BİLEREK dokunulmaz: bu bir operatör değişikliği değil, pasif telemetridir.
+   */
+  async recordLastSeen(
+    siteId: string,
+    throttleSec: number = SITE_LAST_SEEN_THROTTLE_SEC,
+  ): Promise<void> {
+    await this.db
+      .update(sites)
+      .set({ lastSeenAt: new Date() })
+      .where(
+        and(
+          eq(sites.id, siteId),
+          sql`(${sites.lastSeenAt} IS NULL OR ${sites.lastSeenAt} < now() - (${throttleSec} * interval '1 second'))`,
+        ),
       );
   }
 
@@ -434,6 +520,7 @@ export class SitesService {
    */
   async detail(id: string): Promise<SiteDetail> {
     const site = await this.getById(id); // yoksa 404
+    const silenceThresholdHours = resolveSilenceHours();
 
     const [mappingRow, orderRow, todayRow, recentOrders] = await Promise.all([
       this.db
@@ -481,6 +568,10 @@ export class SitesService {
         // olabilir (site bir kez bile push yapmadıysa) ve api/admin deploy sapmasına dayanıklı.
         pluginVersion: site.pluginVersion ?? null,
         pluginVersionAt: site.pluginVersionAt?.toISOString() ?? null,
+        // Canlılık (0040): damga + alarmla AYNI yüklemden gelen karar + eşik.
+        lastSeenAt: site.lastSeenAt?.toISOString() ?? null,
+        silent: isSiteSilent(site.lastSeenAt, site.status, silenceThresholdHours),
+        silenceThresholdHours,
         createdAt: site.createdAt.toISOString(),
       },
       mappingCount: mappingRow[0]?.count ?? 0,
@@ -553,16 +644,26 @@ export class SitesService {
     //    yalnız site GEÇERLİ İMZALI bir istek gönderdiğinde dolar → "hiç istek gelmedi"i kesin ayırt
     //    eder. Metin site detayındaki ("Bağlantı" kartı) ifadeyle BİLİNÇLİ aynı: iki ekran aynı
     //    durumu iki farklı cümleyle anlatırsa operatör hangisine güveneceğini bilemez.
+    //    CANLILIK (0040): "bir zamanlar bağlandı" ile "hâlâ konuşuyor" AYRI şeylerdir. Sürüm
+    //    damgası yalnız sürüm DEĞİŞİNCE yazıldığı için aylar önce kurulmuş, bugün ölmüş bir
+    //    eklenti de burada yemyeşil görünürdü — panelin günlerce fark edemediği kesinti tam
+    //    olarak buydu. `last_seen_at` eşiği aşmışsa kontrol GEÇMEZ (yanlış-yeşil yok).
     const pluginConnected = !!site.pluginVersion;
+    const silenceHours = resolveSilenceHours();
+    const silent = isSiteSilent(site.lastSeenAt, site.status, silenceHours);
+    const lastSeenText = site.lastSeenAt ? ` · son istek ${trDateTime(site.lastSeenAt)}` : '';
     checks.push({
       key: 'plugin',
       name: 'Eklenti bağlantısı',
-      ok: pluginConnected,
-      detail: pluginConnected
-        ? `v${site.pluginVersion}` +
-          (site.pluginVersionAt ? ` · son bildirim ${trDateTime(site.pluginVersionAt)}` : '')
-        : 'mağaza panele hiç imzalı istek göndermedi — eklenti kurulmamış ya da bağlan kodu ' +
-          'WordPress tarafında hiç girilmemiş olabilir',
+      ok: pluginConnected && !silent,
+      detail: !pluginConnected
+        ? 'mağaza panele hiç imzalı istek göndermedi — eklenti kurulmamış ya da bağlan kodu ' +
+          'WordPress tarafında hiç girilmemiş olabilir'
+        : silent
+          ? `v${site.pluginVersion}${lastSeenText} — ${silenceHours} saattir yeni imzalı istek YOK ` +
+            '(eklenti devre dışı, panel adresi/anahtarı değişmiş ya da mağaza erişilemez olabilir)'
+          : `v${site.pluginVersion}${lastSeenText}` +
+            (site.pluginVersionAt ? ` · sürüm bildirimi ${trDateTime(site.pluginVersionAt)}` : ''),
     });
 
     // 5) Geri kanal webhook — yapılandırılmışsa erişilebilirlik probe'u; değilse devre dışı (sorun değil).

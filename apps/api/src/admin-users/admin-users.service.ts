@@ -8,6 +8,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -16,12 +17,27 @@ import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';
 import { REDIS } from '../redis/redis.module';
 import { adminUsers, type AdminUser } from '../db/schema';
-import { securityEvents } from '../db/schema/securityEvents';
 import { hashPassword, verifyPassword, dummyHash } from '../auth/password';
 import { isUniqueViolation } from '../db/pg-error';
+import { recordAuthEvent } from './auth-events';
+import { AdminTotpService } from './totp.service';
 
-/** Parola hash'i olmadan dışa dönük admin görünümü. */
-export type PublicAdminUser = Omit<AdminUser, 'passwordHash'>;
+/**
+ * Parola hash'i olmadan dışa dönük admin görünümü.
+ *
+ * `totpSecretEnc` de ÇIKARILIR: şifreli olsa bile TOTP sırrının ciphertext'ini listeleme/login
+ * yanıtlarında dolaştırmak gereksiz bir sızıntı yüzeyidir (sites `toPublicSite()` mapper'ıyla
+ * aynı ilke — sır kolonları tek noktada strip edilir). Ekranlara yalnız `totpEnabled` bayrağı gider.
+ */
+export type PublicAdminUser = Omit<AdminUser, 'passwordHash' | 'totpSecretEnc'>;
+
+/**
+ * Giriş sonucu. `totp_required` = parola DOĞRU ama ikinci faktör bekleniyor —
+ * bu durumda ÇAĞIRAN OTURUM AÇMAZ (yarım oturum yok, çerez verilmez).
+ */
+export type LoginOutcome =
+  | { status: 'ok'; user: PublicAdminUser }
+  | { status: 'totp_required'; sub: string };
 
 const MAX_FAILS = 10; // kimlik başına başarısız deneme sınırı
 const FAIL_WINDOW_SEC = 900; // 15 dk
@@ -50,6 +66,18 @@ export class AdminUsersService implements OnModuleInit {
     @Inject(DB) private readonly db: Database,
     @Inject(REDIS) private readonly redis: Redis,
     private readonly config: ConfigService,
+    /**
+     * TOTP doğrulayıcı. @Optional: servis Nest DI dışında (entegrasyon testlerinde) elle
+     * new'lenebiliyor ve mevcut çağıranlar 3 argümanla kuruluyor — geriye dönük uyum bozulmasın.
+     * Enjekte EDİLMEMİŞSE ve kullanıcıda TOTP açıksa giriş FAIL-CLOSED reddedilir (aşağıya bkz.).
+     *
+     * @Inject ZORUNLU (sessiz tuzak): TypeScript, OPSİYONEL bir parametrenin tipini
+     * `AdminTotpService | undefined` birleşimi olarak görür ve `design:paramtypes` metadata'sına
+     * `Object` yazar. Token açıkça verilmezse Nest `Object`i çözemez, @Optional yüzünden de
+     * HATA VERMEZ — bağımlılığı sessizce `undefined` bırakırdı ve TOTP açık hesaplar hiç giriş
+     * yapamazdı (fail-closed, ama teşhisi zor).
+     */
+    @Optional() @Inject(AdminTotpService) private readonly totp?: AdminTotpService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -72,7 +100,7 @@ export class AdminUsersService implements OnModuleInit {
   }
 
   private toPublic(u: AdminUser): PublicAdminUser {
-    const { passwordHash: _p, ...rest } = u;
+    const { passwordHash: _p, totpSecretEnc: _t, ...rest } = u;
     return rest;
   }
 
@@ -158,21 +186,19 @@ export class AdminUsersService implements OnModuleInit {
     detail: string,
     meta: Record<string, unknown> = {},
   ): Promise<void> {
-    try {
-      await this.db.insert(securityEvents).values({
-        type,
-        severity,
-        siteId: null,
-        subject: subject ? subject.slice(0, 200) : null,
-        detail,
-        meta,
-      });
-    } catch {
-      /* denetim izi best-effort — auth/CRUD akışını bozmaz */
-    }
+    // Gövde `auth-events.ts`e taşındı — AdminTotpService de AYNI yazıcıyı kullanıyor
+    // (servisler arası dairesel import olmasın). Davranış birebir aynı (best-effort).
+    await recordAuthEvent(this.db, type, severity, subject, detail, meta);
   }
 
-  async verifyCredentials(identifier: string, password: string): Promise<PublicAdminUser | null> {
+  /**
+   * Kimlik + parola doğrular; TOTP açıksa oturum AÇMADAN ikinci adımı ister.
+   *
+   * Eski `verifyCredentials` bunun sarmalayıcısıdır (imza korundu). Ayrım şuradan doğdu:
+   * "parola doğru" ile "giriş tamamlandı" ARTIK AYNI ŞEY DEĞİL — çerez yalnız `status:'ok'`
+   * dönerse verilir.
+   */
+  async login(identifier: string, password: string): Promise<LoginOutcome | null> {
     const raw = identifier.trim();
     // Boş / aşırı uzun kimlik: DB sorgusu ve scrypt maliyeti ÖDENMEDEN reddedilir. Controller
     // zaten 200 karakterde 400 döner; bu guard servisi doğrudan çağıran yollar içindir. (Hesap
@@ -231,9 +257,74 @@ export class AdminUsersService implements OnModuleInit {
       return null;
     }
 
-    // Başarı: her iki kovayı da temizle.
+    // Parola DOĞRU. TOTP açıksa giriş burada BİTMEZ: ne kova temizlenir, ne lastLoginAt yazılır,
+    // ne de 'admin_login' izi düşer — bunlar ancak ikinci faktör geçilince olur. (Kova temizliği
+    // ikinci adıma ertelenmezse, parolayı ele geçiren biri her denemede lockout sayacını
+    // sıfırlayıp 6 haneli kodu SINIRSIZ deneyebilirdi.)
+    if (user.totpEnabled) {
+      if (!this.totp) {
+        // FAIL-CLOSED: doğrulayıcı yoksa TOTP açık hesap giriş YAPAMAZ (2FA'yı sessizce
+        // atlamaktansa erişimi kesmek doğru taraftır).
+        this.logger.error('TOTP açık hesap için doğrulayıcı servis yok — giriş reddedildi.');
+        return null;
+      }
+      return { status: 'totp_required', sub: user.id };
+    }
+
     await this.redis.del(idKey);
     if (acctKey) await this.redis.del(acctKey);
+    return { status: 'ok', user: await this.finishLogin(user, false) };
+  }
+
+  /** Eski imza (TOTP'siz çağıranlar + testler): yalnız TAM başarıda kullanıcı döner. */
+  async verifyCredentials(identifier: string, password: string): Promise<PublicAdminUser | null> {
+    const res = await this.login(identifier, password);
+    return res && res.status === 'ok' ? res.user : null;
+  }
+
+  /**
+   * GİRİŞİN İKİNCİ ADIMI — TOTP kodu. `sub` yalnız birinci adımı (parola) GEÇMİŞ bir isteğin
+   * taşıdığı kısa ömürlü imzalı beklet-token'ından gelir (bkz. apps/admin/app/login/pending.ts);
+   * bu uç ADMIN_TOKEN arkasındadır ve panelden başka çağıranı yoktur.
+   *
+   * LOCKOUT: parola denemeleriyle AYNI hesap kovası (`authfail:id:<id>`) kullanılır — ayrı kova
+   * açmak, parolayı bilen saldırgana 6 haneli kod için TAZE bir bütçe vermek olurdu. Böylece bir
+   * hesaba 15 dakikada toplam MAX_FAILS deneme düşer (10⁶'lık uzayda brute-force imkânsız).
+   */
+  async verifyTotpLogin(sub: string, code: string): Promise<PublicAdminUser | null> {
+    const acctKey = `authfail:id:${sub}`;
+    if ((Number(await this.redis.get(acctKey)) || 0) >= MAX_FAILS) {
+      throw new HttpException(
+        'Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    const [user] = await this.db.select().from(adminUsers).where(eq(adminUsers.id, sub)).limit(1);
+    // Hesap yok/pasif/TOTP kapalı → bu uç hiç kullanılmamalıydı; sayacı artırmadan reddet
+    // (beklet-token'ı imzalı olduğu için buraya normalde yalnız meşru akış düşer).
+    if (!user || user.disabled || !user.totpEnabled) return null;
+
+    const ok = this.totp ? await this.totp.checkCode(user, code) : false;
+    if (!ok) {
+      const failRes = await this.redis.multi().incr(acctKey).expire(acctKey, FAIL_WINDOW_SEC).exec();
+      const failCount = Number(failRes?.[0]?.[1] ?? 0);
+      await this.recordAuthEvent(
+        'admin_totp_failed',
+        failCount >= MAX_FAILS ? 'critical' : 'warning',
+        user.email,
+        failCount >= MAX_FAILS
+          ? 'Geçersiz TOTP kodu — hesap 15 dk kilitlendi (2FA brute-force şüphesi)'
+          : 'Geçersiz TOTP kodu',
+        { userId: user.id, failCount },
+      );
+      return null;
+    }
+    await this.redis.del(acctKey);
+    return this.finishLogin(user, true);
+  }
+
+  /** Tam başarılı girişin ortak kuyruğu: son giriş damgası + denetim izi. */
+  private async finishLogin(user: AdminUser, twoFactor: boolean): Promise<PublicAdminUser> {
     await this.db
       .update(adminUsers)
       .set({ lastLoginAt: sql`now()` })
@@ -242,6 +333,7 @@ export class AdminUsersService implements OnModuleInit {
     await this.recordAuthEvent('admin_login', 'info', user.email, 'Admin girişi başarılı', {
       userId: user.id,
       role: user.role,
+      twoFactor,
     });
     return this.toPublic(user);
   }

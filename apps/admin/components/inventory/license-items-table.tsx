@@ -43,6 +43,7 @@ import type { PayloadFieldDef } from '../../lib/api';
 import { cn, fmtDateTime } from '../../lib/utils';
 import { assignmentStatusLabel, productKindLabel, siteTypeLabel } from '../../lib/labels';
 import { LicenseItemActions, statusLabel } from './license-item-actions';
+import { LicenseExportPanel, type LicenseExportNote } from './license-export-panel';
 
 /** Sayfa boyutu seçenekleri — TEK KAYNAK lib/license-page-sizes (API bu değerlere kırpar). */
 const PAGE_SIZES = LICENSE_PAGE_SIZES;
@@ -269,6 +270,8 @@ export function LicenseItemsTable({
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = React.useState(false);
   const [bulkNote, setBulkNote] = React.useState<BulkNote | null>(null);
+  /** Dışa aktarma sonucu (kaç kayıt indi / kırpıldı mı) — indirme sessiz kalmasın. */
+  const [exportNote, setExportNote] = React.useState<LicenseExportNote | null>(null);
   const { confirm, dialog } = useConfirm();
   const announce = useAnnouncer();
 
@@ -303,7 +306,12 @@ export function LicenseItemsTable({
    * Toplu işlem sonucunu temizler — YALNIZ kullanıcı listeyi kendi değiştirdiğinde çağrılır.
    * Otomatik tazeleme/sayfa düzeltmesi notu silmez (yukarıdaki not).
    */
-  const clearBulkNote = React.useCallback(() => setBulkNote(null), []);
+  const clearBulkNote = React.useCallback(() => {
+    setBulkNote(null);
+    // Dışa aktarma notu da o ANKİ süzgece aitti (ör. "N kayıt indirildi") — liste değişince
+    // yanıltıcı olur, aynı kullanıcı-kaynaklı olayda temizlenir.
+    setExportNote(null);
+  }, []);
 
   // Yarışan yanıtlar: yalnız EN SON isteğin sonucu ekrana yazılır (eski yanıt üzerine binmez).
   const reqId = React.useRef(0);
@@ -587,6 +595,29 @@ export function LicenseItemsTable({
         >
           <RefreshCw aria-hidden className={loading ? 'animate-spin' : undefined} /> Yenile
         </Button>
+        {/*
+          DIŞA AKTARMA — mutabakat/muhasebe (§12/§13). Kapsam/içerik/biçim seçimi ve rol+KVKK
+          davranışı `license-export-panel.tsx` jsdoc'unda. Süzgeçler AYNEN geçirilir ki
+          "tüm süzgeç sonucu" dosyası ekrandaki listeyle aynı kümeyi anlatsın.
+        */}
+        <LicenseExportPanel
+          rows={rows}
+          total={total}
+          masked={data?.masked}
+          disabled={loading}
+          onResult={(n) => {
+            setExportNote(n);
+            announce(n.text);
+          }}
+          params={{
+            productId,
+            batchId,
+            status,
+            holder: holder || undefined,
+            search: term,
+            sort,
+          }}
+        />
       </div>
 
       <p className="text-xs text-muted-foreground">
@@ -609,6 +640,14 @@ export function LicenseItemsTable({
         <Alert variant={bulkNote.tone}>
           {bulkNote.tone === 'success' ? <Check aria-hidden /> : <ShieldAlert aria-hidden />}
           <AlertDescription>{bulkNote.text}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Dışa aktarma sonucu — kırpılma UYARI tonuyla gelir (sessiz eksik dosya yasak). */}
+      {exportNote && (
+        <Alert variant={exportNote.tone}>
+          {exportNote.tone === 'success' ? <Check aria-hidden /> : <ShieldAlert aria-hidden />}
+          <AlertDescription>{exportNote.text}</AlertDescription>
         </Alert>
       )}
 

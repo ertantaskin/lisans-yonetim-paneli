@@ -46,20 +46,31 @@ export interface CsvColumn<T> {
 /**
  * Satırları CSV metnine çevirir.
  *
- * `notice` verilirse dosyanın İLK satırına TEK HÜCRELİK uyarı yazılır (başlık satırı 2. satıra
- * kayar; Excel ragged satırı sorunsuz okur, sütun yapısı bozulmaz). Neden gerekli: kişisel veri
- * içeren dışa aktarmalarda (ör. karantina "iç denetim" seti) uyarı yalnız DOSYA ADINDA vardı —
- * dosya yeniden adlandırılıp/iletilip açıldığında uyarı yok oluyordu. Düz metin (.txt) sürümünde
- * uyarı zaten başlıkta yazılıyor; bu, CSV dalındaki simetriyi kurar (KVKK).
+ * `notice` verilirse dosyanın İLK satır(lar)ına TEK HÜCRELİK uyarı yazılır (başlık satırı
+ * aşağı kayar; Excel ragged satırı sorunsuz okur, sütun yapısı bozulmaz). Neden gerekli:
+ * kişisel veri içeren dışa aktarmalarda (ör. karantina "iç denetim" seti) uyarı yalnız DOSYA
+ * ADINDA vardı — dosya yeniden adlandırılıp/iletilip açıldığında uyarı yok oluyordu. Düz metin
+ * (.txt) sürümünde uyarı zaten başlıkta yazılıyor; bu, CSV dalındaki simetriyi kurar (KVKK).
+ *
+ * DİZİ de kabul edilir: bir dosyada birden çok uyarı olabilir (KVKK + "değerler maskeli" +
+ * "liste sunucu tavanında kırpıldı"). Bunları tek hücrede birleştirmek okunmaz bir satır
+ * üretiyordu; her uyarı kendi satırında durur. Tekil string davranışı BİREBİR korunur
+ * (mevcut çağıranlar etkilenmez).
  *
  * Uyarı hücresi de `cell()`ten geçer → formül enjeksiyonu koruması ve tırnaklama aynen uygulanır.
  * Kişisel veri İÇERMEYEN varyantlarda (ör. tedarikçi bildirimi) `notice` VERİLMEZ.
  */
-export function toCsv<T>(rows: T[], columns: CsvColumn<T>[], notice?: string): string {
+export function toCsv<T>(
+  rows: T[],
+  columns: CsvColumn<T>[],
+  notice?: string | string[],
+): string {
   const head = columns.map((c) => cell(c.header)).join(';');
   const body = rows.map((r) => columns.map((c) => cell(c.value(r))).join(';'));
-  const lead = notice ? [cell(notice)] : [];
-  return [...lead, head, ...body].join(EOL);
+  const notices = (Array.isArray(notice) ? notice : notice ? [notice] : []).filter(
+    (n) => n.trim().length > 0,
+  );
+  return [...notices.map((n) => cell(n)), head, ...body].join(EOL);
 }
 
 /**

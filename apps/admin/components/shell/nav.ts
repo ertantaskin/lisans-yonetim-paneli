@@ -24,6 +24,8 @@ import {
   Sparkles,
   BookOpen,
   Rocket,
+  ScrollText,
+  KeyRound,
   Ship,
   type LucideIcon,
 } from 'lucide-react';
@@ -103,6 +105,14 @@ export const NAV: NavSection[] = [
     title: 'Sistem',
     items: [
       { label: 'Güvenlik', href: '/security', icon: ShieldAlert },
+      // Denetim izi (§8): "kim, neyi, ne zaman yaptı" — güvenlik OLAYLARININ (anomali/kota)
+      // yanına konur ama onunla aynı şey DEĞİLDİR: /security tespit edilen riski, /audit
+      // gerçekleşmiş İNSAN eylemini gösterir. Salt-okunur (append-only tablo).
+      { label: 'Denetim İzi', href: '/audit', icon: ScrollText },
+      // HERKESE açık (ownerOnly DEĞİL): kendi ikinci faktörünü kurma ekranı. `/admins`
+      // owner-only olduğu için buraya yalnız oradan link verilseydi owner-olmayan yöneticiler
+      // 2FA'yı hiç açamazdı — özellik fiilen tek kişilik kalırdı.
+      { label: 'Hesap Güvenliğim', href: '/admins/security', icon: KeyRound },
       { label: 'Yöneticiler', href: '/admins', icon: ShieldCheck, ownerOnly: true },
     ],
   },
