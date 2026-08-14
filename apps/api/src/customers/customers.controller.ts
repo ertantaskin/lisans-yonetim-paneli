@@ -21,6 +21,18 @@ export class CustomersController {
     return this.customers.list({ search, siteId });
   }
 
+  /**
+   * Mağaza başına müşteri özeti (`/customers` giriş ekranı).
+   *
+   * ROTA SIRASI KRİTİK: `@Get(':email')`ten ÖNCE tanımlanmalı — Nest rotaları tanımlanma
+   * sırasına göre eşler ve aşağıya konsaydı bu adres `email = "site-summary"` olarak
+   * detay ucuna düşerdi (sessizce 404/boş müşteri).
+   */
+  @Get('site-summary')
+  siteSummary() {
+    return this.customers.siteSummary();
+  }
+
   @Get(':email')
   detail(@Param('email') email: string) {
     return this.customers.detail(email);

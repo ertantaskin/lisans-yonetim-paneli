@@ -18,6 +18,25 @@ export interface CustomerListRow {
   lastOrderAt: string | null;
 }
 
+/**
+ * Mağaza (site) başına müşteri özeti — `/customers` ekranının GİRİŞ seviyesi (§13).
+ *
+ * NEDEN: müşteriler e-posta bazlı GLOBAL kayıtlardır, ama operatör "hangi mağazanın
+ * müşterisi" diye düşünür; çok siteli kurulumda tek düz liste karışıyordu (kullanıcı
+ * geri bildirimi). Hiyerarşi yalnız SUNUM katmanındadır — veri modeli değişmez.
+ *
+ * DİKKAT (ekranda da yazar): aynı e-posta iki mağazadan alışveriş yaptıysa HER İKİ
+ * mağazada da sayılır → site sayaçlarının toplamı global müşteri sayısından BÜYÜK olabilir.
+ */
+export interface CustomerSiteSummaryRow {
+  siteId: string;
+  domain: string;
+  type: string;
+  customerCount: number;
+  orderCount: number;
+  lastOrderAt: string | null;
+}
+
 /** Müşteri detayı — kalıcı meta (tags/notes) + türetilmiş istatistik + geçmiş. */
 export interface CustomerDetail {
   email: string;
@@ -86,6 +105,51 @@ export class CustomersService {
    * müşterinin sipariş verdiği site alan adları (`sites`) eklenir → global görünümde
    * hangi site(ler) olduğu bir bakışta görünür.
    */
+  /**
+   * Mağaza başına müşteri/sipariş özeti — `/customers` giriş ekranı.
+   *
+   * Siteler LEFT JOIN'lenir: HENÜZ SİPARİŞİ OLMAYAN mağaza da listede kalır (0 müşteri).
+   * Aksi halde yeni bağlanmış bir mağaza ekranda hiç görünmez ve operatör "bağlanmadı mı?"
+   * diye sorar — sıfır, yokluk değil bilgidir.
+   *
+   * PERF: tek geçiş, site başına grup (orders(site_id, created_at) indeksi mevcut).
+   * Sayaçlar anlık türetilir — müşteri sayısı ayrı bir tabloda TUTULMAZ (§13: müşteri
+   * kaydı yalnız etiket/not taşır, sayılar siparişten okunur → tek doğruluk kaynağı).
+   */
+  async siteSummary(): Promise<CustomerSiteSummaryRow[]> {
+    const rows = await rawRows<{
+      site_id: string;
+      domain: string;
+      type: string;
+      customer_count: number;
+      order_count: number;
+      last_order_at: Date | string | null;
+    }>(
+      this.db,
+      sql`
+        SELECT
+          s.id AS site_id,
+          s.domain AS domain,
+          s.type::text AS type,
+          COUNT(DISTINCT lower(o.customer_email))::int AS customer_count,
+          COUNT(o.id)::int AS order_count,
+          MAX(o.created_at) AS last_order_at
+        FROM sites s
+        LEFT JOIN orders o ON o.site_id = s.id
+        GROUP BY s.id, s.domain, s.type
+        ORDER BY customer_count DESC, s.domain ASC
+      `,
+    );
+    return rows.map((r) => ({
+      siteId: r.site_id,
+      domain: r.domain,
+      type: r.type,
+      customerCount: Number(r.customer_count),
+      orderCount: Number(r.order_count),
+      lastOrderAt: r.last_order_at ? new Date(r.last_order_at).toISOString() : null,
+    }));
+  }
+
   async list(
     opts?: { search?: string; siteId?: string },
   ): Promise<{ items: CustomerListRow[]; truncated: boolean }> {

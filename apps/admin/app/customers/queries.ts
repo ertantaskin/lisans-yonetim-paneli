@@ -29,6 +29,16 @@ export interface SiteOption {
   domain: string;
 }
 
+/** `/customers` giriş ekranı: mağaza kartı satırı. */
+export interface CustomerSiteSummary {
+  siteId: string;
+  domain: string;
+  type: string;
+  customerCount: number;
+  orderCount: number;
+  lastOrderAt: string | null;
+}
+
 export interface CustomerDetail {
   email: string;
   tags: string[];
@@ -92,6 +102,18 @@ export async function getSitesForFilter(): Promise<SiteOption[]> {
     domain: string;
   }>;
   return arr.map((s) => ({ id: s.id, domain: s.domain }));
+}
+
+/**
+ * Mağaza başına müşteri özeti — `/customers` giriş ekranı (site → müşteri hiyerarşisi).
+ * Eski API sürümünde uç olmayabilir (api/admin dağıtım sapması) → çağıran tarafta
+ * try/catch ile boş listeye düşer, ekran arama kutusuyla çalışmaya devam eder.
+ */
+export async function getCustomerSiteSummary(): Promise<CustomerSiteSummary[]> {
+  const data = await apiGet<CustomerSiteSummary[] | { items?: CustomerSiteSummary[] }>(
+    '/v1/admin/customers/site-summary',
+  );
+  return Array.isArray(data) ? data : (data?.items ?? []);
 }
 
 /** Tek müşteri 360 görünümü (stats + sipariş + değişim + etiket/not). */

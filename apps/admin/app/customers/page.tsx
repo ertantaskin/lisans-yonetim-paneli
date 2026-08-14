@@ -1,68 +1,183 @@
-import { TriangleAlert, Users } from 'lucide-react';
-import { PageHeader } from '../../components/ui/page-header';
-import { Alert, AlertDescription } from '../../components/ui/alert';
+import Link from 'next/link';
+import { ArrowLeft, Globe, Plus, Search, TriangleAlert, Users } from 'lucide-react';
+import { EmptyState, PageHeader } from '../../components/ui/page-header';
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
+import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
 import { CustomersTable } from '../../components/customers-table';
 import { CustomerSiteFilter } from '../../components/customer-site-filter';
-import { getCustomers, getSitesForFilter, type CustomerRow, type SiteOption } from './queries';
+import { CustomerSiteGrid } from '../../components/customer-site-grid';
+import {
+  getCustomerSiteSummary,
+  getCustomers,
+  getSitesForFilter,
+  type CustomerRow,
+  type CustomerSiteSummary,
+  type SiteOption,
+} from './queries';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Müşteriler — site → müşteri hiyerarşisi. Üstteki site süzgeci ile bir siteye daralınca
- * (?site=<id>) yalnız o sitenin müşterileri + o siteye kapsanmış sayılar gösterilir; süzgeç
- * boşken tüm müşteriler + hangi site(ler)den geldikleri ("Siteler" kolonu) görünür.
+ * Müşteriler — MAĞAZA → müşteri hiyerarşisi (kullanıcı geri bildirimi: "direkt müşteriler
+ * çıkıyor, çok siteli kurulumda karışıyor; siteye girip müşterilerini görmek daha sağlıklı").
+ *
+ * Ekranın ÜÇ hâli var, üçü de aynı adres üzerinden (paylaşılabilir/yer imlenebilir URL):
+ *   1. `/customers`            → MAĞAZA kartları (giriş seviyesi) + tüm mağazalarda arama
+ *   2. `/customers?q=<terim>`  → aramanın SUNUCU-taraflı sonucu, hiyerarşiyi ATLAR
+ *                                (operatör e-postayı biliyorsa hangi mağaza olduğunu bilmek
+ *                                zorunda kalmasın — "genel arama yapılabilir" şartı)
+ *   3. `/customers?site=<id>`  → o mağazanın müşterileri, sayılar o mağazaya kapsanmış
+ *
+ * Müşteri kaydı hâlâ e-posta bazlı GLOBAL'dir (etiket/not tek kayıt) — hiyerarşi yalnız
+ * sunumdadır, veri modeli değişmedi.
  */
 export default async function CustomersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ site?: string }>;
+  searchParams: Promise<{ site?: string; q?: string }>;
 }) {
-  const { site } = await searchParams;
+  const { site, q } = await searchParams;
+  const term = q?.trim() ?? '';
+  /**
+   * API/admin dağıtım sapmasına dayanıklılık: `site-summary` ucu eski API sürümünde YOK.
+   * O durumda ekran hata kartına düşmez — eski davranışa (düz müşteri listesi) geri döner.
+   * (Bu panelde admin ve api ayrı imajlar; biri önce dağıtılabiliyor.)
+   */
+  let summaryUnavailable = false;
+  // Arama, site süzgecini EZER: operatör bir mağazanın içindeyken arama yaptığında
+  // sonuç o mağazayla sınırlı kalsaydı "aradığım müşteri yok" yanılgısı doğardı.
+  const mode: 'search' | 'site' | 'sites' = term ? 'search' : site ? 'site' : 'sites';
 
   let customers: CustomerRow[] = [];
+  let siteSummary: CustomerSiteSummary[] = [];
   let sites: SiteOption[] = [];
   let truncated = false;
   let error: string | null = null;
   try {
-    const [res, siteList] = await Promise.all([
-      getCustomers({ siteId: site }),
-      getSitesForFilter(),
-    ]);
-    customers = res.items;
-    truncated = res.truncated;
-    sites = siteList;
+    if (mode === 'sites') {
+      try {
+        siteSummary = await getCustomerSiteSummary();
+      } catch {
+        summaryUnavailable = true;
+      }
+    }
+    if (mode !== 'sites' || summaryUnavailable) {
+      const [res, siteList] = await Promise.all([
+        getCustomers(mode === 'search' ? { search: term } : { siteId: site }),
+        getSitesForFilter(),
+      ]);
+      customers = res.items;
+      truncated = res.truncated;
+      sites = siteList;
+    }
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
 
   const activeSite = sites.find((s) => s.id === site);
-  const description = activeSite
-    ? `${activeSite.domain} sitesinin müşterileri — sipariş/atama/değişim bu siteye göre.`
-    : 'Sipariş/atama geçmişi, değişim oranı ve etiketler — site süzgeci ile bir siteye daralın.';
+  const description =
+    mode === 'search'
+      ? `“${term}” için tüm mağazalarda arandı.`
+      : mode === 'site'
+        ? `${activeSite?.domain ?? 'Seçili mağaza'} müşterileri — sipariş/atama/değişim sayıları bu mağazaya göre.`
+        : 'Önce mağazayı seçin, müşterileri içeride listelenir. E-postayı biliyorsanız aramayla doğrudan bulun.';
 
   return (
     <div>
       <PageHeader icon={Users} title="Müşteriler" description={description}>
-        <CustomerSiteFilter sites={sites} current={site} />
+        {/* Mağaza içindeyken hızlı geçiş için süzgeç kalır; giriş ekranında kartlar zaten
+            aynı işi yapıyor, ikinci bir seçici gürültü olurdu. */}
+        {mode === 'site' && <CustomerSiteFilter sites={sites} current={site} />}
       </PageHeader>
+
+      {/* Arama HER hâlde üstte: hiyerarşi bir kısıt değil, varsayılan yol olmalı.
+          Native form + GET → JS'siz çalışır, sonuç adres çubuğunda paylaşılabilir. */}
+      <form action="/customers" method="get" className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            name="q"
+            defaultValue={term}
+            placeholder="Tüm mağazalarda e-posta ara…"
+            aria-label="Tüm mağazalarda müşteri ara"
+            className="bg-muted/40 pl-8"
+          />
+        </div>
+        <Button type="submit" variant="outline" size="sm">
+          Ara
+        </Button>
+        {mode !== 'sites' && (
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/customers">
+              <ArrowLeft className="size-3.5" /> Tüm mağazalar
+            </Link>
+          </Button>
+        )}
+      </form>
+
       {error ? (
         <Card className="p-6">
           <p className="text-sm text-destructive">API&apos;ye ulaşılamadı: {error}</p>
         </Card>
+      ) : mode === 'sites' && !summaryUnavailable ? (
+        siteSummary.length === 0 ? (
+          <EmptyState
+            icon={Globe}
+            title="Bağlı mağaza yok"
+            description="Müşteriler mağazalardan gelen siparişlerden türetilir. Önce bir satış kanalı bağlayın."
+          >
+            <Button asChild size="sm">
+              <Link href="/sites/new">
+                <Plus className="size-3.5" /> Mağaza bağla
+              </Link>
+            </Button>
+          </EmptyState>
+        ) : (
+          <CustomerSiteGrid sites={siteSummary} />
+        )
       ) : (
         <>
+          {summaryUnavailable && (
+            <Alert variant="muted" className="mb-4">
+              <TriangleAlert />
+              <div>
+                <AlertTitle>Mağaza görünümü şu an kullanılamıyor</AlertTitle>
+                <AlertDescription>
+                  API bu sürümde mağaza özetini vermiyor (dağıtım sırası) — tüm müşteriler düz
+                  listede gösteriliyor. Arama ve müşteri detayı normal çalışır.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
           {truncated && (
             <Alert variant="warning" className="mb-4">
               <TriangleAlert />
-              <AlertDescription>
-                En yeni <strong>2.000 müşteri</strong> gösteriliyor — arama bu listede yapılır,
-                daha eskileri kapsamaz. Aradığınız müşteriyi bulamıyorsanız <strong>Siparişler</strong>
-                {' '}ekranından e-posta ile arayın ya da site süzgeciyle daraltın.
-              </AlertDescription>
+              <div>
+                <AlertTitle>Liste kırpıldı</AlertTitle>
+                <AlertDescription>
+                  En yeni <strong>2.000 müşteri</strong> gösteriliyor. Aradığınız müşteriyi
+                  bulamıyorsanız yukarıdaki arama kutusunu kullanın — o arama sunucuda, TÜM
+                  kayıtlar üzerinde çalışır.
+                </AlertDescription>
+              </div>
             </Alert>
           )}
-          <CustomersTable customers={customers} siteScoped={!!activeSite} />
+          {mode === 'search' && customers.length === 0 && (
+            <Alert variant="muted" className="mb-4">
+              <Search />
+              <div>
+                <AlertTitle>Sonuç yok</AlertTitle>
+                <AlertDescription>
+                  “{term}” ile eşleşen müşteri bulunamadı. E-postanın bir parçasıyla
+                  (ör. alan adı) aramayı deneyin.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
+          <CustomersTable customers={customers} siteScoped={mode === 'site'} />
         </>
       )}
     </div>
