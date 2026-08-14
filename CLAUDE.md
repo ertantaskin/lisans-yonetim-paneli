@@ -1856,3 +1856,87 @@ arayabilelim gibi düşün, daha kapsamlı"*.
   900px kart — **0** · 1100px tablo (4 kolon) — **0** · 1600px tam tablo (9 kolon) — 1332px içerik / 1222px kap,
   **110px** iç kaydırma kaldı (başlangıç 216px). Bu bant bilinçli kabul: dokuz kolonluk operasyon tablosu
   1222px'e sığmaz, proje kuralı gereği geniş tablo KENDİ kabında kayar; asıl şikâyet (dar ekran + kırpma) kapandı.
+
+**SEKİZ ÖNERİ MADDESİ B1–B8 (commit 10c44fd→ed92a9e, CANLI prod+dev, migration 0040):** Kullanıcı bir
+önceki turda sunduğum öneri listesinin **tamamının** testleriyle birlikte uygulanmasını istedi. Altı
+paralel işçi (ayrık dosya kümeleri) + merkezî tümleştirme. **Şema değişiklikleri BİLEREK tek elde
+toplandı** — üç madde şema istiyordu ve üç işçi eşzamanlı migration üretse drizzle `_journal.json`
+dosyasında çakışırdı. **migration 0040** (additive + `IF NOT EXISTS`; `when` sırası ve drift kontrol
+edildi → `db:generate` "No schema changes").
+- **[B3] `/audit` denetim izi ekranı:** `audit_log` doluydu (her reveal/revoke/import/login bir satır)
+  ama onu LİSTELEYEN hiçbir uç yoktu → "bu anahtarı kim gösterdi", "bu siparişi kim iptal etti"
+  soruları ancak veritabanına ELLE bağlanarak yanıtlanıyordu. Salt-okunur (yazma ucu bilerek YOK —
+  denetim izinin değeri değiştirilemez olmasından gelir), aktör/hedef/eylem/tarih/trace süzgeçleri,
+  `meta` redaksiyon kalkanı (bugün no-op: 30 yazar tarandı, sır girmiyor — GELECEK için), toplam
+  `LIMIT CAP+1` ile SINIRLI sayılır ve aşımda `totalCapped` ile DÜRÜSTÇE söylenir (süzgeçsiz
+  `count(*)` her açılışta tam tablo taraması olurdu). Üç bileşik indeks — ikinci kolon **DESC**
+  (yön ayna değildir, 0031 dersi). Görüntüleme audit'e YAZILMAZ (kendini besleyen döngü olurdu).
+- **[B4/B5] İki yeni rapor.** `/reports/sla`: "anında" ↔ "bekledi" ayrımı uydurma bir eşik DEĞİL
+  **yapısaldır** — `createOrder` siparişi ve atamalarını tek transaction'da yazar, iki tablonun
+  `created_at` varsayılanı da `now()` (tx başlangıcı) → anında teslimde fark **tam 0**, `autoComplete`
+  ayrı tx olduğu için hep sıfırdan büyük. `avg` yanında **p50/p95** (birkaç uzun bekleme ortalamada
+  kaybolur); held/iptal/bonus/**değişimle verilen taze anahtar** hariç ve kaç tanesinin elendiği
+  yanıtta yazılı; tamamlanmamış siparişler `stillOpen` ile ayrı (kohort dürüstlüğü).
+  `/reports/reorder`: hız + o ürünün tedarikçisinin GERÇEKLEŞEN tedarik süresi (yüklem
+  `SuppliersService.scorecard` ile BİREBİR aynı); süre bilinmiyorsa **öneri ÜRETİLMEZ** (varsayılan
+  uydurulmaz), yalnız tükenme tahmini; MAK'ta birim-adet çevrimi açık (karıştırılsa 500 kat hata).
+- **[B8] TOTP iki faktörlü giriş:** RFC 6238 + RFC 4648 elle yazıldı — **sıfır yeni bağımlılık** (QR
+  kütüphanesi de eklenmedi: yeni tedarik-zinciri yüzeyi + sunucuda üretilen QR'ın log/proxy'ye düşme
+  riski; her authenticator "anahtarı elle gir"i destekler). Sır AES-256-GCM envelope + AAD
+  `admin_user:<id>`; tekrar-oynatma defteri Redis `SET NX` (**fail-CLOSED** — bu bir kimlik doğrulama
+  adımı, hız sınırı gibi fail-open olamaz); lockout parola denemeleriyle **AYNI kovada** (ayrı kova,
+  parolayı bilene 6 hane için TAZE bütçe vermek olurdu); oturum çerezi YALNIZ ikinci adımdan sonra —
+  arada 5 dk'lık, imza anahtarı SESSION_SECRET'ten AYRI TÜRETİLMİŞ (`totp-pending-v1`) ve `typ` alanlı
+  beklet-token'ı var, yani bir beklet-token'ı ASLA geçerli oturum olarak doğrulanamaz. `totp_enabled`
+  kullanıcı ilk kodu doğrulayana kadar false (yanlış kurulumda hesap kendini kilitlemez); owner
+  sıfırlaması `token_version` +1. **Yedek kod ÜRETİLMEDİ** (ayrı hash'li kasa + indirme UX'i gerekir —
+  kapsam dışı, raporlandı). `/admins/security` **owner kapısı YOK** ve sol menüde AYRI öğe: `/admins`
+  owner-only olduğu için oradan link vermek 2FA'yı tek kişilik bırakırdı.
+- **[B7] Panelden yedek + geri-yükleme tatbikatı:** dağıtımla AYNI kuyruk (tek-aktif-iş garantisi
+  ikisini birden kapsar) ama **ayrı runner + `claimNext(targets)` filtresi** — filtresiz iki cron
+  runner birbirinin işini claim eder ve claim geri alınamadığı için iş KAYBOLURDU (`targets` alanı
+  opsiyonel, eski runner sürümü kırılmaz). `/deployments`'ta yaş / boyut / **dış kopya** durumu +
+  bayatlık bantları; özet ayrı tablo değil `deployments` satırlarından türetilir. Panel konteynerine
+  Docker soketi VERİLMEZ (istek/çalıştırma ayrımı korundu). Offsite yalnız KANCA (`BACKUP_OFFSITE_CMD`,
+  tek argüman, `eval` yok) — uydurma sağlayıcı entegrasyonu yok.
+- **[B1/B6] Kayıtlı görünümler + envanter dışa aktarma:** görünümler URL query'sini saklıyor, bu yüzden
+  `DataTable`'a opt-in **`syncUrl`** eklendi (arama/facet/sıralama `tq`/`tf.<kolon>`/`tsort` ile adrese
+  yazılır; sayfanın KENDİ parametreleri korunur; facet listesinde olmayan `tf.*` filtre ENJEKTE EDEMEZ).
+  `/orders`'ta menü zaten bağlıydı ama süzgeçler istemci state'inde durduğu için **BOŞ görünüm
+  kaydediyordu**. URL yazımı `window.history.replaceState` ile: `router.replace` her tuş vuruşunda
+  sunucu bileşenini yeniden çalıştırırdı, `useSearchParams` ise her çağıran sayfaya Suspense sınırı
+  dayatırdı. Geri yükleme **tam gezinme** (yumuşak gezinme aynı rotada tabloyu yeniden KURMAZ →
+  "geri yükledim sanıp yüklememek"). Dışa aktarma AYRI sunucu ucu (istemci sayfa döngüsü 50 ayrı reveal
+  audit'i üretir + sayfalar arası mükerrer/atlanmış satır doğururdu), düz metin **yalnız owner** + TEK
+  reveal audit; owner-olmayan maskeli dosya alır ve reveal GERÇEKLEŞMEDİĞİ için audit de YAZILMAZ
+  (canlıda doğrulandı: `masked:true` + `••••••83GT`).
+- **[B2] Mağaza sessizlik alarmı** (`sites.last_seen_at`): damga HmacGuard'da **imza doğrulandıktan
+  SONRA** yazılır — doğrulanmamış istek canlılık üretebilseydi ölü bir mağaza "canlı" gösterilip alarm
+  susturulabilirdi ve sinyalin saldırganca kapatılabilir olması hiç sinyal olmamasından BETERDİR.
+  60 sn throttle hem uygulamada (bayat `req.site` ile ön eleme) hem SQL'de (asıl güvence).
+- **ENTEGRASYON PAKETİNİN YAKALADIĞI 2 SORUN (typecheck + build TEMİZ geçiyordu):** (1) **`/audit`
+  tarih süzgeci HER ZAMAN 500 veriyordu** — ham `sql` fragmanına `Date` NESNESİ konmuştu; postgres.js
+  bind'de `ERR_INVALID_ARG_TYPE` atıyor (drizzle'ın kolon-farkında yolu Date kabul eder, ham fragman
+  ETMEZ). Projenin mevcut deseni uygulandı: ISO dize + açık `::timestamptz`. (2) TOTP testleri kurulum
+  onayı ile girişte AYNI 30 sn'lik adımı kullanıyordu; defter bu ikisi arasında ORTAK (RFC 6238 §5.2,
+  **kasıtlı**) → "geçerli kod reddedildi" gibi görünen 3 başarısızlık. Ürün doğruydu, test kırılgandı;
+  yardımcı önceki adımı tüketiyor + davranış `(d2)` ile AÇIKÇA kilitlendi.
+- **Yol boyunca:** güvenlik olayı etiketleri tek kaynağa (`labels.ts`) toplandı ve ekrana özel yerel
+  sözlük kaldırıldı (aynı ekranda iki sözlük bu projede çelişen etiket üretmişti) · breadcrumb
+  `sla`/`reorder`/`costs` (`costs` uzun süredir ham İngilizceydi) · `security` anahtarı breadcrumb
+  sözlüğüne EKLENMEDİ (NAV spread'inin üstüne yazıp `/security` ekranının etiketini değiştirirdi) ·
+  `smoke-routes.sh`'a 5 yeni rota · rehbere `/audit`, `/reports/sla`, `/reports/reorder`,
+  `/admins/security` ve yedekleme bölümleri; "kayıtlı görünüm yalnız Siparişler'de" iddiası ve
+  "filtreler adres çubuğuna yansır" vaadi artık GERÇEĞE uyuyor.
+- **Doğrulama:** typecheck 4/4 (src+test) · check-use-server 25 dosya/86 export · api birim **124/124** ·
+  admin birim **131/131** (+10 URL durumu testi; **test dosyası `lib/` altına konmalı** — `include`
+  dışında kalan dosya `passWithNoTests` yüzünden SIFIR test koşar ve yeşil görünür) · build 3/3 ·
+  VPS izole test DB **entegrasyon 333/333 + yarış 3/3** · dev: 0040 uygulandı (tracking 41), **30 rota
+  200, hata sınırına düşen YOK**, canlı uç doğrulaması (audit tarih süzgeci 200 / geçersiz action 400,
+  SLA 7 ölçüm p50 38,9 sn p95 62,9 sn, reorder gerçek ürün 6 gün kaldı, export owner-admin farkı,
+  yedek özeti dürüst "hiç yedek yok") · prod `deploy.sh api admin` (rollback'li) → `/v1/health`
+  **200 v1.1.0**, migration tracking **41**, `audit_log` 4 indeks canlı, api **0 ERROR**.
+- **OPERATÖRÜN YAPMASI GEREKENLER (kod değil, ops):** yedek runner'ının cron satırları + **offsite
+  kancası** (`BACKUP_OFFSITE_CMD` — kurulmazsa yedek yalnız bu sunucuda kalır) + `BACKUP_KEEP_LAST`
+  disk planı; hepsi `docs/RUNBOOK-DR.md` §4.3-4.4'te. MASTER_KEY yedeğin İÇİNDE DEĞİL — ayrı kasada
+  çevrimdışı iki kopya.
