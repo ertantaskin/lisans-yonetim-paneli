@@ -246,7 +246,14 @@ export class ProductsService {
   }
 
   async list(): Promise<
-    Array<Product & { availableStock: number; mappedSites: string[]; mappingCount: number }>
+    Array<
+      Product & {
+        availableStock: number;
+        mappedSites: string[];
+        mappingCount: number;
+        categoryName: string | null;
+      }
+    >
   > {
     // Ürün başına anlık 'available' stok sayısı — tek GROUP BY agregasyonu.
     // status='available' filtresi JOIN ON'a alındı: yalnız uygun satırlar okunur,
@@ -292,10 +299,21 @@ export class ProductsService {
     );
     const byProduct = new Map(mapRows.map((r) => [r.product_id, r]));
 
+    // Kategori ADI ayrı sorguda çözülür (JOIN DEĞİL): yukarıdaki sorgu SUM agregasyonu
+    // yapıyor, ikinci bir tabloyu aynı JOIN'e katmak satır çoğaltma riskini geri getirir.
+    // Kategori sayısı ürün sayısından küçüktür → tek küçük sorgu, N+1 yok.
+    const catRows = await rawRows<{ id: string; name: string }>(
+      this.db,
+      sql`SELECT id, name FROM product_categories`,
+    );
+    const catName = new Map(catRows.map((c) => [c.id, c.name]));
+
     return rows.map((r) => {
       const m = byProduct.get(r.product.id);
       return {
         ...r.product,
+        // null = Kategorisiz (geçerli durum; ekran ayrı kovada gösterir, ürünü GİZLEMEZ).
+        categoryName: r.product.categoryId ? (catName.get(r.product.categoryId) ?? null) : null,
         availableStock: Number(r.availableStock),
         // Eşlemesi olmayan ürün → boş dizi (null değil): ekran "eşleme yok" uyarısını
         // BİLGİYE dayanarak basar, alanın gelmemesiyle karıştırmaz.

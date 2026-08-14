@@ -1,4 +1,5 @@
 'use client';
+import * as React from 'react';
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { ProductRow } from '../lib/api';
@@ -38,7 +39,14 @@ function toLocalDatetime(iso: string): string {
  * Sunum: her alan görünür Türkçe etiket + yardım metni ile `Field` içinde sarılır
  * ve anlamlı `FormSection` bloklarına gruplanır (placeholder-only / ham enum yok).
  */
-export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow> }) {
+export function ProductFormFields({
+  defaults,
+  categories = [],
+}: {
+  defaults?: Partial<ProductRow>;
+  /** Seçilebilir kategoriler (`/categories` ekranından yönetilir). Boş dizi = henüz yok. */
+  categories?: Array<{ id: string; name: string }>;
+}) {
   const [kind, setKind] = useState(defaults?.kind ?? 'key');
   const [usageMode, setUsageMode] = useState(defaults?.usageMode ?? 'single');
   const [fields, setFields] = useState<SchemaField[]>(
@@ -60,6 +68,18 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
 
   const schemaJson =
     kind === 'account' ? JSON.stringify(fields.filter((f) => f.key.trim() && f.label.trim())) : '';
+
+  /**
+   * SESSİZ VERİ KAYBI KORUMASI: ürünün MEVCUT kategorisi listede yoksa (çağıran `categories`
+   * geçirmemişse ya da liste bayatsa) tarayıcı `defaultValue`'ya karşılık gelen seçenek
+   * bulamaz ve ilk seçeneği ("Kategorisiz") seçer → kaydet denince ürün sessizce
+   * kategorisinden ÇIKARDI. Mevcut kategori her hâlükârda bir seçenek olarak eklenir.
+   */
+  const categoryOptions = React.useMemo(() => {
+    const current = defaults?.categoryId;
+    if (!current || categories.some((c) => c.id === current)) return categories;
+    return [{ id: current, name: defaults?.categoryName ?? 'Mevcut kategori' }, ...categories];
+  }, [categories, defaults?.categoryId, defaults?.categoryName]);
 
   return (
     <div className="space-y-6 text-sm">
@@ -90,6 +110,33 @@ export function ProductFormFields({ defaults }: { defaults?: Partial<ProductRow>
             />
           </Field>
         </FieldRow>
+
+        {/* Kategori: SERBEST METİN DEĞİL, listeden seçim (kullanıcı kararı — ad tek yerden
+            yönetilir, ikiz kategori olmaz). Liste boşsa alan yine görünür ve nereden
+            açılacağını söyler; ürün kategorisiz de kaydedilebilir. */}
+        <Field
+          label="Kategori"
+          htmlFor="p-category"
+          hint={
+            categories.length > 0
+              ? 'Stok & Ürünler ekranı bu gruba göre açılır. Boş bırakılırsa ürün “Kategorisiz” kartında görünür.'
+              : 'Henüz kategori yok — Kategoriler ekranından açabilirsiniz. Boş bırakabilirsiniz.'
+          }
+        >
+          <select
+            id="p-category"
+            name="categoryId"
+            defaultValue={defaults?.categoryId ?? ''}
+            className={`w-full ${selectClass}`}
+          >
+            <option value="">Kategorisiz</option>
+            {categoryOptions.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
 
         <FieldRow>
           <Field label="Ürün tipi" htmlFor="p-kind" hint="Teslim edilen içeriğin türü.">

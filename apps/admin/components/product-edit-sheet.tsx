@@ -26,9 +26,14 @@ const editInitial: FormState = { ok: false };
 export function ProductEditSheet({
   product,
   trigger,
+  categories = [],
 }: {
   product: Partial<ProductRow> & { id: string; name: string; sku: string };
   trigger?: React.ReactNode;
+  /** Kategori seçenekleri (`/categories`'ten yönetilir). Verilmezse alan yalnız
+   *  "Kategorisiz" gösterir — ürünün mevcut kategorisi yanlışlıkla SIFIRLANMASIN diye
+   *  çağıranların listeyi geçirmesi beklenir (products-table geçiriyor). */
+  categories?: Array<{ id: string; name: string }>;
 }) {
   const [open, setOpen] = React.useState(false);
   const [state, action, pending] = React.useActionState(updateProductAction, editInitial);
@@ -57,7 +62,7 @@ export function ProductEditSheet({
         {/* key={open}: her açılışta formu ürün varsayılanlarıyla sıfırla. */}
         <form key={String(open)} action={action} className="space-y-3 p-4 pt-0">
           <input type="hidden" name="id" value={product.id} />
-          <ProductFormFields defaults={product} />
+          <ProductFormFields defaults={product} categories={categories} />
           {/* role="alert": sunucu eylemi hatası ekran okuyucuya DUYURULUR (kardeş
               product-create-sheet ile aynı desen) — yoksa hata sessizce basılıyordu. */}
           {state.error && (

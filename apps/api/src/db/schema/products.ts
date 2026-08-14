@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -10,6 +11,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { fulfillmentPolicyEnum, onExpiryEnum, productKindEnum, usageModeEnum } from './enums';
+import { productCategories } from './productCategories';
 
 /**
  * products — tek çekirdek, tüm ürün tipleri (§11).
@@ -22,6 +24,18 @@ export const products = pgTable(
     sku: text('sku').notNull(),
     name: text('name').notNull(),
     kind: productKindEnum('kind').notNull().default('key'),
+
+    /**
+     * Kategori (§17 bilgi mimarisi) — `/stock` giriş ekranı bu alana göre gruplanır.
+     *
+     * `ON DELETE SET NULL` bilinçli: kategori silinince ÜRÜN SİLİNMEZ, yalnız kategorisiz
+     * kalır ("Kategorisiz" kartında görünür). RESTRICT olsaydı operatör kategoriyi silmek
+     * için önce her ürünü elle taşımak zorunda kalırdı; ürünü silmek ise felaket olurdu
+     * (ürün stok/sipariş taşır). Silme onayında "N ürün Kategorisiz olacak" yazılır.
+     */
+    categoryId: uuid('category_id').references(() => productCategories.id, {
+      onDelete: 'set null',
+    }),
 
     /** Payload alan şeması (ör. {username, password} hesap için). */
     payloadSchema: jsonb('payload_schema'),
@@ -57,7 +71,11 @@ export const products = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [uniqueIndex('products_sku_uniq').on(t.sku)],
+  (t) => [
+    uniqueIndex('products_sku_uniq').on(t.sku),
+    // Kategori kartlarının sayaç sorgusu + kategoriye süzülmüş ürün listesi bu indeksi kullanır.
+    index('products_category_idx').on(t.categoryId),
+  ],
 );
 
 export type Product = typeof products.$inferSelect;

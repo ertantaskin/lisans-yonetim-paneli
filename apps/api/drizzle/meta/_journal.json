@@ -260,6 +260,13 @@
       "when": 1786653114445,
       "tag": "0036_order_line_canceled_units",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786716335642,
+      "tag": "0037_product_categories",
+      "breakpoints": true
     }
   ]
 }

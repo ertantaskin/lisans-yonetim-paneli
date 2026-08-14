@@ -3,6 +3,7 @@ export * from './enums';
 export * from './adminUsers';
 export * from './sites';
 export * from './siteConnectTokens';
+export * from './productCategories';
 export * from './products';
 export * from './licenseItems';
 export * from './orders';

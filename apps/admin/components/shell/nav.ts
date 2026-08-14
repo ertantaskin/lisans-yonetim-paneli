@@ -8,6 +8,7 @@ import {
   Users,
   LifeBuoy,
   FileText,
+  FolderTree,
   BarChart3,
   Bell,
   Truck,
@@ -55,6 +56,9 @@ export const NAV: NavSection[] = [
     title: 'Envanter',
     items: [
       { label: 'Stok & Ürünler', href: '/stock', icon: Boxes },
+      // Kategoriler ürün listesinin GİRİŞ seviyesini belirler (kullanıcı kararı: ad tek
+      // yerden yönetilsin) → Stok & Ürünler'in hemen altında, aynı grupta.
+      { label: 'Kategoriler', href: '/categories', icon: FolderTree },
       // Stok girişi operasyonun EN SIK yapılan işi ama menüde hiç yoktu → operatör önce
       // ürünü bulup detayına inmek zorundaydı (keşfedilebilirlik sorunu). Artık kendi
       // ekranı var; ürün/parti seçimi ekranın içinde yapılır (?product= / ?batch= ile de gelir).

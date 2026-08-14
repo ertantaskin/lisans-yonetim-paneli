@@ -42,7 +42,9 @@ function isPreRelease(row: ProductTableRow): boolean {
   return Number.isFinite(t) && t > Date.now();
 }
 
-const columns: ColumnDef<ProductTableRow>[] = [
+const buildColumns = (
+  categories: Array<{ id: string; name: string }>,
+): ColumnDef<ProductTableRow>[] => [
   {
     accessorKey: 'name',
     meta: { title: 'Ürün' },
@@ -65,6 +67,28 @@ const columns: ColumnDef<ProductTableRow>[] = [
     meta: { title: 'SKU' },
     header: 'SKU',
     cell: ({ row }) => <span className="font-mono text-xs text-muted-foreground">{row.original.sku}</span>,
+  },
+  {
+    // Kategori kolonu: ARAMA sonucunda ve "Kategorisiz" kartında ürünün hangi gruba ait
+    // olduğu görünmeli (kategori kartından girildiğinde zaten bilinir ama kolon gizlenmez —
+    // aynı tablo üç bağlamda kullanılıyor, koşullu kolon iki farklı tablo demek olurdu).
+    id: 'category',
+    accessorFn: (row) => row.categoryName ?? '',
+    meta: { title: 'Kategori' },
+    header: 'Kategori',
+    cell: ({ row }) =>
+      row.original.categoryName ? (
+        <Link
+          href={`/stock?category=${encodeURIComponent(row.original.categoryId ?? '')}`}
+          className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          {row.original.categoryName}
+        </Link>
+      ) : (
+        <span className="text-xs text-muted-foreground">Kategorisiz</span>
+      ),
+    filterFn: (row, _id, value) =>
+      (value as string[]).includes(row.original.categoryId ?? 'none'),
   },
   {
     accessorKey: 'kind',
@@ -197,7 +221,7 @@ const columns: ColumnDef<ProductTableRow>[] = [
     enableHiding: false,
     cell: ({ row }) => (
       <div className="flex items-center justify-end gap-1">
-        <ProductEditSheet product={row.original} />
+        <ProductEditSheet product={row.original} categories={categories} />
         <Button asChild variant="ghost" size="sm">
           <Link href={`/products/${row.original.id}`}>
             Detay <ArrowRight />
@@ -208,7 +232,18 @@ const columns: ColumnDef<ProductTableRow>[] = [
   },
 ];
 
-export function ProductsTable({ products }: { products: ProductTableRow[] }) {
+export function ProductsTable({
+  products,
+  categories = [],
+}: {
+  products: ProductTableRow[];
+  /** Satır içi "Düzenle" panelinde kategori değiştirebilmek için (`/categories` listesi). */
+  categories?: Array<{ id: string; name: string }>;
+}) {
+  // Kategori listesi kolonlara PROP olarak girmek zorunda (düzenleme sheet'i satırda) →
+  // kolonlar modül sabiti olamaz; kategori değişince yeniden kurulur.
+  const columns = React.useMemo(() => buildColumns(categories), [categories]);
+
   // kind + eşleme facet seçenekleri veriden türetilir
   const facets: FacetConfig[] = React.useMemo(() => {
     const out: FacetConfig[] = [];
@@ -218,6 +253,20 @@ export function ProductsTable({ products }: { products: ProductTableRow[] }) {
         columnId: 'kind',
         title: 'Tip',
         options: kinds.map((k) => ({ label: productKindLabel(k), value: k })),
+      });
+    }
+    // Kategori faceti: yalnız GERÇEKTEN birden çok grup varsa anlamlı (tek kategoride
+    // süzgeç sunmak boş bir seçim yapmaktır). "Kategorisiz" de bir seçenektir.
+    const cats = new Map<string, string>();
+    for (const p of products) {
+      if (p.categoryId && p.categoryName) cats.set(p.categoryId, p.categoryName);
+      else if (!p.categoryId) cats.set('none', 'Kategorisiz');
+    }
+    if (cats.size > 1) {
+      out.push({
+        columnId: 'category',
+        title: 'Kategori',
+        options: [...cats.entries()].map(([value, label]) => ({ label, value })),
       });
     }
     // Süzgeç YALNIZ alan gerçekten geldiyse sunulur (aksi halde hepsi 'unknown' olur ve

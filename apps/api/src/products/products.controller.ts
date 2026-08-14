@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -15,6 +16,7 @@ import { AccountPayloadSchema } from '@lisans/shared';
 import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ProductsService } from './products.service';
+import { ProductCategoriesService } from './product-categories.service';
 
 // Ürün alan tabanı — refine'sız düz nesne, böylece update için .partial() türetilebilir
 // (ZodEffects/refined şema .partial() vermez).
@@ -39,6 +41,12 @@ const ProductObject = z.object({
   /** Stoksuz/ön-sipariş: pending akış, release_at'te teslim (§11). */
   stockless: z.boolean().default(false),
   releaseAt: z.string().datetime().optional(),
+  /**
+   * Kategori (§17): `/stock` giriş ekranı bunun üzerinden gruplanır. Serbest METİN DEĞİL —
+   * `product_categories` kaydının id'si (kullanıcı kararı: ad tek yerden yönetilsin, ikiz
+   * kategori olmasın). null/boş = Kategorisiz (geçerli bir durum, ürün gizlenmez).
+   */
+  categoryId: z.string().uuid().nullable().optional(),
 });
 
 const CreateProductBody = ProductObject
@@ -131,10 +139,14 @@ type UpdateMappingBody = z.infer<typeof UpdateMappingBody>;
 @Controller('admin')
 @UseGuards(AdminGuard)
 export class ProductsController {
-  constructor(private readonly products: ProductsService) {}
+  constructor(
+    private readonly products: ProductsService,
+    private readonly categories: ProductCategoriesService,
+  ) {}
 
   @Post('products')
-  create(@Body(new ZodBody(CreateProductBody)) body: CreateProductBody) {
+  async create(@Body(new ZodBody(CreateProductBody)) body: CreateProductBody) {
+    await this.assertCategoryExists(body.categoryId);
     return this.products.create(this.toDbInput(body));
   }
 
@@ -144,11 +156,24 @@ export class ProductsController {
   }
 
   @Patch('products/:id')
-  update(
+  async update(
     @Param('id') id: string,
     @Body(new ZodBody(UpdateProductBody)) body: UpdateProductBody,
   ) {
+    await this.assertCategoryExists(body.categoryId);
     return this.products.update(id, this.toDbInput(body));
+  }
+
+  /**
+   * Var olmayan kategori id'si → ham Postgres FK ihlali (23503) → opak 500 olurdu.
+   * createMapping deseni: önce varlığı çöz, yoksa anlamlı 404. null/undefined = kategorisiz.
+   */
+  private async assertCategoryExists(categoryId?: string | null) {
+    if (!categoryId) return;
+    const all = await this.categories.list();
+    if (!all.some((c) => c.id === categoryId)) {
+      throw new NotFoundException('Kategori bulunamadı');
+    }
   }
 
   /** Ürün detay panosu (§13): stok kırılımı + parti + PO + satış hızı + düzeltmeler. */

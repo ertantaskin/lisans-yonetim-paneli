@@ -20,7 +20,12 @@ const createInitial: FormState = { ok: false };
  * (Sheet + ProductFormFields + useActionState); başarıda kapanır (revalidatePath tabloyu tazeler).
  * Büyük formu (SKU/tip/politika/payloadSchema editörü/…) sayfadan ayrılmadan açar → /stock sade kalır.
  */
-export function ProductCreateSheet() {
+export function ProductCreateSheet({
+  categories = [],
+}: {
+  /** Kategori seçenekleri (`/categories`). Boşsa form yalnız "Kategorisiz" sunar. */
+  categories?: Array<{ id: string; name: string }>;
+}) {
   const [open, setOpen] = React.useState(false);
   const [state, action, pending] = React.useActionState(createProductAction, createInitial);
 
@@ -44,7 +49,7 @@ export function ProductCreateSheet() {
         </SheetHeader>
         {/* key={open}: her açılışta formu temiz başlat. */}
         <form key={String(open)} action={action} className="space-y-3 p-4 pt-0">
-          <ProductFormFields />
+          <ProductFormFields categories={categories} />
           {state.error && (
             <p role="alert" className="text-sm text-destructive">
               {state.error}

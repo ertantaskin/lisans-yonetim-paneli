@@ -166,6 +166,13 @@ function buildProductBody(formData: FormData, isUpdate = false): Record<string, 
   };
   if (usageMode === 'multi') body.maxUses = num('maxUses');
 
+  // Kategori (§17): boş seçenek = "Kategorisiz". CREATE'te alanı hiç göndermeyiz (DB default
+  // null), UPDATE'te açık `null` göndeririz — aksi halde bir ürünü kategoriden ÇIKARMAK
+  // mümkün olmazdı (eski değer inatla kalırdı; opsiyonel alanlarda bu panelin kuralı budur).
+  const categoryId = String(formData.get('categoryId') || '').trim();
+  if (isUpdate) body.categoryId = categoryId || null;
+  else if (categoryId) body.categoryId = categoryId;
+
   const validityDays = num('validityDays');
   const warrantyDays = num('warrantyDays');
   const lowStockThreshold = num('lowStockThreshold');

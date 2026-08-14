@@ -180,6 +180,13 @@ export interface ProductRow {
   warrantyDays: number | null;
   lowStockThreshold: number | null;
   keyFormat: string | null;
+  /**
+   * Kategori (§17) — `/stock` giriş ekranı buna göre gruplanır. null = Kategorisiz
+   * (geçerli durum, ürün gizlenmez). `categoryName` API'de ad tablosundan çözülür;
+   * eski API sürümünde ALAN GELMEYEBİLİR → okuyanlar `?? null` ile savunmacı davranır.
+   */
+  categoryId?: string | null;
+  categoryName?: string | null;
 }
 
 export interface SiteRow {
