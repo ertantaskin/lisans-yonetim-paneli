@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.0.4
+Stable tag: 1.0.5
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,22 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.0.5 =
+* Tarihler artık mağazanızın saat diliminde gösteriliyor. Lisans geçerlilik ve değişim tarihleri
+  müşteri ekranında ve sipariş kutusunda UTC'ye göre basılıyordu (Türkiye'de 3 saat geriden).
+* Güvenlik: sipariş erişim anahtarı (order key) giriş yapmış müşterinin sayfa kaynağına ve
+  "Tüm lisansları indir" bağlantısına artık hiç gömülmüyor (tarayıcı geçmişi/erişim logu/
+  paylaşılan link üzerinden sızma yolu kapandı). Misafir erişimi aynen çalışıyor.
+* Kalem adedi düşürüldüğünde panel erişilemezse işlem artık SESSİZ kalmıyor: siparişe not
+  düşüyor ve otomatik yeniden deneniyor (fazladan teslim edilmiş lisans geri alınmadan kalmıyordu).
+* Eşzamanlı iki işlem aynı kilide düştüğünde kaybeden iş artık yeniden planlanıyor (Action
+  Scheduler kurulu olmayan sitelerde iş tamamen kaybolabiliyordu); takılı kilidin kurtarma yolu da eklendi.
+* Mağaza ön yüzü hızlandı: yönetici çubuğundaki panel sağlık göstergesi artık müşteriye açık
+  sayfalarda panele istek atmıyor (sayfa render'ı bekletilmiyor).
+* WooCommerce devre dışıyken panel uçları ölümcül hata yerine düzgün yanıt veriyor.
+* Ürün eşleme kutusundaki metinler sadeleşti ("Adet başına kalem" — panel yalnız anahtar değil
+  hesap/kod da taşıyabilir).
 
 = 1.0.4 =
 * Panelde yeni sürüm yayınlandığı hâlde indirme adresi güvenlik kontrolüne takılırsa güncelleyici
