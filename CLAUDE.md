@@ -1800,3 +1800,34 @@ ikiz kategori olmaz, ad değişince her yerde değişir).
   + "Kategorisiz 1 ürün/2 stok" (gerçek stokla birebir) · kategoriye giriş listesi · geçersiz kategori id
   **404** (FK 500 değil) · Türkçe ikiz **409**, farklı ad **201** · silme → `uncategorizedProducts:1` ve ürün
   Kategorisiz kovaya döndü. typecheck 4/4 + check-use-server 23/77 + admin production build.
+
+**KATEGORİ EKRANI SADELEŞTİRME + DAR EKRAN TABLOLARI (commit 12b334f→f411d2f, dev'de canlı):** Kullanıcı
+ikinci tur geri bildirim: *"daha sade minimal olmalı, yükseklik olarak çok yer kaplıyor; stoğu fazla olan
+kategorileri en başta göstermelisin; çok kategori olursa tasarımsal çözüm ne; küçük/dar ekranlarda son eklenen
+lisanslar sıkışıyor, yana kaydırma sorunu var, tablolar çok yüksek duruyor"*. Hepsi ÖLÇÜLEREK yapıldı.
+- **Rehber şerit `compact`:** tek satır adım başlıkları (`1 Panel ürünü › 2 Stok girişi › 3 Mağaza eşlemesi`)
+  + native `<details>` altında cümleler. **110px → 34px** (ölçüldü), öğrenilebilirlik kaybolmadı.
+- **Kategori sırası:** Kategorisiz her zaman SONDA → sabitlenmişler (`sort_order>0`) → **atanabilir stok
+  çoktan aza** → ad. "Sıra" alanı "**Sabitleme sırası**" oldu (0 = otomatik) — aksi halde bu alan stok
+  sıralamasını sessizce ezerdi ve 0'ın ne demek olduğunu kimse bilemezdi.
+- **Kart tek satıra indi** (110px → **60px**): açıklama `title` ipucuna taşındı. **Çok kategori çözümü:**
+  8'i geçince Türkçe-duyarlı (`includesTr`) süzme kutusu + ızgara 2xl'de 4 kolon; sayfalama YOK (operatör
+  adı biliyor, tıklayarak aramaz).
+- **İKİ POSTGRES HATASI (dev'de 500, ölçülerek bulundu):** (1) `0A000` — bir UNION'ın DOĞRUDAN ORDER BY'ı
+  yalnız çıktı kolon ADI kabul eder, `(id IS NULL)` gibi ifade "Only result column names can be used" verir →
+  iki dal `cards` CTE'sine alındı; (2) `42601` — CTE zincirinde eksik virgül. Ayrıca `sql` şablonu içindeki
+  YORUMDA backtick kullanmak şablonu erken kapattı (**bu projede 4. kez**) → o blokta ters tırnak yasak notu düşüldü.
+- **DAR EKRAN — kolon gizlemek YETMEDİ (375px ölçümü):** kalan 4 kolonun min-content genişliği **856px**, kap
+  **291px** → tablo hâlâ **565px** yana kayıyordu (tek parça monospace anahtar + ürün adı/SKU + iki metin
+  düğmesi). 5 kolonlu tablo 291px'e SIĞMAZ → **md altında satır KARTA dönüşür** (hücre bileşenleri aynen
+  yeniden kullanılır, ikinci doğruluk kaynağı yok); md üstünde tablo aynen. Sonuç: yatay kayma **0**, taşan
+  öğe **0**. Süzgeçler mobilde 2 kolonlu ızgara (4 satır ~200px → ~100px). `PageHeader` eylem alanı artık
+  sarıyor (üç düğmeli başlıkta blok 388px'e çıkıp viewport'tan taşıyordu: düğme sağ kenarı 404 > 375).
+- **SAYFA BOYU ÜÇ YERDE TANIMLIYDI** (bileşen · sunucu action · API servisi): kutuda "10 kayıt" seçiliyken
+  tablo **25 satır** gösteriyordu — action listede olmayan değeri ilk seçeneğe düşürüyordu (kullanıcıya yalan
+  söyleyen kontrol). Admin tarafı `lib/license-page-sizes` TEK kaynağından okur; geçersiz değerde 25'e düşer
+  (liste başına 10 eklenince "pageSize'sız" tüm çağrılar sessizce 10 satıra düşerdi). API listesi de 10 aldı.
+- **Ölçülen sonuç:** /stock masaüstü sayfa yüksekliği **3165px → 1672px**; mobilde yatay kaydırma **565px → 0**.
+- **KENDİ HATAM:** `sed` ile eklemeye çalıştığım import dosyadaki gerçek biçime uymadığı için hiç eklenmedi ve
+  **typecheck'i kırık commit'i push ettim** (d23983c) → bir sonraki commit'te düzeltildi. Ders: push'tan önce
+  typecheck ÇIKTISINI oku, "Tasks: N successful" satırını gördüğünü varsayma.
