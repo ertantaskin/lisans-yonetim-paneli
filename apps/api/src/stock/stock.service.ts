@@ -1797,12 +1797,21 @@ export class StockService {
   }
 }
 
-/** Sayfa boyutunu izinli değerlere (25/50/100) kırpar — en yakın olana. */
+/**
+ * Sayfa boyutunu izinli değerlere (10/25/50/100) kırpar — en yakın olana.
+ *
+ * VARSAYILAN AÇIKÇA YAZILIR (`DEFAULT_LICENSE_PAGE_SIZE`), listenin ilk elemanı DEĞİL:
+ * öyleyken listeye başa 10 eklemek "pageSize göndermeyen" HER çağrının sayfa boyunu
+ * sessizce 25 → 10'a düşürmüştü (entegrasyon testi yakaladı: 11 satırlık sıra testi
+ * 10 satır aldı). Sıralı bir sabit listesinin sırası, davranışsal varsayılanı
+ * belirlememeli. Admin tarafında aynı tuzak `license-actions.ts`'te de kapalıdır.
+ */
+export const DEFAULT_LICENSE_PAGE_SIZE = 25;
 function clampPageSize(n?: number): number {
-  if (n == null || !Number.isFinite(n)) return LICENSE_PAGE_SIZES[0];
+  if (n == null || !Number.isFinite(n)) return DEFAULT_LICENSE_PAGE_SIZE;
   return LICENSE_PAGE_SIZES.reduce<number>(
     (best, cur) => (Math.abs(cur - n) < Math.abs(best - n) ? cur : best),
-    LICENSE_PAGE_SIZES[0],
+    DEFAULT_LICENSE_PAGE_SIZE,
   );
 }
 
