@@ -714,7 +714,7 @@ export function LicenseItemsTable({
                     kırpmadan bile kötü). `min-w-52` ile kolon en az 208px alır: 29 karakterlik
                     anahtar en fazla iki satır olur, hiçbir hane kaybolmaz.
                   */}
-                  <TableCell className="min-w-52 max-w-72">
+                  <TableCell className="min-w-[19rem]">
                     <LicenseValueCell row={row} />
                     {/*
                       DAR EKRAN ÖZETİ (kullanıcı: "küçük ekranlarda sıkışıyor, yana kaydırma
@@ -983,7 +983,11 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
         kolon 288px). Kopyalamak için hâlâ tek tık var.
       */}
       <code
-        className="block flex-1 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90"
+        // md ALTI (kart görünümü): sar — kap ~250px, anahtar iki satıra iner, hiçbir hane
+        // kaybolmaz. md ÜSTÜ (tablo): TEK SATIR — `break-all` tabloda min-content'i tek
+        // karaktere indirip kolonu 140px'e eziyordu (1440px'te bile iki satır; ölçüldü).
+        // Kolonun `min-w-[19rem]` tabanıyla 29 karakterlik anahtar tek satıra sığar.
+        className="block flex-1 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90 md:whitespace-nowrap md:break-normal"
         title={row.value}
       >
         {row.value}
