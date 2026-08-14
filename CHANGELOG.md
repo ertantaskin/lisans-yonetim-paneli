@@ -14,6 +14,80 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Proje geneli 6-lensli denetim: 40 doğrulanmış bulgu (migration 0041)
+
+Altı lens (auth/2FA · veri ifşası/RBAC · sipariş invaryantları · rapor/DB · arayüz · ops/betik/WP)
+çekişmeli-doğrulamalı ajanlarla tarandı — her bulgu **çürütme** denemesinden geçti — sonra beş
+paralel işçi ayrık dosya kümeleriyle düzeltti.
+
+**En değerli iki bulgu CANLI SİSTEMDEN geldi, statik analizden değil:**
+
+- **Dört süpürme işi üretimde iki kez koşuyordu.** Redis'te `expiry`/`low-stock`/`reconcile`/
+  `daily-digest` (+`security`) kuyruklarının **ikişer** aktif zamanlayıcısı vardı: biri kararlı
+  kimlikli yenisi, diğeri eski `queue.add(repeat)` çağrısından kalan hash anahtarlı yetim. Redis
+  dağıtımlar arasında kalıcı olduğu için kod düzeltildiğinde eski kayıtlar silinmemişti — "yetim
+  schedule kalmaz" güvencesi yalnız *ileriki* değişiklikler için doğruydu. Kanıt: `digest_alert`
+  günde tam iki satır, damgalar `08:00:00.121` ve `08:00:00.132`. Telegram açık olsaydı operatör
+  her sabah aynı kritik alarmı iki kez alırdı.
+- **`ADMIN_TOKEN` her admin isteğinde düz metin loglanıyordu** (prod logunda son bir saatte 30
+  satır). Bu token `AdminGuard`'ın tek kapısı ve rol başlığı gönderilmediğinde `OwnerGuard`'ı da
+  geçiyor → log okuma yetkisi tam panel kontrolüne yükseliyordu.
+
+**Düzeltildi — çekirdek para yolu**
+- `syncRefunds` iptal defterini uzlaştırmıyordu: aynı iptal iki kez sayılıyor, doldurma hedefi
+  teslim edilenin altına düşüyor ve **değişim yolu kalıcı kilitleniyordu** (stok varken "stok yok").
+- Admin manuel iptali MAK kapasitesini havuza geri veriyordu — aktivasyon sağlayıcı tarafında
+  harcanmışken kalem yeniden satılabilir hale geliyordu (sessiz aşırı-satış).
+- `rejectHeld` kaçak atamaları ham UPDATE ile kapatıyordu: tek-kullanımlık kalem kalıcı
+  `assigned` limbosunda kalıyor ve mutabakat kalıcı kritik alarm üretiyordu.
+- Satır durumu üç yerde ham `qty` ile hesaplanıyordu → satır kalıcı `partial`, mağazada "eksik
+  teslimat", bekleyenler kuyruğunda hayalet iş.
+- Geri çekilen partideki çok-kullanımlı anahtar, kapasite iadesiyle satış havuzuna dönebiliyordu.
+- Toplu geçersiz kılma, canlı müşteri ataması olan kalemi void'liyordu (tekil yol 409 verirken).
+
+**Düzeltildi — raporlar ve veritabanı**
+- "Kaç birim eksik" yükleminin iki tanımı vardı → stok girişi onay modali, bekleyen kuyruğu ve
+  "neden bekliyor" tanısı yanlış sayı gösteriyordu; tek paylaşılan fragmana bağlandı.
+- Teslim edilen mal maliyeti yalnız `active` sayıyordu; aynı ekrandaki satış hızı
+  `active+suspended+expired` sayıyordu → `STANDING_STATUSES` tek kaynağa taşındı.
+- Yeniden-sipariş raporunun satışsız-ürün sayacı ürün başına alt-plan koşuyordu (tek geçişe indi).
+- `/purchase-orders` listesi sınırsız ve indekssiz sıralamaydı → tavan + `truncated` + **0041**
+  (`purchase_orders_created_idx`).
+
+**Düzeltildi — güvenlik ve gizlilik**
+- Owner olmayan yönetici **iki faktörlü girişi hiç açamıyordu** (aktör başlığı yazma yolunda
+  gönderilmiyordu); tek noktadan düzeltildi, yan fayda: tüm yazma yollarında denetim izi gerçek
+  yöneticiye bağlanıyor.
+- Kendi 2FA'sını kapatmada parola + kod artık rolden bağımsız isteniyor (panel formu ikisini de
+  zorunlu topluyordu ama API owner için yok sayıyordu); uca hız sınırı eklendi.
+- `rotate-secret` ucuna `OwnerGuard`; `totp_secret_enc` readonly-sql sır listesine.
+- Tedarikçi fişinde düz metin dönmeden `reveal` audit'i yazılabiliyordu.
+- KVKK anonimleştirme kayıtlı görünüm sorgularını atlıyordu (`URLSearchParams` `@` işaretini
+  `%40` kodladığı için mevcut e-posta deseni kaçırıyordu).
+- Sentry açılırsa istek URL'i ve başlıkları olaya iliştirilebiliyordu → `beforeSend` ile sanitize.
+
+**Düzeltildi — yedekleme ve işletim**
+- Yedek yolu hiçbir alarm kanalına bağlı değildi: cron kurulmamışsa aylarca sessiz kalırdı →
+  `backup_stale` (kritik) / `drill_stale` (uyarı) bildirimleri.
+- 30 dakikalık zombi eşiği 2 saatlik kurtarma hedefiyle çelişiyordu: uzun bir tatbikat "başarısız"
+  sayılıp tek-aktif kilidini açıyor, dağıtım tatbikat sürerken koşuyordu → hedefe göre eşik +
+  `finish` yalnız çalışan işi günceller.
+- Rotasyon, başarısız/doğrulanamamış yedekten sonra da eski dump'ı siliyordu.
+- `SITE_SILENCE_HOURS` compose'tan geçmiyordu → `.env`'e yazmak sessizce etkisizdi.
+- Sürekli sweep'lerden biri (güvenlik taraması) alarmsızdı.
+- CI'a kabuk doğrulaması eklendi; **ilk koşuda `wp-dev.sh`'ta dengesiz tırnak buldu — yerel WP
+  geliştirme komutu fiilen çalışmıyordu.**
+
+**Düzeltildi — arayüz**
+- Kayıtlı görünüm tablo içi süzgeçleri sessizce kaybediyordu (uyarı yalnız adres tamamen boşken
+  çıkıyordu) → `/stock` ve `/customers` süzgeçleri adrese yazıyor, diğer iki ekran görünür uyarı
+  veriyor.
+- Rehberdeki iki yanlış vaat düzeltildi: "gecelik yedek otomatiktir" (gerçekte elle kurulan bir
+  zamanlanmış görev) ve "filtreler adrese yansır" (beş ekranın dördünde yansımıyordu).
+- 2FA kurtarma yolu tarayıcı doğrulamasıyla kilitliydi; `/admins/security` breadcrumb'ı
+  `/security` ekranıyla çakışıyordu; boş tabloda "kayıt yok" ile "süzgeçle eşleşen yok" ayrıldı.
+
+
 ### Sekiz öneri maddesi (B1–B8): denetim izi · iki rapor · 2FA · yedek · görünümler (migration 0040)
 
 Önceki turda "eklenebilir" diye önerilen sekiz maddenin tamamı uygulandı. Altı paralel işçi

@@ -1940,3 +1940,90 @@ edildi → `db:generate` "No schema changes").
   kancası** (`BACKUP_OFFSITE_CMD` — kurulmazsa yedek yalnız bu sunucuda kalır) + `BACKUP_KEEP_LAST`
   disk planı; hepsi `docs/RUNBOOK-DR.md` §4.3-4.4'te. MASTER_KEY yedeğin İÇİNDE DEĞİL — ayrı kasada
   çevrimdışı iki kopya.
+
+**PROJE GENELİ 6-LENSLİ DENETİM → 40 BULGU (commit 6fb406d→dfc85fc, CANLI prod+dev, migration 0041):**
+Kullanıcı "projeyi baştan sona adım adım kontrol et, güvenliği/kullanımı etkileyen sorunları bul ve
+düzelt — işçilerinle" dedi. Altı lens (auth/2FA · veri ifşası/RBAC · sipariş invaryantları · rapor/DB ·
+arayüz · ops/betik/WP) çekişmeli-doğrulamalı ajanlarla tarandı (her bulgu ÇÜRÜTME denemesinden geçti),
+sonra beş paralel işçi + merkezî tümleştirme.
+- **[CANLI ÖLÇÜM — statik analiz göremezdi] Dört süpürme işi prod'da İKİ KEZ koşuyordu.** Redis'te
+  `expiry`/`low-stock`/`reconcile`/`daily-digest` (+`security`) kuyruklarının İKİŞER aktif zamanlayıcısı
+  vardı: biri kararlı kimlikli yenisi, diğeri eski `queue.add(..., {repeat})` çağrısından kalan HASH
+  anahtarlı yetim. **Redis dağıtımlar arasında kalıcı** olduğu için kod düzeltildiğinde eski kayıtlar
+  SİLİNMEMİŞTİ — CLAUDE.md'deki "yetim çift-zamanlama yok" güvencesi yalnız İLERİDEKİ değişiklikler için
+  doğruydu. **Kanıt (prod verisi):** `notifications`'ta `digest_alert` günde tam **2** satır, damgalar
+  `08:00:00.121` ve `08:00:00.132` → iki zamanlayıcı aynı dakikada ateşliyor; Telegram açık olsaydı
+  operatör her sabah aynı kritik alarmı iki kez alırdı. Düzeltme `queue/sole-scheduler.upsertSoleJobScheduler`:
+  upsert'ten sonra beklenen kimlik DIŞINDAKİ zamanlayıcıları siler (boot'ta koşar → kendi kendini onarır;
+  ileride bir schedulerId yeniden adlandırılsa eskisi de temizlenir). Dağıtımda **5 yetimin silindiği
+  loglandı**, ZSET'ler tek zamanlayıcıya indi. +3 entegrasyon testi (gerçek Redis).
+- **[CANLI ÖLÇÜM] `ADMIN_TOKEN` her admin isteğinde DÜZ METİN loglanıyordu** — prod API logunda son 1
+  saatte **30 satır**. pino-http `req`i o isteğin HER log satırına bağlar ve redact listesinde
+  `x-admin-token` YOKTU. Bu token `AdminGuard`ın tek kapısı ve `x-admin-role` gönderilmediğinde
+  `OwnerGuard` da geçirdiği için **log okuma yetkisi TAM panel kontrolüne yükseliyordu**. İki lens
+  bağımsız buldu. NOT: `x-admin-actor` bilerek maskelenmedi (operatör kimliği olay müdahalesinde gerekli,
+  zaten `audit_log`'da; müşteri PII'si değil). **OPS: token ROTASYONU gerekir — log geçmişinde duruyor.**
+- **ÇEKİRDEK PARA YOLU (H1 ailesi, 5. tur):** `syncRefunds` `canceled_units` defterini uzlaştırmıyordu
+  (`reconcileOrder` uzlaştırıyor) → aynı iptal İKİ KEZ sayılıyor, hedef `fulfilled`in ALTINA düşüyor ve
+  **değişim yolu KALICI kilitleniyordu** (`completeLine` remainingUnits=0 → 409 "stok yok", stok VARKEN);
+  müşteriye "2/1" ilerlemesi. · Admin manuel iptali MAK kapasitesini havuza geri veriyordu (controller
+  `returnMultiCapacity` varsayılanını `true` bırakmıştı; aktivasyon sağlayıcı tarafında HARCANMIŞ →
+  sessiz aşırı-satış) — iade yolları `false` geçerken panelden iptal `true` geçiyordu. · `rejectHeld`
+  kaçak atamaları ham `UPDATE assignments` ile kapatıyordu: `license_items` durumu/`use_count`/
+  `fulfilled_qty` güncellenmiyor + yalnız `active` süzülüyordu → tek-kullanımlık kalem KALICI `assigned`
+  limbosunda (sessiz stok kaybı) ve reconcile KALICI kritik alarm üretiyordu. · Satır durumu üç yerde ham
+  `qty` ile hesaplanıyordu → satır kalıcı `partial`. · Geri çekilen partideki MAK anahtarı kapasite
+  iadesiyle havuza dönebiliyordu (recall yalnız `available` kalemleri void'liyordu). · Toplu geçersiz
+  kılma canlı atamalı kalemi void'liyordu (tekil yol 409 verirken).
+- **RAPOR/DB:** "kaç birim eksik" yükleminin İKİ tanımı vardı (`qty−fulfilled_qty` vs kanonik
+  `qty−canceled_units`) → stok girişi onay modali ("N bekleyen birimi teslim eder"), bekleyen kuyruğu ve
+  "neden bekliyor" tanısı YANLIŞ sayı gösteriyordu → `fillTargetSql`/`remainingUnitsSql` tek kaynağı. ·
+  `deliveredCogs` yalnız `active` sayarken aynı ekrandaki satış hızı `active+suspended+expired` sayıyordu
+  → **`STANDING_STATUSES` `assignment/assign.ts`e taşındı** (`notExpiredCond` ile aynı gerekçe), reconcile'ın
+  yerel kopyası da oradan okuyor. · `reorder` satışsız-ürün sayacı `FILTER` İÇİNDEKİ `NOT EXISTS` yüzünden
+  ürün başına SubPlan koşuyordu (sublink pullup yalnız qual konumunda çalışır) → tek geçiş. ·
+  `/purchase-orders` SINIRSIZ + indekssiz sıralamaydı (tablo HER stok girişinde büyüyor) → tavan+`truncated`
+  + **migration 0041** `purchase_orders_created_idx (created_at DESC, id DESC)`.
+- **GÜVENLİK/GİZLİLİK:** owner-olmayan admin **2FA'yı HİÇ açamıyordu** — `apiPost/apiSend` aktörü
+  çağırandan bekliyordu, TOTP aksiyonları geçmiyordu → API `'panel:admin'` fallback'i → `assertSelfOrOwner`
+  403; ekran açılıyor, düğme çalışmıyordu. Düzeltme TEK NOKTADA (aktör verilmezse OTURUMDAN alınır, `apiGet`
+  ile simetrik) → aynı sınıf unutma bir daha doğmaz + tüm yazma yollarında denetim izi gerçek admine bağlanır.
+  · Kendi 2FA'sını kapatmada parola+kod artık ROLDEN BAĞIMSIZ (panel formu ikisini de ZORUNLU topluyordu ama
+  API owner için yok sayıyordu → arayüzün verdiği güvence gerçekte yoktu). · `/totp/disable` hız sınırsızdı
+  (her deneme bir scrypt, aynı event loop teslimatı servis ediyor). · `rotate-secret` `OwnerGuard` taşımıyordu
+  (uç yeni `apiKey`+`hmacSecret`i ÇAĞIRANA döndürür → o kimlikle site-facing reveal imzalanabilir). ·
+  `totp_secret_enc` readonly-sql sır listesindeki TEK eksikti. · Tedarikçi fişinde düz metin DÖNMEDEN
+  `reveal` audit'i yazılıyordu (owner-olmayan kesti ⇒ snapshot zaten maskeli). · **KVKK:** anonimleştirme
+  `saved_views.query` kasasını atlıyordu ve **`URLSearchParams` `@`→`%40` kodladığı için mevcut e-posta
+  deseni kaçırıyordu** → ayrı kodlanmış-varyant deseni. · Sentry `beforeSend` (DSN varsayılan boş).
+- **OPS:** yedek yolu HİÇBİR alarm kanalına bağlı değildi (cron kurulmamışsa/token bozuksa aylarca sessiz;
+  tek işaret operatörün açmayabileceği bir sayfadaki bant) → `BackupAlarmService` (`backup_stale` critical /
+  `drill_stale` warning, dedupe'lu) + runner claim'de HTTP hatası "iş yok"tan ayrıldı. · 30dk zombi eşiği
+  RTO≤2sa hedefiyle çelişiyordu: uzun TATBİKAT 30dk sonra "failed" sayılıp tek-aktif kilidini açıyor, deploy
+  tatbikat sürerken koşuyordu (docker build/up ⟷ pg_restore) → hedefe-göre eşik + `finish` CAS. · Rotasyon
+  BAŞARISIZ yedekten sonra da doğrulanmış dump siliyordu. · `SITE_SILENCE_HOURS` compose'tan geçmiyordu
+  (`.env`'e yazmak SESSİZCE etkisiz — bu projede yaşanan hatanın tekrarı). · `SecurityProcessor` tek alarmsız
+  sweep'ti. · CI'a `bash -n` eklendi ve **ilk koşuda `wp-dev.sh`'ta dengesiz tırnak buldu → `pnpm wp:dev`
+  FİİLEN ÇALIŞMIYORDU.** · WP `run_diagnostics` klon guard'sızdı ("HMAC geçerli 🟢" derken push/revoke klon
+  guard'ıyla kapalı → yanlış teşhis). · `.dockerignore` `backups/` içermiyordu (14 dump her build'de daemon'a).
+- **ARAYÜZ:** kayıtlı görünüm tablo içi süzgeçleri SESSİZCE kaybediyordu — uyarı yalnız adres TAMAMEN boşken
+  çıkıyordu, asıl tehlike "adres dolu ama eksik"ti → `/stock`+`/customers` `syncUrl`, `/quarantine/records`+
+  `/mappings` görünür uyarı (oralarda süzgeç bilinçli olarak tablonun DIŞINDA). · Rehberde İKİ YANLIŞ VAAT:
+  "gecelik yedek otomatiktir" (gerçekte ELLE kurulan cron; panelin kendi metniyle çelişiyordu) ve "filtreler
+  adres çubuğuna yansır" (5 ekranın 4'ünde yansımıyordu — bu iddiayı bir önceki turda BEN genişletmiştim). ·
+  2FA kurtarma yolu native doğrulamayla KİLİTLİYDİ (`formNoValidate` yok). · `/admins/security` breadcrumb'ı
+  `/security` ile ÇAKIŞIYORDU → TAM YOL sözlüğü (segment sözlüğüne `security` eklemek `/security`yi bozardı,
+  ölçüldü) + ara kırıntı link DEĞİL (owner-olmayan "Yetkiniz yok" çıkmazına gidiyordu). · Boş tabloda
+  "kayıt yok" ile "süzgeçle eşleşen yok" ayrıldı — **bu riski benim `syncUrl` değişikliğim doğurdu**
+  (süzgeçli adres artık paylaşılabildiği için sayfaya süzgeç AÇIKKEN girilebiliyor).
+- **Doğrulama:** typecheck 4/4 (src+test) · check-use-server 25/86 · api birim 124/124 · admin birim 135/135 ·
+  admin build ✓ · `bash -n` 9/9 · PHP-lint 13/13 · VPS izole test DB **entegrasyon 357/357** (333 → +24,
+  10 yeni dosya) **+ yarış 3/3** · dev: temiz boot (**`security.module` glue'su olmasa API HİÇ AÇILMAZDI** —
+  `tsc`/`build` çalışma-anı DI hatasını yakalamaz), 30 rota 200, yedek alarmı gerçekten üretti · **tarayıcıda
+  ölçüldü:** `?site=` korunurken tablo araması `tq=`ye yazıldı ve süzgeçli adres geri yüklendi · prod
+  `deploy.sh` (rollback'li) → `/health` **200 v1.1.0**, migration tracking **42**, 5 yetim silindi (loglandı),
+  api **0 ERROR**.
+- **OPERATÖRE KALAN (kod değil):** **ADMIN_TOKEN rotasyonu** (log geçmişinde düz metin duruyor) ·
+  prod SMTP hâlâ `mailpit` (mailler gerçek müşteriye ULAŞMIYOR — panel bunu kritik alarmla söylüyor) ·
+  yedek cron'u + **offsite kancası** (`BACKUP_OFFSITE_CMD`) kurulmalı; artık kurulmazsa panel `backup_stale`
+  alarmı üretiyor.
