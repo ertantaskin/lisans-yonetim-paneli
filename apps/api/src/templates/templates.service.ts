@@ -31,6 +31,10 @@ export const SAMPLE_VARS: Record<string, string> = {
   units: '1',
   customer_email: 'musteri@ornek.com',
   items: '• Windows 11 Pro: XXXXX-XXXXX-XXXXX-XXXXX-XXXXX',
+  // Süreli hesap ürünlerinde lisansın bitiş tarihi (siparişteki EN YAKIN bitiş). Süresiz
+  // üründe boş kalır. Bu sözlük aynı zamanda "desteklenen değişken" listesidir — mail
+  // gerçekten beslediği hâlde buraya eklenmezse editör onu "desteklenmiyor" diye uyarır.
+  valid_until: '01.09.2027 21:00',
 };
 
 export interface TemplateInput {

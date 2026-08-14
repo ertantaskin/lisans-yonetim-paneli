@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { products } from './products';
 import { sites } from './sites';
 
@@ -29,6 +29,10 @@ export const siteProductMappings = pgTable(
   (t) => [
     // Aynı site+remote ürün+varyasyon tek eşleme.
     uniqueIndex('mappings_site_remote_uniq').on(t.siteId, t.remoteProductId, t.remoteVariationId),
+    // `product_id` bir FK'dir ve FK INDEKS OLUŞTURMAZ. Ürün detayındaki "Eşlemeler" sekmesi
+    // (`WHERE product_id = ?`) ve ürün silmedeki RESTRICT doğrulaması bu yüzden tam tarama
+    // yapıyordu — katalog büyüdükçe (ürün × site) doğrusal bozulur.
+    index('mappings_product_idx').on(t.productId),
   ],
 );
 

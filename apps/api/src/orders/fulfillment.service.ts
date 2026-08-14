@@ -118,7 +118,9 @@ export class FulfillmentService {
         return this.noop(line.id, line.orderId, line.qty, line.fulfilledQty, line.status);
       }
 
-      const product = await this.products.getById(line.productId);
+      // `tx` ZORUNLU — transaction içinden kök havuzu kullanmak ikinci bir bağlantı ister ve
+      // eşzamanlı siparişte havuzu kilitler (bkz. products.getById üzerindeki not).
+      const product = await this.products.getById(line.productId, tx);
 
       // Ön sipariş/stoksuz kapısı (§11): release_at gelecekteyse stok girmiş olsa bile
       // atama YAPMA (erken teslim engellenir). createOrder'daki kapıyla aynı invaryant;
@@ -298,8 +300,10 @@ export class FulfillmentService {
    *   · status='available'                      (her iki atama sorgusu)
    *   · notExpiredCond()                        (stok ömrü dolmuş kalem ATANAMAZ — bu koşul
    *     agregasyonlara eklenirken burada UNUTULMUŞTU; sonsuz döngünün kök nedeni buydu)
-   *   · use_count < max_uses  ⟺  consumeMultiUseCapacity'nin `use_count + 1 <= max_uses`i
-   *     (tamsayıda özdeş). Tek kullanımlıkta da doğru: assignAvailableSingleUse use_count'a
+   *   · use_count < max_uses  —  consumeMultiUseCapacity ile artık BİREBİR aynı yüklem
+   *     (toplu kapasite düşümüne geçilirken eski `use_count + 1 <= max_uses` biçimi de bu
+   *     hâle geldi; iki yüklem tamsayıda zaten özdeşti). Tek kullanımlıkta da doğru:
+   *     assignAvailableSingleUse use_count'a
    *     DOKUNMAZ, releaseAllocations GREATEST(0, …) ile 0'da tutar → available tek-kullanım
    *     kaleminde daima use_count=0 < max_uses=1. Yani tek-kullanım davranışı birebir korunur.
    * Kasıtlı TEK fark: FOR UPDATE SKIP LOCKED yoktur (yukarıdaki "çekişme" ayrımı bunu ister).
@@ -357,7 +361,8 @@ export class FulfillmentService {
         .limit(1);
       if (ord?.held) throw new BadRequestException('İnceleme altındaki siparişe bonus verilemez');
 
-      const product = await this.products.getById(ref.productId);
+      // `tx` ZORUNLU — havuz kilitlenmesi (bkz. products.getById üzerindeki not).
+      const product = await this.products.getById(ref.productId, tx);
       // Ön sipariş/stoksuz kapısı (§11): release_at gelecekteyse bonus atama yapılmaz.
       if (
         product.stockless &&
@@ -446,7 +451,14 @@ export class FulfillmentService {
       return { completed: 0, hasMore: false };
     }
 
-    const pending = await this.db
+    // Cap sınırı (yalnız pozitif tamsayı): 0/negatif/NaN verilirse sınırsız kabul edilir
+    // (yanlış konfig ürünü açıkta bırakmasın). undefined → eski (sınırsız) davranış.
+    const cap =
+      maxLines != null && Number.isFinite(maxLines) && maxLines > 0
+        ? Math.floor(maxLines)
+        : null;
+
+    const pendingQuery = this.db
       .select({ id: orderLines.id })
       .from(orderLines)
       .innerJoin(products, eq(orderLines.productId, products.id))
@@ -466,12 +478,12 @@ export class FulfillmentService {
       )
       .orderBy(sql`${orderLines.priority} desc`, asc(orderLines.createdAt));
 
-    // Cap sınırı (yalnız pozitif tamsayı): 0/negatif/NaN verilirse sınırsız kabul edilir
-    // (yanlış konfig ürünü açıkta bırakmasın). undefined → eski (sınırsız) davranış.
-    const cap =
-      maxLines != null && Number.isFinite(maxLines) && maxLines > 0
-        ? Math.floor(maxLines)
-        : null;
+    // PERF (denetim bulgusu): cap yalnız İŞLEMEYİ sınırlıyordu, ÇEKMEYİ değil — eşleşen TÜM
+    // bekleyen satırlar okunup sıralanıyor, sonra ilk 200'ü işleniyordu. Büyük bir backlog'da
+    // her arka plan turu aynı tam listeyi baştan çekip yeniden sıralar (O(N²/cap)). Artık
+    // SQL de sınırlı; "tavan+1" projenin standart deseni (bkz. audit/quarantine listeleri):
+    // fazladan gelen tek satır, kırpma olup olmadığını SESSİZCE değil AÇIKÇA söyler.
+    const pending = cap != null ? await pendingQuery.limit(cap + 1) : await pendingQuery;
 
     let completedLines = 0;
     let processed = 0;

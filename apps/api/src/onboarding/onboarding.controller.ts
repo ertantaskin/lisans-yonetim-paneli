@@ -1,6 +1,7 @@
 import { Body, Controller, Ip, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { OnboardingService } from './onboarding.service';
 
@@ -25,7 +26,18 @@ export class OnboardingAdminController {
   /**
    * Site için tek-seferlik bağlan kodu üretir. Site creds'i yenilenir; yalnız {code, expiresAt}
    * döner (creds koda gömülü, şifreli saklı — claim'de teslim edilir).
+   *
+   * OwnerGuard — `POST /sites/:id/rotate-secret` ile BİREBİR AYNI gerekçe (denetim Y1): bu uç
+   * içeride `sites.rekey` çağırır, yani TAZE apiKey + hmacSecret üretir ve bunlar GUARD'SIZ public
+   * `POST /v1/connect/claim` ucundan kod karşılığı ÇAĞIRANA teslim edilir. Kodu alan biri o
+   * kimlikle site-facing uçları (reveal dahil) imzalayabilir → "düz metin YALNIZ owner" kararı
+   * (A1/A3) tamamen atlanırdı. Ayrıca rekey CANLI mağazanın kimliğini döndürdüğü için grace
+   * penceresi bitince gerçek mağaza koparılabilirdi.
+   *
+   * Next katmanı bu çağrıda oturum rolünü `x-admin-role` ile iletir (apiPost) → owner oturumu
+   * geçer; guard asıl olarak tarayıcıdan/ADMIN_TOKEN ile yapılan doğrudan çağrıyı keser.
    */
+  @UseGuards(OwnerGuard)
   @Post('sites/:id/connect-code')
   connectCode(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.onboarding.issueConnectCode(id);

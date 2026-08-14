@@ -31,6 +31,29 @@ import { TemplatesService, render } from './templates.service';
 type MailJobData = DeliveryJob | ReplacementNoticeJob;
 
 /**
+ * Geçerlilik bitişini müşteriye gösterilecek YEREL tarihe çevirir (§11 süreli hesap).
+ * Boş/geçersiz değer → '' (şablon token'ı boş kalır, mail bozulmaz — kritik olmayan bir
+ * alan yüzünden teslimat maili ASLA düşmemeli). Saat dilimi konteynerden gelir
+ * (docker-compose: TZ=Europe/Istanbul) → panelin gösterdiği tarihle aynı gün sınırı.
+ */
+export function formatValidUntil(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/** Kalemler arasındaki EN YAKIN (en erken) geçerlilik bitişi; hiç yoksa null. */
+export function earliestValidUntil(values: Array<Date | null | undefined>): Date | null {
+  let min: Date | null = null;
+  for (const v of values) {
+    if (!v) continue;
+    if (min === null || v.getTime() < min.getTime()) min = v;
+  }
+  return min;
+}
+
+/**
  * BullMQ worker — 'mail' kuyruğunun TEK tüketicisi (§6). Redis kuyruğundan asenkron.
  *
  * Kuyrukta İKİ AYRI iş türü taşınır ve gövdeleri tamamen farklıdır:
@@ -125,6 +148,10 @@ export class MailProcessor extends WorkerHost {
       const rows = await this.db
         .select({
           units: assignments.units,
+          // Geçerlilik bitişi (süreli hesap ürünü, §11). Süzgeçte KULLANILIYORDU ama
+          // SEÇİLMİYORDU → şablona `{{valid_until}}` yazan operatör sessizce boş string
+          // alıyordu; müşteri geçerlilik tarihini My Account'ta görüyor, MAİLDE göremiyordu.
+          validUntil: assignments.validUntil,
           payloadEnc: licenseItems.payloadEnc,
           licenseItemId: licenseItems.id,
           productName: products.name,
@@ -140,6 +167,12 @@ export class MailProcessor extends WorkerHost {
           and(
             eq(assignments.orderId, orderId),
             eq(assignments.status, 'active'),
+            // #7 denetim (yarış savunması) — getDeliveries ile SİMETRİK: iptal/iade edilmiş
+            // satırın (canceled) ataması ASLA maile girmez. getDeliveries bu yüklemi AÇIK bir
+            // savunma olarak taşıyordu, mail `orderLines`'ı join ettiği hâlde KOYMUYORDU →
+            // stray aktif atama kalırsa My Account anahtarı gizlerken "Tekrar Mail" AYNI
+            // anahtarı DÜZ METİN e-postayla gönderiyordu (okuma yolu yazma yolundan iyi korunuyordu).
+            eq(orderLines.canceled, false),
             // Savunma amaçlı süre filtresi (getDeliveries ile birebir aynı invaryant):
             // expiry job gecikse bile onExpiry='hide' ürünün süresi geçmiş payload'ı
             // mail gövdesine KONULMAZ (düz metin parola sızmaz). 'keep' ürün süre
@@ -170,6 +203,12 @@ export class MailProcessor extends WorkerHost {
           );
           const label = r.productName ?? 'Ürün';
           const qty = r.units > 1 ? ` (${r.units} adet)` : '';
+          // Geçerlilik bitişi kaleme YAZILIR: süreli hesap ürününde tarih müşterinin en çok
+          // ihtiyaç duyduğu bilgidir ve çok kalemli siparişte kalemler FARKLI tarihler taşır
+          // → tek bir {{valid_until}} değişkeni bunu doğru anlatamaz (o değişken yalnız en
+          // yakın tarihi verir, aşağıya bkz.).
+          const until = formatValidUntil(r.validUntil);
+          const untilLine = until ? `\n    Geçerlilik bitişi: ${until}` : '';
           // Hesap ürünü: alan-alan render (Kullanıcı adı: x / Parola: y).
           const schema =
             r.productKind === 'account' ? AccountPayloadSchema.safeParse(r.payloadSchema) : null;
@@ -177,9 +216,9 @@ export class MailProcessor extends WorkerHost {
             const fields = parseAccountPayload(schema.data, plain)
               .map((f) => `    ${f.label}: ${f.value}`)
               .join('\n');
-            return `• ${label}${qty}:\n${fields}`;
+            return `• ${label}${qty}:\n${fields}${untilLine}`;
           }
-          return `• ${label}${qty}: ${plain}`;
+          return `• ${label}${qty}: ${plain}${untilLine}`;
         })
         .join('\n');
 
@@ -192,6 +231,11 @@ export class MailProcessor extends WorkerHost {
         units: String(rows.reduce((s, r) => s + r.units, 0)),
         customer_email: order.customerEmail,
         items: itemsBlock,
+        // Süreli hesap (§11) geçerlilik bitişi. Siparişteki EN YAKIN tarih seçilir: birden çok
+        // kalem farklı tarihler taşıyabilir ve tek değişkene sığmaz; "en erken biten" müşteri
+        // için en güvenli özettir (kalem kalem doğru tarih zaten `{{items}}` bloğunda yazılıdır).
+        // Süresiz üründe BOŞ string (şablon token'ı sessizce kaybolur — mevcut render davranışı).
+        valid_until: formatValidUntil(earliestValidUntil(rows.map((r) => r.validUntil))),
       };
 
       // Sandbox (test modu, §14): site.sandbox=true ise gerçek müşteriye mail GİTMEZ —

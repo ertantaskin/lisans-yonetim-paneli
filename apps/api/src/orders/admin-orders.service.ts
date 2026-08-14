@@ -75,7 +75,7 @@ export function mask(plain: string): string {
  * alanlar maskeli, kullanıcı adı gibi alanlar açık) → JSON yapısı/parola kuyruğu sızmaz.
  * key/code/custom'da tek maskeli string döner.
  */
-function maskPayload(
+export function maskPayload(
   plain: string,
   kind: string,
   payloadSchema: unknown,
@@ -737,6 +737,9 @@ export class AdminOrdersService {
           // Anahtarın ürün tipi: key ise TAM göster (ölü/karantina key → sır değil),
           // account ise parola sızmasın diye maskeli kal.
           productKind: products.kind,
+          // O10: hesap ürününde maske ALAN-FARKINDA olmalı (maskSecret kanonik JSON'un
+          // kuyruğunu = parolanın son karakterlerini bırakıyordu) → şema da gerekli.
+          payloadSchema: products.payloadSchema,
         })
         .from(assignmentHistory)
         .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
@@ -938,11 +941,21 @@ export class AdminOrdersService {
           remoteName: h.remoteName ?? null,
           oldLicenseItemId: h.oldLicenseItemId ?? null,
           newLicenseItemId: h.newLicenseItemId ?? null,
-          oldMasked: oldPlain !== null ? mask(oldPlain) : '—',
+          // O10: ALAN-FARKINDA maske. Düz `mask()` hesap ürününde kanonik JSON'un son 4
+          // karakterini bırakıyordu (`••••••23"}`) — alfabetik sıralama nedeniyle bu kuyruk
+          // genellikle PAROLANIN sonudur. maskPayload account'ta alan-alan maskeler
+          // (secret alanlar kuyruksuz), key/code/custom'da eski davranışı birebir korur.
+          oldMasked:
+            oldPlain !== null
+              ? maskPayload(oldPlain, h.productKind ?? '', h.payloadSchema).maskedPayload
+              : '—',
           // key-tipi ölü anahtar TAM gösterilir (operatör hangi key'in değiştiğini net görür) —
           // ANCAK yalnız owner'a (A1); owner-olmayan 'admin' maskeli oldMasked'e düşer.
           oldValue: reveal && oldPlain !== null && h.productKind === 'key' ? oldPlain : null,
-          newMasked: newPlain !== null ? mask(newPlain) : '—',
+          newMasked:
+            newPlain !== null
+              ? maskPayload(newPlain, h.productKind ?? '', h.payloadSchema).maskedPayload
+              : '—',
           newValue: reveal && newPlain !== null && h.productKind === 'key' ? newPlain : null,
         };
       }),
@@ -976,7 +989,16 @@ export class AdminOrdersService {
           remoteName: a.remoteName ?? null,
           // §8/A1: düz-metin sır YALNIZ owner'a (reveal=true). owner-olmayan 'admin' maskeli görür
           // (key/code son-4; account alanları kuyruksuz maske) — müşteri/getDeliveries ile aynı disiplin.
-          payload: reveal ? plain : maskSecret(plain),
+          //
+          // O10: HESAP ürününde maskeli yolda `payload` HİÇ DÖNMEZ (null). Sebep: account'ta
+          // `plain` KANONİK JSON'dur ve serializeAccountPayload anahtarları ALFABETİK sıralar →
+          // şema {kullanici, sifre} ise metin düz PAROLAYLA biter; `maskSecret` son 4 karakteri
+          // KORUDUĞU için `••••••23"}` = parolanın son 2 karakteri sızıyordu. Aynı yanıtın içinde
+          // `fields` doğru (KUYRUKSUZ) maskeleniyordu — yani iki alan çelişiyordu. Kural
+          // payload.ts'te yazılı: secret alanlar kuyruksuz tam maske.
+          // Hesap ürününün maskeli gösterimi `fields`tir; UI zaten account'ta `payload` basmaz.
+          // Şema bozuksa `fields` de null olur → hiçbir şey gösterilmez (fail-safe yön).
+          payload: reveal ? plain : a.productKind === 'account' ? null : maskSecret(plain),
           fields: reveal ? fields : fields ? maskAccountFields(fields) : null,
           // Terminal atamada iptal sebebi (aktifte null) — "Geçmiş" satırında gösterilir.
           revokeReason: revokeReasonByAsg.get(a.id) ?? null,
@@ -1736,15 +1758,28 @@ export class AdminOrdersService {
     remoteOrderId: string,
     assignmentId: string,
     siteId: string,
-  ): Promise<{ lineId: string; orderId: string; status: string }> {
+  ): Promise<{
+    lineId: string;
+    orderId: string;
+    status: string;
+    validUntil: Date | null;
+    onExpiry: string;
+  }> {
     const [a] = await this.db
       .select({
         lineId: assignments.lineId,
         orderId: assignments.orderId,
         status: assignments.status,
+        // Süre savunması (O4) için: atamanın bitişi + ürünün süre-sonu politikası.
+        // orderLines/products JOIN'i INNER: atama her zaman bir satıra, satır da (bu yolda)
+        // eşlenmiş bir ürüne bağlıdır — atama ancak ürün çözüldükten sonra oluşabilir.
+        validUntil: assignments.validUntil,
+        onExpiry: products.onExpiry,
       })
       .from(assignments)
       .innerJoin(orders, eq(assignments.orderId, orders.id))
+      .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+      .innerJoin(products, eq(orderLines.productId, products.id))
       .where(
         and(
           eq(assignments.id, assignmentId),
@@ -1754,7 +1789,13 @@ export class AdminOrdersService {
       )
       .limit(1);
     if (!a) throw new NotFoundException('Atama bulunamadı');
-    return { lineId: a.lineId, orderId: a.orderId, status: a.status };
+    return {
+      lineId: a.lineId,
+      orderId: a.orderId,
+      status: a.status,
+      validUntil: a.validUntil,
+      onExpiry: a.onExpiry,
+    };
   }
 
   /**
@@ -1767,6 +1808,21 @@ export class AdminOrdersService {
     const a = await this.assertAssignmentInSite(remoteOrderId, assignmentId, site.id);
     if (a.status !== 'active' && a.status !== 'suspended') {
       throw new BadRequestException('Yalnız aktif veya askıdaki atama gösterilebilir');
+    }
+    // O4: SÜRE savunma filtresi — getDeliveries/mail.processor yüklemiyle BİREBİR aynı koşul
+    // (validUntil IS NULL OR validUntil > now() OR onExpiry='keep'). Guard eskiden yalnız
+    // `status`a bakıyordu; oysa "getDeliveries ile simetrik" iddiası tam da bu koşulu kapsar.
+    // ExpiryService sweep'i durursa (bu projede prod'da yetim scheduler'lar bulunmuştu) atama
+    // 'active' KALIR → süresi günler önce dolmuş `hide` hesabının parolası mağaza panelindeki
+    // "Göster" ile düz metin okunabiliyordu; aynı anda My Account ve teslimat maili onu bilinçli
+    // GİZLİYORDU. Kalıcı ('expired') durum zaten yukarıdaki status guard'ına takılır; buradaki
+    // koşul sweep GECİKMESİ penceresini kapatır → süre kararı sweep'in çalışmasına bağlı değil.
+    const expiredHidden =
+      a.onExpiry !== 'keep' && a.validUntil !== null && a.validUntil.getTime() <= Date.now();
+    if (expiredHidden) {
+      throw new BadRequestException(
+        'Bu lisansın geçerlilik süresi doldu; içeriği gösterilemez (süre sonunda gizlenir).',
+      );
     }
     return this.reveal(assignmentId, actor);
   }
@@ -1940,6 +1996,10 @@ export class AdminOrdersService {
         oldLicenseItemId: oldItem.id,
         newPayloadEnc: newItem.payloadEnc,
         newLicenseItemId: newItem.id,
+        // O10: bu sorgu ürün TİPİNİ hiç seçmiyordu → aşağıdaki maskeleme dallanamıyor ve
+        // hesap ürününde düz `mask()`e düşüyordu (kanonik JSON kuyruğu = parolanın sonu).
+        productKind: products.kind,
+        payloadSchema: products.payloadSchema,
       })
       .from(assignmentHistory)
       .innerJoin(assignments, eq(assignmentHistory.assignmentId, assignments.id))
@@ -2017,23 +2077,31 @@ export class AdminOrdersService {
           reason: h.reason,
           actor: h.actor,
           createdAt: h.createdAt,
+          // O10: ALAN-FARKINDA maske (atama satırlarıyla AYNI maskPayload yolu). Düz `mask()`
+          // hesap ürününde kanonik JSON'un son 4 karakterini bırakıyordu ve alfabetik anahtar
+          // sırası nedeniyle o kuyruk çoğu şemada PAROLANIN sonudur → mağaza operatörü, reveal
+          // ucuna hiç gitmeden ve audit'e hiç düşmeden parolanın son karakterlerini görüyordu.
           oldMasked:
             h.oldPayloadEnc && h.oldLicenseItemId
-              ? mask(
+              ? maskPayload(
                   this.crypto.decrypt(
                     h.oldPayloadEnc,
                     CryptoService.licenseItemAad(h.oldLicenseItemId),
                   ),
-                )
+                  h.productKind ?? '',
+                  h.payloadSchema,
+                ).maskedPayload
               : '—',
           newMasked:
             h.newPayloadEnc && h.newLicenseItemId
-              ? mask(
+              ? maskPayload(
                   this.crypto.decrypt(
                     h.newPayloadEnc,
                     CryptoService.licenseItemAad(h.newLicenseItemId),
                   ),
-                )
+                  h.productKind ?? '',
+                  h.payloadSchema,
+                ).maskedPayload
               : '—',
         };
       }),

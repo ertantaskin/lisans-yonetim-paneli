@@ -361,14 +361,35 @@ export function LicenseItemsTable({
   }, [reload, onMutated]);
 
   const total = data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / (data?.pageSize ?? pageSize)));
+  /*
+   * SAYIM TAVANI (perf): API toplamı `LIMIT CAP+1` ile sınırlı sayar — süzgeçsiz açılışta
+   * `license_items` tablosunu baştan saymak ekranı zamanla kullanılamaz hale getiriyordu.
+   * Tavana dayanıldığında `total` GERÇEK toplam değil ALT SINIRDIR; bu yüzden ekranda
+   * "10.000+" yazılır ve sayfa sayısı "400+" olarak gösterilir. Sessizce yanlış bir toplam
+   * göstermek (ve operatörü var olmayan bir "son sayfa"ya inandırmak) bu projede yasak.
+   * Bayrak OPSİYONEL: eski API göndermezse davranış aynen eskisi gibi kalır.
+   */
+  const totalCapped = data?.totalCapped === true;
+  const effPageSize = data?.pageSize ?? pageSize;
+  const pageCount = Math.max(1, Math.ceil(total / effPageSize));
 
   // Kayıt silinince son sayfa boşalabilir → geçerli aralığa çek.
+  // TAVANLI SAYIMDA çekmeyiz: orada `pageCount` gerçek son sayfa değil alt sınırdır ve
+  // operatörü dolu bir sayfadan geriye sıçratmak veri KAYBI gibi görünür. Sayfa gerçekten
+  // boş döndüyse (rows=0) düzeltme yine çalışır.
   React.useEffect(() => {
-    if (data && page > pageCount) setPage(pageCount);
-  }, [data, page, pageCount]);
+    if (!data) return;
+    if (totalCapped && data.rows.length > 0) return;
+    if (page > pageCount) setPage(pageCount);
+  }, [data, page, pageCount, totalCapped]);
 
   const rows = data?.rows ?? [];
+  /*
+   * "Sonraki" düğmesi: normalde `page < pageCount`. Tavanlı sayımda son sayfa BİLİNMEZ →
+   * dolu bir sayfa döndüğü sürece ileri gitmeye izin verilir (aksi halde tavanın ötesindeki
+   * kayıtlara ulaşmanın YOLU KALMAZDI — sessiz kırpmanın ta kendisi).
+   */
+  const hasNext = totalCapped ? rows.length >= effPageSize : page < pageCount;
   const from = total === 0 ? 0 : (page - 1) * (data?.pageSize ?? pageSize) + 1;
   const to = total === 0 ? 0 : from + rows.length - 1;
   const colCount = (showProductColumn ? 8 : 7) + 1; // +1: seçim kolonu
@@ -603,6 +624,8 @@ export function LicenseItemsTable({
         <LicenseExportPanel
           rows={rows}
           total={total}
+          // Toplam tavana dayandıysa panel "10.000+ kayıt" yazar (yanlış kesin sayı yazmaz).
+          totalCapped={totalCapped}
           masked={data?.masked}
           disabled={loading}
           onResult={(n) => {
@@ -978,11 +1001,19 @@ export function LicenseItemsTable({
         <p className="text-xs text-muted-foreground" aria-live="polite">
           {total === 0
             ? 'Kayıt yok'
-            : `${total} kalemden ${from}-${to} arası gösteriliyor`}
+            : // "+" = sayım tavana dayandı, gerçek toplam DAHA FAZLA (bkz. totalCapped notu).
+              `${total.toLocaleString('tr-TR')}${totalCapped ? '+' : ''} kalemden ${from}-${to} arası gösteriliyor`}
+          {totalCapped && (
+            <span className="ml-1">
+              — toplam {total.toLocaleString('tr-TR')} kayıttan fazlası var; kesin sayı için
+              süzgeci daraltın.
+            </span>
+          )}
         </p>
         <div className="flex items-center gap-2">
           <span className="text-xs tabular-nums text-muted-foreground">
             Sayfa {page} / {pageCount}
+            {totalCapped ? '+' : ''}
           </span>
           <Button
             variant="outline"
@@ -1000,10 +1031,12 @@ export function LicenseItemsTable({
             variant="outline"
             size="sm"
             onClick={() => {
-              setPage((p) => Math.min(pageCount, p + 1));
+              // Tavanlı sayımda pageCount bir alt sınırdır → ona KIRPMAYIZ (yoksa tavanın
+              // ötesindeki sayfalara hiç gidilemezdi).
+              setPage((p) => (totalCapped ? p + 1 : Math.min(pageCount, p + 1)));
               clearBulkNote();
             }}
-            disabled={loading || page >= pageCount}
+            disabled={loading || !hasNext}
             aria-label="Sonraki sayfa"
           >
             Sonraki <ChevronRight aria-hidden />

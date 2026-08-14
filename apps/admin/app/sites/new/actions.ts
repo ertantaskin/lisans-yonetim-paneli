@@ -1,6 +1,6 @@
 'use server';
 import { apiPost, isUuid } from '../../../lib/api';
-import { getActor } from '../../../lib/session';
+import { getActor, isOwner } from '../../../lib/session';
 
 /**
  * SEC-1 — YOL ENJEKSİYONU: site kimliği API YOLUNA gömülür. Sunucu aksiyonları TS tiplerini
@@ -10,6 +10,17 @@ import { getActor } from '../../../lib/session';
  * kalıbına bağlanır; `lib/api` merkezî kapısı ikinci savunma hattıdır.
  */
 const INVALID_SITE_ID = 'Geçersiz site kimliği — sihirbaz baştan başlatılmalı.';
+
+/**
+ * SEC-2 (denetim Y1) — YETKİ YÜKSELMESİ: bağlan kodu üretimi site creds'ini YENİLER (rekey) ve
+ * kod, GUARD'SIZ public `/v1/connect/claim` ucundan `{apiKey, hmacSecret}` olarak teslim edilir.
+ * Yani kodu üretebilen herkes o mağazanın HMAC kimliğini eline geçirir ve site-facing `reveal`
+ * ucunu imzalayıp DÜZ METİN lisans anahtarı/hesap parolası okuyabilir → "düz metin YALNIZ owner"
+ * kararı (A1/A3) atlanır. Bu yüzden `rotate-secret` gibi owner-only'dir; API'de OwnerGuard
+ * savunma-derinliği olarak AYRICA vardır, birincil kapı buradaki isOwner() kontrolüdür.
+ */
+const OWNER_REQUIRED =
+  'Bu işlem için owner yetkisi gerekir — bağlan kodu site kimlik bilgilerini yeniler.';
 
 /** Sihirbaz Adım 1 girdisi — site oluşturma alanları (plain object, FormData değil). */
 export interface IssueCodeInput {
@@ -93,6 +104,10 @@ async function issueCode(
  * fırlatmaz; hata ok=false + Türkçe mesaj olarak döner.
  */
 export async function createSiteAndIssueCode(input: IssueCodeInput): Promise<IssueCodeResult> {
+  // Owner kapısı EN BAŞTA: site oluşturma adımı (2. adımda kod üretilecek) bile başlamasın,
+  // yoksa owner-olmayan admin yetim site bırakabilirdi.
+  if (!(await isOwner())) return { ok: false, error: OWNER_REQUIRED };
+
   const domain = input.domain?.trim();
   if (!domain) return { ok: false, error: 'Domain zorunlu' };
 
@@ -141,6 +156,10 @@ export async function createSiteAndIssueCode(input: IssueCodeInput): Promise<Iss
  * ile connect-code üretir. Server action ASLA fırlatmaz.
  */
 export async function issueCodeForSite(siteId: string): Promise<IssueCodeResult> {
+  // Owner kapısı — bu kurtarma yolu VAR OLAN bir sitenin creds'ini yeniler; korumasız kalsaydı
+  // owner-olmayan admin `/sites` listesinden okuduğu herhangi bir site id'siyle kimlik alabilirdi.
+  // (siteId ECHO EDİLMEZ: henüz doğrulanmadı — yetkisiz çağrının girdisini geri yansıtmayalım.)
+  if (!(await isOwner())) return { ok: false, error: OWNER_REQUIRED };
   if (!isUuid(siteId)) return { ok: false, error: INVALID_SITE_ID };
   try {
     const actor = await getActor();

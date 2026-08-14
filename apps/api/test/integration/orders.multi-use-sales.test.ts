@@ -1,0 +1,288 @@
+import { randomUUID } from 'node:crypto';
+import { asc, eq, sql } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { CreateOrderRequest } from '@lisans/shared';
+import { OrdersService } from '../../src/orders/orders.service';
+import { FulfillmentService } from '../../src/orders/fulfillment.service';
+import { AdminOrdersService } from '../../src/orders/admin-orders.service';
+import { ProductsService } from '../../src/products/products.service';
+import { assignments, licenseItems, orderLines, type Site } from '../../src/db/schema';
+import {
+  cleanupByTag,
+  createProduct,
+  createSite,
+  insertLicenseItems,
+  makeCrypto,
+  makeDb,
+  type Db,
+} from './_helpers';
+
+/**
+ * ENTEGRASYON — MAK / ÇOK KULLANIMLIK (`usage_mode='multi'`) SATIŞ YOLU.
+ *
+ * NEDEN: MAK yalnız İADE/geri-alma/red yollarında testliydi (admin-revoke-refund-semantics,
+ * revoke-excess-partial, sync-refunds). SATIŞ tarafı — yani `allocate()` → `consumeMultiUseCapacity`
+ * zinciri — hiç doğrulanmıyordu: `orders.createOrder.test.ts` içinde `multi` kelimesi HİÇ geçmiyor.
+ * Oysa MAK'ta bir ANAHTAR birden çok BİRİM taşır (1 key = N kullanım) ve panelin en tehlikeli
+ * sessiz hatası tam burada doğar: kapasite aşımı = aynı aktivasyon iki müşteriye satılmış demektir
+ * (§2 "çifte satış imkânsız" invaryantı).
+ *
+ * DAVRANIŞ ODAKLI: testler `consumeMultiUseCapacity`'nin İÇ İMZASINA bakmaz (o fonksiyon toplu-alma
+ * yapacak şekilde değişti: artık `{licenseItemId, taken}` döner ve `allocate` ANAHTAR başına döner).
+ * Doğrulanan şey SONUÇTUR: kaç atama oluştu, hangi anahtardan kaç birim düştü, toplam kapasite aşıldı mı.
+ *
+ * Kapsam:
+ *   (a1) Kısmi kapasite tüketimi → TEK atama, units=3, kalem hâlâ 'available'.
+ *   (a2) Taşma → kalan ilk anahtardan, artan İKİNCİ anahtardan (FEFO/seq sırası korunur).
+ *   (a3) Kapasiteden fazla talep → kapasite kadar teslim, AŞILMAZ (bu dosyanın çekirdek invaryantı).
+ *   (a4) Kapasite tükendikten sonra yeni sipariş → 0 atama (over-fulfillment yok).
+ */
+
+const TAG = randomUUID().slice(0, 8);
+
+const { db, end } = makeDb();
+const crypto = makeCrypto();
+
+const mailFake = { enqueueDelivery: async () => {} } as never;
+const webhookFake = { emit: async () => {} } as never;
+const redisFake = {} as never;
+
+const productsService = new ProductsService(db as never);
+const fulfillmentService = new FulfillmentService(
+  db as never,
+  productsService,
+  mailFake,
+  webhookFake,
+);
+const adminOrdersService = new AdminOrdersService(
+  db as never,
+  redisFake,
+  crypto,
+  mailFake,
+  fulfillmentService,
+);
+const orders = new OrdersService(
+  db as never,
+  productsService,
+  crypto,
+  mailFake,
+  webhookFake,
+  fulfillmentService,
+  adminOrdersService,
+  { recordQuotaExceeded: async () => false, recordQuotaHeld: async () => false } as never,
+);
+
+/**
+ * MAK senaryosu: site + `usage_mode='multi'` ürün + `keys` adet anahtar (her biri `maxUses`
+ * kapasiteli) + eşleme. Toplam kapasite = keys × maxUses.
+ */
+async function makScenario(opts: {
+  keys: number;
+  maxUses: number;
+  fulfillmentPolicy?: 'partial-auto' | 'partial-approval' | 'all-or-nothing';
+}) {
+  const site = await createSite(db, crypto, { tag: TAG });
+  const product = await createProduct(db, {
+    tag: TAG,
+    kind: 'key',
+    usageMode: 'multi',
+    maxUses: opts.maxUses,
+    fulfillmentPolicy: opts.fulfillmentPolicy ?? 'partial-auto',
+  });
+  await insertLicenseItems(db, crypto, {
+    productId: product.id,
+    count: opts.keys,
+    tag: TAG,
+    maxUses: opts.maxUses,
+    payloadPrefix: 'MAK',
+  });
+  const remoteProductId = `rp-${randomUUID().slice(0, 8)}`;
+  await productsService.createMapping({ siteId: site.id, productId: product.id, remoteProductId });
+
+  const siteObj = { id: site.id } as Site;
+  const makeDto = (qty: number): CreateOrderRequest => ({
+    remoteOrderId: `ord-${randomUUID().slice(0, 8)}`,
+    customerEmail: `${TAG}@example.test`,
+    lines: [{ remoteLineId: 'line-1', remoteProductId, qty }],
+  });
+  return { site: siteObj, productId: product.id, makeDto };
+}
+
+/**
+ * Ürünün anahtarları — DAİMA `seq` (ekleme sırası) ile sıralı okunur.
+ * Dizi sırasına (INSERT ... RETURNING) GÜVENİLMEZ: FEFO iddiasını doğrulayan sıra
+ * atama sorgusunun kullandığı sıradır (`expires_at, created_at, seq`), o da burada `seq`e iner.
+ */
+async function keysOf(productId: string) {
+  return db
+    .select({
+      id: licenseItems.id,
+      useCount: licenseItems.useCount,
+      maxUses: licenseItems.maxUses,
+      status: licenseItems.status,
+      assignedAt: licenseItems.assignedAt,
+      seq: licenseItems.seq,
+    })
+    .from(licenseItems)
+    .where(eq(licenseItems.productId, productId))
+    .orderBy(asc(licenseItems.seq));
+}
+
+/** Siparişin atama satırları (hangi anahtardan kaç birim). */
+async function assignmentsOf(orderId: string) {
+  return db
+    .select({
+      id: assignments.id,
+      licenseItemId: assignments.licenseItemId,
+      units: assignments.units,
+      status: assignments.status,
+    })
+    .from(assignments)
+    .where(eq(assignments.orderId, orderId));
+}
+
+describe('MAK/çok kullanımlık satış yolu (entegrasyon)', () => {
+  beforeAll(() => {
+    if (!process.env.DATABASE_URL) {
+      throw new Error(
+        'DATABASE_URL tanımlı değil — entegrasyon testleri gerçek PostgreSQL gerektirir.',
+      );
+    }
+  });
+
+  afterAll(async () => {
+    await cleanupByTag(db, TAG);
+    await end();
+  });
+
+  it('(a1) kısmi kapasite: qty=3 → TEK atama (units=3), kalem hâlâ available', async () => {
+    // 2 anahtar × 5 kullanım = 10 birim kapasite; 3 birim isteniyor.
+    const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
+
+    const { httpStatus, body } = await orders.createOrder(site, makeDto(3));
+
+    expect(httpStatus).toBe(201);
+    expect(body.status).toBe('fulfilled');
+    // KRİTİK AYRIM (tek-kullanımlıktan farkı): 3 BİRİM tek ANAHTARdan gelir → 1 atama, units=3.
+    // Tek-kullanımlıkta bu 3 ayrı atama olurdu.
+    expect(body.assignments).toHaveLength(1);
+    expect(body.assignments[0]!.units).toBe(3);
+    expect(body.lines[0]).toMatchObject({ status: 'fulfilled', requestedQty: 3, fulfilledQty: 3 });
+
+    const rows = await assignmentsOf(body.orderId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.units).toBe(3);
+
+    const keys = await keysOf(productId);
+    expect(keys).toHaveLength(2);
+    // İlk anahtardan 3 birim düştü; kapasite KALDIĞI için kalem hâlâ satılabilir ('available').
+    expect(keys[0]!.useCount).toBe(3);
+    expect(keys[0]!.status).toBe('available');
+    // Teslim damgası MAK'ta da basılır (envanterde "teslim tarihi" boş kalmamalı).
+    expect(keys[0]!.assignedAt).not.toBeNull();
+    // İkinci anahtara hiç dokunulmadı.
+    expect(keys[1]!.useCount).toBe(0);
+    expect(keys[1]!.status).toBe('available');
+    expect(keys[1]!.assignedAt).toBeNull();
+  });
+
+  it('(a2) taşma: 3+4 → kalan 2 birim ilk anahtardan, 2 birim İKİNCİ anahtardan (seq sırası)', async () => {
+    const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
+
+    const first = await orders.createOrder(site, makeDto(3));
+    expect(first.body.lines[0]!.fulfilledQty).toBe(3);
+
+    // Ardından 4 birim: ilk anahtarda 2 kalmıştı → 2 oradan, 2 sonraki anahtardan.
+    const second = await orders.createOrder(site, makeDto(4));
+
+    expect(second.httpStatus).toBe(201);
+    expect(second.body.status).toBe('fulfilled');
+    // İKİ atama: talep tek anahtarın kalanını aştığı için sonrakine TAŞTI.
+    expect(second.body.assignments).toHaveLength(2);
+    expect(second.body.lines[0]).toMatchObject({ status: 'fulfilled', fulfilledQty: 4 });
+
+    const keys = await keysOf(productId);
+    const [k1, k2] = keys;
+    // FEFO/seq: ÖNCE girilen anahtar ÖNCE doldurulur ve dolunca 'depleted' olur.
+    expect(k1!.useCount).toBe(5);
+    expect(k1!.status).toBe('depleted');
+    expect(k2!.useCount).toBe(2);
+    expect(k2!.status).toBe('available');
+
+    // Atamaların birim dağılımı anahtar bazında doğrulanır (sıra değil, DAĞILIM kilitlenir).
+    const rows = await assignmentsOf(second.body.orderId);
+    const byItem = new Map(rows.map((r) => [r.licenseItemId, r.units]));
+    expect(byItem.get(k1!.id)).toBe(2);
+    expect(byItem.get(k2!.id)).toBe(2);
+  });
+
+  it('(a3) kapasiteden fazla talep: 11 istendi / 10 kapasite → 10 teslim, KAPASİTE AŞILMAZ', async () => {
+    // Bu dosyanın çekirdek invaryantı: MAK'ta aşırı-satış = aynı aktivasyonu iki müşteriye satmak.
+    const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
+
+    const { httpStatus, body } = await orders.createOrder(site, makeDto(11));
+
+    expect(httpStatus).toBe(207);
+    expect(body.status).toBe('partial');
+    expect(body.lines[0]).toMatchObject({ status: 'partial', requestedQty: 11, fulfilledQty: 10 });
+
+    // Teslim edilen BİRİM toplamı tam kapasite kadar — ne fazla ne eksik.
+    const rows = await assignmentsOf(body.orderId);
+    const grantedUnits = rows.reduce((s, r) => s + r.units, 0);
+    expect(grantedUnits).toBe(10);
+
+    const keys = await keysOf(productId);
+    // Hiçbir anahtar kendi tavanını AŞMADI (satır bazında invaryant).
+    for (const k of keys) {
+      expect(k.useCount).toBeLessThanOrEqual(k.maxUses);
+      expect(k.useCount).toBe(5);
+      expect(k.status).toBe('depleted');
+    }
+    // Toplam defter tutar: Σ use_count == Σ max_uses == teslim edilen birim.
+    const totalUsed = keys.reduce((s, k) => s + k.useCount, 0);
+    const totalCapacity = keys.reduce((s, k) => s + k.maxUses, 0);
+    expect(totalUsed).toBe(totalCapacity);
+    expect(totalUsed).toBe(grantedUnits);
+  });
+
+  it('(a4) kapasite tükendikten sonra yeni sipariş → 0 atama, satır pending (over-fulfillment yok)', async () => {
+    // Tek anahtar × 2 kullanım; ilk sipariş kapasiteyi bitirir.
+    const { site, productId, makeDto } = await makScenario({ keys: 1, maxUses: 2 });
+
+    const first = await orders.createOrder(site, makeDto(2));
+    expect(first.body.lines[0]!.fulfilledQty).toBe(2);
+    const [depleted] = await keysOf(productId);
+    expect(depleted!.status).toBe('depleted');
+    expect(depleted!.useCount).toBe(2);
+
+    // Stok yok → sipariş KAYBOLMAZ ama hiçbir birim teslim edilmez.
+    const second = await orders.createOrder(site, makeDto(1));
+
+    expect(second.httpStatus).toBe(202);
+    expect(second.body.status).toBe('pending');
+    expect(second.body.assignments).toHaveLength(0);
+    expect(second.body.lines[0]).toMatchObject({ status: 'pending', fulfilledQty: 0 });
+
+    expect(await assignmentsOf(second.body.orderId)).toHaveLength(0);
+    // Kapasite defteri DEĞİŞMEDİ — tükenmiş anahtardan "eksiye" düşülmedi.
+    const [after] = await keysOf(productId);
+    expect(after!.useCount).toBe(2);
+    expect(after!.status).toBe('depleted');
+
+    // Satır DB'de gerçekten pending (yanıt ile defter ayrışmıyor).
+    const [line] = await db
+      .select({ status: orderLines.status, fulfilledQty: orderLines.fulfilledQty })
+      .from(orderLines)
+      .where(eq(orderLines.orderId, second.body.orderId))
+      .limit(1);
+    expect(line!.status).toBe('pending');
+    expect(line!.fulfilledQty).toBe(0);
+
+    // Ürün genelinde toplam teslim edilen birim = toplam kapasite (aşım yok).
+    const [agg] = (await db.execute<{ used: string }>(sql`
+      SELECT coalesce(sum(use_count), 0)::text AS used FROM license_items
+      WHERE product_id = ${productId}
+    `)) as unknown as Array<{ used: string }>;
+    expect(Number(agg!.used)).toBe(2);
+  });
+});

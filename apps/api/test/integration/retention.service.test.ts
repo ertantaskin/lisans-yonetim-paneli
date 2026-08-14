@@ -29,7 +29,8 @@ import {
  *
  * Nest ayağa KALDIRILMAZ: servis elle new'lenir. BullMQ Queue yalnız onModuleInit'te
  * kullanılır (çağrılmıyor → {} stub); ConfigService stub'ı boş döner → VARSAYILAN pencereler
- * (180/30/365/365/730/90 gün, audit-tam budama KAPALI) sınanır — üretimde koşan yol budur.
+ * (180/30/365/365/730/90 gün + bildirim 180g / dağıtım 365g / bağlan-kodu 7g; audit-tam ve
+ * bildirim-tam budama KAPALI) sınanır — üretimde koşan yol budur.
  */
 
 const { db, end } = makeDb();
@@ -51,6 +52,10 @@ afterAll(async () => {
   await db.execute(sql`DELETE FROM email_log WHERE subject LIKE ${like}`);
   await db.execute(sql`DELETE FROM security_events WHERE detail LIKE ${like}`);
   await db.execute(sql`DELETE FROM audit_log WHERE actor LIKE ${like}`);
+  await db.execute(sql`DELETE FROM notifications WHERE title LIKE ${like}`);
+  await db.execute(sql`DELETE FROM deployments WHERE requested_by LIKE ${like}`);
+  // site_connect_tokens.site_id FK'siz → testin ürettiği siteId'ler cleanupByTag'e girmez.
+  await db.execute(sql`DELETE FROM site_connect_tokens WHERE code_hash LIKE ${like}`);
   await cleanupByTag(db, tag);
   await end();
 });
@@ -303,6 +308,112 @@ describe('RetentionService.runRetention — audit_log (uyum kaydı KORUNUR)', ()
   });
 });
 
+describe('RetentionService.runRetention — notifications / deployments / connect tokens', () => {
+  /** notifications satırı ekler (okundu bilgisi + yaş kontrollü). */
+  async function insertNotification(opts: {
+    days: number;
+    read: boolean;
+    label: string;
+  }): Promise<string> {
+    const [row] = await db
+      .insert(schema.notifications)
+      .values({
+        type: 'low_stock',
+        severity: 'warning',
+        title: `${tagPrefix(tag)}-${opts.label}`,
+        message: 'test',
+        readAt: opts.read ? daysAgo(opts.days) : null,
+        createdAt: daysAgo(opts.days),
+      })
+      .returning({ id: schema.notifications.id });
+    return row!.id;
+  }
+
+  it('notifications: OKUNMUŞ + eski budanır; OKUNMAMIŞ olan yaşı ne olursa olsun DURUR', async () => {
+    // REGRESYON: `read_at IS NOT NULL` koşulu düşerse operatörün HİÇ görmediği düşük-stok /
+    // kritik alarm bildirimleri sessizce silinir (bu projede "sessiz kayıp" yasak). Ters yönde,
+    // pencere koşulu düşerse yeni okunan bildirimler anında kaybolur (çan geçmişi boşalır).
+    const oldRead = await insertNotification({ days: 200, read: true, label: 'eski-okundu' });
+    const oldUnread = await insertNotification({ days: 400, read: false, label: 'eski-okunmadi' });
+    const freshRead = await insertNotification({ days: 10, read: true, label: 'taze-okundu' });
+
+    const report = await retention.runRetention();
+
+    expect(await exists('notifications', oldRead)).toBe(false);
+    expect(await exists('notifications', oldUnread)).toBe(true);
+    expect(await exists('notifications', freshRead)).toBe(true);
+    // Tam budama (okunmamışlar dahil) VARSAYILAN KAPALI olmalı — audit_log 5b ile aynı kural.
+    expect(report.notificationsAllDeleted).toBe(0);
+  });
+
+  it("deployments: 'success'/'failed' budanır; 'pending'/'running' ASLA silinmez", async () => {
+    // REGRESYON — en kritiği: bu tablo "aynı anda tek aktif dağıtım" kilidinin kendisidir.
+    // Aktif bir satır silinirse koşan dağıtımın sonucu yazılamaz ve kuyruk mantığı bozulur.
+    const mk = async (status: string, days: number): Promise<string> => {
+      const [row] = await db
+        .insert(schema.deployments)
+        .values({
+          target: 'api',
+          status,
+          requestedBy: `${tagPrefix(tag)}-deploy`,
+          createdAt: daysAgo(days),
+        })
+        .returning({ id: schema.deployments.id });
+      return row!.id;
+    };
+
+    const oldSuccess = await mk('success', 400);
+    const oldFailed = await mk('failed', 400);
+    const freshSuccess = await mk('success', 10);
+    const oldPending = await mk('pending', 400); // eski AMA aktif → DURMALI
+    const oldRunning = await mk('running', 400); // eski AMA aktif → DURMALI
+
+    await retention.runRetention();
+
+    expect(await exists('deployments', oldSuccess)).toBe(false);
+    expect(await exists('deployments', oldFailed)).toBe(false);
+    expect(await exists('deployments', freshSuccess)).toBe(true);
+    expect(await exists('deployments', oldPending)).toBe(true);
+    expect(await exists('deployments', oldRunning)).toBe(true);
+  });
+
+  it('site_connect_tokens: tüketilmiş/çoktan süresi geçmiş budanır, CANLI kod DOKUNULMAZ', async () => {
+    // REGRESYON: pencere koşulu düşerse HENÜZ KULLANILMAMIŞ ve süresi dolmamış bir bağlan kodu
+    // silinir → operatörün elindeki kod "geçersiz" olur ve onboarding akışı kırılır (§14).
+    const mk = async (opts: {
+      consumedDaysAgo?: number;
+      expiresInDays: number;
+      label: string;
+    }): Promise<string> => {
+      const [row] = await db
+        .insert(schema.siteConnectTokens)
+        .values({
+          siteId: randomUUID(), // FK YOK (şema notu) → gerçek site gerekmez
+          codeHash: `${tagPrefix(tag)}-${opts.label}`,
+          expiresAt: new Date(Date.now() + opts.expiresInDays * 24 * 60 * 60 * 1000),
+          consumedAt:
+            opts.consumedDaysAgo === undefined ? null : daysAgo(opts.consumedDaysAgo),
+        })
+        .returning({ id: schema.siteConnectTokens.id });
+      return row!.id;
+    };
+
+    const oldConsumed = await mk({ consumedDaysAgo: 30, expiresInDays: -30, label: 'eski-kullanildi' });
+    const longExpired = await mk({ expiresInDays: -30, label: 'cok-eski-suresi-gecti' });
+    // Yeni tüketilmiş: kullanılmış ama 7g penceresi dolmadı → henüz DURMALI (operasyon izi).
+    const freshConsumed = await mk({ consumedDaysAgo: 1, expiresInDays: -1, label: 'yeni-kullanildi' });
+    // CANLI kod: tüketilmemiş + süresi dolmamış → HİÇBİR dala girmemeli.
+    const live = await mk({ expiresInDays: 1, label: 'canli' });
+
+    await retention.runRetention();
+
+    expect(await exists('site_connect_tokens', oldConsumed)).toBe(false);
+    expect(await exists('site_connect_tokens', longExpired)).toBe(false);
+    expect(await exists('site_connect_tokens', freshConsumed)).toBe(true);
+    expect(await exists('site_connect_tokens', live)).toBe(true);
+  });
+});
+
 describe('RetentionService.runRetention — idempotans', () => {
   it('silinecek/maskelenecek bir şey yoksa TÜM sayaçlar 0 döner ve hata atmaz', async () => {
     // REGRESYON: batch döngüsünün bitiş koşulu (n < BATCH_SIZE) bozulursa ya da bir yüklem
@@ -319,6 +430,10 @@ describe('RetentionService.runRetention — idempotans', () => {
       emailDeleted: 0,
       auditRevealDeleted: 0,
       auditAllDeleted: 0,
+      notificationsDeleted: 0,
+      notificationsAllDeleted: 0,
+      deploymentsDeleted: 0,
+      connectTokensDeleted: 0,
     });
   });
 });

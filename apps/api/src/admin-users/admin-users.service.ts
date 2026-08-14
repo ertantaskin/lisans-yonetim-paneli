@@ -12,12 +12,12 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type Redis from 'ioredis';
 import { DB, type Database } from '../db/db.module';
 import { REDIS } from '../redis/redis.module';
 import { adminUsers, type AdminUser } from '../db/schema';
-import { hashPassword, verifyPassword, dummyHash } from '../auth/password';
+import { hashPassword, verifyPassword, dummyHash, needsRehash } from '../auth/password';
 import { isUniqueViolation } from '../db/pg-error';
 import { recordAuthEvent } from './auth-events';
 import { AdminTotpService } from './totp.service';
@@ -266,7 +266,32 @@ export class AdminUsersService implements OnModuleInit {
       return null;
     }
 
-    // Parola DOĞRU. TOTP açıksa giriş burada BİTMEZ: ne kova temizlenir, ne lastLoginAt yazılır,
+    // Parola DOĞRU → hash'i güncel maliyete YÜKSELT (D4, rehash-on-login). Düz parola YALNIZ
+    // burada elimizdedir; scrypt parametreleri artık hash'in içinde saklandığı için eski
+    // (N=2^14) kayıtlar doğrulanmaya devam eder ve kullanıcı fark etmeden yenilenir.
+    //
+    // Koşullu UPDATE (CAS: passwordHash hâlâ AYNI mı): araya bir `resetPassword` girdiyse
+    // taze parolayı ESKİSİYLE geri yazmayız. `tokenVersion` BİLEREK artırılmaz — bu bir
+    // bakım işlemidir, güvenlik olayı değil; artırmak her adminin oturumunu ilk girişte
+    // düşürürdü. Best-effort: yazım hatası girişi ASLA bozmaz (yalnız loglanır, bir sonraki
+    // girişte tekrar denenir).
+    if (needsRehash(user.passwordHash)) {
+      try {
+        const upgraded = await hashPassword(password);
+        await this.db
+          .update(adminUsers)
+          .set({ passwordHash: upgraded })
+          .where(and(eq(adminUsers.id, user.id), eq(adminUsers.passwordHash, user.passwordHash)));
+      } catch (e) {
+        this.logger.warn(
+          `Parola hash'i güncel maliyete yükseltilemedi (giriş etkilenmedi): ${
+            e instanceof Error ? e.message : e
+          }`,
+        );
+      }
+    }
+
+    // TOTP açıksa giriş burada BİTMEZ: ne kova temizlenir, ne lastLoginAt yazılır,
     // ne de 'admin_login' izi düşer — bunlar ancak ikinci faktör geçilince olur. (Kova temizliği
     // ikinci adıma ertelenmezse, parolayı ele geçiren biri her denemede lockout sayacını
     // sıfırlayıp 6 haneli kodu SINIRSIZ deneyebilirdi.)

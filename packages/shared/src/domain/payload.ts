@@ -132,6 +132,19 @@ export function serializeAccountPayload(
 /**
  * Teslimat/reveal: kanonik JSON string'i şema sırasına göre alan listesine çözer.
  * Bozuk/eski (JSON olmayan) düz metin gelirse tek alanlık geriye dönük görünüm döner.
+ *
+ * GÜVENLİK (denetim Y1) — fallback alanı `secret: TRUE` işaretlenir:
+ * `maskAccountFields` YALNIZ `secret` alanları maskeler. Fallback eskiden `secret:false`
+ * dönüyordu → maskeleme değere HİÇ DOKUNMUYORDU. Gerçek arıza yolu: operatör `kind='key'`
+ * bir ürünü `account`'a çevirir (ürün formunda tip seçici serbest) → o üründeki TÜM eski
+ * kayıtlar kanonik JSON olmadığı için bu dala düşer ve owner-OLMAYAN admin, mağaza
+ * operatörü (WP meta box) ve arama sonuçları anahtarların TAMAMINI düz metin görürdü
+ * (uyarı yok, reveal audit'i yok). Aynı anahtar `kind='key'` yolundan geçse `••••••V66T`
+ * olurdu — yani maskeleme rejimi ürün tipine göre sessizce kayboluyordu.
+ *
+ * Fail-safe YÖN: içeriği ÇÖZEMEDİĞİMİZ bir payload'ı "gizli değil" saymak yanlış yöndür;
+ * bilinmeyeni SIR kabul ederiz. Müşteri kendi teslimatını maskesiz görmeye devam eder
+ * (maskeleme YALNIZ admin/mağaza yüzeylerinde uygulanır — bkz. PayloadFieldDef.secret).
  */
 export function parseAccountPayload(
   schema: AccountPayloadSchema,
@@ -143,7 +156,7 @@ export function parseAccountPayload(
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error();
     obj = parsed as Record<string, unknown>;
   } catch {
-    return [{ key: 'payload', label: 'Lisans', value: serialized, secret: false }];
+    return [{ key: 'payload', label: 'Lisans', value: serialized, secret: true }];
   }
   return schema
     .filter((f) => obj[f.key] != null && String(obj[f.key]) !== '')
@@ -152,6 +165,23 @@ export function parseAccountPayload(
 
 const MASK_TAIL = 4;
 const MASK_BODY = '••••••';
+
+/**
+ * Maske GÖVDESİ — sunucu tarafında "bu değer maskeden geldi" tespiti için dışa açıktır.
+ *
+ * NEDEN (denetim bulgusu Y3): owner OLMAYAN admin envanterde bir hesap kaydını düzenlemek
+ * istediğinde form alanları MASKELİ değerlerle ön-doldurulur; yalnız kullanıcı adını düzeltip
+ * kaydederse parola alanında `••••••` gider ve GERÇEK PAROLA yerine bu dize şifrelenir —
+ * lisans sessizce yok edilir (eski ciphertext üzerine yazıldığı için kurtarma da yoktur).
+ * `serializeAccountPayload` için `••••••` mükemmel geçerli bir doludur, o yüzden kapı
+ * yazma yolunda açık olmalıdır.
+ */
+export const MASK_PREFIX = MASK_BODY;
+
+/** Değer bir maskeden mi geliyor (gerçek sır değil)? */
+export function looksMasked(value: string): boolean {
+  return value.startsWith(MASK_BODY);
+}
 
 /**
  * KEY kimlik maskesi: sabit gövde + son 4 hane. key/code/custom'ın BÜTÜN payload'ında

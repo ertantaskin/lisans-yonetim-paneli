@@ -13,7 +13,19 @@ import { WEBHOOK_QUEUE, type WebhookJob } from './webhook.service';
  * Geri kanal webhook worker (§2). Siteye (WP eklentisi) HMAC imzalı POST atar.
  * İmza şeması gelen isteklerle aynı — eklenti kendi secret'iyle doğrular.
  */
-@Processor(WEBHOOK_QUEUE)
+// concurrency 5 (varsayılan 1'di): worker TEK iş çalıştırırken erişilemeyen BİR mağaza
+// (aşağıdaki 10sn timeout'a kadar asılı kalır) tüm kuyruğu BAŞ-BLOK yapıyordu → kuyruk
+// ~0,1 iş/sn'ye düşüyor ve SAĞLIKLI mağazaların 'order.fulfilled' webhook'ları arkada
+// sıraya giriyordu (müşteri My Account'ta lisansı görüyor, mağaza durumu dakikalarca
+// güncellenmiyordu). mail.processor ile AYNI gerekçe/aynı sayı.
+//
+// SIRA İNVARYANTI KORUNUR (paralel çalıştırma sırayı bozabilir, ama durum GERİLEYEMEZ):
+// gövdedeki monoton `seq` (outbox createdAt epoch-ms, imzalı gövdenin parçası) alıcı
+// tarafta karşılaştırılır — WP `class-webhook.php` `_wpteslimat_seq` meta'sını okur ve
+// `seq <= son-uygulanan` ise olayı UYGULAMADAN 200 {stale:true} döner. Yani 'partial',
+// 'fulfilled'dan sonra ulaşsa bile durumu geri yazamaz. Bu koruma zaten ŞARTTI: BullMQ
+// retry'ları concurrency 1'de de sırayı bozuyordu.
+@Processor(WEBHOOK_QUEUE, { concurrency: 5 })
 export class WebhookProcessor extends WorkerHost {
   constructor(
     @Inject(DB) private readonly db: Database,

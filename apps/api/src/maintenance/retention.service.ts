@@ -42,6 +42,17 @@ export interface RetentionReport {
   auditRevealDeleted: number;
   /** audit_log: (yalnız RETENTION_AUDIT_ALL_DAYS set ise) N günden eski TÜM SİLİNEN satır. */
   auditAllDeleted: number;
+  /** notifications: OKUNMUŞ (read_at dolu) VE N günden eski SİLİNEN satır. */
+  notificationsDeleted: number;
+  /**
+   * notifications: (yalnız RETENTION_NOTIFICATION_ALL_DAYS set ise) N günden eski
+   * OKUNMAMIŞ satırlar dahil TÜM SİLİNEN satır.
+   */
+  notificationsAllDeleted: number;
+  /** deployments: TAMAMLANMIŞ (success/failed) VE N günden eski SİLİNEN satır. */
+  deploymentsDeleted: number;
+  /** site_connect_tokens: tüketilmiş VEYA süresi çoktan geçmiş SİLİNEN satır. */
+  connectTokensDeleted: number;
 }
 
 /**
@@ -117,6 +128,10 @@ export class RetentionService implements OnModuleInit {
     const emailDeleteDays = this.days('RETENTION_EMAIL_DELETE_DAYS', 730);
     const auditRevealDays = this.days('RETENTION_AUDIT_REVEAL_DAYS', 90);
     const auditAllDays = this.optionalDays('RETENTION_AUDIT_ALL_DAYS'); // null = KAPALI (varsayılan)
+    const notificationDays = this.days('RETENTION_NOTIFICATION_DAYS', 180);
+    const notificationAllDays = this.optionalDays('RETENTION_NOTIFICATION_ALL_DAYS'); // null = KAPALI
+    const deploymentDays = this.days('RETENTION_DEPLOYMENT_DAYS', 365);
+    const connectTokenDays = this.days('RETENTION_CONNECT_TOKEN_DAYS', 7);
 
     // (1) fulfillment_events — sipariş timeline'ı ~2×sipariş hızında büyür; N günden eski sil.
     const fulfillmentEventsDeleted = await this.pruneBatched(
@@ -240,6 +255,106 @@ export class RetentionService implements OnModuleInit {
       );
     }
 
+    /*
+     * (6) notifications — düşük-stok taraması (30dk) + günlük özet sürekli satır yazar;
+     *     yılda binlerce satır birikir ve HİÇ budanmıyordu. YALNIZ OKUNMUŞ (read_at dolu)
+     *     ve N günden eski satırlar silinir: okunmamış bir uyarıyı silmek, operatörün HİÇ
+     *     görmediği bir alarmı sessizce yok etmek olurdu (bu projede "sessiz kayıp" yasak).
+     *     Partial index `notifications_unread_idx` okunmamışları kapsar; buradaki yüklem
+     *     ise `notifications_created_idx` üzerinden ilerler.
+     */
+    const notificationsDeleted = await this.pruneBatched(
+      'notifications',
+      sql`
+        DELETE FROM notifications
+        WHERE ctid IN (
+          SELECT ctid FROM notifications
+          WHERE read_at IS NOT NULL
+            AND created_at < now() - (${notificationDays} * interval '1 day')
+          LIMIT ${BATCH_SIZE}
+        )
+        RETURNING id;
+      `,
+    );
+
+    /*
+     * (6b) notifications TAM budama — VARSAYILAN KAPALI (audit_log 5b deseni).
+     *      Okunmamış bildirimler hiç okunmazsa (6) onları asla silmez → tablo yine de
+     *      büyümeye devam eder. Bu kapı, operatörün bilinçli olarak "N günden eski her
+     *      bildirimi at" demesi içindir; açılmadıkça okunmamış uyarı KAYBOLMAZ.
+     */
+    let notificationsAllDeleted = 0;
+    if (notificationAllDays !== null) {
+      notificationsAllDeleted = await this.pruneBatched(
+        'notifications(all)',
+        sql`
+          DELETE FROM notifications
+          WHERE ctid IN (
+            SELECT ctid FROM notifications
+            WHERE created_at < now() - (${notificationAllDays} * interval '1 day')
+            LIMIT ${BATCH_SIZE}
+          )
+          RETURNING id;
+        `,
+      );
+    }
+
+    /*
+     * (7) deployments — satır başına `log` alanı 20.000 karaktere kadar çıkabilir (deploy.sh
+     *     çıktısının kuyruğu) → az satırla bile disk/yedek boyutunu büyütür.
+     *
+     *     KRİTİK: 'pending'/'running' satırlara ASLA DOKUNULMAZ. Bu tablo "aynı anda tek
+     *     aktif dağıtım" kilidinin kendisidir (request/claim bekleyen işi burada arar) ve
+     *     runner claim'i buradan okur; aktif bir satırı silmek koşan bir dağıtımın sonucunu
+     *     yazamaz hale getirir. Bu yüzden BEYAZ LİSTE (`IN ('success','failed')`) kullanılır:
+     *     ileride yeni bir ara durum eklenirse (NOT IN yazımının aksine) otomatik olarak
+     *     KORUNUR — yanlış tarafa düşen hata sessiz veri kaybı olurdu.
+     *
+     *     DİKKAT (pencereyi kısaltacak operatöre): yedek/tatbikat geçmişi de BU tabloda durur
+     *     (`deployments.backupSummary`, target 'backup'/'backup-drill' — ayrı tablo AÇILMADI).
+     *     Pencereyi tatbikat aralığının ALTINA çekmek son BAŞARILI tatbikat kaydını siler →
+     *     panel "hiç tatbikat yok" der ve `drill_stale` alarmı yanlış yere ateşler. 365 gün
+     *     varsayılanı bilerek cömerttir.
+     */
+    const deploymentsDeleted = await this.pruneBatched(
+      'deployments',
+      sql`
+        DELETE FROM deployments
+        WHERE ctid IN (
+          SELECT ctid FROM deployments
+          WHERE status IN ('success', 'failed')
+            AND created_at < now() - (${deploymentDays} * interval '1 day')
+          LIMIT ${BATCH_SIZE}
+        )
+        RETURNING id;
+      `,
+    );
+
+    /*
+     * (8) site_connect_tokens — tek-seferlik onboarding kodu (§14). Tüketilen/süresi geçen
+     *     satırlar şifreli creds'i null'lansa da SATIR OLARAK kalıyordu; hiç budanmıyordu.
+     *
+     *     ONBOARDING AKIŞI KIRILMAZ: iki dal da PENCERE İLE korunur — canlı bir kod (15dk
+     *     TTL, tüketilmemiş) hiçbir dala girmez. Tüketilmiş kod zaten tek kullanımlıktır
+     *     (claim idempotent değil, yeniden kullanılamaz) → silinmesi davranışı değiştirmez.
+     */
+    const connectTokensDeleted = await this.pruneBatched(
+      'site_connect_tokens',
+      sql`
+        DELETE FROM site_connect_tokens
+        WHERE ctid IN (
+          SELECT ctid FROM site_connect_tokens
+          WHERE (
+                  consumed_at IS NOT NULL
+                  AND consumed_at < now() - (${connectTokenDays} * interval '1 day')
+                )
+             OR expires_at < now() - (${connectTokenDays} * interval '1 day')
+          LIMIT ${BATCH_SIZE}
+        )
+        RETURNING id;
+      `,
+    );
+
     const report: RetentionReport = {
       fulfillmentEventsDeleted,
       outboxDeleted,
@@ -248,12 +363,21 @@ export class RetentionService implements OnModuleInit {
       emailDeleted,
       auditRevealDeleted,
       auditAllDeleted,
+      notificationsDeleted,
+      notificationsAllDeleted,
+      deploymentsDeleted,
+      connectTokensDeleted,
     };
     this.logger.log(
       `Saklama koşusu bitti: fulfillment=${fulfillmentEventsDeleted} sil, outbox=${outboxDeleted} sil, ` +
         `security=${securityEventsDeleted} sil, email=${emailMasked} maske/${emailDeleted} sil, ` +
         `audit auto-reveal=${auditRevealDeleted} sil` +
-        (auditAllDays !== null ? `, audit tam=${auditAllDeleted} sil (${auditAllDays}g)` : ''),
+        (auditAllDays !== null ? `, audit tam=${auditAllDeleted} sil (${auditAllDays}g)` : '') +
+        `, bildirim=${notificationsDeleted} sil` +
+        (notificationAllDays !== null
+          ? `, bildirim tam=${notificationsAllDeleted} sil (${notificationAllDays}g)`
+          : '') +
+        `, dagitim=${deploymentsDeleted} sil, baglan-kodu=${connectTokensDeleted} sil`,
     );
     return report;
   }

@@ -55,7 +55,19 @@ export const replacementRequests = pgTable(
   },
   (t) => [
     index('replacement_requests_status_idx').on(t.status),
+    // HAM kolon indeksi — `replacements.list` içindeki `c.customer_email = rr.customer_email`
+    // eşitlik join'i bunu kullanır. Aşağıdaki fonksiyonel indeksle ÇAKIŞMAZ: biri ham, diğeri
+    // lower() değerini indeksler; Postgres için bunlar farklı ifadelerdir.
     index('replacement_requests_email_idx').on(t.customerEmail),
+    // Müşteri 360 (`/customers/[email]`) `lower(customer_email) = ?` ile sorguluyor → KOLONU
+    // fonksiyona soktuğu için ham indeks ASLA kullanılamıyordu, her müşteri detayı açılışı
+    // tam tarama yapıyordu. `orders` tarafında bu doğru yapılmış (orders_email_lower_idx);
+    // asimetri yalnız bu tablodaydı.
+    index('replacement_requests_email_lower_idx').on(sql`lower(${t.customerEmail})`),
+    // Sipariş detayı her açılışta bu tabloyu `WHERE order_id = ?` ile okuyor (Promise.all'ın
+    // bir dalı). order_id bir FK'dir ve FK'ler INDEKS OLUŞTURMAZ → destek hacmi büyüdükçe
+    // doğrusal bozulan bir seq scan'di.
+    index('replacement_requests_order_idx').on(t.orderId, t.createdAt.desc()),
     // Destek kuyruğu + canlı akış sıcak yolu (0025 — elle yazılmıştı, şemaya taşındı).
     index('replacement_requests_created_idx').on(t.createdAt.desc(), t.id.desc()),
   ],

@@ -567,7 +567,8 @@ export default function GuidePage() {
         description="Kusurlu lisansı taze biriyle değiştirme."
       >
         <Bullets>
-          <li><strong>Müşteri talebi:</strong> müşteri My Account&apos;ta &quot;Sorun Bildir&quot; ile talep açar → <R href="/support">Destek</R> kuyruğunda görünür. Onayla / Reddet / Bilgi İste yapabilirsiniz. Onay, garanti penceresi içinde ve stok varsa çalışır.</li>
+          <li><strong>Müşteri talebi:</strong> müşteri My Account&apos;ta &quot;Sorun Bildir&quot; ile talep açar → <R href="/support">Destek</R> kuyruğunda görünür. Onayla / Reddet / Bilgi İste yapabilirsiniz. Onay için tek teknik şart <strong>stok</strong>tur.</li>
+          <li><strong>Garanti penceresi kararı size aittir:</strong> panel her talebe &quot;Garanti içi / Garanti dışı&quot; rozetini bilgi olarak basar (teslim tarihi + ürünün garanti gün sayısı; lisansın geçerlilik süresi dolmuşsa garanti içi sayılmaz). Bu rozet onayı <em>engellemez</em> — garanti dışı bir talebi de onaylayabilirsiniz. İlke aynı: <strong>&quot;sistem önerir, insan onaylar.&quot;</strong></li>
           <li><strong>Proaktif değişim:</strong> müşteri beklemeden, sipariş detayında bir atamayı <strong>&quot;Değiştir&quot;</strong> ile aynı üründen taze bir key ile değiştirebilirsiniz. Eski key karantinaya alınır, değişim geçmişi tutulur.</li>
         </Bullets>
         <Tip>

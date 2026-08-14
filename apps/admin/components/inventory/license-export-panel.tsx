@@ -46,6 +46,7 @@ export interface LicenseExportNote {
 export function LicenseExportPanel({
   rows,
   total,
+  totalCapped,
   params,
   masked,
   disabled,
@@ -56,6 +57,12 @@ export function LicenseExportPanel({
   rows: LicenseInventoryRow[];
   /** Süzgece uyan toplam kayıt (sunucudan) — "tüm süzgeç sonucu" seçeneğinde yazılır. */
   total: number;
+  /**
+   * Sunucu sayımı tavana dayandı mı? true → `total` GERÇEK toplam değil ALT SINIRDIR
+   * (perf: süzgeçsiz `count(*)` tam tablo taramasıydı). Etiket "N+ kayıt" yazar; kesin bir
+   * sayı yazmak operatöre "hepsi indi" yalanını söyleyebilirdi.
+   */
+  totalCapped?: boolean;
   /** Tablonun o anki süzgeçleri — sunucu dışa aktarmasına AYNEN geçer (liste = dosya). */
   params: LicenseListParams;
   /** API'nin `masked` bayrağı; gelmezse satırlardan sezilir (dağıtım sapması yedeği). */
@@ -85,6 +92,8 @@ export function LicenseExportPanel({
     truncated: boolean;
     total: number;
     limit: number;
+    /** Sunucu sayımı tavana dayandı mı → aşağıdaki uyarıdaki toplam ALT SINIRDIR. */
+    totalCapped?: boolean;
   }) {
     const spec = INVENTORY_EXPORT_VARIANT[variant];
     const notices = exportNotices({
@@ -95,6 +104,14 @@ export function LicenseExportPanel({
       exported: args.data.length,
       limit: args.limit,
     });
+    // Tavanlı sayımda "süzgece uyan N kayıt" cümlesi bir ALT SINIRDIR; dosyanın İÇİNE de
+    // yazılır (dosya yeniden adlandırılıp iletilebilir — uyarı yalnız ekranda kalamaz).
+    if (args.totalCapped) {
+      notices.push(
+        `NOT: Süzgece uyan toplam ${args.total.toLocaleString('tr-TR')} sayısı bir ALT SINIRDIR ` +
+          '(sunucu sayımı performans için tavanlıdır) — gerçek kayıt sayısı daha fazla olabilir.',
+      );
+    }
     const base = `${spec.file}_${args.scopeTag}_${stamp()}`;
     if (format === 'csv') {
       // Uyarılar CSV'nin İLK satırlarına da yazılır: dosya yeniden adlandırılıp iletilebilir,
@@ -113,7 +130,7 @@ export function LicenseExportPanel({
       args.truncated
         ? {
             tone: 'warning',
-            text: `${args.data.length} kayıt indirildi — süzgece uyan ${args.total} kayıttan yalnız ilk ${args.limit} tanesi alınabildi. Uyarı dosyanın içinde de var.`,
+            text: `${args.data.length} kayıt indirildi — süzgece uyan ${args.total.toLocaleString('tr-TR')}${args.totalCapped ? '+' : ''} kayıttan yalnız ilk ${args.limit} tanesi alınabildi. Uyarı dosyanın içinde de var.`,
           }
         : { tone: 'success', text: `${args.data.length} kayıt indirildi.` },
     );
@@ -151,6 +168,7 @@ export function LicenseExportPanel({
         masked: res.data.masked ?? looksMasked(res.data.rows),
         truncated: res.data.truncated,
         total: res.data.total,
+        totalCapped: res.data.totalCapped,
         limit: res.data.limit,
       });
     } catch (e) {
@@ -184,7 +202,7 @@ export function LicenseExportPanel({
               },
               {
                 value: 'all',
-                label: `Tüm süzgeç sonucu — ${total} kayıt`,
+                label: `Tüm süzgeç sonucu — ${total.toLocaleString('tr-TR')}${totalCapped ? '+' : ''} kayıt`,
                 // DÜRÜSTLÜK: sunucu tavanı var; sığmazsa dosyada ve panelde yazılır.
                 hint: 'Sayfalama olmadan, ekrandaki arama/süzgeçlerin tamamı. Sunucu üst sınırını aşarsa dosyada uyarı olur.',
               },

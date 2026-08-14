@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.0.5
+Stable tag: 1.0.6
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,19 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.0.6 =
+* Müşteri sayfasında lisanslar artık ÜRÜNE göre gruplanıp ürün adıyla başlıklanıyor (çok ürünlü
+  siparişte hangi anahtarın hangi ürün olduğu belli değildi). Aynı gruplama .txt indirmede de var.
+* Çok kullanımlı (MAK/toplu) anahtarlarda "bu anahtar kaç aktivasyon hakkı içeriyor" bilgisi
+  müşteriye gösteriliyor — müşteri eksik teslimat aldığını sanmıyor.
+* Hesap ürününde alanlar çözülemediğinde müşteri artık kalıcı "Teslimat hazırlanıyor" ekranında
+  kilitlenmiyor: lisans bilgisi olduğu gibi gösteriliyor, hiç içerik yoksa destek yönlendirmesi
+  yapılıyor (.txt indirmede boş satır üretilmesi de düzeltildi).
+* Panele iletilemeyen işlemler artık sonsuza kadar denenmiyor: 1dk/5dk/30dk sonra en fazla üç deneme,
+  sonra tek ve net bir sipariş notu. Kimlik doğrulama hatasında (geçersiz anahtar/imza) hiç denenmiyor;
+  bunun yerine yönetici panelinde uyarı gösteriliyor. Sipariş notu tekrarları da bitti.
+* Güvenlik/doğruluk: tablo göçündeki `SHOW TABLES LIKE` sorgusu joker karakter kaçışıyla yapılıyor.
 
 = 1.0.5 =
 * Tarihler artık mağazanızın saat diliminde gösteriliyor. Lisans geçerlilik ve değişim tarihleri

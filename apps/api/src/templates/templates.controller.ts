@@ -3,14 +3,21 @@ import {
   Controller,
   Delete,
   Get,
+  HttpException,
+  HttpStatus,
+  Ip,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminGuard } from '../auth/admin.guard';
+import { RateLimitService } from '../common/rate-limit.service';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { DeliveryTemplatesService } from './templates.service';
 
@@ -40,11 +47,32 @@ const TestBody = z.object({
 });
 type TestBody = z.infer<typeof TestBody>;
 
+/**
+ * Test-mail hız sınırı (denetim D2 — KİMLİK AVI YÜZEYİ).
+ *
+ * `POST :id/test` içeriğini operatörün yazdığı bir şablonu KEYFİ bir adrese, panelin MAIL_FROM
+ * kimliği ve alan adının SPF/DKIM itibarıyla gönderir. Sınırsızken bu uç bir toplu-gönderim
+ * (kimlik avı) aracına dönüşebilirdi: önce şablon oluştur, sonra döngüyle gönder.
+ *
+ * ALICI KISITLANMAZ — operatörün kendi test adresine göndermesi meşrudur; sınırlanan HIZDIR.
+ *
+ * KOVA ANAHTARI = ADMİN AKTÖRÜ, IP DEĞİL: panel uçlarına istekler Next admin sunucusu üzerinden
+ * PROXY'lenir, yani API'nin gördüğü IP tüm operatörler için AYNIDIR — "IP başına" sınır tek
+ * global kovaya çöker ve bir operatör diğerlerini kilitler (AI uçlarında düzeltilen aynı hata).
+ * Aktör yoksa/varsayılansa ('panel:admin' — auth KAPALI kurulum ya da sistem çağrısı) IP'ye
+ * geri düşülür; o kurulumda zaten tek operatör vardır ve panel ADMIN_TOKEN ile korunur.
+ */
+const TEST_MAIL_RL_WINDOW_SEC = 600; // 10 dk
+const TEST_MAIL_RL_MAX = 10; // aktör başına 10 test maili / 10 dk
+
 /** Admin: teslimat mail şablonları CRUD + önizleme + test-mail (§6/§13). */
 @Controller('admin/templates')
 @UseGuards(AdminGuard)
 export class TemplatesController {
-  constructor(private readonly templates: DeliveryTemplatesService) {}
+  constructor(
+    private readonly templates: DeliveryTemplatesService,
+    private readonly rateLimit: RateLimitService,
+  ) {}
 
   @Get()
   list() {
@@ -83,12 +111,28 @@ export class TemplatesController {
     return this.templates.preview(id, body.sampleVars);
   }
 
-  /** Tek-seferlik test maili (örnek değişkenlerle) — gerçek müşteri verisi kullanılmaz. */
+  /**
+   * Tek-seferlik test maili (örnek değişkenlerle) — gerçek müşteri verisi kullanılmaz.
+   * Aktör başına hız sınırlıdır (yukarıdaki gerekçe): aşımda 429 + Retry-After.
+   */
   @Post(':id/test')
-  test(
+  async test(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(TestBody)) body: TestBody,
+    @Ip() ip: string,
+    @AdminActor() actor: string,
+    @Res({ passthrough: true }) reply: FastifyReply,
   ) {
+    const known = actor && actor !== 'panel:admin' ? actor : null;
+    const key = known ? `templates:test:actor:${known}` : `templates:test:ip:${ip}`;
+    if (!(await this.rateLimit.hit(key, TEST_MAIL_RL_MAX, TEST_MAIL_RL_WINDOW_SEC))) {
+      // Fastify başlığı, istisna filtresi 429'u render etmeden ÖNCE korunur (admin-users deseni).
+      reply.header('retry-after', String(TEST_MAIL_RL_WINDOW_SEC));
+      throw new HttpException(
+        'Çok fazla test maili gönderildi. Kısa süre sonra tekrar deneyin.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
     return this.templates.sendTest(id, body.toEmail);
   }
 }

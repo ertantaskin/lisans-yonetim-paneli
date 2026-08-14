@@ -101,6 +101,19 @@ class Wpteslimat_Order_Sync {
     const DONE_MARKER_TTL = 300;
     const DONE_MARKER_WINDOW = 180;
 
+    /**
+     * (§4) Başarısız panel çağrısının tekrar deneme basamakları (saniye): 1dk → 5dk → 30dk, SONRA DUR.
+     *
+     * NEDEN sayaç + üst sınır + backoff: eskiden her başarısızlık SABİT 300sn sonra KOŞULSUZ yeniden
+     * planlanıyordu ve zincirin sonu YOKTU. Panel kalıcı olarak reddediyorsa (panelde `rotate-secret`
+     * yapılıp wp-config güncellenmediyse 401, ya da sunucu saati kaydığı için imza penceresi dışına
+     * düşüldüyse) durum ASLA 2xx olmaz → etkilenen HER sipariş için günde ~288 sipariş notu, 288
+     * zamanlanmış eylem ve 288 kuyruk log satırı üretiliyordu (sipariş ekranı okunamaz hale gelir,
+     * DB ve AS kuyruğu şişer). Sözleşme (§4: "5xx → 1dk/5dk/30dk retry") zaten SONLU bir zinciri
+     * tarif ediyordu ve kodun kendi yorumu da bunu söylüyordu — sapan taraf uygulamaydı.
+     */
+    const RETRY_DELAYS = [60, 300, 1800];
+
     public static function instance() {
         if (self::$instance === null) self::$instance = new self();
         return self::$instance;
@@ -151,6 +164,9 @@ class Wpteslimat_Order_Sync {
         // ve operatör bunu yalnız kuyruk log tablosuna bakarsa fark ediyordu. Adet DÜŞÜRÜLDÜYSE bu,
         // fazladan teslim edilmiş birimin geri alınmaması demektir (§2). Diğer üç iş gibi retry'lı.
         add_action('wpteslimat_retry_resync', [$this, 'resync_items'], 10, 2);
+
+        // (§4) Kimlik doğrulama reddi (401/403) tekrar denemeyle DÜZELMEZ → yöneticiye görünür uyarı.
+        add_action('admin_notices', [$this, 'auth_failure_notice']);
     }
 
     /**
@@ -572,7 +588,7 @@ class Wpteslimat_Order_Sync {
      * (G2) Kilit MEŞGULken işi SESSİZCE düşürme — Action Scheduler güvenlik ağını yutar.
      *
      * Senaryo: satır-içi koşum fatal alır (max_execution_time/OOM) → kilit açılmadan kalır ve
-     * kalıcı "yapıldı" meta'sı YAZILMAZ; gövde içindeki schedule_retry() de hiç çalışmaz. AS işi
+     * kalıcı "yapıldı" meta'sı YAZILMAZ; gövde içindeki handle_failure() de hiç çalışmaz. AS işi
      * kilidi taze görüp sessizce dönerse eylem 'complete' işaretlenir → SİPARİŞ PANELE HİÇ GİTMEZ.
      * Bu yüzden meşgul kilitte iş +60sn sonraya YENİDEN PLANLANIR (o an kilit TTL ile bayat olur ve
      * devralınır) ve iz için log bırakılır. AS yoksa sessiz geçilir (o kurulumda senkron fallback
@@ -604,7 +620,7 @@ class Wpteslimat_Order_Sync {
         // eşzamanlı istek (ör. iki yöneticinin aynı siparişi işlemesi, ödeme geçidi IPN'i ile admin
         // isteğinin çakışması) aynı kilide gider; kaybeden koşum hiç yeniden denenmezdi. Ayrıca
         // ÖNCEKİ koşum fatal alıp kilidi takılı bıraktıysa hiçbir kurtarma yolu kalmıyordu.
-        // wp-cron'a düş (schedule_retry ile AYNI fallback deseni) — dedupe: aynı argümanlı olay varsa ekleme.
+        // wp-cron'a düş (handle_failure ile AYNI fallback deseni) — dedupe: aynı argümanlı olay varsa ekleme.
         if (!function_exists('wp_schedule_single_event')) return;
         if (function_exists('wp_next_scheduled') && wp_next_scheduled('wpteslimat_recheck', $args)) return;
         wp_schedule_single_event(time() + self::JOB_RESCHEDULE_DELAY, 'wpteslimat_recheck', $args);
@@ -759,11 +775,10 @@ class Wpteslimat_Order_Sync {
                 $order->add_order_note('Teslimat: Sipariş güvenlik incelemesine alındı — teslimat yönetici onayından sonra tamamlanacak.');
             }
             $order->save();
+            $this->mark_success($order, 'push');
         } else {
-            // Başarısız → retry planla (§4 eklenti 1dk/5dk/30dk).
-            $order->add_order_note(sprintf('Teslimat: panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
-            $order->save();
-            $this->schedule_retry($order_id, $actor);
+            // Başarısız → §4 basamaklarıyla (1dk/5dk/30dk) sonlu tekrar deneme; 401/403'te hiç deneme.
+            $this->handle_failure($order, 'push', $res, $actor, __('sipariş', 'wpteslimat'));
         }
     }
 
@@ -873,28 +888,15 @@ class Wpteslimat_Order_Sync {
                     $order->update_meta_data('_wpteslimat_status', $res['body']['status']);
                     $order->save();
                 }
+                $this->mark_success($order, 'resync');
             } else {
                 // (denetim) Eskiden bu dal YOKTU: başarısız uzlaştırma tamamen sessizdi. Panel eski
                 // adette kalır; adet DÜŞÜRÜLMÜŞSE fazla teslim edilen birim geri alınmaz (§2).
-                // push/revoke/refund ile aynı davranış: görünür sipariş notu + otomatik tekrar deneme.
-                $order->add_order_note(sprintf(
-                    'Teslimat: sipariş kalemi güncellemesi panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.',
-                    isset($res['code']) ? (int) $res['code'] : 0
-                ));
-                $order->save();
-                $this->schedule_resync_retry($order_id, $actor);
+                // push/revoke/refund ile aynı davranış: görünür sipariş notu + sonlu tekrar deneme.
+                $this->handle_failure($order, 'resync', $res, $actor, __('sipariş kalemi güncellemesi', 'wpteslimat'));
             }
         } finally {
             self::$syncing = false;
-        }
-    }
-
-    /** Kalem uzlaştırması için tekrar deneme (push/revoke/refund ile aynı desen ve gecikme). */
-    private function schedule_resync_retry($order_id, $actor = '') {
-        if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_resync', [$order_id, $actor], 'wpteslimat');
-        } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_resync', [$order_id, $actor]);
         }
     }
 
@@ -958,29 +960,156 @@ class Wpteslimat_Order_Sync {
                 $who !== '' ? ' İşlemi başlatan: ' . $who . '.' : ''
             ));
             $order->save();
+            $this->mark_success($order, 'revoke');
         } else {
-            // Başarısız → retry planla (aktör tekrar denemeye taşınır).
-            $order->add_order_note(sprintf('Teslimat: lisans geri alımı panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
-            $order->save();
-            $this->schedule_revoke_retry($order_id, $actor);
+            // Başarısız → sonlu tekrar deneme (aktör tekrar denemeye taşınır).
+            $this->handle_failure($order, 'revoke', $res, $actor, __('lisans geri alımı', 'wpteslimat'));
         }
     }
 
-    /** Tekrar denemeyi planlar; aktör argümanda taşınır (kalıcı meta okunmaz). */
-    private function schedule_retry($order_id, $actor = '') {
+    /**
+     * (§4) Başarısız panel çağrısının ORTAK sonucu: sayaçlı/backoff'lu tekrar deneme + TEK not.
+     * Dört iş de (push/resync/revoke/refund) bu yoldan geçer — davranış tek yerde tanımlıdır.
+     *
+     * Tekrar deneme hook'u iş adından türer: `wpteslimat_retry_<op>` (dördü de kayıtlı). Aktör
+     * argümanda taşınır (kalıcı meta okunmaz) → 30dk sonra koşan iş hâlâ DOĞRU kişiyi gösterir.
+     *
+     * NEDEN 401/403 HİÇ denenmez: bunlar YAPILANDIRMA hatasıdır (geçersiz api_key / imza / saat
+     * kayması). Aynı istek 30dk sonra da aynı yanıtı alır; tekrar denemek düzeltmez, yalnız gürültü
+     * üretir. Operatöre TEK kalıcı sipariş notu + yönetici paneli uyarısı bırakılır (auth_failure_notice).
+     *
+     * NEDEN ara denemelerde not YAZILMAZ: her denemeye not düşmek siparişin zaman çizelgesini
+     * okunamaz hale getiriyordu. İlk başarısızlıkta BİR bilgilendirme, zincir tükenince BİR kalıcı
+     * not yazılır; aradaki denemelerin izi zaten kuyruk log tablosundadır.
+     *
+     * @param WC_Order $order
+     * @param string   $op    İş adı: 'push' | 'resync' | 'revoke' | 'refund'.
+     * @param array    $res   Panel yanıtı (log ile aynı yapı; 'code' okunur, 0 = ağ hatası).
+     * @param string   $actor İşi tetikleyen mağaza yöneticisi (yoksa '').
+     * @param string   $what  Nota giren Türkçe iş adı ("sipariş", "lisans geri alımı", …).
+     */
+    private function handle_failure($order, $op, $res, $actor, $what) {
+        $code = isset($res['code']) ? (int) $res['code'] : 0;
+        $attempts = count(self::RETRY_DELAYS);
+
+        // Kimlik doğrulama reddi → tekrar deneme YOK; tek kalıcı not + yönetici uyarısı.
+        if ($code === 401 || $code === 403) {
+            self::flag_auth_failure($code);
+            $this->note_once($order, $op, sprintf(
+                /* translators: 1: iş adı (sipariş, lisans geri alımı…), 2: HTTP durum kodu */
+                __('Teslimat: %1$s panele iletilemedi (HTTP %2$d — panel kimlik doğrulamayı reddetti). Otomatik tekrar DENENMEYECEK: panel adresi, API anahtarı/HMAC sırrı ve sunucu saati kontrol edilmeli.', 'wpteslimat'),
+                $what,
+                $code
+            ));
+            return;
+        }
+
+        $n = (int) $order->get_meta('_wpteslimat_retry_' . $op);
+        if ($n >= $attempts) {
+            // Zincir tükendi → DUR. Sessizce vazgeçme: operatör tek ve net bir not görür.
+            $this->note_once($order, $op, sprintf(
+                /* translators: 1: iş adı, 2: HTTP durum kodu, 3: deneme adedi */
+                __('Teslimat: %1$s panele iletilemedi (HTTP %2$d) — %3$d otomatik denemeden sonra vazgeçildi. Panel bağlantısını/yapılandırmasını kontrol edip işlemi tekrar başlatın.', 'wpteslimat'),
+                $what,
+                $code,
+                $attempts
+            ));
+            return;
+        }
+
+        $delay = self::RETRY_DELAYS[$n];
+        $order->update_meta_data('_wpteslimat_retry_' . $op, $n + 1);
+        $order->save();
+        if ($n === 0) {
+            $order->add_order_note(sprintf(
+                /* translators: 1: iş adı, 2: HTTP durum kodu, 3: toplam deneme adedi */
+                __('Teslimat: %1$s panele iletilemedi (HTTP %2$d) — otomatik tekrar denenecek (en fazla %3$d deneme).', 'wpteslimat'),
+                $what,
+                $code,
+                $attempts
+            ));
+        }
+
+        $hook = 'wpteslimat_retry_' . $op;
+        $args = [$order->get_id(), $actor];
         if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_push', [$order_id, $actor], 'wpteslimat');
+            as_schedule_single_action(time() + $delay, $hook, $args, 'wpteslimat');
         } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_push', [$order_id, $actor]);
+            wp_schedule_single_event(time() + $delay, $hook, $args);
         }
     }
 
-    private function schedule_revoke_retry($order_id, $actor = '') {
-        if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_revoke', [$order_id, $actor], 'wpteslimat');
-        } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_revoke', [$order_id, $actor]);
+    /**
+     * Aynı kalıcı hata için TEK sipariş notu (meta bayrağıyla korunur) — not spam'i olmaz.
+     * Bayrak başarılı bir 2xx'te temizlenir (bkz. mark_success), böylece SONRAKİ gerçek bir arıza
+     * yine görünür olur.
+     */
+    private function note_once($order, $op, $message) {
+        if ($order->get_meta('_wpteslimat_fail_' . $op) === 'yes') return;
+        $order->update_meta_data('_wpteslimat_fail_' . $op, 'yes');
+        $order->save();
+        $order->add_order_note($message);
+    }
+
+    /**
+     * Başarılı (2xx) sonuç: bu işin tekrar deneme sayacını ve kalıcı hata izlerini SIFIRLA.
+     *
+     * NEDEN: sayaç sıfırlanmazsa aylar önce yaşanmış geçici bir hata, gelecekteki MEŞRU bir tekrar
+     * deneme zincirini daha ilk denemede keser (sipariş sessizce panele iletilemez).
+     * Değişiklik varsa kendi kaydını yapar → çağıranların save() düzenine bağımlı değildir.
+     */
+    private function mark_success($order, $op) {
+        $changed = false;
+        foreach (['_wpteslimat_retry_' . $op, '_wpteslimat_fail_' . $op] as $meta) {
+            if ($order->get_meta($meta) !== '') {
+                $order->delete_meta_data($meta);
+                $changed = true;
+            }
         }
+        if ($changed) $order->save();
+        // Başarılı imzalı istek, kimlik bilgilerinin ARTIK çalıştığının kanıtıdır → uyarıyı kaldır.
+        self::clear_auth_failure();
+    }
+
+    /**
+     * (401/403) Kimlik doğrulama reddini yönetici uyarısı için işaretle. Aynı kod için tekrar tekrar
+     * option yazmaz (her başarısız istekte DB yazımı olmasın); ilk görülme zamanı korunur.
+     */
+    private static function flag_auth_failure($code) {
+        $cur = get_option('wpteslimat_auth_failure', []);
+        if (is_array($cur) && isset($cur['code']) && (int) $cur['code'] === (int) $code) return;
+        update_option('wpteslimat_auth_failure', ['code' => (int) $code, 'time' => time()]);
+    }
+
+    /** Kimlik doğrulama uyarısını kaldırır (ilk başarılı imzalı istekte). */
+    private static function clear_auth_failure() {
+        if (get_option('wpteslimat_auth_failure', null) !== null) {
+            delete_option('wpteslimat_auth_failure');
+        }
+    }
+
+    /**
+     * Panel kimlik doğrulamayı reddettiyse (401/403) yöneticiye GÖRÜNÜR uyarı bas.
+     *
+     * NEDEN: bu hata tekrar denemeyle DÜZELMEZ ve tek iz sipariş notu olsaydı operatör o siparişi
+     * açana kadar fark etmezdi — bu arada gelen HER yeni sipariş de sessizce panele iletilemez.
+     * Klon/güvensiz-adres uyarılarıyla aynı desen (sır/kimlik bilgisi EKRANA BASILMAZ).
+     */
+    public function auth_failure_notice() {
+        if (!current_user_can('manage_options')) return;
+        $flag = get_option('wpteslimat_auth_failure', []);
+        if (!is_array($flag) || empty($flag['time'])) return;
+        $when = function_exists('wp_date')
+            ? wp_date(get_option('date_format') . ' H:i', (int) $flag['time'])
+            : date_i18n(get_option('date_format') . ' H:i', (int) $flag['time']);
+        echo '<div class="notice notice-error"><p>' . esc_html(sprintf(
+            'Teslimat eklentisi: Panel kimlik doğrulamayı reddediyor (HTTP %d — ilk hata: %s). Siparişler panele ' .
+            'İLETİLEMİYOR ve bu hata için otomatik tekrar deneme YAPILMIYOR (tekrar denemek düzeltmez). ' .
+            'Panelde anahtar rotasyonu yapıldıysa yeni API anahtarını/HMAC sırrını (wp-config.php ya da ' .
+            'Ayarlar → Teslimat Eklentisi) güncelleyin ve sunucu saatinin doğru olduğunu kontrol edin.',
+            (int) $flag['code'],
+            $when
+        )) . '</p></div>';
     }
 
     /**
@@ -1058,18 +1187,9 @@ class Wpteslimat_Order_Sync {
             $revoked = isset($res['body']['revoked']) ? (int) $res['body']['revoked'] : 0;
             $order->add_order_note(sprintf('Teslimat: kısmi iade uzlaştırıldı (%d birim geri alındı).', $revoked));
             $order->save();
+            $this->mark_success($order, 'refund');
         } else {
-            $order->add_order_note(sprintf('Teslimat: kısmi iade uzlaştırması panele iletilemedi (HTTP %d) — birazdan otomatik tekrar denenecek.', isset($res['code']) ? (int) $res['code'] : 0));
-            $order->save();
-            $this->schedule_refund_retry($order_id, $actor);
-        }
-    }
-
-    private function schedule_refund_retry($order_id, $actor = '') {
-        if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time() + 300, 'wpteslimat_retry_refund', [$order_id, $actor], 'wpteslimat');
-        } else {
-            wp_schedule_single_event(time() + 300, 'wpteslimat_retry_refund', [$order_id, $actor]);
+            $this->handle_failure($order, 'refund', $res, $actor, __('kısmi iade uzlaştırması', 'wpteslimat'));
         }
     }
 

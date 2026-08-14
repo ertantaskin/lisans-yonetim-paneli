@@ -199,7 +199,17 @@ export class ReplacementsService {
   async create(
     site: Site,
     dto: CreateReplacementInput,
-  ): Promise<{ id: string; status: ReplacementRequest['status']; withinWarranty: boolean }> {
+  ): Promise<{
+    id: string;
+    status: ReplacementRequest['status'];
+    withinWarranty: boolean;
+    /**
+     * EKLEMELİ bilgi alanı (mevcut sözleşme KIRILMADI): `withinWarranty=false`ın sebebi
+     * "garanti süresi doldu" mu, yoksa "garanti sürüyor ama LİSANSIN ömrü bitti" mi?
+     * İkisi operasyonel olarak farklıdır; DB'ye yazılmaz (şema değişikliği gerekmez).
+     */
+    licenseExpired: boolean;
+  }> {
     const [order] = await this.db
       .select()
       .from(orders)
@@ -228,6 +238,8 @@ export class ReplacementsService {
     // referans (başka site/sipariş) DB'ye HİÇ yazılmaz → null kalır (lineId=null ile tutarlı).
     let assignmentId: string | null = null;
     let withinWarranty = false;
+    /** Garanti penceresi sürüyor AMA lisansın geçerlilik süresi dolmuş (O7b) — yalnız bilgi. */
+    let licenseExpired = false;
 
     if (dto.assignmentId) {
       // Atamayı sipariş kapsamında çöz → garanti (delivered_at + warranty_days) + satır.
@@ -236,6 +248,9 @@ export class ReplacementsService {
           orderId: assignments.orderId,
           lineId: assignments.lineId,
           deliveredAt: assignments.deliveredAt,
+          // O7(b): lisansın KENDİ geçerlilik bitişi (süreli hesap, §11). Garanti hesabı bunu
+          // hesaba katmıyordu — aşağıdaki gerekçeye bakın.
+          validUntil: assignments.validUntil,
           warrantyDays: products.warrantyDays,
         })
         .from(assignments)
@@ -249,7 +264,21 @@ export class ReplacementsService {
         assignmentId = dto.assignmentId;
         lineId = asg.lineId;
         if (asg.deliveredAt && asg.warrantyDays && asg.warrantyDays > 0) {
-          withinWarranty = asg.deliveredAt.getTime() + asg.warrantyDays * DAY_MS >= Date.now();
+          const inWarrantyWindow =
+            asg.deliveredAt.getTime() + asg.warrantyDays * DAY_MS >= Date.now();
+          // Lisansın ÖMRÜ garanti penceresinden kısa olabilir (`validity_days` < `warranty_days`).
+          // Örnek gerçek arıza: validity_days=30, on_expiry='keep', warranty_days=365 → müşteri
+          // 2 ay sonra talep açar; panel YEŞİL "Garanti içi" basardı, oysa ortada bir KUSUR yok,
+          // lisans süresi dolmuştur. Onaylanınca completeLine taze atamaya `now + 30 gün` yazar →
+          // BEDAVA 30 gün, 12 ay boyunca tekrarlanabilir. `hide` tarafında akış TESADÜFEN doğru
+          // sonuç veriyordu (sweep atamayı 'expired' yapar, değişim reddedilir) — yani AYNI iş
+          // kuralı iki ürün ayarında iki farklı sonuç üretiyordu. Süresi geçmiş lisans artık
+          // "garanti içi" SAYILMAZ; talep yine AÇILIR ve kuyruğa düşer (karar operatörde, §15).
+          const stillValid = asg.validUntil === null || asg.validUntil.getTime() >= Date.now();
+          withinWarranty = inWarrantyWindow && stillValid;
+          // Kuyrukta ayırt edilebilsin: "garanti içi ama lisans süresi dolmuş" hâli, hiç garantisi
+          // olmayan talepten farklıdır (operatör bunu okumadan "kusurlu" sanıp onaylayabilir).
+          licenseExpired = inWarrantyWindow && !stillValid;
         }
       }
     }
@@ -268,7 +297,12 @@ export class ReplacementsService {
       })
       .returning();
 
-    return { id: row!.id, status: row!.status, withinWarranty: row!.withinWarranty };
+    return {
+      id: row!.id,
+      status: row!.status,
+      withinWarranty: row!.withinWarranty,
+      licenseExpired,
+    };
   }
 
   /**

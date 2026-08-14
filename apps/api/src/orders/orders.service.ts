@@ -176,7 +176,16 @@ export class OrdersService {
       this.db
         .select({
           suspended: sql<number>`count(*) filter (where ${assignments.status} = 'suspended')`,
-          expiredHidden: sql<number>`count(*) filter (where ${assignments.status} = 'active' and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now())`,
+          // "Süresi doldu" bilgilendirmesi (§7/§11). Durum kümesi active + EXPIRED olmalı:
+          // bayrak yalnız 'active' aransa, ExpiryService sweep'i (5 dk'da bir) tam bu satırları
+          // 'expired' yaptığı ANDA kayboluyordu → bayrak KALICI durumu değil, sweep'in GECİKTİĞİ
+          // ≤5 dakikalık pencereyi anlatıyordu. Sonuç: süresi dolan müşteri My Account'ta BOŞ
+          // liste + SIFIR açıklama görüyor, sipariş ise 'fulfilled' duruyordu ("siparişim
+          // kayboldu" talebi). 'expired' KALICI durumdur; 'active' ise yalnız sweep gecikmesini
+          // kapsar — ikisi birlikte pencereden bağımsız DOĞRU cevabı verir.
+          // `on_expiry='hide' AND valid_until < now()` koşulu kümeyi zaten daraltıyor:
+          // 'keep' ürünler ve süresi geçmemiş atamalar sayılmaz.
+          expiredHidden: sql<number>`count(*) filter (where ${assignments.status} in ('active','expired') and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now())`,
         })
         .from(assignments)
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
@@ -339,10 +348,13 @@ export class OrdersService {
 
           const heldLines: OrderLineResult[] = [];
           for (const line of dto.lines) {
+            // `tx` ZORUNLU: transaction içinden kök havuzu (this.db) kullanmak İKİNCİ bir
+            // bağlantı ister ve 10 eşzamanlı siparişte havuzu kilitler (bkz. products.getById).
             const mapping = await this.products.resolveMapping(
               site.id,
               line.remoteProductId,
               line.remoteVariationId,
+              tx,
             );
             const requiredUnits = mapping ? line.qty * mapping.bundleQty : line.qty;
             await tx.insert(orderLines).values({
@@ -390,10 +402,12 @@ export class OrdersService {
         let anyUnmapped = false;
 
         for (const line of dto.lines) {
+          // `tx` ZORUNLU — havuz kilitlenmesi (bkz. products.getById üzerindeki not).
           const mapping = await this.products.resolveMapping(
             site.id,
             line.remoteProductId,
             line.remoteVariationId,
+            tx,
           );
 
           if (!mapping) {
@@ -418,7 +432,8 @@ export class OrdersService {
             continue;
           }
 
-          const product = await this.products.getById(mapping.productId);
+          // `tx` ZORUNLU — havuz kilitlenmesi (bkz. products.getById üzerindeki not).
+          const product = await this.products.getById(mapping.productId, tx);
           const requiredUnits = line.qty * mapping.bundleQty;
           const policy = line.policyOverride ?? product.fulfillmentPolicy;
 
@@ -646,6 +661,9 @@ export class OrdersService {
     siteId: string,
     line: { productId: string | null; bundleQty: number | null },
     remote: { remoteProductId: string; remoteVariationId?: string | null },
+    // Transaction içinden çağrılır → kendi bağlantısını AÇMAMALI (havuz kilitlenmesi;
+    // bkz. products.getById üzerindeki not).
+    exec: Database = this.db,
   ): Promise<number | null> {
     if (!line.productId) return 1;
     if (line.bundleQty != null && line.bundleQty > 0) return line.bundleQty;
@@ -653,6 +671,7 @@ export class OrdersService {
       siteId,
       remote.remoteProductId,
       remote.remoteVariationId ?? null,
+      exec,
     );
     return mapping?.bundleQty ?? null;
   }
@@ -714,7 +733,7 @@ export class OrdersService {
 
         // Yeni gerekli birim = mağaza adedi × ÖLÇEK. Ölçek satırın anlık görüntüsünden (0025) →
         // yoksa canlı eşlemeden; eşlemesiz satırda 1 (qty MAĞAZA birimindedir).
-        const scale = await this.resolveLineScale(site.id, line, dtoLine);
+        const scale = await this.resolveLineScale(site.id, line, dtoLine, tx);
         if (scale == null) {
           // Ölçek çözülemedi (eşleme kaldırılmış + anlık görüntü yok): qty'ye DOKUNMA. Aksi halde
           // bundleQty sessizce 1 sayılır → müşterinin CANLI anahtarları iade YOKKEN geri alınırdı.
@@ -745,7 +764,8 @@ export class OrdersService {
             });
           }
           if (line.productId) {
-            const product = await this.products.getById(line.productId);
+            // `tx` ZORUNLU — havuz kilitlenmesi (bkz. products.getById üzerindeki not).
+            const product = await this.products.getById(line.productId, tx);
             const policy = line.policyOverride ?? product.fulfillmentPolicy;
             if (policy === 'partial-auto') increasedPartialAuto.push(line.id);
           }

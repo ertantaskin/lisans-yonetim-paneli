@@ -471,7 +471,7 @@ export class SitesService {
     siteId: string,
     executor: Database = this.db,
   ): Promise<{ apiKey: string; hmacSecret: string }> {
-    const site = await this.getById(siteId);
+    const site = await this.getById(siteId, executor);
     // create() ile aynı önek (`wpt_`) — iki üretim noktası hep birlikte değişmeli.
     const newApiKey = `wpt_${randomBytes(24).toString('hex')}`;
     const newHmacSecret = randomBytes(32).toString('hex');
@@ -506,8 +506,10 @@ export class SitesService {
     return this.crypto.decrypt(site.hmacSecretEnc, CryptoService.siteSecretAad(site.id));
   }
 
-  async getById(id: string): Promise<Site> {
-    const [site] = await this.db.select().from(sites).where(eq(sites.id, id)).limit(1);
+  // `exec`: transaction içinden çağıran KENDİ tx.ini geçirmelidir — kök havuzdan ikinci bir
+  // bağlantı istemek eşzamanlılıkta havuzu kilitler (bkz. products.getById üzerindeki not).
+  async getById(id: string, exec: Database = this.db): Promise<Site> {
+    const [site] = await exec.select().from(sites).where(eq(sites.id, id)).limit(1);
     if (!site) throw new NotFoundException('Site bulunamadı');
     return site;
   }

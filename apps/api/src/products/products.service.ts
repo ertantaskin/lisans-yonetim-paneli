@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { and, asc, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { AccountPayloadSchema } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { isUniqueViolation } from '../db/pg-error';
@@ -139,6 +140,66 @@ export interface CapacityChange {
  *    kalan kullanım hakkını temsil edilemez hale getirir (allocate() single dalına düşer ve
  *    anahtarın TAMAMINI tek birim sayar → anahtar başına N−1 kullanım KALICI kaybolur).
  */
+/** `payloadSchemaBreakingChange` sonucu — şema düzenlemesinin GERİYE DÖNÜK etkisi. */
+export interface PayloadSchemaChange {
+  /** Şemadan kalkan (silinen VEYA yeniden adlandırılan) alan anahtarları. */
+  removedKeys: string[];
+  /** `secret: true → false` düşürülen alan anahtarları (geriye dönük İFŞA). */
+  unsecuredKeys: string[];
+  /** removedKeys veya unsecuredKeys doluysa true → mevcut stok varken reddedilir. */
+  breaking: boolean;
+}
+
+/**
+ * Hesap ürünü payload şemasının GERİYE DÖNÜK yıkıcı değişip değişmediğini hesaplar
+ * (saf fonksiyon — birim testli).
+ *
+ * NEDEN gerekli: `parseAccountPayload` şemayı bir FİLTRE olarak kullanır — şifreli kanonik
+ * JSON'da duran ama şemada BULUNMAYAN anahtar sessizce düşer, `secret` bayrağı da maskeyi
+ * o anda belirler. Şema serbestçe düzenlenebildiğinde üç ayrı hasar doğar (üçü de gerçek):
+ *  (a) VERİ KAYBI — şemadaki yazım hatası (`usernme` → `username`) düzeltilince o şemayla
+ *      girilmiş kayıtlarda alan müşteri sayfasında/mailde/envanterde ARTIK GÖRÜNMEZ
+ *      (ciphertext yerinde durur ama panelde hiçbir sinyal yoktur),
+ *  (b) İFŞA — "Parola" alanının `secret` bayrağı kaldırılınca GEÇMİŞ tüm kayıtlarda parola
+ *      düz görünür; tedarikçi fişi kesilirse `key_snapshot`'a KALICI donar ve dışarı gider,
+ *  (c) DEDUPE — kanonik JSON'un alan KÜMESİ değişince `payload_hash` sapar → aynı liste
+ *      ikinci kez stoğa girer, rapor `duplicates: 0` der ve aynı hesap iki müşteriye satılır.
+ *
+ * Bu yüzden YALNIZ yıkıcı yön kilitlenir: alan EKLEME, `label` ve `required` değişimi
+ * MEŞRU düzenlemelerdir (yeni kayıtları etkiler, eskileri bozmaz) ve serbest kalır.
+ * Kapasite guard'ıyla (productCapacityChange) aynı felsefe: yalnız veri bozan geçiş reddedilir.
+ */
+export function payloadSchemaBreakingChange(
+  currentSchema: unknown,
+  nextSchema: unknown,
+): PayloadSchemaChange {
+  const current = AccountPayloadSchema.safeParse(currentSchema);
+  // Mevcut şema yok/bozuksa kaybedilecek bir sözleşme de yoktur (zaten hiçbir alan
+  // çözülemiyor) → guard devreye girmez; operatör bozuk şemayı onarabilmelidir.
+  if (!current.success) return { removedKeys: [], unsecuredKeys: [], breaking: false };
+
+  const next = AccountPayloadSchema.safeParse(nextSchema);
+  // Şemanın TAMAMEN kaldırılması (null) ya da geçersiz hale getirilmesi = TÜM alanların
+  // kaybı; en yıkıcı hâl olduğu için "hepsi silindi" sayılır (DTO doğrulaması ayrı katman).
+  const nextFields = next.success ? next.data : [];
+  const nextByKey = new Map(nextFields.map((f) => [f.key, f]));
+
+  const removedKeys: string[] = [];
+  const unsecuredKeys: string[] = [];
+  for (const f of current.data) {
+    const n = nextByKey.get(f.key);
+    // Yeniden adlandırma = eski anahtarın KALKMASI + yeni anahtarın eklenmesi; eski kayıtlar
+    // yeni adı taşımadığı için ikisi aynı hasarı üretir → tek kovada raporlanır.
+    if (!n) removedKeys.push(f.key);
+    else if (f.secret && !n.secret) unsecuredKeys.push(f.key);
+  }
+  return {
+    removedKeys,
+    unsecuredKeys,
+    breaking: removedKeys.length > 0 || unsecuredKeys.length > 0,
+  };
+}
+
 export function productCapacityChange(
   current: Pick<Product, 'usageMode' | 'maxUses'>,
   patch: Pick<Partial<NewProduct>, 'usageMode' | 'maxUses'>,
@@ -224,6 +285,68 @@ export class ProductsService {
               'Kapasiteyi ARTIRMAK serbesttir. Düşürmek için: önce bu kalemleri tüketin ya da ' +
               'Envanter ekranından iptal edin; alternatif olarak yeni kapasiteyle YENİ bir ürün ' +
               'açıp site eşlemesini ona taşıyın.',
+          );
+        }
+      }
+
+      // ── Payload şeması + ürün TİPİ koruması (denetim Y1/Y2) ───────────────────────────
+      // Kapasite guard'ıyla BİREBİR aynı desen: karar mevcut satır KİLİTLİ iken verilir,
+      // yalnız GERİYE DÖNÜK veri bozan geçiş reddedilir, mesaj operatöre çıkış yolunu söyler.
+      //
+      // İki ayrı yıkıcı geçiş kapatılır:
+      //  1) payloadSchema'da alan KALDIRMA/YENİDEN ADLANDIRMA veya secret:true→false
+      //     (bkz. payloadSchemaBreakingChange — veri kaybı / ifşa / dedupe sapması),
+      //  2) `kind` değişimi (ör. key → account): payload ÇÖZÜM YOLUNU tümden değiştirir.
+      //     Aynı ciphertext bir gün "düz anahtar", ertesi gün "hesap alanları" olarak okunur;
+      //     eski kayıtlar kanonik JSON olmadığı için parseAccountPayload'ın fallback dalına
+      //     düşer (Y1'in ikinci katmanı — fallback artık secret olsa da tip değişimi maskeleme
+      //     rejimini ve mail/WP render'ını sessizce değiştirmeye devam eder).
+      const schemaChange = payloadSchemaBreakingChange(
+        current.payloadSchema,
+        // patch'te ANAHTAR YOK → şema değişmiyor; anahtar VAR ama null → şema TEMİZLENİYOR
+        // (tüm alanların kaybı) → mevcut şemayla karşılaştırılır.
+        patch.payloadSchema === undefined ? current.payloadSchema : (patch.payloadSchema ?? null),
+      );
+      const kindChanged = patch.kind !== undefined && patch.kind !== current.kind;
+
+      if (schemaChange.breaking || kindChanged) {
+        // Kapasite guard'ıyla AYNI canlı-kalem tanımı: ölü satırlar (voided/revoked/replaced/
+        // quarantined/expired) hiçbir yüzeyde çözülmediği için sayılmaz.
+        const [row] = await rawRows<{ n: number }>(tx, sql`
+          SELECT count(*)::int AS n
+          FROM license_items
+          WHERE product_id = ${id}
+            AND status IN ('available', 'assigned', 'suspended');
+        `);
+        const live = Number(row?.n ?? 0);
+        if (live > 0) {
+          const parts: string[] = [];
+          if (schemaChange.removedKeys.length > 0) {
+            parts.push(
+              `şemadan kalkan alan(lar): ${schemaChange.removedKeys.join(', ')} — bu alanlar ` +
+                'mevcut kayıtlarda ŞİFRELİ olarak durmaya devam eder ama müşteri sayfasında, ' +
+                'mailde ve envanterde bir daha GÖRÜNMEZ',
+            );
+          }
+          if (schemaChange.unsecuredKeys.length > 0) {
+            parts.push(
+              `gizliliği kaldırılan alan(lar): ${schemaChange.unsecuredKeys.join(', ')} — ` +
+                'bu değişiklik GEÇMİŞ tüm kayıtlarda da geçerli olur ve maskelenen değerler ' +
+                'düz metin görünmeye başlar',
+            );
+          }
+          if (kindChanged) {
+            parts.push(
+              `ürün tipi ${current.kind} → ${String(patch.kind)} — mevcut kayıtların payload ` +
+                'çözüm biçimi değişir (aynı veri farklı okunur)',
+            );
+          }
+          throw new ConflictException(
+            `Bu üründe ${live} canlı lisans kaydı var; ${parts.join('; ')}. ` +
+              'Alan EKLEMEK, etiket (label) ve zorunluluk (required) değiştirmek serbesttir. ' +
+              'Yıkıcı değişiklik için: önce bu kalemleri tüketin ya da Envanter ekranından ' +
+              'iptal edin; alternatif olarak yeni şemayla YENİ bir ürün açıp site eşlemesini ' +
+              'ona taşıyın (eski ürün geçmiş siparişler için okunabilir kalır).',
           );
         }
       }
@@ -324,8 +447,25 @@ export class ProductsService {
     });
   }
 
-  async getById(id: string): Promise<Product> {
-    const [row] = await this.db.select().from(products).where(eq(products.id, id)).limit(1);
+  /**
+   * HAVUZ KİLİTLENMESİ (denetim/yük testi bulgusu) — `exec` neden var:
+   *
+   * Bu metot bir `db.transaction()` GÖVDESİ İÇİNDEN çağrılıyor (createOrder satır çözümü).
+   * `this.db` KÖK havuzdur: transaction zaten bir bağlantıyı REZERVE etmişken `this.db`
+   * üzerinden sorgu açmak havuzdan İKİNCİ bir bağlantı ister. Havuz `max: 10` olduğu için
+   * 10 eşzamanlı sipariş şu duruma düşüyordu:
+   *   · 10 transaction 10 bağlantının hepsini tutar,
+   *   · her biri ikinci bir bağlantı bekler → hiçbiri asla serbest kalmaz → KALICI KİLİTLENME.
+   * Bağlantılar "idle in transaction" durumunda kalır ve ancak `idle_in_transaction_session_timeout`
+   * (60 sn) hepsini öldürünce çözülür; o süre boyunca `/v1/health` bile `db:false` döner, yani
+   * sipariş trafiği TÜM paneli devirir. Yük testinde ÖLÇÜLDÜ (100 VU → 0 tamamlanan sipariş,
+   * Postgres logunda 60 saniyede bir tüm havuzun FATAL ile düşmesi).
+   *
+   * Bu yüzden transaction içinden çağıran HER ZAMAN kendi `tx`ini geçirmelidir. Varsayılan
+   * `this.db` yalnız transaction DIŞI çağıranlar (controller/rapor yolları) içindir.
+   */
+  async getById(id: string, exec: Database = this.db): Promise<Product> {
+    const [row] = await exec.select().from(products).where(eq(products.id, id)).limit(1);
     if (!row) throw new NotFoundException('Ürün bulunamadı');
     return row;
   }
@@ -580,18 +720,24 @@ export class ProductsService {
     }));
   }
 
-  /** Site-facing sipariş akışı için: remote ürün → panel ürünü çöz (§2 mapping_not_found). */
+  /**
+   * Site-facing sipariş akışı için: remote ürün → panel ürünü çöz (§2 mapping_not_found).
+   *
+   * `exec` ZORUNLU OLARAK transaction'dan geçirilmelidir (createOrder bunu yapar) —
+   * bkz. `getById` üzerindeki HAVUZ KİLİTLENMESİ notu.
+   */
   async resolveMapping(
     siteId: string,
     remoteProductId: string,
     remoteVariationId?: string | null,
+    exec: Database = this.db,
   ): Promise<{ productId: string; bundleQty: number } | null> {
     // '0'/boş varyasyon = varyasyon yok (Woo bazen '0' gönderir).
     const variation = remoteVariationId && remoteVariationId !== '0' ? remoteVariationId : null;
 
     // 1) Varyasyon-özel eşleme (varsa) — en spesifik.
     if (variation) {
-      const [row] = await this.db
+      const [row] = await exec
         .select()
         .from(siteProductMappings)
         .where(
@@ -608,7 +754,7 @@ export class ProductsService {
     }
 
     // 2) Ürün-seviyesi (varyasyon null) eşleme — fallback, deterministik (en eski).
-    const [row] = await this.db
+    const [row] = await exec
       .select()
       .from(siteProductMappings)
       .where(

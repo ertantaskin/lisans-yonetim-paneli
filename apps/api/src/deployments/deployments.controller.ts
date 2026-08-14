@@ -97,15 +97,33 @@ export class DeploymentsController {
    * Runner: bekleyen en eski isteği claim et (pending→running). Yoksa null.
    * Gövdedeki `targets` ile runner kendi hedef sınıfını süzer (yedek runner'ı dağıtım
    * isteğini ASLA kapmasın — claim geri alınamaz).
+   *
+   * OwnerGuard (denetim D3): kuyruğu ÜRETEN uç (POST /) owner-only iken TÜKETEN uçlar açıktı.
+   * Owner-olmayan bir admin, Next sunucusu üzerinden (ör. bir sunucu aksiyonundaki yol
+   * enjeksiyonu — bkz. ops/actions.ts SEC notu) claim çağırıp owner'ın isteğini KAPABİLİRDİ:
+   * claim geri alınamaz, gerçek runner işi bulamaz, istek "çalıştı" sanılıp kaybolurdu.
+   *
+   * RUNNER KIRILMAZ: `deploy-runner.sh` / `backup-runner.sh` yalnız `X-Admin-Token` gönderir,
+   * `x-admin-role` GÖNDERMEZ → guard'ın "başlık yok → geçir" dalına düşer. Guard yalnız
+   * başlığı İLETEN (yani Next oturumu üzerinden gelen) owner-olmayan çağrıyı keser.
    */
   @Post('claim')
+  @UseGuards(OwnerGuard)
   async claim(@Body(new ZodBody(ClaimSchema)) body: ClaimInput) {
     const row = await this.deployments.claimNext(body.targets);
     return row ?? {};
   }
 
-  /** Runner: dağıtım sonucunu yaz. */
+  /**
+   * Runner: dağıtım sonucunu yaz.
+   *
+   * OwnerGuard (denetim D3): bu uç dağıtım GEÇMİŞİNİ yazar ve o geçmiş bir denetim kaydı olarak
+   * okunuyor. Korumasızken owner-olmayan bir admin uydurma `status:'success'` + uydurma
+   * `gitSha`/`log` yazabilir, panel "dağıtım başarılı" gösterirken gerçekte hiçbir şey
+   * dağıtılmamış olurdu. Runner uyumu `claim` ile aynı gerekçeyle korunur (rol başlığı yok).
+   */
   @Patch(':id/finish')
+  @UseGuards(OwnerGuard)
   async finish(@Param('id') id: string, @Body(new ZodBody(FinishSchema)) body: FinishInput) {
     const row = await this.deployments.finish(id, body.status, {
       gitSha: body.gitSha,

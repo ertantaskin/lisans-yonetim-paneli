@@ -185,47 +185,89 @@ class Wpteslimat_My_Account {
                     esc_html__('Tüm lisansları .txt indir', 'wpteslimat') . '</a></p>';
             }
 
+            // (§7 çok ürünlü sipariş) Teslimatları SİPARİŞ KALEMİNE göre grupla: 3 ürünlü bir
+            // siparişte müşteri düz bir anahtar listesi görüyor ve hangi anahtarın hangi ürüne ait
+            // olduğunu ayırt edemiyordu (teslimat MAİLİ ve sipariş kutusu ürün adını ZATEN
+            // gösteriyordu → aynı veri üç yüzeyde farklı). Ürün adı PANELDEN İSTENMEZ: `remoteLineId`
+            // WooCommerce sipariş kalemi id'sidir, adı mağaza kendi kaleminden bilir (ek istek yok).
+            $groups = self::group_by_line($deliveries, self::item_names($order));
+
             echo '<table class="woocommerce-table shop_table"><tbody>';
-            foreach ($deliveries as $i => $d) {
-                echo '<tr><td>';
-                $is_account = isset($d['kind']) ? ($d['kind'] === 'account') : (!empty($d['fields']));
-                if ($is_account && !empty($d['fields']) && is_array($d['fields'])) {
-                    echo '<div class="wpteslimat-fields">';
-                    foreach ($d['fields'] as $fi => $f) {
-                        $label  = isset($f['label']) ? $f['label'] : '';
-                        $value  = isset($f['value']) ? $f['value'] : '';
-                        $secret = !empty($f['secret']);
-                        $fid = 'wpt-f-' . intval($i) . '-' . intval($fi);
-                        echo '<div style="margin:2px 0">';
-                        echo '<strong>' . esc_html($label) . ':</strong> ';
-                        if ($secret) {
-                            // §7 parola GÖSTER/GİZLE: gerçek değer data-attr'da; görünen varsayılan maskeli.
-                            echo '<code id="' . esc_attr($fid) . '" data-secret="' . esc_attr($value) . '" data-shown="0" style="user-select:all">••••••••</code> ';
-                            echo '<button type="button" class="button button-small wpteslimat-toggle" data-target="' . esc_attr($fid) . '" style="margin-left:6px">' . esc_html__('Göster', 'wpteslimat') . '</button> ';
-                        } else {
-                            echo '<code id="' . esc_attr($fid) . '" style="user-select:all">' . esc_html($value) . '</code> ';
+            foreach ($groups as $group) {
+                // Başlık YALNIZ kalem gerçekten çözülebildiğinde basılır; çözülemeyen satır (eski
+                // teslimat, silinmiş/bilinmeyen kalem) başlıksız ESKİ davranışa düşer — asla fatal olmaz.
+                if ($group['label'] !== '') {
+                    echo '<tr><td style="background:#f6f7f7;font-weight:600">' . esc_html($group['label']) . '</td></tr>';
+                }
+                foreach ($group['rows'] as $row) {
+                    list($i, $d) = $row;
+                    echo '<tr><td>';
+                    $is_account = isset($d['kind']) ? ($d['kind'] === 'account') : (!empty($d['fields']));
+                    if ($is_account && !empty($d['fields']) && is_array($d['fields'])) {
+                        echo '<div class="wpteslimat-fields">';
+                        foreach ($d['fields'] as $fi => $f) {
+                            $label  = isset($f['label']) ? $f['label'] : '';
+                            $value  = isset($f['value']) ? $f['value'] : '';
+                            $secret = !empty($f['secret']);
+                            $fid = 'wpt-f-' . intval($i) . '-' . intval($fi);
+                            echo '<div style="margin:2px 0">';
+                            echo '<strong>' . esc_html($label) . ':</strong> ';
+                            if ($secret) {
+                                // §7 parola GÖSTER/GİZLE: gerçek değer data-attr'da; görünen varsayılan maskeli.
+                                echo '<code id="' . esc_attr($fid) . '" data-secret="' . esc_attr($value) . '" data-shown="0" style="user-select:all">••••••••</code> ';
+                                echo '<button type="button" class="button button-small wpteslimat-toggle" data-target="' . esc_attr($fid) . '" style="margin-left:6px">' . esc_html__('Göster', 'wpteslimat') . '</button> ';
+                            } else {
+                                echo '<code id="' . esc_attr($fid) . '" style="user-select:all">' . esc_html($value) . '</code> ';
+                            }
+                            echo '<button type="button" class="button button-small wpteslimat-copy" data-target="' . esc_attr($fid) . '" style="margin-left:6px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
+                            echo '</div>';
                         }
-                        echo '<button type="button" class="button button-small wpteslimat-copy" data-target="' . esc_attr($fid) . '" style="margin-left:6px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
                         echo '</div>';
+                    } else {
+                        // NEDEN "elseif ($is_account) → Teslimat hazırlanıyor" dalı KALDIRILDI:
+                        // hesap ürününde `fields` BOŞ gelebilir ve bu "teslim edilmedi" DEMEK DEĞİLDİR —
+                        // (a) ürünün payloadSchema'sı bozuksa panel bilerek {kind:'account', payload:düz
+                        // metin, fields:null} döner, (b) operatör şema alan anahtarını sonradan
+                        // değiştirirse eski payload'lar eşleşmez ve fields BOŞ DİZİ olur. Eski dal bu iki
+                        // durumda teslim EDİLMİŞ siparişte müşteriyi KALICI "hazırlanıyor" ekranına
+                        // kilitliyordu (üstelik ilerleme çubuğu "3/3 teslim edildi" diyordu — çelişki) ve
+                        // ekran kendini asla düzeltmiyordu. Sipariş kutusu (metabox) ZATEN bu desende:
+                        // alanlar çözülemezse ham payload gösterilir.
+                        $payload = (isset($d['payload']) && is_scalar($d['payload'])) ? (string) $d['payload'] : '';
+                        if ($payload === '') {
+                            // Gerçekten hiçbir içerik yok → "hazırlanıyor" DEME (sipariş teslim edilmiş
+                            // olabilir); müşteriye aksiyon veren, ayırt edici mesaj bas.
+                            echo '<em>' . esc_html__('Lisans bilgileriniz görüntülenemedi — lütfen destek ekibimizle iletişime geçin.', 'wpteslimat') . '</em>';
+                        } else {
+                            $id = 'wpt-key-' . intval($i);
+                            echo '<code id="' . esc_attr($id) . '" style="user-select:all">' . esc_html($payload) . '</code> ';
+                            echo '<button type="button" class="button wpteslimat-copy" data-target="' . esc_attr($id) . '" style="margin-left:8px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
+                        }
                     }
-                    echo '</div>';
-                } elseif ($is_account) {
-                    echo '<em>' . esc_html__('Teslimat hazırlanıyor.', 'wpteslimat') . '</em>';
-                } else {
-                    $payload = isset($d['payload']) ? $d['payload'] : '';
-                    $id = 'wpt-key-' . intval($i);
-                    echo '<code id="' . esc_attr($id) . '" style="user-select:all">' . esc_html($payload) . '</code> ';
-                    echo '<button type="button" class="button wpteslimat-copy" data-target="' . esc_attr($id) . '" style="margin-left:8px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
+                    // (§11 çok kullanımlı / MAK) Bir anahtar birden çok aktivasyon hakkı taşıyabilir.
+                    // Bu bilgi mailde ("(3 adet)") ve sipariş kutusunda ("3/5 kullanım") vardı, müşteri
+                    // sayfasında HİÇ yoktu → 9 aktivasyon alan müşteri 2 çıplak anahtar görüp eksik
+                    // teslimat aldığını sanıyordu. Panel `units` alanını zaten döndürüyor (API değişmedi);
+                    // tek kullanımlıkta (units yok/1) hiçbir şey basılmaz — gereksiz gürültü olmasın.
+                    $units = isset($d['units']) ? (int) $d['units'] : 0;
+                    if ($units > 1) {
+                        $units_msg = $is_account
+                            /* translators: %d = bu kayıttaki kullanım/aktivasyon hakkı adedi */
+                            ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
+                            /* translators: %d = bu anahtardaki kullanım/aktivasyon hakkı adedi */
+                            : __('Bu anahtar %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat');
+                        echo '<br><small>' . esc_html(sprintf($units_msg, $units)) . '</small>';
+                    }
+                    if (!empty($d['validUntil'])) {
+                        $exp = !empty($d['expired']);
+                        echo '<br><small' . ($exp ? ' style="color:#b45309"' : '') . '>';
+                        echo esc_html($exp ? __('Süresi doldu:', 'wpteslimat') : __('Geçerlilik:', 'wpteslimat'));
+                        echo ' ' . esc_html(self::format_date($d['validUntil'])) . '</small>';
+                    }
+                    $assignment_id = isset($d['assignmentId']) ? $d['assignmentId'] : (isset($d['id']) ? $d['id'] : '');
+                    Wpteslimat_Report_Issue::render_button($order, $assignment_id);
+                    echo '</td></tr>';
                 }
-                if (!empty($d['validUntil'])) {
-                    $exp = !empty($d['expired']);
-                    echo '<br><small' . ($exp ? ' style="color:#b45309"' : '') . '>';
-                    echo esc_html($exp ? __('Süresi doldu:', 'wpteslimat') : __('Geçerlilik:', 'wpteslimat'));
-                    echo ' ' . esc_html(self::format_date($d['validUntil'])) . '</small>';
-                }
-                $assignment_id = isset($d['assignmentId']) ? $d['assignmentId'] : (isset($d['id']) ? $d['id'] : '');
-                Wpteslimat_Report_Issue::render_button($order, $assignment_id);
-                echo '</td></tr>';
             }
             echo '</tbody></table>';
         }
@@ -424,28 +466,114 @@ class Wpteslimat_My_Account {
             count($deliveries)
         ));
 
+        // Ekran render'ıyla AYNI gruplama/etiketleme: indirilen dosya da hangi anahtarın hangi
+        // ürüne ait olduğunu göstermeli (iki yüzey ayrışırsa müşteri hangisine güveneceğini bilemez).
+        $groups = self::group_by_line($deliveries, self::item_names($order));
+
         $lines = [];
         $lines[] = sprintf('# Sipariş #%d — %s', $order_id, wp_date('Y-m-d H:i'));
         $lines[] = str_repeat('-', 40);
-        foreach ($deliveries as $d) {
-            $is_account = isset($d['kind']) ? ($d['kind'] === 'account') : (!empty($d['fields']));
-            if ($is_account && !empty($d['fields']) && is_array($d['fields'])) {
-                foreach ($d['fields'] as $f) {
-                    $lines[] = (isset($f['label']) ? $f['label'] : '') . ': ' . (isset($f['value']) ? $f['value'] : '');
+        foreach ($groups as $group) {
+            if ($group['label'] !== '') {
+                $lines[] = '## ' . $group['label'];
+            }
+            foreach ($group['rows'] as $row) {
+                $d = $row[1]; // [0] = orijinal indeks; .txt'de gerekmez (yalnız DOM id'leri için tutulur).
+                $is_account = isset($d['kind']) ? ($d['kind'] === 'account') : (!empty($d['fields']));
+                if ($is_account && !empty($d['fields']) && is_array($d['fields'])) {
+                    foreach ($d['fields'] as $f) {
+                        $lines[] = (isset($f['label']) ? $f['label'] : '') . ': ' . (isset($f['value']) ? $f['value'] : '');
+                    }
+                } else {
+                    // Ekran dalıyla aynı NEDEN: `fields` boş gelen hesap ürününde düz payload'a düş.
+                    // Eskiden bu satır (string) null → dosyaya BOŞ SATIR yazıyordu ve siparişe yine
+                    // "Müşteri N lisansı .txt indirdi" notu düşüyordu (müşteri boş dosya, operatör
+                    // "teslim edildi" izi görüyordu).
+                    $payload = (isset($d['payload']) && is_scalar($d['payload'])) ? (string) $d['payload'] : '';
+                    $lines[] = $payload !== ''
+                        ? $payload
+                        : __('(Lisans bilgisi görüntülenemedi — lütfen destek ekibimizle iletişime geçin.)', 'wpteslimat');
                 }
-            } else {
-                $lines[] = isset($d['payload']) ? (string) $d['payload'] : '';
+                $units = isset($d['units']) ? (int) $d['units'] : 0;
+                if ($units > 1) {
+                    $units_msg = $is_account
+                        /* translators: %d = bu kayıttaki kullanım/aktivasyon hakkı adedi */
+                        ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
+                        /* translators: %d = bu anahtardaki kullanım/aktivasyon hakkı adedi */
+                        : __('Bu anahtar %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat');
+                    $lines[] = sprintf($units_msg, $units);
+                }
+                if (!empty($d['validUntil'])) {
+                    $lines[] = __('Geçerlilik:', 'wpteslimat') . ' ' . self::format_date($d['validUntil']);
+                }
+                $lines[] = '';
             }
-            if (!empty($d['validUntil'])) {
-                $lines[] = __('Geçerlilik:', 'wpteslimat') . ' ' . self::format_date($d['validUntil']);
-            }
-            $lines[] = '';
         }
         nocache_headers();
         header('Content-Type: text/plain; charset=utf-8');
         header('Content-Disposition: attachment; filename="lisanslar-siparis-' . $order_id . '.txt"');
         echo implode("\n", $lines);
         exit;
+    }
+
+    /**
+     * Sipariş kalemi id → görünen ad haritası.
+     *
+     * Ürün adı PANELDEN İSTENMEZ: mağaza kendi sipariş kalemlerini zaten bilir (ek istek/alan yok)
+     * ve `$item->get_name()` varyasyon etiketini de içerir — teslimat mailindeki adla aynı kaynak.
+     */
+    private static function item_names($order) {
+        $names = [];
+        foreach ($order->get_items() as $item_id => $item) {
+            $name = trim((string) $item->get_name());
+            if ($name !== '') $names[(string) $item_id] = $name;
+        }
+        return $names;
+    }
+
+    /**
+     * Panel satır kimliğini (remoteLineId) Woo sipariş kalemine çözer. İki biçim eşleşir — sipariş
+     * kutusundaki `line_matches()` ile AYNI kural (iki yüzey farklı gruplama yapmasın):
+     *   - "<item_id>"              → normal sipariş kalemi
+     *   - "bonus:<item_id>:<uuid>" → o kaleme eklenen sentetik bonus satırı (panel bonusAssign)
+     * Çözülemezse '' → çağıran BAŞLIKSIZ (eski) davranışa düşer; asla fatal olmaz.
+     */
+    private static function resolve_item_id($remote_line_id, $item_names) {
+        $rl = (string) $remote_line_id;
+        if ($rl === '') return '';
+        if (isset($item_names[$rl])) return $rl;
+        if (strpos($rl, 'bonus:') === 0) {
+            $parts = explode(':', $rl);
+            if (isset($parts[1]) && isset($item_names[$parts[1]])) return $parts[1];
+        }
+        return '';
+    }
+
+    /**
+     * Teslimatları sipariş kalemine göre gruplar — ekran ve .txt ORTAK kullanır (iki yüzey
+     * ayrışırsa müşteri hangisine güveneceğini bilemez). Bonus satırı ait olduğu ürünün grubuna
+     * katılır (aynı ad iki kez başlık olmaz). Çözülemeyen satırlar kendi ham kimlikleri altında,
+     * başlıksız kalır — bilinmeyen satırlar birbirine karışmasın.
+     *
+     * @return array<string, array{label:string, rows:array}> rows: [orijinal indeks, teslimat]
+     */
+    private static function group_by_line($deliveries, $item_names) {
+        $groups = [];
+        foreach ($deliveries as $i => $d) {
+            $line_id = (isset($d['remoteLineId']) && is_scalar($d['remoteLineId'])) ? (string) $d['remoteLineId'] : '';
+            $item_id = self::resolve_item_id($line_id, $item_names);
+            $key = $item_id !== '' ? 'i:' . $item_id : 'x:' . $line_id;
+            if (!isset($groups[$key])) {
+                $groups[$key] = [
+                    'label' => $item_id !== '' ? $item_names[$item_id] : '',
+                    'rows'  => [],
+                ];
+            }
+            // Orijinal indeks KORUNUR: ekrandaki DOM id'leri (wpt-key-N / wpt-f-N-M) ona dayanır,
+            // gruplama sonrası yeniden numaralandırılırsa kopyala/göster düğmeleri yanlış öğeyi hedefler.
+            $groups[$key]['rows'][] = [$i, $d];
+        }
+        return $groups;
     }
 
     /**

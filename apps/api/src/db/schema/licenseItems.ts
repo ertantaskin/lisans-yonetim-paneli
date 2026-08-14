@@ -84,9 +84,22 @@ export const licenseItems = pgTable(
     index('license_items_available_idx')
       .on(t.productId, t.createdAt)
       .where(sql`${t.status} = 'available'`),
-    // FEFO taraması.
-    index('license_items_fefo_idx')
-      .on(t.productId, t.expiresAt)
+    // ATAMA SORGUSUNUN TAM KARŞILIĞI (denetim/perf bulgusu) — sistemin en sıcak yazma yolu.
+    // `assignAvailableSingleUse` / `consumeMultiUseCapacity` şu sırayla seçer:
+    //   WHERE product_id=? AND status='available' AND (expires_at IS NULL OR expires_at>now())
+    //   ORDER BY expires_at ASC NULLS LAST, created_at, seq  LIMIT n  FOR UPDATE SKIP LOCKED
+    // Eski `_fefo_idx` yalnız (product_id, expires_at) taşıyordu; `created_at`/`seq` indekste
+    // OLMADIĞI için sıralama anahtarlarını okumak üzere her aday satır için heap'e gidiliyordu.
+    // Üstelik kalemlerin ezici çoğunluğunda `expires_at IS NULL` olduğundan presorted prefix
+    // TEK dev gruba düşüyor, yani LIMIT devreye girmeden o ürünün TÜM available satırları
+    // sıralanıyordu (0030'da `seq` tie-break'i eklenmişti, indeksi eklenmemişti — regresyon
+    // buradan doğdu). Dört kolon birlikte olduğunda tarama LIMIT kadar indeks girdisinde durur.
+    //
+    // `_fefo_idx` DÜŞÜRÜLDÜ: bu indeksin ÖN EKİ (product_id, expires_at) ve kısmi koşulu
+    // birebir aynı → her planı bu index de karşılar. license_items her stok girişinde ve her
+    // atamada yazıldığı için kesinlikle gereksiz bir indeksi taşımak yazma maliyetidir.
+    index('license_items_alloc_idx')
+      .on(t.productId, t.expiresAt, t.createdAt, t.seq)
       .where(sql`${t.status} = 'available'`),
     // Son 5 hane araması.
     index('license_items_suffix_idx').on(t.payloadSuffixHash),
@@ -111,6 +124,15 @@ export const licenseItems = pgTable(
     // eşitlikle sabitlenmiş ilk kolondan sonra GERİYE taramayla karşılanır.
     index('license_items_product_created_idx').on(t.productId, t.createdAt, t.seq),
     index('license_items_status_created_idx').on(t.status, t.createdAt.desc()),
+    // KUSURLU STOK (/quarantine) sıralaması — `ORDER BY coalesce(assigned_at, created_at) DESC,
+    // seq DESC`. Bu bir İFADE'dir, hiçbir kolon indeksi karşılamaz → karantina/void kümesinin
+    // TAMAMI materyalize edilip sıralanıyordu (üstelik payload_enc dahil geniş satırlarla ve
+    // 7 LEFT JOIN fan-out'uyla; work_mem aşılırsa disk sort). Küme KÜMÜLATİF: kusurlu anahtar
+    // silinmiyor, retention da budamıyor → sürekli büyür.
+    // İfade indeksi olduğu için sorgudaki ifade BİREBİR aynı yazılmalıdır (`coalesce(...)`).
+    index('license_items_dead_at_idx')
+      .on(sql`coalesce(${t.assignedAt}, ${t.createdAt}) DESC`, t.seq.desc())
+      .where(sql`${t.status} IN ('quarantined', 'voided')`),
     index('license_items_assigned_idx').on(sql`${t.assignedAt} DESC NULLS LAST`),
     index('license_items_batch_idx').on(t.batchId),
   ],

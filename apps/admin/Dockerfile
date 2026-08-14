@@ -14,7 +14,14 @@ ENV NEXT_OUTPUT_STANDALONE=1
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* turbo.json tsconfig.base.json ./
 COPY packages/shared/package.json ./packages/shared/
 COPY apps/admin/package.json ./apps/admin/
-RUN pnpm install --frozen-lockfile || pnpm install
+# `|| pnpm install` YEDEĞİ KALDIRILDI (tedarik zinciri denetimi O1): `--frozen-lockfile`
+# lockfile ile package.json uyuşmadığında HATA VERİR; eski yedek bu hatayı YUTUP build anında
+# yeniden çözüm yapıyordu → o an registry'de yayınlanmış, kod incelemesinden GEÇMEMİŞ bir
+# transitif sürüm sessizce prod imajına girip build "başarılı" görünüyordu. İmajlar VPS'te
+# deploy.sh ile üretildiği için bu doğrudan canlıya giden bir yoldu. Artık GÜRÜLTÜLÜ ÇÖKER
+# (SESSION_SECRET/MASTER_KEY doğrulamalarındaki fail-closed ilkesiyle aynı): lockfile bayatsa
+# çözüm `pnpm install` ile lockfile'ı GÜNCELLEYİP commit'lemektir, build'de gizlice çözmek değil.
+RUN pnpm install --frozen-lockfile
 COPY packages/shared ./packages/shared
 COPY apps/admin ./apps/admin
 RUN pnpm --filter @lisans/shared build \

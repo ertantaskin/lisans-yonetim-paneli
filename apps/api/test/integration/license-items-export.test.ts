@@ -4,7 +4,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import * as schema from '../../src/db/schema';
 import { FulfillmentService } from '../../src/orders/fulfillment.service';
 import { ProductsService } from '../../src/products/products.service';
-import { LICENSE_EXPORT_LIMIT, StockService } from '../../src/stock/stock.service';
+import {
+  LICENSE_COUNT_CAP,
+  LICENSE_EXPORT_LIMIT,
+  StockService,
+} from '../../src/stock/stock.service';
 import type { CryptoService } from '../../src/crypto/crypto.service';
 import {
   cleanupByTag,
@@ -113,6 +117,10 @@ describe('lisans envanteri dışa aktarma — rol kapısı, reveal audit, dürü
     expect(res.truncated).toBe(false);
     expect(res.limit).toBe(LICENSE_EXPORT_LIMIT);
     expect(res.masked).toBe(false);
+    // Sayım TAVANLI yapılır (perf); tavanın altındaki toplam TAM doğrudur ve bunu
+    // `totalCapped=false` ile söyler. İstemci "4 kayıt" yazabilir, "4+" değil.
+    expect(res.totalCapped).toBe(false);
+    expect(res.countCap).toBe(LICENSE_COUNT_CAP);
     // Düz metin: payload tag'i görünür, maske gövdesi YOK.
     for (const r of res.rows) {
       expect(r.value).toContain(tag);
@@ -179,6 +187,9 @@ describe('lisans envanteri dışa aktarma — rol kapısı, reveal audit, dürü
         { id: 'b', value: 'Y' },
       ] as never,
       total: 9_000,
+      // 9.000 < LICENSE_COUNT_CAP → sayım tavana DAYANMADI, `total` gerçek toplamdır.
+      totalCapped: false,
+      countCap: LICENSE_COUNT_CAP,
       page: 1,
       pageSize: LICENSE_EXPORT_LIMIT,
       masked: false,
@@ -206,5 +217,15 @@ describe('lisans envanteri dışa aktarma — rol kapısı, reveal audit, dürü
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('(e) INVARYANT: sayım tavanı dışa aktarma limitinden BÜYÜK olmalı', () => {
+    /*
+     * `truncated` kararı `total > rows.length` ile verilir ve `total` artık LICENSE_COUNT_CAP
+     * ile tavanlıdır. Tavan dışa aktarma limitinin ÜSTÜNDE kaldığı sürece karar doğrudur
+     * (tavana dayanılan her senaryoda 10.000 > 5.000). Tavan bir gün limitin ALTINA çekilirse
+     * kırpılmış bir dosya "tam" sanılabilirdi — bu test o sessiz bozulmayı kapıda karşılar.
+     */
+    expect(LICENSE_COUNT_CAP).toBeGreaterThan(LICENSE_EXPORT_LIMIT);
   });
 });

@@ -17,6 +17,7 @@ import {
   parseAccountPayload,
   serializeAccountPayload,
   maskSecret,
+  looksMasked,
   maskAccountFields,
   type AccountPayloadSchema as AccountPayloadSchemaT,
 } from '@lisans/shared';
@@ -538,7 +539,15 @@ export interface LicenseInventoryRow {
 
 export interface LicenseInventoryPage {
   rows: LicenseInventoryRow[];
+  /**
+   * Süzgece uyan kayıt sayısı. `totalCapped` true ise "EN AZ bu kadar" demektir
+   * (bkz. LICENSE_COUNT_CAP) — istemci bunu "10.000+" gibi dürüstçe yazmak zorundadır.
+   */
   total: number;
+  /** Sayım tavana dayandı mı? true → `total` gerçek toplam DEĞİL, alt sınırdır. */
+  totalCapped: boolean;
+  /** Sayımın kırpıldığı sınır (LICENSE_COUNT_CAP) — istemci metni buradan kurar. */
+  countCap: number;
   page: number;
   pageSize: number;
   /**
@@ -555,8 +564,16 @@ export interface LicenseInventoryPage {
  */
 export interface LicenseInventoryExport {
   rows: LicenseInventoryRow[];
-  /** Süzgece uyan TOPLAM kayıt (kırpılmadan önceki gerçek sayı). */
+  /**
+   * Süzgece uyan TOPLAM kayıt (kırpılmadan önce). `totalCapped` true ise ALT SINIRDIR
+   * (sayım LICENSE_COUNT_CAP ile tavanlanır) — `truncated` kararı bundan ETKİLENMEZ,
+   * çünkü tavan (10.000) dışa aktarma limitinden (5.000) büyüktür.
+   */
   total: number;
+  /** Sayım tavana dayandı mı? true → `total` alt sınırdır ("10.000+"). */
+  totalCapped: boolean;
+  /** Sayımın kırpıldığı sınır (LICENSE_COUNT_CAP). */
+  countCap: number;
   /** Sunucu üst sınırı (LICENSE_EXPORT_LIMIT). */
   limit: number;
   /** total > limit → dosyada eksik kayıt var; istemci bunu GÖRÜNÜR yazmak zorunda. */
@@ -578,6 +595,28 @@ export interface LicenseInventoryExport {
  * İÇİNDE bunu yazar (dosya yeniden adlandırılıp iletilebilir — uyarı sadece ekranda kalamaz).
  */
 export const LICENSE_EXPORT_LIMIT = 5_000;
+
+/**
+ * `total` üst sınırı (envanter listesi + dışa aktarma).
+ *
+ * NEDEN VAR (denetim bulgusu — ORTA): toplam `count(*) OVER ()` penceresiyle hesaplanıyordu
+ * ve pencere fonksiyonu LIMIT'ten ÖNCE, süzgece uyan TÜM bölüm üzerinde çalışır. Yani
+ * SÜZGEÇSİZ açılışta (varsayılan /stock "Son Eklenen Lisanslar" kartı ve envanter ekranı)
+ * her görüntüleme `license_items` tablosunun TAMAMINI sayıyordu — sayfanın kendisi indexten
+ * (created_at + LIMIT) karşılanırken sayacın taraması ekranı zamanla kullanılamaz hale
+ * getirirdi; `license_items` sistemin en hızlı büyüyen tablolarından biri.
+ *
+ * ÇÖZÜM `audit.service.AUDIT_COUNT_CAP` ile BİREBİR AYNI desendir: sayım `LIMIT CAP+1` ile
+ * sınırlı bir alt sorgudan yapılır. Gerçek toplam sınırın altındaysa TAM doğrudur; üstündeyse
+ * `totalCapped=true` ile DÜRÜSTÇE söylenir ("10.000+"). Sessizce yanlış toplam göstermek bu
+ * projede yasak (sessiz kırpma sınıfı).
+ *
+ * DEĞER audit ile aynı büyüklükte (10.000) ve BİLEREK `LICENSE_EXPORT_LIMIT`ten (5.000)
+ * BÜYÜK: dışa aktarmanın `truncated` kararı `total > rows.length` ile verilir; tavan dışa
+ * aktarma limitinin üstünde kaldığı sürece o karar tavandan ETKİLENMEZ (total kırpılan tüm
+ * senaryolarda zaten 10.000 > 5.000 ⇒ truncated true).
+ */
+export const LICENSE_COUNT_CAP = 10_000;
 
 /** `listLicenseItems` iç ayarları — dışa aktarma yolu için (dış sözleşme değişmez). */
 interface ListLicenseItemsOptions {
@@ -1716,16 +1755,23 @@ export class StockService {
           ? sql`li.assigned_at DESC NULLS LAST, li.created_at DESC, li.seq DESC`
           : sql`li.created_at DESC, li.seq DESC`;
 
-    // ── Sayfa + toplam: TEK sorgu ──
+    // ── Sayfa + toplam: TEK sorgu (iki CTE) ──
     // Eskiden rows ve count(*) AYRI iki sorguydu; ikisi de aynı süzgeçle license_items'ı
-    // baştan tarıyordu (iki tam geçiş + iki tur ağ). Artık `count(*) OVER ()` penceresi
-    // sayfa alt-sorgusunda hesaplanır: pencere fonksiyonu WHERE'den SONRA ama ORDER BY/LIMIT'ten
-    // ÖNCE çalıştığı için değer "süzgece uyan TOPLAM kayıt"tır (sayfanınki değil) → semantik
-    // eski COUNT ile birebir.
+    // baştan tarıyordu (iki tam geçiş + iki tur ağ). Sonra toplam `count(*) OVER ()` ile
+    // sayfa alt-sorgusuna alındı — ama PENCERE FONKSİYONU LIMIT'ten ÖNCE, süzgece uyan TÜM
+    // bölüm üzerinde çalışır: süzgeçsiz açılışta her görüntüleme tabloyu BAŞTAN SAYIYORDU
+    // (denetim bulgusu — ORTA). Artık sayım AYRI ve TAVANLI bir CTE'de yapılır
+    // (`LIMIT CAP+1` → en çok 10.001 satıra dokunur; bkz. LICENSE_COUNT_CAP).
     //
-    // Alt sorgu ayrıca N+1'in tersini de çözer: LIMIT/OFFSET, JOIN'lerden ve LATERAL'den ÖNCE
-    // uygulanır → ürün/parti/tedarikçi join'leri ve teslimat LATERAL'i yalnız ≤100 satır için
-    // koşar (eskiden LATERAL, sıralamadan önce eşleşen HER satır için çalışabiliyordu).
+    // TEK SORGU KORUNUR (ayrı bir COUNT turu açılmaz): tavanlı CTE sayfayla CROSS JOIN edilir
+    // — bir satır döndürdüğü için satır sayısını ETKİLEMEZ. Süzgeç fragmanı ikisinde de
+    // BİREBİR aynı `where` nesnesidir (iki ayrı yazım bu projede "toplam ile liste çelişir"
+    // hatasını doğurmuştu).
+    //
+    // Sayfa alt sorgusu ayrıca N+1'in tersini de çözer: LIMIT/OFFSET, JOIN'lerden ve
+    // LATERAL'den ÖNCE uygulanır → ürün/parti/tedarikçi join'leri ve teslimat LATERAL'i
+    // yalnız ≤100 satır için koşar (eskiden LATERAL, sıralamadan önce eşleşen HER satır
+    // için çalışabiliyordu).
     const rows = await rawRows<LicenseItemRawRow & { total_count: number }>(this.db, sql`
         WITH page_slice AS (
           -- Süzgeç ARTIK yalnız license_items'a dokunur: arama fragmanı b/p join'lerine değil
@@ -1734,11 +1780,17 @@ export class StockService {
           -- Süzgeç fragmanı countLicenseItems ile BİREBİR aynı olmalı, yoksa toplam ile
           -- liste ayrışır; bu yüzden fragman TEK yerde kurulur ve join gerektirmez.
           -- (NOT: bu SQL bir template literal — yorumda TERS TIRNAK kullanılamaz, şablonu kapatır.)
-          SELECT li.id AS id, (count(*) OVER ())::int AS total_count
+          SELECT li.id AS id
           FROM license_items li
           WHERE ${where}
           ORDER BY ${orderBy}
           LIMIT ${pageSize} OFFSET ${offset}
+        ),
+        capped_total AS (
+          -- SINIRLI sayım (audit.service deseni): iç LIMIT sayesinde planlayıcı CAP+1 satır
+          -- görür görmez durur. SELECT 1 yeter — sayım için kolon okumaya gerek yok.
+          SELECT count(*)::int AS n
+          FROM (SELECT 1 FROM license_items li WHERE ${where} LIMIT ${LICENSE_COUNT_CAP + 1}) capped
         )
         SELECT
           li.id                       AS id,
@@ -1775,8 +1827,9 @@ export class StockService {
           d.site_domain               AS site_domain,
           d.site_type                 AS site_type,
           d.admin_order_url_template  AS admin_order_url_template,
-          ps.total_count              AS total_count
+          ct.n                        AS total_count
         FROM page_slice ps
+        CROSS JOIN capped_total ct
         JOIN license_items li ON li.id = ps.id
         JOIN products p ON p.id = li.product_id
         LEFT JOIN batches b ON b.id = li.batch_id
@@ -1809,17 +1862,23 @@ export class StockService {
 
     const mapped = rows.map((r) => this.mapInventoryRow(r, reveal));
 
-    // Toplam: normalde pencere fonksiyonundan (ek sorgu YOK). Tek istisna, OFFSET'in sonuç
-    // kümesini AŞMASIDIR: hiç satır dönmez → pencere değeri de gelmez. Bu durumda kontratı
-    // korumak için (total = süzgece uyan kayıt sayısı, sayfa boş olsa bile) yedek COUNT
+    // Toplam: normalde tavanlı CTE'den (ek sorgu turu YOK). Tek istisna, OFFSET'in sonuç
+    // kümesini AŞMASIDIR: CROSS JOIN hiç satır üretmez → sayaç da gelmez. Bu durumda kontratı
+    // korumak için (total = süzgece uyan kayıt sayısı, sayfa boş olsa bile) yedek sayım
     // koşulur — yalnız page>1 iken, yani "3. sayfadayken filtre daraldı" senaryosunda.
-    // 1. sayfa boşsa toplam zaten 0'dır, gereksiz sorgu açılmaz.
-    const total =
+    // 1. sayfa boşsa toplam zaten 0'dır, gereksiz sorgu açılmaz. Yedek sayım da AYNI tavanı
+    // uygular (yoksa kaçış yolu tam tablo taraması olurdu — düzeltilen hatanın ta kendisi).
+    //
+    // HAM değer CAP+1 olabilir; dışarıya CAP olarak verilir ve `totalCapped` ile "en az bu
+    // kadar" olduğu SÖYLENİR (audit.service ile birebir aynı sözleşme).
+    const rawTotal =
       rows.length > 0
         ? Number(rows[0]?.total_count ?? 0)
         : page > 1
           ? await this.countLicenseItems(where)
           : 0;
+    const totalCapped = rawTotal > LICENSE_COUNT_CAP;
+    const total = totalCapped ? LICENSE_COUNT_CAP : rawTotal;
 
     // Görüntüleme audit'i (§8 "reveal audit'e düşer"): YALNIZ düz-metin gerçekten gösterildiğinde
     // (owner, reveal=true) yazılır — owner-olmayan 'admin' maskeli gördüğünden reveal değildir (A1).
@@ -1853,7 +1912,15 @@ export class StockService {
 
     // `masked` = "bu yanıttaki değerler düz metin DEĞİL". İstemci dosyaya uyarı basmak için
     // bunu bilmek zorunda (kendi başına maske gövdesini aramak kırılgan bir tahmindir).
-    return { rows: mapped, total, page, pageSize, masked: !reveal };
+    return {
+      rows: mapped,
+      total,
+      totalCapped,
+      countCap: LICENSE_COUNT_CAP,
+      page,
+      pageSize,
+      masked: !reveal,
+    };
   }
 
   /**
@@ -1879,7 +1946,10 @@ export class StockService {
       pageSizeOverride: limit,
       audit: false,
     });
-    // `total` süzgece uyan GERÇEK sayıdır (count(*) OVER) → kırpılma buradan kesin bilinir.
+    // Kırpılma kararı `total > rows.length` ile verilir. `total` artık LICENSE_COUNT_CAP ile
+    // tavanlı olabilir, AMA karar bundan ETKİLENMEZ: tavan (10.000) dışa aktarma limitinden
+    // (5.000) büyük olduğu için tavana dayanılan her senaryoda zaten 10.000 > 5.000 ⇒ true.
+    // (Tavan bir gün limitin ALTINA çekilirse bu çıkarım bozulur — ikisi birlikte okunmalı.)
     const truncated = page.total > page.rows.length;
 
     // §8 DEĞİŞMEZ KURAL: "reveal audit'e düşer". Dosyaya düz metin YAZILDIĞINDA tek bir kayıt
@@ -1897,6 +1967,7 @@ export class StockService {
             view: 'license_inventory',
             count: page.rows.length,
             total: page.total,
+            totalCapped: page.totalCapped,
             truncated,
             limit,
             productId: params.productId ?? null,
@@ -1914,7 +1985,15 @@ export class StockService {
       }
     }
 
-    return { rows: page.rows, total: page.total, limit, truncated, masked: page.masked };
+    return {
+      rows: page.rows,
+      total: page.total,
+      totalCapped: page.totalCapped,
+      countCap: page.countCap,
+      limit,
+      truncated,
+      masked: page.masked,
+    };
   }
 
   /**
@@ -1923,12 +2002,15 @@ export class StockService {
    * artık YALNIZ `li` kolonlarına ve kendi kendine yeten alt sorgulara dayandığı için
    * (arama adayları UNION ALL alt sorgusunda) burada batches/products join'i GEREKMEZ —
    * iki sorgunun join listesi ayrışıp sonuçların çelişmesi de imkânsızlaşır.
+   *
+   * TAVAN BURADA DA UYGULANIR (aynı `LIMIT CAP+1` deseni): aksi halde "derin sayfada süzgeç
+   * daraldı" kenar durumu, tam da kaçınmak istediğimiz tam tablo taramasına açılan bir kaçış
+   * yolu olurdu. Dönen değer CAP+1 olabilir; çağıran tavanı uygular.
    */
   private async countLicenseItems(where: SQL): Promise<number> {
     const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
-      FROM license_items li
-      WHERE ${where};
+      FROM (SELECT 1 FROM license_items li WHERE ${where} LIMIT ${LICENSE_COUNT_CAP + 1}) capped;
     `);
     return Number(rows[0]?.c ?? 0);
   }
@@ -2159,6 +2241,28 @@ export class StockService {
       if (row.status !== 'available') {
         throw new ConflictException(
           `Yalnız satılabilir (available) durumdaki lisans düzenlenebilir. Mevcut durum: ${row.status}.`,
+        );
+      }
+
+      // ── MASKELİ DEĞER KAPISI (denetim bulgusu) — otoriter katman SUNUCUDA ──
+      //
+      // Owner OLMAYAN admin envanterde bir kaydı düzenlerken form alanları MASKELİ değerlerle
+      // ön-doldurulur (canRevealPlaintext=false). Yalnız bir alanı düzeltip kaydederse kalan
+      // alanlarda `••••••` gider ve GERÇEK sırrın üzerine bu dize şifrelenir → satılmamış
+      // lisans sessizce yok olur (eski ciphertext üzerine yazıldığı için geri dönüş yoktur;
+      // hata da alınmaz, "Değişiklik kaydedildi" der). `serializeAccountPayload` için `••••••`
+      // geçerli bir dolu değerdir, dolayısıyla kapı BURADA olmak zorunda.
+      //
+      // İstemci tarafındaki düğme-kilidi tek başına yeterli değildir: bu servis doğrudan da
+      // çağrılabilir ve projenin kuralı gereği otoriter kontrol sunucudadır.
+      const maskedInput = [
+        ...(input.fields ? Object.values(input.fields) : []),
+        ...(input.value != null ? [input.value] : []),
+      ].some((v) => typeof v === 'string' && looksMasked(v));
+      if (maskedInput) {
+        throw new BadRequestException(
+          'Maskeli değer kaydedilemez. Görüntüleme yetkiniz olmadığı için alanlar maskeli ' +
+            'geldi; bu kaydı düzenlemek için tam değerleri girin veya owner yetkisi isteyin.',
         );
       }
 

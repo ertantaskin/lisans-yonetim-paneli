@@ -10,12 +10,27 @@ import {
 
 /**
  * CSRF/login-CSRF koruması: tarayıcı cross-site bir POST navigasyonunda Origin gönderir.
- * Origin host'u istek Host'uyla uyuşmuyorsa reddet (session fixation / zorla logout engellenir).
- * Origin yoksa (bazı aynı-origin durumları) izin ver — meşru girişleri kırmayalım.
+ * Origin host'u istek Host'uyla uyuşmuyorsa reddet (session fixation engellenir).
+ *
+ * DENETİM D5 — "Origin yoksa geçir" KALDIRILDI: POST'ta Origin YOKLUĞU meşru bir tarayıcı
+ * davranışı değildir (modern tarayıcılar form POST'unda da gönderir); açık bırakmak, kalan tek
+ * savunması `sameSite:'lax'` çerezi olan gereksiz bir kapıydı.
+ *
+ * YEDEK KAPI (`Sec-Fetch-Site`): Origin'i soyan egzotik bir proxy meşru girişi KİLİTLEMESİN diye,
+ * Origin yoksa Fetch Metadata'ya bakılır — `same-origin` (aynı origin'den form/fetch) ve `none`
+ * (adres çubuğuna yazılan/doğrudan navigasyon) kabul edilir; `cross-site`/`same-site` reddedilir.
+ * Her ikisi de yoksa reddedilir (bunlar da yalnız tarayıcı-dışı istemcide birlikte eksik olur).
+ * Yedek kapı bilinçli olarak Origin'den GEVŞEK değildir: iki başlık da saldırgan sayfa tarafından
+ * ayarlanamayan, tarayıcının koyduğu başlıklardır.
  */
+// (EXPORT EDİLMEZ: Next route handler dosyaları yalnız HTTP metot export'larına izin verir;
+//  logout aynı mantığı kendi dosyasında birebir taşır.)
 function sameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get('origin');
-  if (!origin) return true;
+  if (!origin) {
+    const fetchSite = req.headers.get('sec-fetch-site');
+    return fetchSite === 'same-origin' || fetchSite === 'none';
+  }
   try {
     return new URL(origin).host === req.headers.get('host');
   } catch {

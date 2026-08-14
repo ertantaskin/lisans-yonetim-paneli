@@ -61,6 +61,23 @@ export const orders = pgTable(
     // var ama schema'da DECLARE edilmemişti → drift. Burada tanımlanır ki schema tekrar TEK doğruluk
     // kaynağı olsun (#7 denetim M): db:generate 0020 CREATE üretir, prod'da IF NOT EXISTS ile no-op.
     index('orders_email_lower_idx').on(sql`lower(${t.customerEmail})`),
+    // "BEKLEYEN TESLİMATLAR" (/pending) — operatörün gün boyu açık tuttuğu ekran.
+    // `orders.status` üzerinde HİÇBİR index yoktu: plan ya `orders_created_idx`'i geriye
+    // tarayıp status ile eleyerek 201 eşleşme bulana kadar okuyor (sağlıklı bir panelde
+    // siparişlerin ezici çoğunluğu 'fulfilled' olduğu için milyonlarca satır okunup atılır),
+    // ya da seq scan + top-N sort yapıyordu; hiç 'unmapped' sipariş yoksa tablonun TAMAMI
+    // taranıp ekran BOŞ dönüyordu. Terminal olmayan durumlar küçük bir alt küme → kısmi index
+    // (order_lines_pending_product_idx felsefesi).
+    // İkinci kolon DESC olmak ZORUNDA (0031 dersi: btree'de yön ayna değildir; `created_at DESC,
+    // id DESC` sıralaması ancak aynı yönde tanımlı indeksten karşılanır).
+    //
+    // BİLİNÇLİ SINIR: `/orders` faceted süzgeci terminal durumları da (fulfilled/revoked)
+    // süzebiliyor ve bu index onları KAPSAMAZ. Koşulsuz bir (status, created_at DESC) indeksi
+    // eklenmedi: o durumların ezici çoğunluk olması sayesinde mevcut created_at taraması hızla
+    // eşleşme buluyor, buna karşılık her sipariş yazımına bir index daha bindirmek gerekirdi.
+    index('orders_open_status_idx')
+      .on(t.status, t.createdAt.desc(), t.id.desc())
+      .where(sql`${t.status} IN ('pending', 'partial', 'unmapped')`),
   ],
 );
 
@@ -123,8 +140,14 @@ export const orderLines = pgTable(
     // Tamamlama motoru: ürün bazında bekleyen/kısmi + iptal-EDİLMEMİŞ satırları tarar.
     // Partial index → devasa geçmiş satır kümesinde yalnız "iş bekleyen" alt küme küçük kalır
     // (license_items_available_idx felsefesi). status IN (pending, partial) AND NOT canceled.
-    index('order_lines_pending_product_idx')
-      .on(t.productId)
+    // Sıralama kolonları da indekste: `autoCompleteProduct` bekleyen satırları
+    // `ORDER BY priority DESC, created_at ASC` (FIFO + öncelik) ile tarıyor. Yalnız
+    // (product_id) taşıyan eski sürümde eşleşen TÜM bekleyen satırlar okunup sıralanıyordu;
+    // stok girişi sonrası her tamamlama turu aynı listeyi baştan çekip yeniden sıralıyordu
+    // (büyük backlog'da O(N²/cap)). Eski `order_lines_pending_product_idx` DÜŞÜRÜLDÜ: ön eki
+    // ve kısmi koşulu birebir aynı → onun karşıladığı her planı bu index de karşılar.
+    index('order_lines_pending_fifo_idx')
+      .on(t.productId, t.priority.desc(), t.createdAt)
       .where(sql`${t.status} IN ('pending', 'partial') AND ${t.canceled} = false`),
   ],
 );

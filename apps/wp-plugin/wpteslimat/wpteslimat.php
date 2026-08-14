@@ -3,7 +3,7 @@
  * Plugin Name: WP Teslimat Eklentisi
  * Description: WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatları
  *              müşteriye gösterir. Lisans verisi WP'de TUTULMAZ — panel tek doğruluk kaynağı.
- * Version: 1.0.5
+ * Version: 1.0.6
  * Requires PHP: 7.4
  * Author: Lisans Paneli
  * Text Domain: wpteslimat
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 //           eşlemek için. Sır göndermez (yalnız ad/sku/tip); additive.
 // = 0.6.0 = Sipariş satırlarına mağaza ürün adı (remoteName) eklendi — panelde eşlenmemiş
 //           ürünleri isimle görüp tek tıkla eşlemek için (teslimatı etkilemez, additive).
-define('WPTESLIMAT_VERSION', '1.0.5');
+define('WPTESLIMAT_VERSION', '1.0.6');
 define('WPTESLIMAT_DIR', plugin_dir_path(__FILE__));
 define('WPTESLIMAT_FILE', __FILE__);
 
@@ -173,9 +173,13 @@ function wpteslimat_ensure_schema() {
     $old = $wpdb->prefix . 'jetlisans_queue';
 
     // Kuyruk log tablosu: yeni yoksa → eskiyi yeniden adlandır (logları koru) yoksa taze oluştur.
-    $has_new = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $new)) === $new;
+    // `esc_like()` ŞART: bu bir LIKE bağlamıdır ve tablo adındaki `_` (wp_wpteslimat_queue) LIKE'ta
+    // JOKER karakterdir → kaçışsız desen BAŞKA bir tabloyla eşleşebilir ve göç yanlış karar verir
+    // (var olan tabloyu "yok" ya da olmayanı "var" sayar). prepare() yalnız tırnak/enjeksiyon
+    // kaçışıdır, joker anlamını kaldırmaz — ikisi birlikte kullanılır.
+    $has_new = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($new))) === $new;
     if (!$has_new) {
-        $has_old = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $old)) === $old;
+        $has_old = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($old))) === $old;
         if ($has_old) {
             // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tablo adları prefix'ten güvenli
             $wpdb->query("RENAME TABLE `$old` TO `$new`");

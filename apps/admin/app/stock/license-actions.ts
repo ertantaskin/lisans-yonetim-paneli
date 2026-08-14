@@ -86,7 +86,18 @@ export interface LicenseInventoryRow {
 
 export interface LicenseInventoryPage {
   rows: LicenseInventoryRow[];
+  /**
+   * Süzgece uyan kayıt sayısı. `totalCapped` true ise "EN AZ bu kadar" demektir —
+   * UI bunu "10.000+" gibi DÜRÜSTÇE yazmak zorunda (sessiz/yanlış toplam yasak).
+   */
   total: number;
+  /**
+   * Sayım sunucu tavanına dayandı mı? OPSİYONEL: api ve admin ayrı imajlar — eski API bu
+   * alanı göndermez, o durumda davranış eskisi gibi ("total = tam sayı") kalır.
+   */
+  totalCapped?: boolean;
+  /** Sayımın kırpıldığı sınır (sunucudan) — UI metni buradan kurulur. */
+  countCap?: number;
   page: number;
   pageSize: number;
   /**
@@ -100,8 +111,12 @@ export interface LicenseInventoryPage {
 /** `GET /v1/admin/license-items/export` yanıtı — sayfalama YOK, sunucu tavanı var. */
 export interface LicenseInventoryExport {
   rows: LicenseInventoryRow[];
-  /** Süzgece uyan GERÇEK toplam (kırpılmadan önce). */
+  /** Süzgece uyan toplam (kırpılmadan önce). `totalCapped` true ise ALT SINIRDIR. */
   total: number;
+  /** Sayım sunucu tavanına dayandı mı (bkz. LicenseInventoryPage)? */
+  totalCapped?: boolean;
+  /** Sayımın kırpıldığı sınır (sunucudan). */
+  countCap?: number;
   /** Sunucu üst sınırı. */
   limit: number;
   /** true → dosyada eksik kayıt var; UI bunu GÖRÜNÜR yazmak zorunda (sessiz kırpma yasak). */

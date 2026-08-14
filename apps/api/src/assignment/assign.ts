@@ -144,39 +144,66 @@ export async function releaseAllocations(
   }
 }
 
+/** Tek bir MAK/çok-kullanımlık anahtardan alınan kapasite. */
+export interface MultiUseTake {
+  licenseItemId: string;
+  /** Bu çağrıda GERÇEKTEN düşülen birim (1..want) — anahtarın kalanıyla sınırlı. */
+  taken: number;
+}
+
 /**
  * Çok kullanımlık (multi / MAK) kapasite düşümü (§2). Satır seçmek yerine kilitli
- * tek satırda use_count += units (koşul: use_count + units <= max_uses).
- * Kapasite aşımı imkânsız.
+ * tek satırda use_count += LEAST(want, kalan). Kapasite aşımı imkânsız (`taken`
+ * tanımı gereği kalanı geçemez, satır `FOR UPDATE` ile kilitliyken hesaplanır).
  *
- * @returns kapasitesi düşülen license_item id'si, yeterli kapasite yoksa null
+ * PERF (denetim bulgusu): eskiden bu fonksiyon "hepsi ya da hiç" idi (`use_count +
+ * units <= max_uses`) ve `allocate()` onu BİRİM BAŞINA çağırıyordu → 200 adetlik bir
+ * MAK satırı tek transaction içinde 200 sıralı UPDATE gidiş-dönüşü demekti; kilitler
+ * o süre boyunca tutulduğu için eşzamanlı siparişlerde çekişme katlanıyordu. Artık
+ * çağıran ANAHTAR başına döner, birim başına değil.
+ *
+ * @returns düşülen anahtar + alınan birim; hiç kapasite yoksa null
  */
 export async function consumeMultiUseCapacity(
   db: Executor,
   productId: string,
-  units: number,
-): Promise<string | null> {
-  const list = await rawRows<{ id: string }>(db, sql`
-    UPDATE license_items SET
-      use_count = use_count + ${units},
-      -- İLK teslimat anını damgala (COALESCE → sonraki kapasite düşümleri damgayı KAYDIRMAZ).
-      -- Tek-kullanımda assignAvailableSingleUse zaten yazıyordu; MAK/multi'de hiç yazılmıyordu →
-      -- envanter listesinde "teslim tarihi" boş kalıyor ve teslim edilmiş MAK anahtarları
-      -- assigned_at sıralamasında hiç görünmüyordu (denetim bulgusu).
-      assigned_at = COALESCE(assigned_at, now()),
-      status = CASE WHEN use_count + ${units} >= max_uses THEN 'depleted' ELSE status END
-    WHERE id = (
-      SELECT id FROM license_items
+  want: number,
+): Promise<MultiUseTake | null> {
+  if (want <= 0) return null;
+  const list = await rawRows<{ id: string; taken: number }>(db, sql`
+    WITH picked AS (
+      -- Alınacak birim TEK anahtarın KALAN kapasitesiyle sınırlıdır: LEAST(istenen, kalan).
+      -- Eski sürüm "hepsi ya da hiç" (use_count + want <= max_uses) idi ve çağıran her
+      -- BİRİM için ayrı çağrı yapıyordu; artık kalan ne kadarsa o kadar alınır, dolayısıyla
+      -- 200 birimlik bir MAK satırı 200 değil ~1 gidiş-dönüşte karşılanır. Dağılım aynı:
+      -- FEFO sırasındaki ilk anahtar doldurulur, artan talep sonraki anahtara taşar.
+      SELECT id, LEAST(${want}, max_uses - use_count) AS taken
+      FROM license_items
       WHERE product_id = ${productId}
         AND status = 'available'
-        AND use_count + ${units} <= max_uses
+        AND use_count < max_uses
         AND ${notExpiredCond()}
       ORDER BY expires_at ASC NULLS LAST, created_at, seq
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING id;
+    UPDATE license_items li SET
+      use_count = li.use_count + p.taken,
+      -- İLK teslimat anını damgala (COALESCE → sonraki kapasite düşümleri damgayı KAYDIRMAZ).
+      -- Tek-kullanımda assignAvailableSingleUse zaten yazıyordu; MAK/multi'de hiç yazılmıyordu →
+      -- envanter listesinde "teslim tarihi" boş kalıyor ve teslim edilmiş MAK anahtarları
+      -- assigned_at sıralamasında hiç görünmüyordu (denetim bulgusu).
+      assigned_at = COALESCE(li.assigned_at, now()),
+      status = CASE WHEN li.use_count + p.taken >= li.max_uses THEN 'depleted' ELSE li.status END
+    FROM picked p
+    -- DİKKAT: taken CTE'de, yani GÜNCELLEMEDEN ÖNCEKİ satırdan hesaplanır. RETURNING içinde
+    -- max_uses - use_count yazmak YANLIŞ olurdu: Postgres RETURNING'de UPDATE SONRASI
+    -- (NEW) değerleri döndürür → alınan birim yerine kalan kapasite dönerdi.
+    -- (Bu blok bir SQL şablon dizesinin içindedir; yorumlarda ters tırnak KULLANMA.)
+    WHERE li.id = p.id
+    RETURNING li.id, p.taken AS taken;
   `);
 
-  return list.length > 0 ? list[0]!.id : null;
+  const row = list[0];
+  return row ? { licenseItemId: row.id, taken: Number(row.taken) } : null;
 }

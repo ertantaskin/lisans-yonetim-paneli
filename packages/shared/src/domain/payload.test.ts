@@ -188,6 +188,17 @@ describe('parseAccountPayload', () => {
     expect(fields).toHaveLength(1);
     expect(fields[0]).toMatchObject({ key: 'payload', value: 'ESKI-DUZ-KEY' });
   });
+
+  // REGRESYON (denetim Y1): fallback alanı SIR sayılmalı. `secret:false` dönerse
+  // maskAccountFields değere dokunmaz ve ürün tipi 'key'→'account' yapıldığında
+  // eski anahtarların TAMAMI admin/mağaza yüzeylerinde düz metin görünür.
+  it('bozuk kaydın fallback alanı secret=true işaretlenir (maskelenebilir kalır)', () => {
+    const fields = parseAccountPayload(schema, 'VK7JG-NPHTM-C97JM-9MPGT-3V66T');
+    expect(fields[0]!.secret).toBe(true);
+    const masked = maskAccountFields(fields);
+    expect(masked[0]!.value).toBe('••••••');
+    expect(masked[0]!.value).not.toContain('3V66T');
+  });
 });
 
 describe('maskSecret / maskAccountFields', () => {
