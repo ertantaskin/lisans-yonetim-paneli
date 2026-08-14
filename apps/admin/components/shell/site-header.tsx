@@ -72,7 +72,11 @@ export function SiteHeader() {
           Eskiden sabit genişlikteydi → dar/orta ekranda sağdaki kontrolleri dışarı itiyordu
           (ölçüldü, 789px + açık menü: tema düğmesi x=791, üst barın sağ kenarı 771 → düğme
           üst barın DIŞINDA kalıp erişilemez oluyordu). */}
-      <Breadcrumb className="hidden min-w-0 flex-1 overflow-hidden sm:block">
+      {/* `[&_ol]:flex-nowrap [&_ol]:whitespace-nowrap`: BreadcrumbList taban sınıfı `flex-wrap`
+          taşır; esnek genişlikle birleşince dar alanda İKİ SATIRA kırılıp 56px'lik üst bardan
+          taşıyordu (görsel doğrulamada yakalandı). Artık tek satır kalır ve sığmayan kısım
+          kabın `overflow-hidden`ı ile kırpılır — yükseklik sabit kalır. */}
+      <Breadcrumb className="hidden min-w-0 flex-1 overflow-hidden sm:block [&_ol]:flex-nowrap [&_ol]:whitespace-nowrap">
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
