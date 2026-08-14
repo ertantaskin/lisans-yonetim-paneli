@@ -45,6 +45,15 @@ const FAIL_WINDOW_SEC = 900; // 15 dk
 /** Lockout penceresi (saniye) — controller 429'a `Retry-After` başlığı koyarken kullanır. */
 export const LOGIN_FAIL_WINDOW_SEC = FAIL_WINDOW_SEC;
 
+/**
+ * Hesap-lockout kovasının ORTAK sözleşmesi — parola girişi, TOTP adımı ve TOTP kapatma
+ * AYNI kovayı paylaşır. Ayrı kovalar, parolayı ele geçirmiş birine her adım için TAZE bir
+ * deneme bütçesi vermek demektir. `totp.service` de buradan okur (iki yerde iki sabit
+ * tutmak sapma üretirdi).
+ */
+export const ACCOUNT_FAIL_KEY = (userId: string) => `authfail:id:${userId}`;
+export const ACCOUNT_MAX_FAILS = MAX_FAILS;
+
 /** Kimlik üst sınırı (controller ZodBody ile AYNI); savunma derinliği — bkz. verifyCredentials. */
 const MAX_IDENTIFIER_LEN = 200;
 

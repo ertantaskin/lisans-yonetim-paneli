@@ -67,6 +67,14 @@ import { RateLimitModule } from './common/rate-limit.module';
             'req.headers.authorization',
             'req.headers["x-api-key"]',
             'req.headers["x-signature"]',
+            // ADMIN_TOKEN (denetim bulgusu — CANLIDA doğrulandı: son 1 saatte 30 log satırında
+            // DÜZ METİN duruyordu). pino-http `req`i o isteğin HER log satırına bağlar, yani
+            // başlık maskelenmezse token tüm admin trafiğiyle birlikte loga akar. Bu token
+            // `AdminGuard`ın tek kapısıdır ve `x-admin-role` başlığı gönderilmediğinde
+            // `OwnerGuard` da geçirdiği için, log okuma yetkisi TAM panel kontrolüne yükselirdi.
+            // NOT: `x-admin-actor` bilerek maskelenmez — operatör kimliği olay müdahalesinde
+            // gereklidir ve zaten audit_log'da saklanır (müşteri PII'si DEĞİL).
+            'req.headers["x-admin-token"]',
             'req.body.payload',
             // Stok import gövdesi payload'ı DİZİ İÇİNDE taşır ({ items: [{ payload: … }] });
             // skaler 'req.body.payload' yolu bunu KAPSAMAZ → lisans anahtarları loga sızardı.

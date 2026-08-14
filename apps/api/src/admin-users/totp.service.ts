@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -23,6 +25,8 @@ import {
   verifyTotpOnce,
 } from '../auth/totp';
 import { recordAuthEvent } from './auth-events';
+// Lockout kovası GİRİŞ ile ORTAK — ayrı kova, parolayı bilene taze bir deneme bütçesi verirdi.
+import { ACCOUNT_FAIL_KEY, ACCOUNT_MAX_FAILS, LOGIN_FAIL_WINDOW_SEC } from './admin-users.service';
 
 /**
  * AdminTotpService — admin girişinde iki faktörlü doğrulama (§8 üzerine).
@@ -179,9 +183,15 @@ export class AdminTotpService {
   }
 
   /**
-   * KAPAT. Kullanıcının kendisi için parola + GEÇERLİ KOD şarttır (çalınmış bir oturum çerezi
-   * tek başına ikinci faktörü söküp atamasın); owner ise doğrudan kapatabilir (kurtarma yetkisi
-   * zaten onda ve parola sıfırlama deseniyle simetrik).
+   * KAPAT. KENDİ hesabını kapatmak için parola + GEÇERLİ KOD şarttır — rolden BAĞIMSIZ olarak
+   * (çalınmış bir oturum çerezi tek başına ikinci faktörü söküp atamasın). BAŞKASININ faktörünü
+   * kapatmak yalnız owner'a açıktır ve orada parola istenmez (owner kurbanın parolasını zaten
+   * bilmez; kurtarma yetkisi parola sıfırlama deseniyle simetriktir).
+   *
+   * DENETİM BULGUSU (düzeltildi): eskiden koşul "owner ise atla" idi. Owner KENDİ hesabını
+   * kapatırken de parola/kod atlanıyordu; oysa panel formu ikisini de ZORUNLU alan olarak
+   * topluyordu → arayüzün verdiği güvence gerçekte yoktu ve tek-owner kurulumda (bu projenin
+   * varsayılanı) çalınmış bir oturum çerezi 2FA'yı parolasız söküyordu.
    */
   async disable(
     id: string,
@@ -191,14 +201,52 @@ export class AdminTotpService {
   ): Promise<{ totpEnabled: false }> {
     const user = await this.load(id);
     this.assertSelfOrOwner(user, actor, role);
-    const byOwner = role === 'owner' || (role === '' && actor === 'panel:admin');
-    if (!byOwner) {
+    // "Kendi hesabı mı?" — aktör `admin:<e-posta>` biçiminde gelir (bkz. assertSelfOrOwner).
+    // Auth KAPALIYKEN (role '' + actor 'panel:admin') kimlik kavramı yoktur; panel zaten
+    // herkese açıktır, o yüzden eski davranış (doğrudan kapat) korunur.
+    const authDisabled = role === '' && actor === 'panel:admin';
+    const isSelf =
+      actor.startsWith('admin:') && actor.slice('admin:'.length).toLowerCase() === user.email.toLowerCase();
+    const byOwner = !isSelf && (role === 'owner' || authDisabled);
+    if (!byOwner && !authDisabled) {
+      /*
+       * HESAP KOVASI (denetim bulgusu): bu uç parola DOĞRULUYOR ama hiçbir hız sınırı yoktu.
+       * Her deneme bir scrypt (N=16384, ~60-100 ms) demek; sınırsız deneme hem parola
+       * brute-force'u hem de teslimat yolunu da servis eden event loop'a ucuz bir DoS'tur.
+       * Giriş ile AYNI kova kullanılır (ayrı kova = parolayı bilene taze bütçe, bkz.
+       * ACCOUNT_FAIL_KEY yorumu).
+       */
+      const failKey = ACCOUNT_FAIL_KEY(user.id);
+      if ((Number(await this.redis.get(failKey)) || 0) >= ACCOUNT_MAX_FAILS) {
+        throw new HttpException(
+          'Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
       const passOk = input.password
         ? await verifyPassword(input.password, user.passwordHash)
         : false;
       const codeOk = passOk && input.code ? await this.checkCode(user, input.code) : false;
-      // Tek mesaj: hangisinin yanlış olduğu söylenmez (parola oraklı üretmeyelim).
-      if (!passOk || !codeOk) throw new UnauthorizedException('Parola veya kod hatalı.');
+      if (!passOk || !codeOk) {
+        const res = await this.redis
+          .multi()
+          .incr(failKey)
+          .expire(failKey, LOGIN_FAIL_WINDOW_SEC)
+          .exec();
+        const failCount = Number(res?.[0]?.[1] ?? 0);
+        await recordAuthEvent(
+          this.db,
+          'admin_totp_failed',
+          failCount >= ACCOUNT_MAX_FAILS ? 'critical' : 'warning',
+          user.email,
+          'İki faktörlü kapatma denemesi başarısız (parola veya kod hatalı)',
+          { userId: user.id, failCount, op: 'disable' },
+        );
+        // Tek mesaj: hangisinin yanlış olduğu söylenmez (parola oraklı üretmeyelim).
+        throw new UnauthorizedException('Parola veya kod hatalı.');
+      }
+      // Başarılı doğrulama kovayı temizler (giriş yolundaki davranışın aynısı).
+      await this.redis.del(failKey);
     }
     await this.clearSecret(id, false);
     await recordAuthEvent(

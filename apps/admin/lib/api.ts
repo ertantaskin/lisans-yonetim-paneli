@@ -85,14 +85,29 @@ export async function apiGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * AKTÖR VARSAYILANI (denetim bulgusu): `actor` verilmezse OTURUMDAN alınır.
+ *
+ * Eskiden yazma çağrıları aktörü çağırandan bekliyordu; geçmeyi unutan her çağrı API'de
+ * sessizce `'panel:admin'` fallback'ine düşüyordu. İki sonucu vardı: (a) denetim izi
+ * "kim yaptı"yı kaybediyordu, (b) aktöre göre YETKİ veren uçlar (TOTP `assertSelfOrOwner`)
+ * owner-olmayan yöneticiye 403 veriyordu — yani iki faktörlü doğrulama fiilen yalnız
+ * owner'da çalışıyordu. Çağıran açıkça bir aktör geçerse o kazanır (davranış korunur).
+ */
+async function resolveActor(explicit?: string): Promise<{ actor?: string; role: string | null }> {
+  if (explicit) return { actor: explicit, role: await getSessionRole() };
+  const { actor, role } = await getActorAndRole();
+  return { actor, role };
+}
+
 export async function apiPost<T>(path: string, body?: unknown, actor?: string): Promise<T> {
   // YOL KAPISI (SEC-1) — YAZMA yolu: enjekte edilen bir segment owner-only bir uca
   // düşerse ADMIN_TOKEN ile çalıştırılırdı; bu yüzden fetch'ten ÖNCE reddedilir.
   assertSafePath(path);
-  const role = await getSessionRole();
+  const resolved = await resolveActor(actor);
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
-    headers: headers(body !== undefined, actor, role),
+    headers: headers(body !== undefined, resolved.actor, resolved.role),
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
@@ -108,10 +123,10 @@ export async function apiSend<T>(
 ): Promise<T> {
   // YOL KAPISI (SEC-1) — PATCH/DELETE de yazma yoludur (bkz. apiPost).
   assertSafePath(path);
-  const role = await getSessionRole();
+  const resolved = await resolveActor(actor);
   const res = await fetch(`${API_URL}${path}`, {
     method,
-    headers: headers(body !== undefined, actor, role),
+    headers: headers(body !== undefined, resolved.actor, resolved.role),
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
