@@ -67,7 +67,7 @@ export class ProductCategoriesService {
            -- Süresi geçmiş kalem ATANAMAZ → sayımdan da düşer (assign.ts notExpiredCond ile aynı).
            AND (li.expires_at IS NULL OR li.expires_at > now())
           GROUP BY p.id, p.category_id, p.low_stock_threshold
-        )
+        ),
         cards AS (
         SELECT
           c.id AS id,
