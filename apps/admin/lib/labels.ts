@@ -581,6 +581,13 @@ const NOTIFICATION_TYPE: Record<string, string> = {
   site_silent: 'Mağaza sessiz',
   /** Tekrarlı bir süpürme işi patladı (SweepAlarmService) — "iş sessizce öldü" alarmı. */
   sweep_failed: 'Arka plan işi başarısız',
+  /**
+   * Yedek/tatbikat bayatlığı (BackupAlarmService). Yedeksizlik bu panelde geri alınamaz TEK
+   * kayıp sınıfıdır; alarm bir dönem HİÇBİR kanala bağlı değildi (yalnız operatörün açmayabileceği
+   * bir sayfadaki bant) → cron kurulmamışsa aylarca fark edilmezdi.
+   */
+  backup_stale: 'Yedek bayat',
+  drill_stale: 'Geri yükleme tatbikatı bayat',
 };
 export const notificationTypeLabel = (t: string) => lookup(NOTIFICATION_TYPE, t);
 
