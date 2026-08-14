@@ -82,7 +82,7 @@ export default async function CustomersPage({
       ? `“${term}” için tüm mağazalarda arandı.`
       : mode === 'site'
         ? `${activeSite?.domain ?? 'Seçili mağaza'} müşterileri — sipariş/atama/değişim sayıları bu mağazaya göre.`
-        : 'Önce mağazayı seçin, müşterileri içeride listelenir. E-postayı biliyorsanız aramayla doğrudan bulun.';
+        : 'Mağazayı seçin, müşterileri içeride listelensin. E-postayı biliyorsanız aramayla doğrudan bulun.';
 
   return (
     <div>
@@ -165,19 +165,23 @@ export default async function CustomersPage({
               </div>
             </Alert>
           )}
-          {mode === 'search' && customers.length === 0 && (
-            <Alert variant="muted" className="mb-4">
-              <Search />
-              <div>
-                <AlertTitle>Sonuç yok</AlertTitle>
-                <AlertDescription>
-                  “{term}” ile eşleşen müşteri bulunamadı. E-postanın bir parçasıyla
-                  (ör. alan adı) aramayı deneyin.
-                </AlertDescription>
-              </div>
-            </Alert>
+          {/* Sonuçsuz aramada TABLO ÇİZİLMEZ: boş tablo + sayfalama ("0 kayıt · Sayfa 1/1")
+              aramanın kendisini gölgeliyordu. Tek mesaj, tek çıkış yolu. */}
+          {mode === 'search' && customers.length === 0 ? (
+            <EmptyState
+              icon={Search}
+              title={`“${term}” ile eşleşen müşteri yok`}
+              description="Arama tüm mağazalarda, sunucu tarafında yapıldı. E-postanın bir parçasıyla (ör. alan adı) deneyin ya da mağaza listesine dönün."
+            >
+              <Button asChild variant="outline" size="sm">
+                <Link href="/customers">
+                  <ArrowLeft className="size-3.5" /> Mağaza listesi
+                </Link>
+              </Button>
+            </EmptyState>
+          ) : (
+            <CustomersTable customers={customers} siteScoped={mode === 'site'} />
           )}
-          <CustomersTable customers={customers} siteScoped={mode === 'site'} />
         </>
       )}
     </div>
