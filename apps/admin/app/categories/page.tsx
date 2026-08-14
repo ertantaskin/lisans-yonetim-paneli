@@ -42,6 +42,7 @@ export default async function CategoriesPage() {
       </PageHeader>
 
       <HowItWorks
+        compact
         steps={[
           {
             title: 'Kategori aç',

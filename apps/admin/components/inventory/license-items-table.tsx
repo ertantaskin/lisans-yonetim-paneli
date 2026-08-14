@@ -44,7 +44,7 @@ import { assignmentStatusLabel, productKindLabel, siteTypeLabel } from '../../li
 import { LicenseItemActions, statusLabel } from './license-item-actions';
 
 /** Sayfa boyutu seçenekleri — API bu üç değere kırpar (kullanıcının açık isteği). */
-const PAGE_SIZES = [25, 50, 100] as const;
+const PAGE_SIZES = [10, 25, 50, 100] as const;
 
 /**
  * Durum süzgeci. ETİKETLER TEK KAYNAKTAN (`lib/labels` → statusLabel) gelir — burada yalnız
@@ -127,6 +127,7 @@ export function LicenseItemsTable({
   onMutated,
   payloadSchema,
   showProductColumn = false,
+  defaultPageSize,
   className,
 }: {
   /** Verilirse yalnız bu ürünün kalemleri listelenir (ürün detayı). */
@@ -155,6 +156,12 @@ export function LicenseItemsTable({
   payloadSchema?: PayloadFieldDef[] | null;
   /** Global listede ürün kolonu gösterilir (farklı ürünler karışık gelir). */
   showProductColumn?: boolean;
+  /**
+   * Başlangıç sayfa boyu. Gömülü kullanımlarda (ör. /stock giriş ekranındaki "Son Eklenen
+   * Lisanslar" kartı) 25 satır ekranı gereksiz uzatıyordu — orada 10 verilir, operatör
+   * yine de kutudan büyütebilir. Verilmezse liste ekranlarındaki davranış aynen korunur.
+   */
+  defaultPageSize?: (typeof PAGE_SIZES)[number];
   className?: string;
 }) {
   const [search, setSearch] = React.useState('');
@@ -162,7 +169,7 @@ export function LicenseItemsTable({
   const [status, setStatus] = React.useState('');
   const [holder, setHolder] = React.useState<string>(lockedHolder ?? '');
   const [sort, setSort] = React.useState<string>('created_desc');
-  const [pageSize, setPageSize] = React.useState<number>(PAGE_SIZES[0]);
+  const [pageSize, setPageSize] = React.useState<number>(defaultPageSize ?? 25);
   const [page, setPage] = React.useState(1);
   const [reloadKey, setReloadKey] = React.useState(0);
 
@@ -379,9 +386,14 @@ export function LicenseItemsTable({
 
   return (
     <div className={cn('space-y-3', className)}>
-      {/* ── Üst çubuk: arama + süzgeçler ── */}
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex min-w-56 flex-1 flex-col gap-1">
+      {/*
+        ── Üst çubuk: arama + süzgeçler ──
+        DAR EKRAN: dört süzgeç `flex-wrap` ile alt alta düşüyordu (etiket+kontrol ≈ 50px ×4
+        ≈ 200px, tablo daha başlamadan ekran doluyordu). 360px'te iki sütunlu ızgara → aynı
+        süzgeçler ~100px'te sığar; sm ve üstünde eski tek satırlık akış aynen korunur.
+      */}
+      <div className="grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap">
+        <div className="col-span-2 flex min-w-56 flex-1 flex-col gap-1">
           <label htmlFor={`${uid}-search`} className="text-xs font-medium text-foreground/70">
             Ara
           </label>
@@ -522,10 +534,10 @@ export function LicenseItemsTable({
               {showProductColumn && <TableHead>Ürün</TableHead>}
               <TableHead>Lisans / Hesap</TableHead>
               <TableHead>Durum</TableHead>
-              <TableHead>Kapasite</TableHead>
-              <TableHead>Parti</TableHead>
-              <TableHead>Teslimat</TableHead>
-              <TableHead>Eklenme</TableHead>
+              <TableHead className="hidden lg:table-cell">Kapasite</TableHead>
+              <TableHead className="hidden xl:table-cell">Parti</TableHead>
+              <TableHead className="hidden md:table-cell">Teslimat</TableHead>
+              <TableHead className="hidden lg:table-cell">Eklenme</TableHead>
               <TableHead className="text-right">
                 <span className="sr-only">İşlemler</span>
               </TableHead>
@@ -616,13 +628,36 @@ export function LicenseItemsTable({
 
                   <TableCell className="max-w-72">
                     <LicenseValueCell row={row} />
+                    {/*
+                      DAR EKRAN ÖZETİ (kullanıcı: "küçük ekranlarda sıkışıyor, yana kaydırma
+                      sorunu var"): Kapasite/Parti/Teslimat/Eklenme kolonları md/lg/xl altında
+                      GİZLİ — bilgileri kaybolmasın diye burada tek satırda özetlenir. Yalnız
+                      DOLU olanlar yazılır; kolonlar görünür olduğunda bu satır kaybolur
+                      (aynı bilgiyi iki kez göstermek satırı yine şişirirdi).
+                    */}
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground xl:hidden">
+                      {row.delivered && (
+                        <Link
+                          href={`/orders/${row.delivered.orderId}`}
+                          className="font-medium tabular-nums text-foreground underline-offset-4 hover:underline md:hidden"
+                        >
+                          #{row.delivered.remoteOrderId || '—'}
+                        </Link>
+                      )}
+                      {row.batchCode && <span className="truncate">{row.batchCode}</span>}
+                      {row.usageMode === 'multi' && (
+                        <span className="tabular-nums lg:hidden">
+                          kalan {row.remainingUses}
+                        </span>
+                      )}
+                    </div>
                   </TableCell>
 
                   <TableCell>
                     <StatusCell row={row} />
                   </TableCell>
 
-                  <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                  <TableCell className="hidden whitespace-nowrap tabular-nums text-muted-foreground lg:table-cell">
                     {row.usageMode === 'multi' ? (
                       <span title={`${row.useCount} kullanıldı / ${row.maxUses} toplam`}>
                         {row.useCount}/{row.maxUses}
@@ -633,7 +668,7 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
 
-                  <TableCell className="max-w-40">
+                  <TableCell className="hidden max-w-40 xl:table-cell">
                     {row.batchCode ? (
                       <>
                         <div className="truncate text-foreground/90" title={row.batchCode}>
@@ -653,11 +688,11 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
 
-                  <TableCell className="max-w-64">
+                  <TableCell className="hidden max-w-64 md:table-cell">
                     <DeliveryCell row={row} />
                   </TableCell>
 
-                  <TableCell className="whitespace-nowrap tabular-nums text-xs text-muted-foreground">
+                  <TableCell className="hidden whitespace-nowrap tabular-nums text-xs text-muted-foreground lg:table-cell">
                     {fmtDateTime(row.createdAt)}
                   </TableCell>
 

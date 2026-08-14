@@ -119,6 +119,7 @@ export default async function StockPage({
           ekranın kendisinde anlatılır (kullanıcı isteği) — yalnız giriş seviyesinde. */}
       {mode === 'categories' && (
         <HowItWorks
+          compact
           steps={[
             {
               title: '1. Panel ürünü',
@@ -237,7 +238,7 @@ export default async function StockPage({
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <LicenseItemsTable showProductColumn />
+            <LicenseItemsTable showProductColumn defaultPageSize={10} />
           </CardContent>
         </Card>
       )}

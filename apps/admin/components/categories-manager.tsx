@@ -163,9 +163,9 @@ function CategoryForm({
           />
         </Field>
         <Field
-          label="Sıra"
+          label="Sabitleme sırası"
           htmlFor={`cat-sort-${category?.id ?? 'new'}`}
-          hint="Küçük sayı önce gelir. Eşitlikte ada göre sıralanır."
+          hint="0 = otomatik (stoğu çok olan üstte). Bir kategoriyi hep en üstte tutmak için 1, 2, 3… verin."
         >
           <Input
             id={`cat-sort-${category?.id ?? 'new'}`}

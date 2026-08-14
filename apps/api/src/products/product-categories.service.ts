@@ -94,7 +94,25 @@ export class ProductCategoriesService {
         WHERE s.category_id IS NULL
         HAVING COUNT(*) > 0
 
-        ORDER BY sort_order NULLS LAST, name NULLS LAST
+        /*
+         * SIRALAMA (kullanıcı geri bildirimi: "stoğu fazla olan kategoriler en başta"):
+         *   1) "Kategorisiz" HER ZAMAN en sonda - bir kategori degil, artik kovasidir.
+         *   2) SABITLENMIS kategoriler (sort_order > 0) once, kendi siralariyla. sort_order
+         *      varsayilani 0'dir ve 0 "otomatik" demektir - operator bir kategoriyi elle one
+         *      almak isterse 1, 2, 3 verir. (Aksi halde sira alani stok siralamasini sessizce
+         *      ezerdi ve hic kimse 0'in ne anlama geldigini bilemezdi.)
+         *   3) Kalanlar ATANABILIR STOGA gore coktan aza - operatorun satacak mali olan
+         *      gruplari en ustte gormesi istendi.
+         *   4) Esitlikte ada gore -> sira deterministik (ayni veri hep ayni sirada).
+         * NOT: bu blok bir sql-sablonunun ICINDE - ters tirnak KULLANILAMAZ (sablonu erken
+         * kapatir; bu projede daha once uc kez yasandi, typecheck TS1005/TS2349 ile yakalar).
+         */
+        ORDER BY
+          (id IS NULL) ASC,
+          (sort_order IS NULL OR sort_order = 0) ASC,
+          sort_order ASC,
+          available_stock DESC,
+          name ASC
       `,
     );
 

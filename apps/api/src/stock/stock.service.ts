@@ -189,7 +189,14 @@ export interface StockPreview {
 }
 
 /** Lisans envanteri: sayfa başına izinli adetler (UI "25 / 50 / 100" seçeneği). */
-export const LICENSE_PAGE_SIZES = [25, 50, 100] as const;
+/**
+ * İzinli sayfa boyları. `clampPageSize` gelen değeri bu kümenin EN YAKININA çeker, yani
+ * listede olmayan bir değer SESSİZCE başka bir sayıya döner. Bu yüzden admin'deki seçenek
+ * listesiyle (license-items-table `PAGE_SIZES`) BİREBİR aynı kalmalı — aksi halde kutuda
+ * "10 kayıt" yazarken tablo 25 satır gösterirdi.
+ * 10: gömülü kartlarda (/stock giriş ekranı) ekranı uzatmamak için eklendi.
+ */
+export const LICENSE_PAGE_SIZES = [10, 25, 50, 100] as const;
 
 /** license_items.status enum'unun TAM listesi (UI facet'i genelde ilk 4'ünü kullanır). */
 export const LICENSE_ITEM_STATUSES = [
