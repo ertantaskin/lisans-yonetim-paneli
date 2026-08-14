@@ -511,9 +511,86 @@ export function LicenseItemsTable({
         </div>
       )}
 
-      {/* ── Tablo ── */}
+      {/*
+        ── DAR EKRAN: KART LİSTESİ (md altı) ──
+        Kullanıcı: "küçük ekranlarda sıkışıyor, yana kaydırma sorunu var, tablolar çok
+        yüksek duruyor". ÖLÇÜLDÜ (375px): kolonları gizlemek YETMİYOR — kalan dört kolonun
+        min-content genişliği 856px ve kap 291px, yani tablo hâlâ 565px yana kayıyordu
+        (anahtar tek parça monospace metin, ürün adı + SKU, iki metin düğmesi).
+        5 kolonlu bir tablo 291px'e SIĞMAZ; bu yüzden dar ekranda satır KARTA dönüşür.
+        Hücre bileşenleri (LicenseValueCell/StatusCell/DeliveryCell/LicenseItemActions)
+        AYNEN yeniden kullanılır → iki ayrı doğruluk kaynağı oluşmaz.
+      */}
+      <div className="space-y-2 md:hidden" aria-busy={loading}>
+        {loading && rows.length === 0 ? (
+          Array.from({ length: 3 }).map((_, i) => (
+            <div key={`mc-sk-${i}`} className="rounded-lg border border-border p-3">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="mt-2 h-3 w-1/3" />
+            </div>
+          ))
+        ) : rows.length === 0 ? null : (
+          rows.map((row) => (
+            <div
+              key={`mc-${row.id}`}
+              className={cn(
+                'rounded-lg border border-border p-3',
+                loading && 'opacity-60',
+                selected.has(row.id) && 'bg-accent',
+              )}
+            >
+              <div className="flex items-start gap-2">
+                {row.status === 'available' ? (
+                  <label className="-m-1 flex size-9 shrink-0 cursor-pointer items-center justify-center">
+                    <Checkbox
+                      checked={selected.has(row.id)}
+                      disabled={bulkBusy}
+                      onChange={(e) => toggleRow(row.id, e.currentTarget.checked)}
+                      aria-label="Bu lisansı seç"
+                    />
+                  </label>
+                ) : (
+                  <span className="size-9 shrink-0" aria-hidden />
+                )}
+                <div className="min-w-0 flex-1">
+                  <LicenseValueCell row={row} />
+                  {showProductColumn && (
+                    <Link
+                      href={`/products/${row.productId}`}
+                      className="mt-1 block truncate text-xs font-medium text-foreground underline-offset-4 hover:underline"
+                    >
+                      {row.productName}
+                    </Link>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <StatusCell row={row} />
+                    {row.batchCode && <span className="truncate">{row.batchCode}</span>}
+                    {row.usageMode === 'multi' && (
+                      <span className="tabular-nums">kalan {row.remainingUses}</span>
+                    )}
+                  </div>
+                  {row.delivered && (
+                    <div className="mt-1.5">
+                      <DeliveryCell row={row} />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex justify-end border-t border-border pt-2">
+                <LicenseItemActions
+                  row={row}
+                  payloadSchema={productId ? payloadSchema : undefined}
+                  onDone={reloadAfterMutation}
+                />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* ── Tablo (md ve üstü) ── */}
       <div
-        className="rounded-lg border border-border"
+        className="hidden rounded-lg border border-border md:block"
         aria-busy={loading}
       >
         <Table>
