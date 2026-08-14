@@ -41,6 +41,8 @@ import {
   adjustmentActionLabel,
 } from '../../../lib/labels';
 import { getProductDetail, type ProductDetail } from './queries';
+import { getCategories } from '../../categories/queries';
+import { UNCATEGORIZED, type CategoryRow } from '../../../lib/categories';
 import { StockAdjustForm } from './stock-adjust-form';
 import { ProductTabs } from './product-tabs';
 import { ProductEditSheet } from '../../../components/product-edit-sheet';
@@ -70,12 +72,19 @@ export default async function ProductDetailPage({
 
   let data: ProductDetail | null = null;
   let sites: SiteRow[] = [];
+  let categories: CategoryRow[] = [];
   let error: string | null = null;
   try {
-    // Detay + siteler paralel (siteler eşleme formunun site seçimi için).
-    [data, sites] = await Promise.all([
+    // Detay + siteler + kategoriler paralel (siteler eşleme formunun site seçimi için,
+    // kategoriler "Düzenle" panelindeki kategori alanı için).
+    //
+    // Kategori ucu KRİTİK DEĞİL: eski API imajında (dağıtım sapması) 404 dönebilir. O yüzden
+    // `.catch(() => [])` ile YUTULUR — Promise.all'a çıplak bırakılsaydı tüm ürün detayı hata
+    // kartına düşerdi (/stock ekranındaki savunmalı desenin aynısı).
+    [data, sites, categories] = await Promise.all([
       getProductDetail(id),
       apiGet<SiteRow[]>('/v1/admin/sites'),
+      getCategories().catch(() => [] as CategoryRow[]),
     ]);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
@@ -98,6 +107,12 @@ export default async function ProductDetailPage({
   }
 
   const { product, stock, batches, purchaseOrders, velocity, adjustments } = data;
+
+  // Formlarda seçilebilir GERÇEK kategoriler ("Kategorisiz" sanal kovadır, seçenek değil).
+  // /stock ekranındaki türetmenin birebir aynısı — iki ekran aynı seçenek listesini gösterir.
+  const selectableCategories = categories
+    .filter((c) => c.id !== UNCATEGORIZED)
+    .map((c) => ({ id: c.id, name: c.name }));
 
   // Düşük stok işareti (§12): eşik tanımlı ve kalan available <= eşik.
   const lowStock =
@@ -140,9 +155,18 @@ export default async function ProductDetailPage({
                 Düşük stok (eşik {product.lowStockThreshold})
               </Badge>
             )}
-            {/* Ürün-merkezli hub: düzenleme artık burada (paylaşımlı edit sheet). */}
+            {/* Ürün-merkezli hub: düzenleme artık burada (paylaşımlı edit sheet).
+                `categories` GEÇİLMEK ZORUNDA: verilmezse sheet varsayılanı `[]` olur ve form
+                yalnız "Kategorisiz" gösterir → ürünü bu ekrandan kategoriye taşımak imkânsız
+                olurdu (ürün düzenleme buraya taşınmıştı, /stock tablosundaki satır aksiyonu
+                zaten geçiriyor).
+                NOT: ürünün MEVCUT kategorisi `product.categoryId` üzerinden ön-seçilir —
+                detay ucu tam `products` satırını döndürdüğü için alan yanıtta VARDIR
+                (`queries.ts`'teki `ProductRecord` arayüzü onu henüz ilan etmiyor, ama
+                `ProductRow` opsiyonel taşıyor ve değer spread ile aynen geçiyor). */}
             <ProductEditSheet
               product={{ ...product, availableStock: stock.available }}
+              categories={selectableCategories}
               trigger={
                 <Button variant="outline" size="sm">
                   <Pencil /> Düzenle

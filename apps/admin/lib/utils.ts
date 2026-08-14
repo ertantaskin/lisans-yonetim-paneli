@@ -22,6 +22,16 @@ export function lowerTr(value: unknown): string {
 }
 
 /**
+ * "Nokta katlaması": İ/I/ı/i dört varyantını tek harfe (`i`) indirip küçük harfe çevirir.
+ * Veritabanı tarafındaki kategori ikiz kilidiyle AYNI kural (migration 0038) — arama ile
+ * benzersizlik kuralının aynı dili konuşması bilinçlidir. Yalnız `includesTr` içinde
+ * kullanılır; sıralama/karşılaştırma için `lowerTr` kalır.
+ */
+function foldDotless(value: string): string {
+  return value.replace(/[İIı]/g, 'i').toLocaleLowerCase('tr-TR');
+}
+
+/**
  * Türkçe-duyarlı "içeriyor mu" — tablo arama/filtre (`filterFn`) fonksiyonlarında kullanılır.
  * TanStack'in yerleşik `includesString` süzgeci ham `toLowerCase()` kullandığı için
  * TÜRKÇE KAYITLARDA BOZUKTUR; onun yerine bu yardımcı çağrılır.
@@ -45,7 +55,15 @@ export function includesTr(haystack: unknown, needle: unknown): boolean {
   // 1) Türkçe katlama: "IŞIK Bilişim" ⊃ "ışık", "İhsan" ⊃ "ihsan"
   if (lowerTr(rawHay).includes(lowerTr(rawNeedle))) return true;
   // 2) Nötr katlama: "AI Operasyon" ⊃ "ai", "IBAN" ⊃ "iban" (tr-TR'de 'aı'/'ıban' olurdu)
-  return rawHay.toLowerCase().includes(rawNeedle.toLowerCase());
+  if (rawHay.toLowerCase().includes(rawNeedle.toLowerCase())) return true;
+  // 3) NOKTA KATLAMASI — İ/I/ı/i dördü de 'i' sayılır (DB'deki kategori ikiz kilidiyle AYNI
+  //    kural: migration 0038 `lower(translate(name,'İIı','iii'))`).
+  //    NEDEN: ilk iki geçiş 16 hücrelik I/İ/ı/i matrisinin 5'ini kaçırıyordu (test yazılırken
+  //    ölçüldü) — en can yakanı "isik" yazan operatörün "IŞIK" kaydını BULAMAMASIydı. Klavyede
+  //    noktasız ı üretmek zahmetli olduğu için operatör doğal olarak 'i' yazar.
+  //    YÖN GÜVENLİ: bu geçiş yalnız daha ÇOK sonuç döndürür (üst küme); bir arama süzgecinde
+  //    fazladan satır göstermek, aranan kaydı sessizce gizlemekten her zaman iyidir.
+  return foldDotless(rawHay).includes(foldDotless(rawNeedle));
 }
 
 /** ISO tarihi tr-TR biçimler. */

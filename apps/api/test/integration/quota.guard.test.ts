@@ -18,9 +18,28 @@ import {
 } from './_helpers';
 
 /**
- * SalesQuotaGuard entegrasyon testi (§5).
+ * ⚠️ UYARI — BU TEST BİR ZORLAMA (enforcement) GARANTİSİ DEĞİLDİR.
  *
- * Guard, HmacGuard'dan SONRA çalışır: req.site iliştirilmiş kabul edilir. Bugünkü
+ * `SalesQuotaGuard` ŞU AN HİÇBİR ROTAYA BAĞLI DEĞİLDİR: `orders.module.ts` içinde yalnız
+ * provider olarak kayıtlıdır; kod tabanında onu `@UseGuards(...)` ile kullanan bir controller
+ * ya da global `APP_GUARD` kaydı YOKTUR (doğrulandı: `grep -rn "SalesQuotaGuard" apps/api/src`).
+ * Yani buradaki testler YEŞİL olsa bile hiçbir HTTP isteği bu guard'dan geçmez.
+ *
+ * GERÇEK ZORLAMA NEREDE: sert günlük satış kotası `orders.service.createOrder` içinde,
+ * `pg_advisory_xact_lock(hashtext(site.id))` ALTINDA say-ve-ekle olarak uygulanır (say-sonra-ekle
+ * TOCTOU yarışı bu yüzden servis yoluna taşındı; bkz. orders.service `evaluateQuota` + createOrder).
+ * 429'u ve `quota_exceeded` güvenlik olayını da o yol üretir (`Retry-After` başlığı reply erişimi
+ * olan orders.controller'da yazılır). Kotanın GERÇEKTEN çalıştığını doğrulayan testler orada
+ * (sert-kota/TOCTOU entegrasyon testleri) — bu dosya DEĞİL.
+ *
+ * NEDEN SİLİNMEDİ: guard sınıfını ya da testini kaldırmak bir kapsam/ürün kararıdır (kullanıcı
+ * onayı gerekir). Ancak "yeşil test = kota zorlanıyor" yanılgısı üretmemesi için dosya adı,
+ * describe başlığı ve bu blok neyin test edildiğini açıkça sınırlar: yalnız guard SINIFININ
+ * kendi mantığı (sayma + eşik + 429 fırlatma) test edilir, sistemdeki zorlama YOLU değil.
+ * Guard ileride bir rotaya bağlanırsa bu uyarı KALDIRILMALIDIR.
+ *
+ * ── Test kurulumu ──────────────────────────────────────────────────────────────────────
+ * Guard, HmacGuard'dan SONRA çalışacak şekilde yazılmıştır: req.site iliştirilmiş kabul eder. Bugünkü
  * sipariş sayısını gerçek DB'den sayar (created_at >= date_trunc('day', now())) ve
  * site.salesDailyQuota dolmuşsa 429 (TOO_MANY_REQUESTS) fırlatır.
  *
@@ -59,7 +78,7 @@ function siteObj(salesDailyQuota: number | null): Partial<Site> {
   return { id: siteId, salesDailyQuota } as Partial<Site>;
 }
 
-describe('SalesQuotaGuard (günlük satış kotası)', () => {
+describe('SalesQuotaGuard sınıf mantığı — ROTAYA BAĞLI DEĞİL (zorlama orders.service içinde)', () => {
   beforeAll(async () => {
     const h = makeDb();
     db = h.db;

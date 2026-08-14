@@ -24,7 +24,7 @@ import type {
   QuarantineStatusFilter,
 } from '../app/quarantine/queries';
 import { SEGMENTED_LIST, segmentedItem } from '../lib/segmented';
-import { cn, fmtDateTime } from '../lib/utils';
+import { cn, fmtDateTime, includesTr } from '../lib/utils';
 import { claimOutcomeLabel, licenseItemStatusLabel, productKindLabel } from '../lib/labels';
 import {
   downloadCsv,
@@ -53,8 +53,12 @@ import {
 
 // ── Yardımcılar (hepsi null-güvenli: alanlar backend sapmasında eksik gelebilir) ──
 
-/** Türkçe küçültme (İ/ı) — arama karşılaştırması için. */
-const lower = (s: string) => s.toLocaleLowerCase('tr-TR');
+// ARAMA KARŞILAŞTIRMASI: burada YEREL bir `toLocaleLowerCase('tr-TR')` katlaması vardı.
+// Tek geçişli tr-TR katlaması ASCII büyük `I`yı NOKTASIZ `ı` yapar → "LISANS", "AI", "ID"
+// gibi terimlerde SESSİZ boş sonuç verir (hata yok, sadece kayıt "yok" görünür). Projede
+// merkezî çözüm var: `lib/utils.includesTr` (tr-TR **ve** nötr, iki geçiş). Bu kusur panelde
+// DAHA ÖNCE İKİ KEZ yaşandı (Ctrl+K "AI Operasyon" ve /notifications-/review aramaları) —
+// bu yüzden burada yeni bir yerel katlama yazılmaz, tek kaynak çağrılır.
 
 const ts = (iso?: string | null): number => {
   if (!iso) return 0;
@@ -576,7 +580,13 @@ function ChoiceGroup<T extends string>({
  */
 interface IndexedRow {
   row: QuarantineItem;
-  /** Aranabilir alanların birleşimi (Türkçe küçültülmüş). */
+  /**
+   * Aranabilir alanların birleşimi — HAM (katlanmamış).
+   *
+   * Katlama artık burada YAPILMAZ: karşılaştırma `includesTr` üzerinden gider ve o yardımcı
+   * iki katlamayı birden dener (yukarıdaki nota bakın). Perf kaybı yok — terim başına TEK
+   * geçiş yapılıp sonuç `termMatched` kümesinde saklanır, facet sayaçları o kümeyi okur.
+   */
   hay: string;
   keys: Record<FacetKey, string | null>;
 }
@@ -631,8 +641,6 @@ export function QuarantineTable({
     return () => window.clearTimeout(t);
   }, [q]);
 
-  const needle = React.useMemo(() => lower(term), [term]);
-
   const go = React.useCallback(
     (next: Partial<QuarantineFilterState>) => {
       // Kutuda YAZILI olan metin ve seçili aralık düğmesi her gezinmede taşınır: operatör
@@ -668,22 +676,20 @@ export function QuarantineTable({
     () =>
       all.map((r) => ({
         row: r,
-        hay: lower(
-          [
-            r.productName,
-            r.sku,
-            r.keyPreview,
-            r.customerEmail,
-            r.remoteOrderId ?? r.sourceRemoteOrderId,
-            r.batchCode,
-            r.supplierName,
-            r.siteDomain,
-            r.reason,
-            r.claimCode,
-          ]
-            .filter(Boolean)
-            .join(' '),
-        ),
+        hay: [
+          r.productName,
+          r.sku,
+          r.keyPreview,
+          r.customerEmail,
+          r.remoteOrderId ?? r.sourceRemoteOrderId,
+          r.batchCode,
+          r.supplierName,
+          r.siteDomain,
+          r.reason,
+          r.claimCode,
+        ]
+          .filter(Boolean)
+          .join(' '),
         keys: {
           claim: FACET_VALUE.claim(r),
           product: FACET_VALUE.product(r),
@@ -693,6 +699,22 @@ export function QuarantineTable({
       })),
     [all],
   );
+
+  /**
+   * Arama terimine uyan satırlar — TERİM BAŞINA TEK GEÇİŞ.
+   *
+   * `match` hem süzme hem de her facet sayacı için çağrılır (5×N); metin karşılaştırmasını
+   * orada yapmak `includesTr`'yi satır başına beş kez koştururdu. Sonuç burada bir kez
+   * hesaplanıp küme olarak saklanır → tuş başına yalnız `Set.has` çalışır (eski önceden
+   * katlanmış `hay` çözümünün perf kazancı korunur, katlama mantığı ise tek kaynakta kalır).
+   * `null` = arama yok (süzme uygulanmaz).
+   */
+  const termMatched = React.useMemo(() => {
+    if (!term) return null;
+    const hit = new Set<IndexedRow>();
+    for (const item of indexed) if (includesTr(item.hay, term)) hit.add(item);
+    return hit;
+  }, [indexed, term]);
 
   /**
    * Bir satır YEREL süzgeçlere uyuyor mu. `skip` verilirse O SÜZGEÇ atlanır — facet sayaçları
@@ -708,10 +730,10 @@ export function QuarantineTable({
         const value = item.keys[key];
         if (value === null || !selected.includes(value)) return false;
       }
-      if (needle && !item.hay.includes(needle)) return false;
+      if (termMatched && !termMatched.has(item)) return false;
       return true;
     },
-    [facetValues, needle],
+    [facetValues, termMatched],
   );
 
   const filtered = React.useMemo(

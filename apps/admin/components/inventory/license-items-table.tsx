@@ -108,6 +108,19 @@ const SORT_OPTIONS = [
 /** Gizli alan maskesi — uzunluk/biçim sızdırmayan sabit gövde (§8 mask deseni). */
 const MASK = '••••••';
 
+/**
+ * Toplu işlem sonucu — METİN İLE BİRLİKTE TONU da taşır.
+ *
+ * DENETİM BULGUSU (orta): sonuç notu düz `string` idi ve kutu KOŞULSUZ `variant="success"` +
+ * tik ikonu basıyordu. Operatör 40 kalemi "Geçersiz kıl" dediğinde istek düşse bile ekranda
+ * YEŞİL ✓ ile "0 lisans düşüldü. Hata: …" beliriyordu → bozuk anahtarlar stokta kalıp
+ * satılmaya devam ediyordu. Ton artık sonuçtan türetilir:
+ *   destructive → en az bir grup hata verdi (işlem YAPILMADI ya da yarım kaldı)
+ *   warning     → hepsi geçti ama bazı kalemler atlandı (arada kapıldı)
+ *   success     → istenen her kalem işlendi
+ */
+type BulkNote = { tone: 'success' | 'warning' | 'destructive'; text: string };
+
 /** Hâlâ "satılabilir" görünen durumlar — stok ömrü dolmuşsa UYARI tonu bunlarda gösterilir. */
 const SELLABLE_STATUS = new Set(['available', 'reserved']);
 
@@ -125,6 +138,51 @@ function stockExpiry(row: LicenseInventoryRow): { expired: boolean; expiresAt: s
   const r = row as unknown as { expired?: unknown; expiresAt?: unknown };
   const expiresAt = typeof r.expiresAt === 'string' && r.expiresAt.trim() ? r.expiresAt : null;
   return { expired: r.expired === true, expiresAt };
+}
+
+/**
+ * BOŞ DURUM METNİ — TEK KAYNAK.
+ *
+ * DENETİM BULGUSU (düşük): metin türetmesi YALNIZ tablo dalında (lg ve üstü) vardı; dar
+ * ekrandaki kart dalı `rows.length === 0 ? null` diyordu → 1024px altında arama sonuç
+ * vermeyince ekranda HİÇBİR açıklama kalmıyordu (operatör "yükleniyor mu, bozuk mu?"
+ * ayrımını yapamıyordu). Metin buraya çıkarıldı ki iki dal AYNI cümleyi göstersin;
+ * kopyalanmış ikinci bir metin kümesi ileride sessizce ayrışmasın.
+ */
+function emptyStateText(args: {
+  lockedHolder?: 'customer';
+  term: string;
+  status: string;
+  holder: string;
+  productId?: string;
+}): { title: string; description: string } {
+  const { lockedHolder, term, status, holder, productId } = args;
+  // Kilitli kapsamda boş liste bir SONUÇTUR, süzgeç hatası değil: "bu partiden müşterilerde
+  // kalem kalmadı" demektir (hepsi değiştirilmiş ya da hiç teslim edilmemiş) — öyle de yazar.
+  if (lockedHolder === 'customer' && !term && !status) {
+    return {
+      title: 'Bu partiden müşterilerde kalem kalmadı.',
+      description:
+        'Değiştirilecek bir şey yok: bu partinin kalemlerinden hiçbiri şu an bir müşterinin elinde değil.',
+    };
+  }
+  if (term || status || holder) {
+    return {
+      title: 'Bu süzgeçlerle kayıt bulunamadı.',
+      description: 'Aramayı veya süzgeçleri değiştirip tekrar deneyin.',
+    };
+  }
+  if (productId) {
+    return {
+      title: 'Bu ürüne henüz lisans girilmemiş.',
+      description: 'Yukarıdaki “Key / Stok İçe Aktar” bölümünden bu ürüne lisans ekleyebilirsiniz.',
+    };
+  }
+  return {
+    title: 'Henüz lisans yok.',
+    description:
+      'Bir ürünün detay sayfasındaki “Key / Stok İçe Aktar” bölümünden lisans ekleyebilirsiniz.',
+  };
 }
 
 /**
@@ -197,9 +255,20 @@ export function LicenseItemsTable({
   // Yalnız STOKTAKİ (available) kalemler seçilebilir: "geçersiz kıl / hasarlı" satılabilir
   // stoğu düşürme işlemidir; teslim edilmiş bir anahtarı buradan öldürmek müşterinin canlı
   // lisansını sessizce bozardı (o akış sipariş detayındaki "Değiştir").
+  //
+  // KAPSAM: seçim YALNIZ GÖRÜNEN SAYFAYA aittir — sayfa/süzgeç/sıralama değişince SIFIRLANIR
+  // (aşağıdaki effect). NEDEN (denetim bulgusu, orta): seçim sayfalar arasında birikiyor ama
+  // `runBulk` yalnız o an GÖRÜNEN satırları işleyip ardından TÜM seçimi temizliyordu →
+  // 1. sayfada 5, 2. sayfada 3 kalem seçen operatörün 5 kalemi SESSİZCE kayboluyordu
+  // (ekranda "3 lisans stoktan düşüldü" yazıyordu, itiraz eden bir uyarı yoktu).
+  // İki çözümden (a) "sayfa değişince sıfırla" ve (b) "seçilen satırları Map'te biriktirip
+  // tümü üzerinde çalış" arasından (a) seçildi: (b) toplu isteği farklı sayfalardaki
+  // (dolayısıyla bayat olabilecek) satırlara yayar ve onay modalindeki önizleme ile gerçek
+  // küme yine ayrışabilir. (a) ile sayaç · onay modali · işlenen küme TEK VE AYNI şeyi söyler.
+  // Davranış gizli değil: araç çubuğunda ve onay modalinde açıkça yazılır (sessiz davranış yasak).
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = React.useState(false);
-  const [bulkNote, setBulkNote] = React.useState<string | null>(null);
+  const [bulkNote, setBulkNote] = React.useState<BulkNote | null>(null);
   const { confirm, dialog } = useConfirm();
   const announce = useAnnouncer();
 
@@ -216,6 +285,15 @@ export function LicenseItemsTable({
   React.useEffect(() => {
     setPage(1);
   }, [term, status, holder, sort, pageSize]);
+
+  // Seçim SAYFA/SÜZGEÇ değişiminde bilerek sıfırlanır (yukarıdaki kapsam notu): toplu işlem
+  // yalnız görünen sayfayı işlediği için seçimin sayfalar arası birikmesi VAAT EDİLMEYEN bir
+  // davranıştı ve sessiz kayba yol açıyordu. `bulkNote` da temizlenir — önceki sonucun
+  // (özellikle hata notunun) yeni bir seçimin üstünde asılı kalması yanıltıcıdır.
+  React.useEffect(() => {
+    setSelected(new Set());
+    setBulkNote(null);
+  }, [page, term, status, holder, sort, pageSize]);
 
   // Yarışan yanıtlar: yalnız EN SON isteğin sonucu ekrana yazılır (eski yanıt üzerine binmez).
   const reqId = React.useRef(0);
@@ -276,15 +354,19 @@ export function LicenseItemsTable({
   const from = total === 0 ? 0 : (page - 1) * (data?.pageSize ?? pageSize) + 1;
   const to = total === 0 ? 0 : from + rows.length - 1;
   const colCount = (showProductColumn ? 8 : 7) + 1; // +1: seçim kolonu
+  // Boş durum metni TEK yerden türetilir → kart (dar ekran) ve tablo (geniş ekran) dalları
+  // aynı cümleyi gösterir.
+  const empty = emptyStateText({ lockedHolder, term, status, holder, productId });
 
   // ── Seçim türevleri ──
   const selectableIds = React.useMemo(
     () => rows.filter((r) => r.status === 'available').map((r) => r.id),
     [rows],
   );
-  // Seçim SAYFA DEĞİŞİNCE korunur (operatör süzüp birden çok sayfadan toplayabilir) ama
-  // seçili bir kalem artık listede yoksa (iptal edildi/atandı) sayaç yanıltmasın diye
-  // toplu işlem yalnız GÖRÜNÜR satırların kimliklerini kullanır — id → satır eşlemesi lazım.
+  // Seçim sayfa/süzgeç değişiminde sıfırlanır, AMA liste yerinde tazelenebilir (kardeş tablo
+  // mutasyonu, "Yenile"): seçili bir kalem o sırada atanmış/iptal edilmiş olabilir. Sayaç ve
+  // toplu işlem bu yüzden hâlâ GÖRÜNÜR satırların kimlikleriyle çalışır — id → satır eşlemesi
+  // lazım (bayat id ile istek atıp "hata" almak yerine kalem sessizce listeden düşer).
   const rowById = React.useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows]);
   const selectedVisible = React.useMemo(
     () => [...selected].filter((id) => rowById.has(id)),
@@ -342,7 +424,7 @@ export function LicenseItemsTable({
       const res = await confirm({
         title: `${ids.length} lisans stoktan düşülecek`,
         description:
-          'Bu kalemler "geçersiz" olur; bir daha teslim edilmezler ve Kusurlu Stok ekranında sebebiyle listelenirler. İşlem geri alınamaz.',
+          'Bu kalemler "geçersiz" olur; bir daha teslim edilmezler ve Kusurlu Stok ekranında sebebiyle listelenirler. İşlem geri alınamaz. Yalnız BU SAYFADA seçtikleriniz işlenir — sayfa değiştirirseniz seçim sıfırlanır.',
         details: preview,
         tone: 'danger',
         confirmLabel: label,
@@ -383,15 +465,29 @@ export function LicenseItemsTable({
             errors.push(out.error);
           }
         }
-        const msg = errors.length
-          ? `${affected} lisans düşüldü. Hata: ${errors[0]}`
+        // SONUÇ TONU (denetim bulgusu): hata da başarı da aynı yeşil kutuya yazılıyordu.
+        // Artık en kötü sonuç tonu belirler ve HATA DALINDA SEÇİM KORUNUR — operatör aynı
+        // kalemleri yeniden seçmek zorunda kalmadan tekrar deneyebilsin (bozuk anahtarlar
+        // stokta kalmışken "başarılı" hissi vermek kabul edilemez).
+        const note: BulkNote = errors.length
+          ? {
+              tone: 'destructive',
+              text:
+                affected > 0
+                  ? `İşlem YARIM kaldı: ${affected} lisans düşüldü, kalanı düşülemedi. Hata: ${errors[0]} — seçim korundu, tekrar deneyebilirsiniz.`
+                  : `Hiçbir lisans düşülemedi. Hata: ${errors[0]} — seçim korundu, tekrar deneyebilirsiniz.`,
+            }
           : skipped > 0
-            ? `${affected} lisans stoktan düşüldü, ${skipped} tanesi atlandı (artık stokta değildi).`
-            : `${affected} lisans stoktan düşüldü.`;
-        setBulkNote(msg);
-        announce(msg);
-        setSelected(new Set());
-        // Toplu düşme de veriyi DEĞİŞTİRİR → kardeş tablo da tazelenmeli.
+            ? {
+                tone: 'warning',
+                text: `${affected} lisans stoktan düşüldü, ${skipped} tanesi atlandı (artık stokta değildi).`,
+              }
+            : { tone: 'success', text: `${affected} lisans stoktan düşüldü.` };
+        setBulkNote(note);
+        announce(note.text);
+        if (!errors.length) setSelected(new Set());
+        // Toplu düşme de veriyi DEĞİŞTİRİR → kardeş tablo da tazelenmeli. Hata dalında da
+        // çağrılır: gruplardan biri başarılı olmuş olabilir, liste gerçeği göstermeli.
         reloadAfterMutation();
       } finally {
         setBulkBusy(false);
@@ -480,10 +576,12 @@ export function LicenseItemsTable({
         </Alert>
       )}
 
+      {/* Sonuç kutusu TONUYLA gelir (başarı/uyarı/hata) — ikon da tona uyar; hata artık
+          yeşil tik ile gösterilmez (bkz. BulkNote notu). */}
       {bulkNote && (
-        <Alert variant="success">
-          <Check aria-hidden />
-          <AlertDescription>{bulkNote}</AlertDescription>
+        <Alert variant={bulkNote.tone}>
+          {bulkNote.tone === 'success' ? <Check aria-hidden /> : <ShieldAlert aria-hidden />}
+          <AlertDescription>{bulkNote.text}</AlertDescription>
         </Alert>
       )}
 
@@ -493,10 +591,13 @@ export function LicenseItemsTable({
       {selectedVisible.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
           <span className="text-sm font-medium text-foreground">
-            {selectedVisible.length} lisans seçildi
+            Bu sayfada {selectedVisible.length} lisans seçildi
           </span>
+          {/* Seçimin SAYFAYA bağlı olduğu görünür yazılır: kapsam sayaç/onay/işlenen küme
+              arasında tek ve aynı olsun, operatör "5'i nereye gitti" demesin. */}
           <span className="text-xs text-muted-foreground">
-            (yalnız stoktakiler seçilebilir — teslim edilmiş kalem buradan düşülemez)
+            (yalnız stoktakiler seçilebilir — teslim edilmiş kalem buradan düşülemez; sayfa veya
+            süzgeç değişirse seçim sıfırlanır)
           </span>
           <span className="ml-auto flex flex-wrap items-center gap-2">
             <Button
@@ -545,7 +646,14 @@ export function LicenseItemsTable({
               <Skeleton className="mt-2 h-3 w-1/3" />
             </div>
           ))
-        ) : rows.length === 0 ? null : (
+        ) : rows.length === 0 ? (
+          // DAR EKRANDA DA BOŞ DURUM (denetim bulgusu): burada `null` dönülüyordu → 1024px
+          // altında arama sonuç vermeyince ekranda hiçbir açıklama kalmıyordu. Metin tablo
+          // dalıyla AYNI kaynaktan (`emptyStateText`) gelir.
+          <div className="rounded-lg border border-border">
+            <EmptyState icon={KeyRound} title={empty.title} description={empty.description} />
+          </div>
+        ) : (
           rows.map((row) => (
             <div
               key={`mc-${row.id}`}
@@ -658,30 +766,8 @@ export function LicenseItemsTable({
             ) : rows.length === 0 ? (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={colCount}>
-                  <EmptyState
-                    icon={KeyRound}
-                    title={
-                      // Kilitli kapsamda boş liste bir SONUÇTUR, süzgeç hatası değil:
-                      // "bu partiden müşterilerde kalem kalmadı" demektir (hepsi
-                      // değiştirilmiş ya da hiç teslim edilmemiş) — öyle de yazar.
-                      lockedHolder === 'customer' && !term && !status
-                        ? 'Bu partiden müşterilerde kalem kalmadı.'
-                        : term || status || holder
-                          ? 'Bu süzgeçlerle kayıt bulunamadı.'
-                          : productId
-                            ? 'Bu ürüne henüz lisans girilmemiş.'
-                            : 'Henüz lisans yok.'
-                    }
-                    description={
-                      lockedHolder === 'customer' && !term && !status
-                        ? 'Değiştirilecek bir şey yok: bu partinin kalemlerinden hiçbiri şu an bir müşterinin elinde değil.'
-                        : term || status || holder
-                          ? 'Aramayı veya süzgeçleri değiştirip tekrar deneyin.'
-                          : productId
-                            ? 'Yukarıdaki “Key / Stok İçe Aktar” bölümünden bu ürüne lisans ekleyebilirsiniz.'
-                            : 'Bir ürünün detay sayfasındaki “Key / Stok İçe Aktar” bölümünden lisans ekleyebilirsiniz.'
-                    }
-                  />
+                  {/* Metin `emptyStateText` tek kaynağından (kart dalı da aynısını kullanır). */}
+                  <EmptyState icon={KeyRound} title={empty.title} description={empty.description} />
                 </TableCell>
               </TableRow>
             ) : (

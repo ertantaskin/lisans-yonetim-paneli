@@ -379,10 +379,14 @@
   right: 0;
   background-color: var(--card);
 }
-tr:hover > .sticky-actions {
+/* KAPSAM `tbody` İLE SINIRLI: seçici yalnız `tr:hover` olduğunda BAŞLIK satırında da
+ * tetikleniyordu. Başlık satırı `hover:bg-transparent` taşır (satır zemini boyanmaz) ama bu
+ * kural yalnız SABİT hücreyi boyadığı için imleç başlığın üzerindeyken EN SAĞDAKİ hücre tek
+ * başına renkleniyordu (görsel kusur). Boyama artık yalnız gerçek veri satırlarında. */
+tbody tr:hover > .sticky-actions {
   background-color: color-mix(in oklch, var(--accent) 40%, var(--card));
 }
-tr[data-state='selected'] > .sticky-actions {
+tbody tr[data-state='selected'] > .sticky-actions {
   background-color: color-mix(in oklch, var(--accent) 60%, var(--card));
 }
 @media (prefers-reduced-motion: reduce) {

@@ -47,10 +47,53 @@ export function CollapsiblePanel({
   const [open, setOpen] = React.useState(defaultOpen);
   const bodyId = React.useId();
 
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const bodyRef = React.useRef<HTMLDivElement>(null);
+  const closeRef = React.useRef<HTMLButtonElement>(null);
+  /**
+   * Bir sonraki render'da odağın NEREYE taşınacağı ('none' = dokunma).
+   *
+   * DENETİM BULGUSU (orta, a11y): kapalı ve açık hâller TAMAMEN ayrı ağaçlar; açılınca
+   * tetikleyici düğme unmount oluyor ve odak `<body>`ye düşüyordu → klavye/ekran okuyucu
+   * kullanıcısı formun neresinde olduğunu kaybedip sekmeyle sayfa başından geri geliyordu
+   * (kullanım: /categories "Yeni Kategori", /admins "Yeni Admin", /suppliers "Yeni Tedarikçi").
+   * İki ağaç KORUNDU (görsel tasarım değişmesin) ama odak elle taşınır: açılışta gövdedeki
+   * ilk odaklanabilir alana, kapanışta tetikleyiciye geri.
+   *
+   * REF (state değil): odak taşıma bir YAN ETKİDİR, render'a girmemeli; ayrıca ilk render'da
+   * (`defaultOpen`) odağın ÇALINMAMASI için "kullanıcı etkileşimi oldu mu" bilgisi gerekir —
+   * bayrak yalnız tıklama işleyicilerinde kurulur.
+   */
+  const focusIntent = React.useRef<'none' | 'body' | 'trigger'>('none');
+
+  React.useEffect(() => {
+    const want = focusIntent.current;
+    if (want === 'none') return;
+    focusIntent.current = 'none';
+    if (want === 'trigger') {
+      triggerRef.current?.focus();
+      return;
+    }
+    // Gövdedeki ilk odaklanabilir alan; yoksa (salt-metin gövde) Kapat düğmesi — odak her
+    // hâlükârda panelin İÇİNDE kalır.
+    const first = bodyRef.current?.querySelector<HTMLElement>(FOCUSABLE);
+    (first ?? closeRef.current)?.focus();
+  }, [open]);
+
   if (!open) {
     return (
       <div className={cn('mb-5', className)}>
-        <Button variant="outline" onClick={() => setOpen(true)} aria-expanded={false} aria-controls={bodyId}>
+        {/* `aria-controls` VERİLMEZ: gövde kapalıyken DOM'da yok, var olmayan bir id'yi
+            işaret etmek yardımcı teknolojide kırık ilişki üretir. `aria-expanded` yeterli. */}
+        <Button
+          ref={triggerRef}
+          variant="outline"
+          onClick={() => {
+            focusIntent.current = 'body';
+            setOpen(true);
+          }}
+          aria-expanded={false}
+        >
           {icon ?? <Plus aria-hidden />} {openLabel ?? title}
         </Button>
         {description && <p className="mt-1.5 text-xs text-muted-foreground">{description}</p>}
@@ -70,20 +113,30 @@ export function CollapsiblePanel({
             {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
           </div>
           <Button
+            ref={closeRef}
             variant="ghost"
             size="sm"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              focusIntent.current = 'trigger';
+              setOpen(false);
+            }}
             aria-expanded
             aria-controls={bodyId}
           >
             <X aria-hidden /> {closeLabel}
           </Button>
         </div>
-        <div id={bodyId}>{children}</div>
+        <div id={bodyId} ref={bodyRef}>
+          {children}
+        </div>
       </CardContent>
     </Card>
   );
 }
+
+/** Gövdedeki ilk odaklanabilir öğeyi bulmak için seçici (devre dışı/gizli olanlar hariç). */
+const FOCUSABLE =
+  'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
 
 /** Kapalı/açık okunu gerektiren yerler için küçük yardımcı (şu an yalnız tip uyumu). */
 export const CollapsibleChevron = ChevronDown;

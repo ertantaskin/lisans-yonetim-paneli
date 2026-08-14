@@ -212,6 +212,259 @@ export const LICENSE_ITEM_STATUSES = [
 ] as const;
 export type LicenseItemStatus = (typeof LICENSE_ITEM_STATUSES)[number];
 
+// ─── keyFormat (anahtar biçimi) güvenlik kapısı — ReDoS ────────────────────────────────
+/**
+ * `products.key_format` operatörün yazdığı SERBEST bir düzenli ifadedir ve stok girişinde
+ * 10.000'e kadar payload'a karşı SENKRON `test()` edilir. Node'da regex için zaman aşımı
+ * YOKTUR: katastrofik geri-izlemeli TEK bir desen (`^(a+)+$` + uygun bir payload) event
+ * loop'unu üstel süre bloklar → sipariş teslimatı dahil TÜM API donar. Eskiden girdi
+ * doğrulaması yalnız `z.string().optional()` idi: ne uzunluk tavanı ne desen denetimi vardı.
+ *
+ * KARAR — neden RE2 gibi YENİ BİR BAĞIMLILIK EKLENMEDİ:
+ *  · `re2` native (node-gyp) bir eklentidir; runtime imajlarımızda derleme zinciri yok →
+ *    Dockerfile + dağıtım zinciri (deploy.sh) değişirdi. Bu bulgu bir DOĞRULAMA boşluğu,
+ *    altyapı eksiği değil; düzeltmenin maliyeti kapsamıyla orantılı kalmalı.
+ *  · Regex'i worker thread'e taşımak da izole EDER ama ENGELLEMEZ (thread yine tükenir,
+ *    kuyruk birikir) ve senkron import yolunu asenkronlaştırıp transaction sınırlarını bozar.
+ *  · Saldırı yüzeyi DAR: deseni yalnız admin yazar, ürün başına TEK kez. Bu yüzden savunma
+ *    bağımlılıksız ve ÜÇ KATMANLI:
+ *      1) KAYIT ANI (products.controller): uzunluk tavanı + derleme denemesi + statik sezgi →
+ *         riskli desen 400 ile reddedilir; hata import anında değil, kaydederken görünür.
+ *      2) KULLANIM ANI (compileKeyFormat / updateLicenseItem): bu denetimden ÖNCE kaydedilmiş
+ *         ürünler için aynı kapı tekrar uygulanır — eski riskli desen sessizce çalışmaya
+ *         devam etmesin (yalnız kayıt anını korumak, mevcut satırları açıkta bırakırdı).
+ *      3) GİRDİ TAVANI (normalizePayload): desen ancak `KEY_FORMAT_MAX_INPUT_LENGTH` karaktere
+ *         kadar payload'a uygulanır — sezgiyi atlatan bir desende bile girdi boyu SABİTTİR.
+ *  · Sezgi TAM DEĞİLDİR (katastrofik geri-izlemeyi statik olarak kesin tespit etmek imkânsız):
+ *    bilerek TEMKİNLİ tarafta durur. Yanlış-pozitifte sessiz reddetme YOK — operatör ne
+ *    yapacağını söyleyen Türkçe mesaj görür (aşağıdaki iki sabit).
+ */
+export const KEY_FORMAT_MAX_LENGTH = 200;
+
+/**
+ * Desenin test edilebileceği EN UZUN payload. `UpdateLicenseItemBody.value` zaten
+ * `.max(4_000)` kullanıyor (stock.controller) → aynı sayı; import ve tekil düzenleme
+ * yolları aynı tavanda buluşur.
+ */
+export const KEY_FORMAT_MAX_INPUT_LENGTH = 4_000;
+
+/**
+ * Dış niceleyici bunun üstünde tekrar edebiliyorsa "çoğaltıcı" sayılır. `{4}` gibi küçük
+ * SABİT tekrarlar (ör. `(-[A-Z0-9]{5}){4}` — en yaygın meşru anahtar biçimi) elenir;
+ * sınırsız (`*`, `+`, `{n,}`) olanlar her zaman çoğaltıcıdır.
+ */
+const OUTER_REPEAT_RISK_THRESHOLD = 10;
+
+const NESTED_QUANTIFIER_MSG =
+  'Anahtar biçimi riskli: tekrarlanan bir grubun İÇİNDE de değişken tekrar var ' +
+  '(ör. "(a+)+", "([A-Z]+-)*"). Bu kalıp katastrofik geri-izlemeye (ReDoS) yol açıp stok ' +
+  "girişini ve tüm API'yi kilitleyebilir. Grubu SABİT tekrarla yazın " +
+  '(ör. "([A-Z0-9]{5}-){4}") ya da içteki değişken tekrarı kaldırın.';
+
+const AMBIGUOUS_ALTERNATION_MSG =
+  'Anahtar biçimi riskli: tekrarlanan grupta birbirinin aynısı ya da ön eki olan seçenekler ' +
+  'var (ör. "(a|a)*", "(a|ab)+"). Aynı metni birden çok yoldan eşleştiren bu kalıp ' +
+  'katastrofik geri-izlemeye (ReDoS) yol açar. Seçenekleri örtüşmeyecek biçimde ayrıştırın.';
+
+interface KeyFormatQuantifier {
+  min: number;
+  max: number;
+  /** Niceleyiciden SONRAKİ ilk konum (tembel `?` eki dahil atlanır). */
+  end: number;
+}
+
+/** `[...]` karakter sınıfını atlar (içindeki `*`/`+`/`|` niceleyici DEĞİLDİR). */
+function skipCharClass(pattern: string, start: number): number {
+  let i = start + 1;
+  if (pattern[i] === '^') i += 1;
+  // Sınıfın İLK `]` karakteri literaldir (`[]]`), sınıfı kapatmaz.
+  if (pattern[i] === ']') i += 1;
+  while (i < pattern.length) {
+    if (pattern[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (pattern[i] === ']') return i + 1;
+    i += 1;
+  }
+  return pattern.length;
+}
+
+/**
+ * `pos` konumundaki niceleyiciyi okur: `*` `+` `?` `{n}` `{n,}` `{n,m}`. Yoksa null
+ * (ör. literal `{` — `new RegExp` bunu niceleyici saymaz, biz de saymayız).
+ * Tembel/aç gözlü AYRIMI YAPILMAZ: tembel niceleyici de aynı şekilde geri-izler.
+ */
+function readKeyFormatQuantifier(pattern: string, pos: number): KeyFormatQuantifier | null {
+  const skipLazy = (p: number) => (pattern[p] === '?' ? p + 1 : p);
+  const c = pattern[pos];
+  if (c === '*') return { min: 0, max: Infinity, end: skipLazy(pos + 1) };
+  if (c === '+') return { min: 1, max: Infinity, end: skipLazy(pos + 1) };
+  if (c === '?') return { min: 0, max: 1, end: skipLazy(pos + 1) };
+  if (c !== '{') return null;
+  const close = pattern.indexOf('}', pos);
+  if (close < 0) return null;
+  const m = /^(\d+)(,(\d*))?$/.exec(pattern.slice(pos + 1, close));
+  if (!m) return null;
+  const min = Number(m[1]);
+  // `{n}` → sabit; `{n,}` → sınırsız; `{n,m}` → m.
+  const max = m[2] === undefined ? min : m[3] ? Number(m[3]) : Infinity;
+  return { min, max, end: skipLazy(close + 1) };
+}
+
+/** `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!`, `(?<ad>` öneki (grup gövdesinin parçası değildir). */
+const GROUP_PREFIX_RE = /^\(\?(:|=|!|<=|<!|<[A-Za-z_$][\w$]*>)/;
+
+/**
+ * Gövdede HERHANGİ bir derinlikte "değişken" (min≠max) niceleyici var mı?
+ * `{5}` gibi SABİT tekrar değişken değildir — `(x{5}){4}` patlamaz, `(x+){4}` patlar.
+ */
+function hasVariableQuantifier(body: string): boolean {
+  let i = 0;
+  while (i < body.length) {
+    const c = body[i];
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === '[') {
+      i = skipCharClass(body, i);
+      continue;
+    }
+    if (c === '(') {
+      // Grup önekindeki `?` bir niceleyici DEĞİLDİR — atlanmazsa `(?:ab)` yanlış-pozitif olurdu.
+      const m = GROUP_PREFIX_RE.exec(body.slice(i));
+      i += m ? m[0].length : 1;
+      continue;
+    }
+    const q = readKeyFormatQuantifier(body, i);
+    if (q) {
+      if (q.min !== q.max) return true;
+      i = q.end;
+      continue;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+/** Gövdeyi ÜST düzey `|` işaretlerinden böler (grup/sınıf içindekiler bölmez). */
+function splitTopLevelAlternatives(body: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let depth = 0;
+  let i = 0;
+  while (i < body.length) {
+    const c = body[i];
+    if (c === '\\') {
+      current += body.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if (c === '[') {
+      const end = skipCharClass(body, i);
+      current += body.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (c === '(') depth += 1;
+    else if (c === ')') depth -= 1;
+    else if (c === '|' && depth === 0) {
+      out.push(current);
+      current = '';
+      i += 1;
+      continue;
+    }
+    current += c;
+    i += 1;
+  }
+  out.push(current);
+  return out;
+}
+
+/**
+ * ÇOĞALTICI bir niceleyiciyle tekrarlanan grup gövdesini denetler. İki klasik katastrofik
+ * kalıbı arar: (a) iç içe değişken niceleyici `(a+)+`, (b) belirsiz alternasyon `(a|a)*` /
+ * `(a|ab)+` (aynı metni birden çok yoldan eşleştirir → geri-izleme dallanır).
+ */
+function inspectRepeatedBody(body: string): string | null {
+  if (hasVariableQuantifier(body)) return NESTED_QUANTIFIER_MSG;
+  const alts = splitTopLevelAlternatives(body).filter((a) => a.length > 0);
+  for (let a = 0; a < alts.length; a += 1) {
+    for (let b = a + 1; b < alts.length; b += 1) {
+      const x = alts[a]!;
+      const y = alts[b]!;
+      if (x.startsWith(y) || y.startsWith(x)) return AMBIGUOUS_ALTERNATION_MSG;
+    }
+  }
+  return null;
+}
+
+/**
+ * Deseni gezip ÇOĞALTICI niceleyiciyle tekrarlanan grupları bulur ve gövdelerini denetler.
+ * Sözdizimi ayrıştırıcısı DEĞİLDİR (kaçışları ve karakter sınıflarını doğru atlayan bir
+ * tarayıcıdır) — deseni `new RegExp` zaten ayrıca derliyor, buradaki iş yalnız risk sezgisi.
+ */
+function findRiskyRepetition(pattern: string): string | null {
+  const stack: number[] = [];
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === '\\') {
+      i += 2;
+      continue;
+    }
+    if (c === '[') {
+      i = skipCharClass(pattern, i);
+      continue;
+    }
+    if (c === '(') {
+      stack.push(i);
+      i += 1;
+      continue;
+    }
+    if (c === ')') {
+      const start = stack.pop();
+      if (start === undefined) {
+        // Dengesiz parantez — `new RegExp` zaten reddeder; sezgi burada karar vermez.
+        i += 1;
+        continue;
+      }
+      const quant = readKeyFormatQuantifier(pattern, i + 1);
+      if (quant && (quant.max === Infinity || quant.max >= OUTER_REPEAT_RISK_THRESHOLD)) {
+        const raw = pattern.slice(start + 1, i);
+        const prefix = GROUP_PREFIX_RE.exec(`(${raw}`);
+        const body = prefix ? raw.slice(prefix[0].length - 1) : raw;
+        const reason = inspectRepeatedBody(body);
+        if (reason) return reason;
+      }
+      i = quant ? quant.end : i + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return null;
+}
+
+/**
+ * `keyFormat` deseni kabul edilebilir mi? Sorun varsa OPERATÖRE gösterilecek Türkçe sebebi,
+ * yoksa null döner. String döndürür (exception DEĞİL) ki hem zod (`ctx.addIssue`) hem servis
+ * (`BadRequestException`) aynı TEK kaynaktan beslenebilsin.
+ */
+export function checkKeyFormatSafety(pattern: string): string | null {
+  // Boş dize = "biçim kuralı yok" (mevcut davranış: compileKeyFormat null döner).
+  if (pattern.length === 0) return null;
+  if (pattern.length > KEY_FORMAT_MAX_LENGTH) {
+    return `Anahtar biçimi deseni en fazla ${KEY_FORMAT_MAX_LENGTH} karakter olabilir (girilen: ${pattern.length}).`;
+  }
+  try {
+    new RegExp(pattern);
+  } catch (err) {
+    return `Anahtar biçimi geçerli bir düzenli ifade değil: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  return findRiskyRepetition(pattern);
+}
+
 export type LicenseInventorySort = 'created_desc' | 'created_asc' | 'assigned_desc';
 
 /** Hesap (account) ürününde alan-alan çözülmüş payload. */
@@ -990,14 +1243,23 @@ export class StockService {
     return parsed.data;
   }
 
-  /** keyFormat regex'ini derler (bozuk regex → import reddedilir, sessiz kabul yok). */
+  /**
+   * keyFormat regex'ini derler (bozuk regex → import reddedilir, sessiz kabul yok).
+   *
+   * GÜVENLİK (2. katman, bkz. `checkKeyFormatSafety` başlığı): desen artık KAYIT ANINDA da
+   * denetleniyor, ama bu denetimden ÖNCE kaydedilmiş ürünlerde riskli desen DB'de duruyor
+   * olabilir. Import 10.000 payload'a karşı senkron `test()` ettiği için kapı burada da
+   * uygulanır: riskli/bozuk desen 400 ile reddedilir (eskiden API'yi kilitleyebiliyordu).
+   */
   private compileKeyFormat(product: Product): RegExp | null {
     if (!product.keyFormat) return null;
-    try {
-      return new RegExp(product.keyFormat);
-    } catch {
-      throw new BadRequestException(`Ürün key_format regex'i geçersiz: ${product.keyFormat}`);
+    const reason = checkKeyFormatSafety(product.keyFormat);
+    if (reason) {
+      throw new BadRequestException(
+        `Ürünün anahtar biçimi (key_format) kullanılamıyor — ${reason} Ürünü düzenleyip deseni düzeltin.`,
+      );
     }
+    return new RegExp(product.keyFormat);
   }
 
   /**
@@ -1029,8 +1291,21 @@ export class StockService {
     if (typeof payload !== 'string') {
       throw new Error('Bu ürün tipi için payload düz string olmalı');
     }
-    if (keyRegex && !keyRegex.test(payload)) {
-      throw new Error('Payload key_format desenine uymuyor');
+    if (keyRegex) {
+      // GÜVENLİK (3. katman — ÇALIŞMA ZAMANI TAVANI): regex'in üzerinde çalışacağı girdi
+      // boyu SABİTLENİR. Statik sezgi (checkKeyFormatSafety) tam değildir; onu atlatan bir
+      // desende bile geri-izleme maliyeti girdi uzunluğuyla üstel büyüdüğü için tavan tek
+      // başına anlamlı bir fren. Sayı `UpdateLicenseItemBody.value` (.max(4_000)) ile aynı.
+      // Reddetme SATIR bazındadır (rejections'a düşer) — import bütünüyle patlamaz ve
+      // keyFormat'ı OLMAYAN ürünler bu daldan hiç geçmez (davranış değişmez).
+      if (payload.length > KEY_FORMAT_MAX_INPUT_LENGTH) {
+        throw new Error(
+          `Payload çok uzun (${payload.length} karakter) — anahtar biçimi denetimi en fazla ${KEY_FORMAT_MAX_INPUT_LENGTH} karakterde yapılır.`,
+        );
+      }
+      if (!keyRegex.test(payload)) {
+        throw new Error('Payload key_format desenine uymuyor');
+      }
     }
     return payload;
   }
@@ -1257,33 +1532,72 @@ export class StockService {
         collapsed.replace(/\s+/g, '').toUpperCase(),
       ]);
       const exactList = [...variants].map((v) => sql`${this.crypto.payloadHash(v)}`);
-      const exactCond = sql`li.payload_hash IN (${sql.join(exactList, sql`, `)})`;
 
       // Son-5 yolu: 5+ karakter girildiyse. Varyantların son 5'i farklı olabileceği için
       // (ör. boşluklu yapıştırma) hepsi denenir; 4 hane TEK BAŞINA eşleşmez (bilinçli kısıt).
       const suffixList = [...variants]
         .filter((v) => v.length >= 5)
         .map((v) => sql`${this.crypto.payloadSuffixHash(v)}`);
-      const suffixCond =
+      // Varyant yoksa DAL HİÇ ÜRETİLMEZ — eski `OR false` ile birebir aynı sonuç kümesi.
+      const suffixBranch =
         suffixList.length > 0
-          ? sql`li.payload_suffix_hash IN (${sql.join(suffixList, sql`, `)})`
-          : sql`false`;
+          ? sql`
+        UNION ALL
+        -- 2) son 5 hane → license_items_suffix_idx
+        SELECT ls.id FROM license_items ls
+        WHERE ls.payload_suffix_hash IN (${sql.join(suffixList, sql`, `)})`
+          : sql``;
 
-      conds.push(sql`(
-        ${exactCond}
-        OR ${suffixCond}
-        OR b.label ILIKE ${pattern} ESCAPE '\\'
-        -- ÜRÜN ADI/SKU: operatör çoğu zaman "hangi üründen kaç kalem var" diye arıyor;
-        -- eskiden bu eksen YOKTU ve ürün adı yazınca liste boş dönüyordu (yanıltıcı).
-        OR p.name ILIKE ${pattern} ESCAPE '\\'
-        OR p.sku ILIKE ${pattern} ESCAPE '\\'
-        OR EXISTS (
-          SELECT 1 FROM assignments a3
-          JOIN orders o3 ON o3.id = a3.order_id
-          WHERE a3.license_item_id = li.id
-            AND (o3.customer_email ILIKE ${pattern} ESCAPE '\\'
-                 OR o3.remote_order_id ILIKE ${pattern} ESCAPE '\\')
-        )
+      /*
+       * PLAN (denetim bulgusu — ORTA): eskiden bütün eksenler TEK dev OR bloğuydu:
+       *   (payload_hash IN (…) OR payload_suffix_hash IN (…) OR b.label ILIKE …
+       *    OR p.name ILIKE … OR p.sku ILIKE … OR EXISTS (assignments JOIN orders …))
+       * Postgres bir OR'u ancak TÜM dalları indekslenebilirse BitmapOr ile karşılar. Buradaki
+       * ILIKE dalları ve KORELE `EXISTS` indekslenemez → planlayıcı OR'un tamamını satır
+       * süzgecine düşürüyordu: en yaygın senaryoda bile (operatör TAM anahtarı yapıştırır,
+       * `license_items_payload_hash_uniq` ile tek satır bulunabilir) `license_items` TAM
+       * TARANIYOR ve eşleşmeyen HER satır için 3-join'li EXISTS alt-planı koşuyordu.
+       *
+       * Artık aday id kümesi UNION ALL ile ayrı dallardan üretilir: hash dalları kendi
+       * UNIQUE/suffix indekslerinden karşılanır, metinsel dallar KÜÇÜK tablolarda (batches,
+       * products) ve assignments/orders üzerinde YALNIZ BİR KEZ (korelasyon yok) koşar.
+       * `IN (alt sorgu)` semi-join'e dönüşür → satır ÇOĞALTMAZ (UNION ALL'ın mükerrer id'leri
+       * sonucu etkilemez), bu yüzden `count(*) OVER ()` toplamı da değişmez.
+       *
+       * NEDEN CTE DEĞİL, SATIR-İÇİ ALT SORGU: bu fragman İKİ sorguda kullanılıyor (page_slice
+       * ve yedek countLicenseItems). Ayrı bir `WITH` bloğu iki sorgunun başına AYRI AYRI
+       * eklenmek zorunda kalır ve ikisinin ayrışması bu projede daha önce yaşanan "toplam ile
+       * liste çelişir" hatasını doğurur. Alt sorgu `where` fragmanının İÇİNDE kaldığı için iki
+       * sorgu otomatik olarak BİREBİR aynı süzgeci taşır. Plan şekli aynıdır (uncorrelated
+       * alt sorgu — hash'lenip tek kez değerlendirilir).
+       *
+       * DAVRANIŞ BİREBİR KORUNUR: hangi girdinin hangi satırı bulduğu değişmedi (tam anahtar,
+       * son-5 hane, ürün adı, SKU, parti kodu, müşteri e-postası, mağaza sipariş no). Metinsel
+       * dallarda LEFT JOIN → JOIN dönüşümü sonucu değiştirmez: eski yazımda da `b.label` NULL
+       * (partisiz kalem) ILIKE'ı asla sağlamıyordu.
+       */
+      conds.push(sql`li.id IN (
+        -- 1) TAM anahtar → license_items_payload_hash_uniq (UNIQUE index)
+        SELECT lh.id FROM license_items lh
+        WHERE lh.payload_hash IN (${sql.join(exactList, sql`, `)})${suffixBranch}
+        UNION ALL
+        -- 3) parti kodu
+        SELECT lb.id FROM license_items lb
+        JOIN batches b2 ON b2.id = lb.batch_id
+        WHERE b2.label ILIKE ${pattern} ESCAPE '\\'
+        UNION ALL
+        -- 4) ÜRÜN ADI/SKU: operatör çoğu zaman "hangi üründen kaç kalem var" diye arıyor;
+        --    eskiden bu eksen YOKTU ve ürün adı yazınca liste boş dönüyordu (yanıltıcı).
+        SELECT lp.id FROM license_items lp
+        JOIN products p2 ON p2.id = lp.product_id
+        WHERE p2.name ILIKE ${pattern} ESCAPE '\\'
+           OR p2.sku ILIKE ${pattern} ESCAPE '\\'
+        UNION ALL
+        -- 5) müşteri e-postası / mağaza sipariş no (artık korele DEĞİL: tek geçiş)
+        SELECT a3.license_item_id FROM assignments a3
+        JOIN orders o3 ON o3.id = a3.order_id
+        WHERE o3.customer_email ILIKE ${pattern} ESCAPE '\\'
+           OR o3.remote_order_id ILIKE ${pattern} ESCAPE '\\'
       )`);
     }
 
@@ -1343,13 +1657,14 @@ export class StockService {
     // koşar (eskiden LATERAL, sıralamadan önce eşleşen HER satır için çalışabiliyordu).
     const rows = await rawRows<LicenseItemRawRow & { total_count: number }>(this.db, sql`
         WITH page_slice AS (
+          -- Süzgeç ARTIK yalnız license_items'a dokunur: arama fragmanı b/p join'lerine değil
+          -- kendi UNION ALL aday alt sorgusuna dayanıyor (yukarı bkz.) → sayfa alt-sorgusu
+          -- index'ten karşılanır, sunum join'leri (aşağıda) yalnız dönen sayfaya uygulanır.
+          -- Süzgeç fragmanı countLicenseItems ile BİREBİR aynı olmalı, yoksa toplam ile
+          -- liste ayrışır; bu yüzden fragman TEK yerde kurulur ve join gerektirmez.
+          -- (NOT: bu SQL bir template literal — yorumda TERS TIRNAK kullanılamaz, şablonu kapatır.)
           SELECT li.id AS id, (count(*) OVER ())::int AS total_count
           FROM license_items li
-          -- b/p: yalnız arama süzgeci (b.label, p.name, p.sku) için — LEFT JOIN, satır
-          -- çoğaltmaz (ikisi de PK üzerinden). Süzgeç fragmanı countLicenseItems ile
-          -- BİREBİR aynı olmalı, yoksa toplam ile liste ayrışır.
-          LEFT JOIN batches b ON b.id = li.batch_id
-          LEFT JOIN products p ON p.id = li.product_id
           WHERE ${where}
           ORDER BY ${orderBy}
           LIMIT ${pageSize} OFFSET ${offset}
@@ -1469,15 +1784,15 @@ export class StockService {
 
   /**
    * Toplam kayıt sayısının YEDEK sorgusu — yalnız "sayfa boş ama page>1" kenar durumunda
-   * çalışır (bkz. listLicenseItems). Süzgeç fragmanı ana sorguyla BİREBİR aynıdır; `b`
-   * join'i arama koşulundaki `b.label` içindir.
+   * çalışır (bkz. listLicenseItems). Süzgeç fragmanı ana sorguyla BİREBİR aynıdır: `where`
+   * artık YALNIZ `li` kolonlarına ve kendi kendine yeten alt sorgulara dayandığı için
+   * (arama adayları UNION ALL alt sorgusunda) burada batches/products join'i GEREKMEZ —
+   * iki sorgunun join listesi ayrışıp sonuçların çelişmesi de imkânsızlaşır.
    */
   private async countLicenseItems(where: SQL): Promise<number> {
     const rows = await rawRows<{ c: number }>(this.db, sql`
       SELECT count(*)::int AS c
       FROM license_items li
-      LEFT JOIN batches b ON b.id = li.batch_id
-      LEFT JOIN products p ON p.id = li.product_id
       WHERE ${where};
     `);
     return Number(rows[0]?.c ?? 0);
@@ -1740,12 +2055,23 @@ export class StockService {
         const value = (input.value ?? '').trim();
         if (!value) throw new BadRequestException('Yeni lisans değeri (`value`) zorunludur.');
         if (row.key_format) {
-          let re: RegExp;
-          try {
-            re = new RegExp(row.key_format);
-          } catch {
-            throw new BadRequestException(`Ürün key_format regex'i geçersiz: ${row.key_format}`);
+          // İKİNCİ derleme noktası — import yoluyla AYNI kapıdan geçer (checkKeyFormatSafety).
+          // Burası ayrıca bir TRANSACTION İÇİNDEDİR: katastrofik bir desen yalnız event
+          // loop'unu değil, açık kalan tx'in kilitlerini de süresiz tutardı.
+          const reason = checkKeyFormatSafety(row.key_format);
+          if (reason) {
+            throw new BadRequestException(
+              `Ürünün anahtar biçimi (key_format) kullanılamıyor — ${reason} Ürünü düzenleyip deseni düzeltin.`,
+            );
           }
+          // Girdi tavanı: DTO zaten `.max(4_000)` uyguluyor, savunma derinliği için tekrar
+          // (iç çağıranlar controller'ı atlayabilir — bu dosyanın genel deseni).
+          if (value.length > KEY_FORMAT_MAX_INPUT_LENGTH) {
+            throw new BadRequestException(
+              `Yeni lisans değeri çok uzun (en fazla ${KEY_FORMAT_MAX_INPUT_LENGTH} karakter).`,
+            );
+          }
+          const re = new RegExp(row.key_format);
           if (!re.test(value)) {
             throw new BadRequestException('Yeni değer ürünün anahtar biçimine (key_format) uymuyor.');
           }

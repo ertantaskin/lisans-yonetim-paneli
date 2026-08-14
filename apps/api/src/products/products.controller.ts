@@ -17,6 +17,29 @@ import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ProductsService } from './products.service';
 import { ProductCategoriesService } from './product-categories.service';
+import { KEY_FORMAT_MAX_LENGTH, checkKeyFormatSafety } from '../stock/stock.service';
+
+/**
+ * `keyFormat` = operatörün yazdığı SERBEST düzenli ifade; stok girişinde 10.000'e kadar
+ * payload'a karşı SENKRON test edilir ve Node'da regex için zaman aşımı YOKTUR. Eskiden bu
+ * alan yalnız `z.string().optional()` idi: ne uzunluk tavanı ne desen denetimi vardı →
+ * katastrofik geri-izlemeli tek bir desen (`^(a+)+$`) event loop'unu üstel süre bloklayıp
+ * TÜM API'yi (sipariş teslimatı dahil) donduruyordu.
+ *
+ * Doğrulama artık KAYDETME ANINDA yapılır (import anında değil): uzunluk tavanı + gerçek
+ * `new RegExp` derleme denemesi + katastrofik kalıp sezgisi. Kural TEK KAYNAKTAN gelir
+ * (`checkKeyFormatSafety`, stock.service) — deseni derleyip çalıştıran yer ile kabul eden
+ * yerin kuralı ayrışamaz. Sezgi TEMKİNLİdir; yanlış-pozitifte operatör ne yapması gerektiğini
+ * söyleyen Türkçe mesajı 400 ile görür (sessiz reddetme yok). CREATE ve UPDATE şemalarının
+ * İKİSİ de bu alanı kullanır — biri atlanırsa güncelleme yolu açık kalırdı.
+ */
+const KeyFormatPattern = z
+  .string()
+  .max(KEY_FORMAT_MAX_LENGTH, `Anahtar biçimi en fazla ${KEY_FORMAT_MAX_LENGTH} karakter olabilir.`)
+  .superRefine((value, ctx) => {
+    const reason = checkKeyFormatSafety(value);
+    if (reason) ctx.addIssue({ code: z.ZodIssueCode.custom, message: reason });
+  });
 
 // Ürün alan tabanı — refine'sız düz nesne, böylece update için .partial() türetilebilir
 // (ZodEffects/refined şema .partial() vermez).
@@ -35,7 +58,8 @@ const ProductObject = z.object({
     .enum(['partial-auto', 'partial-approval', 'all-or-nothing'])
     .default('partial-auto'),
   warrantyDays: z.number().int().nonnegative().optional(),
-  keyFormat: z.string().optional(),
+  /** Anahtar biçimi (regex) — ReDoS kapısı için bkz. `KeyFormatPattern`. */
+  keyFormat: KeyFormatPattern.optional(),
   /** null/omit = düşük-stok uyarısı KAPALI; >=0 ise eşik (§12). */
   lowStockThreshold: z.number().int().nonnegative().optional(),
   /** Stoksuz/ön-sipariş: pending akış, release_at'te teslim (§11). */
@@ -81,7 +105,9 @@ const UpdateProductBody = ProductObject.partial()
     validityDays: z.number().int().positive().nullable().optional(),
     warrantyDays: z.number().int().nonnegative().nullable().optional(),
     lowStockThreshold: z.number().int().nonnegative().nullable().optional(),
-    keyFormat: z.string().nullable().optional(),
+    // CREATE ile AYNI ReDoS kapısı (bkz. `KeyFormatPattern`) + güncellemeye özgü `null`
+    // ("alanı temizle"). Kapı yalnız CREATE'e konsaydı riskli desen PATCH ile girebilirdi.
+    keyFormat: KeyFormatPattern.nullable().optional(),
     releaseAt: z.string().datetime().nullable().optional(),
   })
   // CREATE ile AYNI kural: multi (MAK) ise kapasite >1 olmalı. Kısmi gövdede yalnız

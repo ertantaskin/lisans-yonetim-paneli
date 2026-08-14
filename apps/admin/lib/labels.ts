@@ -250,6 +250,9 @@ export const supportStatusLabel = (s: string) => lookup(SUPPORT_STATUS, s);
  * Fişin yaşam döngüsü. "Fiş" bilinçli bir kelime: operatör bunu gün sonunda kesip
  * tedarikçiye gönderiyor (Z raporu benzetmesi). "Talep"/"RMA" denmedi — panelin geri
  * kalanı `replacement_requests`'e (MÜŞTERİ talebi) "talep" diyor, iki yön karışırdı.
+ *
+ * ⚠ `sent` anahtarı `BADGE_STATUS`'ta da var ama orası MAİL kaydıdır ("Gönderildi").
+ * İki sözlük bilinçli AYRI — birleştirme, birini düzenlerken diğerine dokunma.
  */
 const CLAIM_STATUS: Record<string, string> = {
   draft: 'Taslak',
@@ -322,6 +325,17 @@ export const messageAuthorLabel = (t: string) => lookup(MESSAGE_AUTHOR, t);
 // mail / lisans kalemi). Etiketler burada birleşir → bileşende yalnız renk + ikon eşlemesi
 // kalır. Büyük/küçük harf tutarlıdır (eski sözlükte "teslim edildi" ile "Geri alındı"
 // karışıktı — aynı satırda iki farklı dil görünüyordu).
+//
+// ⚠ ÇAKIŞAN ANAHTAR UYARISI (yaşanmış hata): bu sözlük ile tedarikçi fişi sözlükleri
+// (`CLAIM_STATUS` / `CLAIM_OUTCOME` → `ClaimStatusBadge` / `ClaimOutcomeBadge`) BAZI
+// anahtarları PAYLAŞIR — `sent`, `pending`, `approved`, `rejected` — ama AYNI anahtar iki
+// vokabülerde FARKLI şey demektir:
+//   · `sent`     burada MAİL kaydı ("Gönderildi"), fişte tedarikçiye iletilmiş fiş.
+//   · `pending`  burada sipariş/atama ("Bekliyor"), fişte tedarikçi yanıtı bekleniyor.
+//   · `approved`/`rejected` burada MÜŞTERİ değişim talebi, fişte TEDARİKÇİ yanıtı.
+// Bu yüzden sözlükler bilinçli olarak AYRIDIR. Birini düzenlerken diğerini DEĞİŞTİRME ve
+// asla tek haritada birleştirme — `sent` bir tur "Tedarikçiye gönderildi" yazıldığı için
+// müşteriye giden teslimat maili sipariş detayında "Tedarikçiye gönderildi" görünüyordu.
 const BADGE_STATUS: Record<string, string> = {
   // Sipariş / atama
   fulfilled: 'Teslim edildi',
@@ -340,8 +354,9 @@ const BADGE_STATUS: Record<string, string> = {
   info_requested: 'Bilgi bekleniyor',
   approved: 'Onaylandı',
   rejected: 'Reddedildi',
-  // Mail kaydı
-  sent: 'Tedarikçiye gönderildi',
+  // Mail kaydı (`email_log.status`) — bu satırın okuyucusu sipariş detayındaki "Teslimat
+  // Mailleri" kartıdır, yani MÜŞTERİYE giden mail. Tedarikçi fişinin `sent`'i AYRI sözlükte.
+  sent: 'Gönderildi',
   delivered: 'İletildi',
   queued: 'Kuyrukta',
   failed: 'Başarısız',

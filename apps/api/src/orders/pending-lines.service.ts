@@ -237,12 +237,28 @@ export class PendingLinesService {
         GROUP BY site_id, domain, remote_product_id, variation
         -- Çıktı takma-adı yerine AÇIK ifade: 'mapped_now' hem CTE kolonu hem çıktı adı olduğu
         -- için sıralamada belirsizlik doğmasın (çözülebilir gruplar önce, sonra en eski).
-        ORDER BY BOOL_OR(mapped_now) DESC, MIN(created_at) ASC
-        LIMIT ${sql.raw(String(GROUP_LIMIT))}
+        --
+        -- TIE-BREAK ZORUNLU: LIMIT'li her ORDER BY'ın deterministik son anahtarı olmalı. Aynı
+        -- saniyede yazılmış siparişlerde (toplu import/resync sıradan bir durum) sıra keyfi
+        -- kalırsa tavana dayanan listede HANGİ grubun pencereye gireceği çağrıdan çağrıya
+        -- değişir → operatör aynı ekranı yenilediğinde grup kaybolur/geri gelir. Grup anahtarı
+        -- (site, mağaza ürünü, varyasyon) tekil olduğu için sıralamayı tam belirler.
+        ORDER BY BOOL_OR(mapped_now) DESC,
+                 MIN(created_at) ASC,
+                 site_id ASC,
+                 remote_product_id ASC NULLS LAST,
+                 variation ASC NULLS LAST
+        -- TAVAN+1 (proje deseni — aynı dosyadaki findCandidates / customers.list): eski
+        -- "LIMIT TAVAN" + "n >= TAVAN" yüklemi TAM 500 grup varken hiçbir şey kırpılmamışken
+        -- "liste eksik" uyarısı basıyordu. Yanlış alarm, GERÇEK kırpma uyarısını da değersizleştirir.
+        -- (DİKKAT: bu blok bir sql şablon literalinin İÇİNDE — yorumda TERS TIRNAK kullanmak
+        --  şablonu erken kapatır ve derleme kırılır; bu projede tekrarlayan bir tuzak.)
+        LIMIT ${sql.raw(String(GROUP_LIMIT + 1))}
       `,
     );
 
-    const groups: PendingGroup[] = rows.map((r) => {
+    // Kırpılma TESPİTİ için çekilen fazladan satır YANITA GİRMEZ (sözleşme: en fazla GROUP_LIMIT).
+    const groups: PendingGroup[] = rows.slice(0, GROUP_LIMIT).map((r) => {
       const mappedNow = Boolean(r.mapped_now) && r.remote_product_id !== null;
       const reason: PendingReason = !r.remote_product_id
         ? 'no-remote-id'
@@ -287,9 +303,10 @@ export class PendingLinesService {
 
     return {
       groups,
-      // Grup sorgusu LIMIT 500 ile sınırlı — sınıra DAYANDIYSA dürüstçe bildir (sessiz kırpma
-      // "hepsi bu kadar" izlenimi verirdi; CLAUDE.md "no silent caps").
-      truncated: rows.length >= GROUP_LIMIT,
+      // Grup sorgusu GROUP_LIMIT ile sınırlı — GERÇEKTEN kırpıldıysa dürüstçe bildir (sessiz
+      // kırpma "hepsi bu kadar" izlenimi verirdi; CLAUDE.md "no silent caps").
+      // TAVAN+1 çekildiği için `>` KESİN sinyaldir: tam GROUP_LIMIT grupta uyarı BASILMAZ.
+      truncated: rows.length > GROUP_LIMIT,
       totals: {
         groupCount: groups.length,
         lineCount: groups.reduce((s, g) => s + g.lineCount, 0),

@@ -17,8 +17,11 @@ set -uo pipefail
 
 BASE="${1:-http://127.0.0.1:3006}"
 
+# NOT: yeni bir sayfa (app/<rota>/page.tsx) eklendiğinde BURAYA da eklenmeli — betiğin tüm
+# değeri kapsamında. `categories` ilk turda unutulmuştu (kategori ekranı eklendiği hâlde hiç
+# taranmıyordu); `login` bilinçli dışarıda (kimlik doğrulama akışı, hata sınırı testi değil).
 ROUTES=(
-  dashboard pending review orders stock stock/import mappings quarantine quarantine/claims quarantine/records sites
+  dashboard pending review orders stock stock/import categories mappings quarantine quarantine/claims quarantine/records sites
   suppliers purchase-orders batches support customers reports ai notifications
   ops security admins templates releases deployments settings guide products
 )

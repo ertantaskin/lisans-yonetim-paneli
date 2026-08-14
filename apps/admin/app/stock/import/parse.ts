@@ -126,9 +126,20 @@ export function padRow(row: string[], width: number): string[] {
   return out;
 }
 
-/** Türkçe-duyarlı normalize (başlık eşleştirmesi için; "İSİM" ↔ "isim"). */
+/**
+ * Başlık eşleştirmesi için normalize.
+ *
+ * İ/I/ı/i DÖRT varyantı TEK harfe indirilir — DB tarafındaki kategori ikiz kilidiyle AYNI
+ * kural (migration 0038: `lower(translate(name,'İIı','iii'))`).
+ *
+ * NEDEN (test yazılırken yakalanan gerçek kusur): eskiden yalnız `toLocaleLowerCase('tr-TR')`
+ * vardı ve tr-TR'de ASCII `I` → NOKTASIZ `ı` olur. Yani BÜYÜK harfle yazılmış İngilizce sütun
+ * başlıkları eşleşmiyordu: `"EMAIL"` → `"emaıl"` ≠ `"email"`. Sonuç sessiz ve kötüydü —
+ * başlık satırı VERİ sanılıp içe aktarılıyordu (kullanıcı adı "EMAIL" olan bir hesap kaydı).
+ * Türkçe başlıklar ("E-POSTA") etkilenmiyordu, bu yüzden gözden kaçmıştı.
+ */
 function norm(v: string): string {
-  return v.trim().toLocaleLowerCase('tr-TR');
+  return v.trim().replace(/[İIı]/g, 'i').toLocaleLowerCase('tr-TR');
 }
 
 /**

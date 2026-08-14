@@ -47,20 +47,30 @@ export default async function StockPage({
   let error: string | null = null;
   let categoriesUnavailable = false;
   try {
-    // Ürün listesi HER hâlde çekilir: arama ve kategori süzgeci aynı listeden türetilir
-    // (ürün sayısı panel ölçeğinde küçüktür — kategori başına ayrı uç açmak yerine tek çekim).
-    products = await apiGet<ProductTableRow[]>('/v1/admin/products');
-  } catch (e) {
-    error = e instanceof Error ? e.message : 'Bağlantı hatası';
+    // HER hâlde çekilir: kartlar için sayaçlar, tablo/düzenleme paneli için seçenek listesi
+    // (ürünü başka kategoriye taşımak satır içindeki "Düzenle"den de yapılabilmeli).
+    categories = await getCategories();
+  } catch {
+    // API eski sürümdeyse (dağıtım sapması) ekran kırılmaz: düz ürün tablosuna düşer.
+    categoriesUnavailable = true;
   }
-  if (!error) {
+
+  /**
+   * ÜRÜN LİSTESİ YALNIZ GERÇEKTEN RENDER EDİLDİĞİNDE ÇEKİLİR (perf).
+   * Giriş ekranı (`mode === 'categories'`) kategori KARTLARINI gösterir, `ProductsTable`
+   * hiç basılmaz — ama `/v1/admin/products` satılabilir stok havuzunun tamamı üzerinde
+   * agregasyon yapar ve bu sayfa `force-dynamic`, yani her açılışta koşardı. Kardeş ekran
+   * `/customers` bunu zaten böyle yapıyor (mağaza kartlarında müşteri listesi çekilmez).
+   * Kategori ucu erişilemezse düz ürün tablosuna DÜŞÜLDÜĞÜ için orada liste yine gerekir.
+   */
+  const needProducts = mode !== 'categories' || categoriesUnavailable;
+  if (needProducts) {
     try {
-      // HER hâlde çekilir: kartlar için sayaçlar, tablo/düzenleme paneli için seçenek listesi
-      // (ürünü başka kategoriye taşımak satır içindeki "Düzenle"den de yapılabilmeli).
-      categories = await getCategories();
-    } catch {
-      // API eski sürümdeyse (dağıtım sapması) ekran kırılmaz: düz ürün tablosuna düşer.
-      categoriesUnavailable = true;
+      // Arama ve kategori süzgeci aynı listeden türetilir (ürün sayısı panel ölçeğinde
+      // küçüktür — kategori başına ayrı uç açmak yerine tek çekim).
+      products = await apiGet<ProductTableRow[]>('/v1/admin/products');
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Bağlantı hatası';
     }
   }
 
@@ -116,13 +126,15 @@ export default async function StockPage({
       </PageHeader>
 
       {/* Rehber şerit: "panel ürünü ekleniyor, sonra mağaza ürünüyle eşleşiyor" akışı
-          ekranın kendisinde anlatılır (kullanıcı isteği) — yalnız giriş seviyesinde. */}
+          ekranın kendisinde anlatılır (kullanıcı isteği) — yalnız giriş seviyesinde.
+          BAŞLIKLARDA NUMARA YOK: `HowItWorks` adım numarasını kendisi basıyor, başlıkta da
+          "1." yazınca ekranda "① 1. Panel ürünü" çıkıyordu (çift numaralandırma). */}
       {mode === 'categories' && (
         <HowItWorks
           compact
           steps={[
             {
-              title: '1. Panel ürünü',
+              title: 'Panel ürünü',
               text: (
                 <>
                   Sattığınız şeyi panelde tanımlarsınız (Windows 11 Pro, Office 365 hesabı…).
@@ -131,7 +143,7 @@ export default async function StockPage({
               ),
             },
             {
-              title: '2. Stok girişi',
+              title: 'Stok girişi',
               text: (
                 <>
                   Anahtar/hesap kayıtlarını <Link href="/stock/import" className="underline underline-offset-2">Stok Girişi</Link>{' '}
@@ -140,7 +152,7 @@ export default async function StockPage({
               ),
             },
             {
-              title: '3. Mağaza eşlemesi',
+              title: 'Mağaza eşlemesi',
               text: (
                 <>
                   Panel ürününü mağazadaki ürüne{' '}

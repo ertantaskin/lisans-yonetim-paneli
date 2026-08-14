@@ -61,7 +61,11 @@ export async function updateCategoryAction(
       name,
       // Boş bırakılan açıklama TEMİZLENİR (null) — "değişmedi" ile karışmasın.
       description: description || null,
-      ...(sortRaw ? { sortOrder: Number(sortRaw) } : {}),
+      // Boş bırakılan sıra da TEMİZLENİR (0 = "otomatik sıra"). Eskiden alan atlanıyordu:
+      // operatör kutuyu boşaltıp kaydediyor, "Kategori güncellendi" mesajını görüyor ama
+      // eski sabitleme sırası sessizce duruyordu — açıklama alanıyla tutarsız, yanıltıcıydı.
+      // NaN gönderilmez (kutu boş değil ama sayı değilse 0'a düşer → API 400 yerine sıfırlama).
+      sortOrder: sortRaw && Number.isFinite(Number(sortRaw)) ? Number(sortRaw) : 0,
     }, await getActor());
     await revalidateCategoryScreens();
     return { ok: true, message: 'Kategori güncellendi.' };

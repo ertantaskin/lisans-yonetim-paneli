@@ -74,6 +74,24 @@ export interface CustomerDetail {
 }
 
 /**
+ * API tarafındaki SABİT üst sınır (`customers.service` → `CUSTOMER_LIST_LIMIT = 2000`).
+ * Ekrandaki kırpma uyarısı bu sabitten türetilir — sayıyı metne gömmek iki yerin sessizce
+ * ayrışmasına yol açar (aynı desen: SUPPORT_FETCH_LIMIT / SECURITY_FETCH_LIMIT).
+ */
+export const CUSTOMERS_FETCH_LIMIT = 2000;
+
+/**
+ * UUID kalıbı — `?site=` adres çubuğundan gelir ve doğrudan API'ye iletiliyordu; geçersiz
+ * bir değer (elle düzenlenmiş/bayat link) API'de 500 üretip TÜM ekranı hata kartına
+ * düşürüyordu. Kalıba uymayan değer artık süzgeç olarak UYGULANMAZ.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `?site=` gerçekten bir site kimliği mi? (Sayfa, mod seçiminde de bunu kullanır.) */
+export const isValidSiteId = (id: string | undefined | null): id is string =>
+  typeof id === 'string' && UUID_RE.test(id);
+
+/**
  * Müşteri listesi. `siteId` verilirse SADECE o sitenin müşterileri + o siteye kapsanmış
  * sayılar döner (site → müşteri hiyerarşisi). Sıralama/filtre istemcide DataTable'da.
  */
@@ -83,7 +101,8 @@ export async function getCustomers(opts?: {
 }): Promise<{ items: CustomerRow[]; truncated: boolean }> {
   const params = new URLSearchParams();
   if (opts?.search) params.set('search', opts.search);
-  if (opts?.siteId) params.set('siteId', opts.siteId);
+  // Savunma derinliği: sayfa zaten doğruluyor, burada da geçersiz kimlik hiç gönderilmez.
+  if (isValidSiteId(opts?.siteId)) params.set('siteId', opts.siteId);
   const qs = params.toString() ? `?${params.toString()}` : '';
   const data = await apiGet<CustomerRow[] | { items: CustomerRow[]; truncated?: boolean }>(
     `/v1/admin/customers${qs}`,

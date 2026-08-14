@@ -16,9 +16,19 @@ import { ZodBody } from '../common/zod-validation.pipe';
 import type { Site } from '../db/schema';
 import { ReplacementRateLimitException, ReplacementsService } from './replacements.service';
 
+/**
+ * Değişim/garanti talebi — MÜŞTERİ kaynaklı serbest metin taşır (mağaza formundan gelir).
+ *
+ * ÜST SINIRLAR (denetim bulgusu): `reason` sınırsızdı → güvenilmez girdi doğrudan DB'ye
+ * yazılıyordu (gövde şişirme + destek kuyruğunda okunamaz kayıt). Aynı dosyadaki müşteri
+ * mesajı zaten bilinçli olarak 2000'e kapalı; `reason` da AYNI sınıf girdi olduğu için
+ * AYNI tavana bağlandı (tutarlı sözleşme, tek gerekçe).
+ * `remoteOrderId` bir mağaza sipariş KİMLİĞİdir (kısa sayı/kod) — 64 karakter her platform
+ * için fazlasıyla yeterli; serbest metin uzunluğunda olması hiçbir meşru durumda gerekmez.
+ */
 const CreateReplacementBody = z.object({
-  remoteOrderId: z.string().min(1),
-  reason: z.string().min(3),
+  remoteOrderId: z.string().min(1).max(64),
+  reason: z.string().min(3).max(2000),
   assignmentId: z.string().uuid().optional(),
 });
 type CreateReplacementBody = z.infer<typeof CreateReplacementBody>;

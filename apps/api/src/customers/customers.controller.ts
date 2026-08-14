@@ -10,6 +10,36 @@ const UpdateCustomerBody = z.object({
 });
 type UpdateCustomerBody = z.infer<typeof UpdateCustomerBody>;
 
+/**
+ * Boş string = "süzgeç yok" (admin tarafı `?site=` gibi boş parametre gönderebilir);
+ * dolu ise GEÇERLİ UUID olmak ZORUNDA. Desen `stock.controller.ts` içindeki `optionalUuid`
+ * ile birebir aynıdır (z.preprocess/z.coerce KULLANILMAZ — girdi tipini `unknown` yapıp
+ * `ZodBody<T>` ile çakışırlar).
+ */
+const optionalUuid = z.union([z.literal(''), z.string().uuid()]).optional();
+
+/**
+ * `/customers` liste süzgeçleri.
+ *
+ * NEDEN DOĞRULAMA: `siteId` daha önce doğrulanmadan SQL'e gidiyordu → geçersiz değer
+ * Postgres 22P02 (`invalid input syntax for type uuid`) ile **500** üretiyor ve admin
+ * ekranı hata kartına düşüyordu.
+ *
+ * NEDEN "sessizce yok say" DEĞİL de AÇIK 400: bozuk bir `?site=` değerini süzgeçsiz kabul
+ * etmek TÜM müşterileri listelerdi — operatör baktığı kapsamın daraltıldığını sanırken
+ * aslında global listeye bakardı. Bu projede sessiz kapsam sapması (sessiz kırpma/sessiz
+ * genişletme) bilinçli olarak dürüst hataya çevriliyor; 400 operatöre bağlantının bozuk
+ * olduğunu SÖYLER.
+ *
+ * `search` üst sınırı: girdi mağaza/operatör kaynaklı serbest metin — sınırsız string
+ * gövde ve log şişirme yüzeyidir; 200 karakter e-posta aramasına fazlasıyla yeter.
+ */
+const ListCustomersQuery = z.object({
+  search: z.string().max(200).optional(),
+  siteId: optionalUuid,
+});
+type ListCustomersQuery = z.infer<typeof ListCustomersQuery>;
+
 /** Admin: müşteri kayıtları (§13). ADMIN_TOKEN gerektirir. */
 @Controller('admin/customers')
 @UseGuards(AdminGuard)
@@ -17,8 +47,8 @@ export class CustomersController {
   constructor(private readonly customers: CustomersService) {}
 
   @Get()
-  list(@Query('search') search?: string, @Query('siteId') siteId?: string) {
-    return this.customers.list({ search, siteId });
+  list(@Query(new ZodBody(ListCustomersQuery)) query: ListCustomersQuery) {
+    return this.customers.list({ search: query.search, siteId: query.siteId });
   }
 
   /**

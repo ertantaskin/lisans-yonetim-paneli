@@ -9,9 +9,11 @@ import { CustomersTable } from '../../components/customers-table';
 import { CustomerSiteFilter } from '../../components/customer-site-filter';
 import { CustomerSiteGrid } from '../../components/customer-site-grid';
 import {
+  CUSTOMERS_FETCH_LIMIT,
   getCustomerSiteSummary,
   getCustomers,
   getSitesForFilter,
+  isValidSiteId,
   type CustomerRow,
   type CustomerSiteSummary,
   type SiteOption,
@@ -38,8 +40,14 @@ export default async function CustomersPage({
 }: {
   searchParams: Promise<{ site?: string; q?: string }>;
 }) {
-  const { site, q } = await searchParams;
+  const { site: siteRaw, q } = await searchParams;
   const term = q?.trim() ?? '';
+  /**
+   * `?site=` adres çubuğundan gelir: bayat/elle düzenlenmiş bir değer API'de 500 üretip
+   * ekranı hata kartına düşürüyordu. Geçersiz kimlik SÜZGEÇ SAYILMAZ → mağaza listesine
+   * düşülür (hata değil): operatörün gördüğü şey "bozuk link" değil, giriş ekranıdır.
+   */
+  const site = isValidSiteId(siteRaw) ? siteRaw : undefined;
   /**
    * API/admin dağıtım sapmasına dayanıklılık: `site-summary` ucu eski API sürümünde YOK.
    * O durumda ekran hata kartına düşmez — eski davranışa (düz müşteri listesi) geri döner.
@@ -152,15 +160,31 @@ export default async function CustomersPage({
               </div>
             </Alert>
           )}
+          {/* KIRPMA UYARISI MODA GÖRE AYRILIR: operatör zaten aramadayken "arama kutusunu
+              kullanın" demek yol göstermiyor, üstelik "sonuç eksik olabilir"i gizliyor —
+              bu panelin savaştığı "sessiz kırpma → o müşteri yok" sınıfının mesaj hâli.
+              Sayı koda gömülmez, API sabitinden (CUSTOMERS_FETCH_LIMIT) türetilir. */}
           {truncated && (
             <Alert variant="warning" className="mb-4">
               <TriangleAlert />
               <div>
                 <AlertTitle>Liste kırpıldı</AlertTitle>
                 <AlertDescription>
-                  En yeni <strong>2.000 müşteri</strong> gösteriliyor. Aradığınız müşteriyi
-                  bulamıyorsanız yukarıdaki arama kutusunu kullanın — o arama sunucuda, TÜM
-                  kayıtlar üzerinde çalışır.
+                  {mode === 'search' ? (
+                    <>
+                      “{term}” araması{' '}
+                      <strong>{CUSTOMERS_FETCH_LIMIT.toLocaleString('tr-TR')} kayıtla</strong>{' '}
+                      sınırlandı — eşleşen müşterilerin tamamı listede olmayabilir. Daha dar bir
+                      terim yazın (tam e-posta ya da alan adı) veya bir mağaza seçip içeride arayın.
+                    </>
+                  ) : (
+                    <>
+                      En yeni{' '}
+                      <strong>{CUSTOMERS_FETCH_LIMIT.toLocaleString('tr-TR')} müşteri</strong>{' '}
+                      gösteriliyor. Aradığınız müşteriyi bulamıyorsanız yukarıdaki arama kutusunu
+                      kullanın — o arama sunucuda, TÜM kayıtlar üzerinde çalışır.
+                    </>
+                  )}
                 </AlertDescription>
               </div>
             </Alert>

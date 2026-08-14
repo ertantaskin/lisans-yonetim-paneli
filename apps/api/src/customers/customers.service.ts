@@ -90,6 +90,31 @@ function rate(replacementCount: number, assignmentCount: number): number {
 const CUSTOMER_LIST_LIMIT = 2000;
 
 /**
+ * `siteSummary` önbellek süresi. dashboard.service'teki COUNTER_CACHE_TTL_MS ile AYNI
+ * değer (60 sn) ve AYNI gerekçe: bu sayaçlar SUNUM içindir — teslimat/atama kararları
+ * bunlara DAYANMAZ, dolayısıyla ≤60 sn bayatlık kabul edilebilir.
+ *
+ * NEDEN GEREKLİ: `/customers` giriş ekranı her açılışta orders tablosunun TAMAMINI tarayıp
+ * site başına COUNT(DISTINCT lower(email)) hesaplıyordu (grup agregasyonu, indeksle
+ * karşılanamaz). Ekran her gezinmede yeniden çağrılır → sipariş hacmi büyüdükçe maliyet
+ * doğrusal artar.
+ *
+ * NEDEN KOPYA DESEN (dashboard'daki `counterCached` yeniden KULLANILMADI): o yardımcı
+ * DashboardService'in PRIVATE metodu ve yalnız `number` döndürür; buradaki değer bir SATIR
+ * DİZİSİdir. Ortak bir yardımcıya çıkarmak dashboard.service.ts + modül bağlantılarını
+ * değiştirmeyi gerektirirdi (bu partide o dosyalar başka işçilerde). Desen birebir aynı
+ * tutuldu: TTL + `inflight` ile sürü-etkisi (thundering herd) koruması.
+ */
+const SITE_SUMMARY_CACHE_TTL_MS = 60_000;
+
+/** TTL'li tek-uçuş önbellek yuvası (dashboard.service'teki CounterCacheSlot ile aynı şekil). */
+interface SiteSummaryCacheSlot {
+  value: CustomerSiteSummaryRow[] | null;
+  at: number;
+  inflight: Promise<CustomerSiteSummaryRow[]> | null;
+}
+
+/**
  * Müşteri servisi (§13). Sipariş/atama sayıları orders/assignments üzerinden anlık
  * hesaplanır; replacement sayıları RAW SQL ile replacement_requests'ten okunur
  * (drizzle şema bağımlılığı YOK — tablo migration sonrası var). e-posta lowercase kanonik.
@@ -97,6 +122,12 @@ const CUSTOMER_LIST_LIMIT = 2000;
 @Injectable()
 export class CustomersService {
   constructor(@Inject(DB) private readonly db: Database) {}
+
+  /**
+   * `siteSummary` önbellek yuvası. Servis singleton olduğu için alan süreç ömrü boyunca
+   * yaşar; kalıcılık/invalidasyon YOKTUR (TTL yeter — bkz. SITE_SUMMARY_CACHE_TTL_MS).
+   */
+  private siteSummarySlot: SiteSummaryCacheSlot = { value: null, at: 0, inflight: null };
 
   /**
    * Müşteri listesi — e-posta bazlı toplulaştırma; search → e-posta ILIKE.
@@ -115,8 +146,35 @@ export class CustomersService {
    * PERF: tek geçiş, site başına grup (orders(site_id, created_at) indeksi mevcut).
    * Sayaçlar anlık türetilir — müşteri sayısı ayrı bir tabloda TUTULMAZ (§13: müşteri
    * kaydı yalnız etiket/not taşır, sayılar siparişten okunur → tek doğruluk kaynağı).
+   *
+   * ÖNBELLEKLİ (≤60 sn bayat olabilir — bkz. SITE_SUMMARY_CACHE_TTL_MS): sorgu orders
+   * tablosunun tamamını tarar ve bu ekran sık açılır. Bayatlık zararsız çünkü buradaki
+   * sayılar YALNIZ gezinme/sunum içindir; hiçbir teslimat/atama kararı bunlara dayanmaz
+   * (mağazaya girildiğinde okunan müşteri listesi CANLI sorgudan gelir).
    */
   async siteSummary(): Promise<CustomerSiteSummaryRow[]> {
+    const slot = this.siteSummarySlot;
+    if (slot.value !== null && Date.now() - slot.at < SITE_SUMMARY_CACHE_TTL_MS) return slot.value;
+    // Eşzamanlı çağrılar TEK sorguyu paylaşır (sürü etkisi): ilk çağıran hesabı başlatır,
+    // diğerleri aynı promise'e bağlanır. Hata durumunda BAYAT değere düşülmez — hata
+    // çağırana yansır (dashboard.counterCached ile aynı takas).
+    if (slot.inflight) return slot.inflight;
+
+    const run = this.loadSiteSummary()
+      .then((value) => {
+        slot.value = value;
+        slot.at = Date.now();
+        return value;
+      })
+      .finally(() => {
+        slot.inflight = null;
+      });
+    slot.inflight = run;
+    return run;
+  }
+
+  /** siteSummary'nin ÖNBELLEKSİZ gövdesi — yalnız yukarıdaki yuva tarafından çağrılır. */
+  private async loadSiteSummary(): Promise<CustomerSiteSummaryRow[]> {
     const rows = await rawRows<{
       site_id: string;
       domain: string;
@@ -157,13 +215,24 @@ export class CustomersService {
     const siteId = opts?.siteId?.trim();
 
     // Ana WHERE (orders alias o) — search + opsiyonel site süzgeci.
-    // PERF: aramayı SARGABLE yap — önek yolu lower(customer_email) LIKE lower(term)||'%'
-    // (orders_email_lower_idx fonksiyonel indeksi kullanılabilir) + contains ILIKE fallback ile OR.
-    // Önek ⊆ contains olduğundan birleşim = ESKİ contains davranışıyla AYNEN aynı eşleşme kümesi;
-    // yalnız planlayıcıya indeks yolu açılır (dönüş/eşleşme davranışı korunur).
-    const searchCond = term
-      ? sql`(lower(o.customer_email) LIKE lower(${term}) || '%' OR o.customer_email ILIKE ${'%' + term + '%'})`
-      : null;
+    //
+    // ARAMA = CONTAINS ve ŞU AN SEQ SCAN'dir. Bunu gizlemiyoruz; buradaki eski yorum
+    // "SARGABLE — orders_email_lower_idx kullanılabilir" diyordu ve YANLIŞTI:
+    //   (a) `%term%` biçimindeki LIKE/ILIKE hiçbir B-tree indeksiyle karşılanamaz (sol ucu açık);
+    //   (b) yanına OR'lu bir ÖNEK dalı eklemek de kurtarmaz — OR'un diğer dalı tam tarama
+    //       gerektirdiği için planlayıcı tabloyu zaten baştan sona okur. Üstelik önek ⊆ contains
+    //       olduğundan o dalın eşleşme kümesine hiçbir katkısı da yoktu → SADECE fazladan iş
+    //       üretiyordu; kaldırıldı (dönen satır kümesi AYNEN aynı, davranış değişmedi);
+    //   (c) mevcut fonksiyonel indeks `text_pattern_ops` OLMADAN oluşturulduğu için C dışı bir
+    //       collation'da `LIKE 'önek%'` optimizasyonunu zaten desteklemez.
+    // Contains davranışı BİLİNÇLİ korunuyor: operatör e-postanın ortasında geçen parçayla
+    // (alan adı, isim) arıyor — öneke daraltmak "müşteri yok" yanılgısı üretirdi.
+    //
+    // GERÇEK ÇÖZÜM: `pg_trgm` extension + GIN indeksi (lower(customer_email) gin_trgm_ops).
+    // ÖLÇEK-KAPILI olarak ERTELENDİ (bu partide migration/extension eklenmiyor): ekran zaten
+    // CUSTOMER_LIST_LIMIT tavanlı ve arama insan hızında/nadir. NE ZAMAN GEREKİR: orders tablosu
+    // ~1M satırı geçtiğinde ya da bu sorgunun p95 süresi saniyeye yaklaştığında.
+    const searchCond = term ? sql`o.customer_email ILIKE ${'%' + term + '%'}` : null;
     const siteCond = siteId ? sql`o.site_id = ${siteId}` : null;
     let whereClause = sql``;
     if (searchCond && siteCond) whereClause = sql`WHERE ${searchCond} AND ${siteCond}`;

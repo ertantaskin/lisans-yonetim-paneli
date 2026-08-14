@@ -3,6 +3,16 @@ import { revalidatePath } from 'next/cache';
 import { ApiError, apiPost } from '../../lib/api';
 import { getActor } from '../../lib/session';
 
+/**
+ * KRİTİK (Next 15): bu dosya 'use server' taşır ve YALNIZ async fonksiyon EXPORT edebilir.
+ * Aşağıdaki sabitler bilinçli olarak dosya-içi (export edilmez) — `scripts/check-use-server.js`
+ * bunu denetler.
+ */
+/** Yeniden kuyruğa alınabilecek kayıt türleri (API yolunun ilk parçası). */
+const REPLAY_KINDS: readonly string[] = ['outbox', 'email'];
+/** Kayıt kimliği kalıbı — panelin ortak deseni (bkz. app/quarantine/claims-actions.ts). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface ReplayState {
   ok: boolean;
   error?: string;
@@ -25,8 +35,27 @@ export interface ReplayState {
  * aksiyonu zaten kapatır, bu dal ikinci savunma hattıdır (bayat sayfa/eş zamanlı değişim).
  */
 export async function replayAction(kind: 'outbox' | 'email', id: string): Promise<ReplayState> {
+  // GİRDİ DOĞRULAMASI — ÇALIŞMA ANINDA (denetim bulgusu, orta/güvenlik).
+  // TS tipleri sunucu aksiyonlarında ZORLANMAZ: action uç noktası dışarıdan da çağrılabilir
+  // ve parametreler serileştirilmiş gövdeden gelir. Değerler doğrudan API YOLUNA gömüldüğü
+  // için `replayAction('..', '../deployments/claim')` gibi bir çağrı WHATWG URL
+  // normalizasyonuyla BAŞKA bir admin ucuna düşebilirdi (yol enjeksiyonu). Bu yüzden `kind`
+  // beyaz listeye, `id` UUID kalıbına bağlanır (kayıt kimlikleri şemada uuid) ve iki parça
+  // ayrıca `encodeURIComponent` ile kodlanır — ikinci savunma hattı.
+  // Aksiyonlar THROW ETMEZ; ekranın beklediği `{ ok, error }` sözleşmesine uyulur.
+  if (!REPLAY_KINDS.includes(kind)) {
+    return { ok: false, error: 'Geçersiz kayıt türü — yalnız teslimat maili veya webhook olayı yeniden gönderilebilir.' };
+  }
+  if (!UUID_RE.test(String(id ?? '').trim())) {
+    return { ok: false, error: 'Geçersiz kayıt kimliği — liste yenilenip tekrar denenmeli.' };
+  }
+
   try {
-    await apiPost(`/v1/admin/ops/replay/${kind}/${id}`, undefined, await getActor());
+    await apiPost(
+      `/v1/admin/ops/replay/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`,
+      undefined,
+      await getActor(),
+    );
     revalidatePath('/ops');
     return { ok: true };
   } catch (e) {
