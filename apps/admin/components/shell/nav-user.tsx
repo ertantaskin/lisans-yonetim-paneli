@@ -35,11 +35,15 @@ export function NavUser({ user }: { user: User }) {
           <Avatar className="size-8 rounded-lg">
             <AvatarFallback>{initials(user.name)}</AvatarFallback>
           </Avatar>
-          <span className="grid flex-1 text-left leading-tight">
+          {/* İkon modunda GİZLEN: 48px'lik rayda düğme 32px'e iner ve bu iki öğe yer kaplamaya
+              devam ederse (gizli/kırpılmış olsalar bile) flex içeriği taşırır — `justify-center`
+              taşmayı İKİ YANA dağıttığı için avatar düğmenin SOLUNA sızıp kırpılıyordu.
+              Metin `span:last-child` olmadığı için taban kuralı bunları yakalamaz, elle gizlenir. */}
+          <span className="grid flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-medium">{user.name}</span>
             <span className="truncate text-[11px] text-sidebar-foreground/60">{user.email}</span>
           </span>
-          <ChevronsUpDown className="ml-auto size-4 opacity-70" />
+          <ChevronsUpDown className="ml-auto size-4 opacity-70 group-data-[collapsible=icon]:hidden" />
         </SidebarMenuButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent

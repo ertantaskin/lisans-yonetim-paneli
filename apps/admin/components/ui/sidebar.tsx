@@ -285,11 +285,20 @@ export function SidebarInset({ className, ...props }: React.ComponentProps<'div'
 }
 
 export function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-sidebar="header" className={cn('flex flex-col gap-2 p-3', className)} {...props} />;
+  // YATAY dolgu SidebarGroup ile AYNI olmalı (8px): marka satırı, menü öğeleri ve kullanıcı
+  // satırı tek dikey eksende hizalanır. `p-3` denendi ve KIRDI — ölçüldü: açık menüde marka/
+  // kullanıcı x=12 iken menü öğeleri x=8 (4px kayma); 48px ikon rayında ise düğme merkezi 28
+  // (ray merkezi 24) ve kullanıcı avatarı x=47'ye taşıp kırpılıyordu. Dikeyde 12px serbest.
+  return (
+    <div data-sidebar="header" className={cn('flex flex-col gap-2 px-2 py-3', className)} {...props} />
+  );
 }
 
 export function SidebarFooter({ className, ...props }: React.ComponentProps<'div'>) {
-  return <div data-sidebar="footer" className={cn('flex flex-col gap-2 p-3', className)} {...props} />;
+  // Yatay dolgu SidebarHeader/SidebarGroup ile aynı (8px) — gerekçe SidebarHeader'da.
+  return (
+    <div data-sidebar="footer" className={cn('flex flex-col gap-2 px-2 py-3', className)} {...props} />
+  );
 }
 
 export function SidebarContent({ className, ...props }: React.ComponentProps<'div'>) {
@@ -354,7 +363,7 @@ const sidebarMenuButtonVariants = cva(
   //   aktif → `bg-primary text-background` (DOLU pill; eskiden soluk `bg-sidebar-accent` idi)
   // Kayma yalnız genişken: ikon modunda 40px kutuda 4px kayma ikonu kırpardı.
   // `motion-reduce:` — hareket azaltma tercihinde kayma yok (WCAG 2.3.3).
-  'peer/menu-button flex w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-medium outline-none transition-[width,height,padding,transform,background-color,color] duration-200 ease-in-out disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 hover:translate-x-1 group-data-[collapsible=icon]:hover:translate-x-0 motion-reduce:hover:translate-x-0 data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:font-medium data-[active=true]:hover:bg-primary data-[active=true]:hover:text-primary-foreground group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:hover:translate-x-0 [&>span:last-child]:truncate [&>svg]:size-4.5 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-3 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-medium outline-none transition-[width,height,padding,transform,background-color,color] duration-200 ease-in-out disabled:pointer-events-none disabled:opacity-50 group-has-[[data-sidebar=menu-action]]/menu-item:pr-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 hover:translate-x-1 group-data-[collapsible=icon]:hover:translate-x-0 motion-reduce:hover:translate-x-0 data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:font-medium data-[active=true]:hover:bg-primary data-[active=true]:hover:text-primary-foreground group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:p-2 group-data-[collapsible=icon]:hover:translate-x-0 group-data-[collapsible=icon]:[&>span:last-child]:hidden [&>span:last-child]:truncate [&>svg]:size-4.5 [&>svg]:shrink-0',
   {
     variants: {
       variant: {
