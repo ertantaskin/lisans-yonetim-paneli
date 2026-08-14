@@ -1831,3 +1831,28 @@ lisanslar sıkışıyor, yana kaydırma sorunu var, tablolar çok yüksek duruyo
 - **KENDİ HATAM:** `sed` ile eklemeye çalıştığım import dosyadaki gerçek biçime uymadığı için hiç eklenmedi ve
   **typecheck'i kırık commit'i push ettim** (d23983c) → bir sonraki commit'te düzeltildi. Ders: push'tan önce
   typecheck ÇIKTISINI oku, "Tasks: N successful" satırını gördüğünü varsayma.
+
+**LİSANS GÖRÜNÜRLÜĞÜ + KAPSAMLI ARAMA (commit c884ba9→c5d4383, dev'de canlı):** Kullanıcı: *"küçük ekranlarda
+hâlâ sorun var, lisans tamamen görünmüyor son haneleri; arama kısmını da iyileştir, lisansı tam haliyle de
+arayabilelim gibi düşün, daha kapsamlı"*.
+- **Kırpma kaldırıldı:** anahtar `truncate` ile tek satıra sıkışıp sonu "…" oluyordu ve kaybolan kısım tam da
+  kalemi AYIRT EDEN son hanelerdi. **Ama `break-all` tek başına DAHA KÖTÜ oldu** (ölçüldü): tabloda bir
+  hücrenin min-content'ini tek karaktere indirdiği için kolon 1440px'te bile 140px'e eziliyor ve anahtar
+  5 satıra sarıyordu. ÇÖZÜM İKİ YOLLU: **tabloda (lg+) tek satır** + kolon tabanı `min-w-[19rem]`;
+  **kartta (lg altı) sarma**. İkisinde de hiçbir hane kaybolmuyor (`kirpik:false` ölçüldü).
+- **Arama artık üç eksende:** (1) **TAM anahtar** — `payload_hash` eşitliği (şifreli payload'da LIKE
+  yapılamaz, hash anahtarlıdır → DB'yi ele geçiren bu aramayı yapamaz); (2) mevcut **son 5 hane**
+  (`payload_suffix_hash`); (3) YENİ **ürün adı + SKU** (operatör "bu üründen kaç kalem var" diye arıyordu,
+  liste boş dönüyordu). **Biçim toleransı:** ham / boşlukları sadeleşmiş / boşluksuz ve her birinin BÜYÜK
+  harflisi denenir (≤6 hash) → kopyala-yapıştır farkı "sonuç yok" demez. `page_slice` VE `count` sorgusuna
+  `products` LEFT JOIN eklendi (süzgeç fragmanı ikisinde birebir aynı olmalı, yoksa toplam ile liste ayrışır).
+  İpucu metni gerçeğe hizalandı ("yalnız son 5 hane" artık yanlış bilgiydi).
+- **DAR EKRAN — kart eşiği md→lg:** 900px'te sayfa kaymıyordu ama TABLO kendi kabında **568px** kayıyordu.
+  Kartlar artık `lg` altında; tabloda Teslimat `xl`, Kapasite/Parti/Eklenme `2xl`; ürün kolonu dar bantta
+  `max-w-36`; **tablodaki aksiyon etiketleri gizli** (ikon + aria-label; kartta etiketler DURUYOR — orada yer
+  var); teslimat hücresinde mağaza alan adı kırpılır (min-content'i tek uzun token belirliyordu); Eklenme
+  yalnız tarih (saat `title`'da).
+- **Ölçülen sonuç:** 375px kart görünümü — yatay kayma **0**, anahtar tam, düğme etiketleri görünür ·
+  900px kart — **0** · 1100px tablo (4 kolon) — **0** · 1600px tam tablo (9 kolon) — 1332px içerik / 1222px kap,
+  **110px** iç kaydırma kaldı (başlangıç 216px). Bu bant bilinçli kabul: dokuz kolonluk operasyon tablosu
+  1222px'e sığmaz, proje kuralı gereği geniş tablo KENDİ kabında kayar; asıl şikâyet (dar ekran + kırpma) kapandı.
