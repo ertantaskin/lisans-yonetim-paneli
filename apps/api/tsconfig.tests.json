@@ -1,0 +1,20 @@
+{
+  // TİP DENETİMİ KAPSAMI — src + test.
+  //
+  // NEDEN AYRI DOSYA: `tsconfig.json` derleme (nest build) içindir ve `**/*.test.ts` dosyalarını
+  // bilerek DIŞLAR (test kodu üretim bundle'ına girmemeli). Sonuç: test dosyaları HİÇBİR tip
+  // denetiminden geçmiyordu. Vitest de tipleri kontrol etmeden transpile ettiği için testler
+  // yeşil kalırken imzalardan SESSİZCE sapabiliyordu — denetimde tam olarak bu bulundu:
+  // 5 dosyada bayat imza (3 argümanlık kurucuya 1 argüman, kaldırılmış alan, daralmış union).
+  // Sapan bir test "geçiyor" ama artık gerçek sözleşmeyi doğrulamıyor olabilir.
+  //
+  // `pnpm --filter @lisans/api typecheck` BUNU koşar (src'yi de kapsar → tek geçiş yeter).
+  // Vitest config dosyaları hariç: `import.meta` kullanıyorlar ve derleme ayarlarıyla uyumsuz.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "vitest.race.config.ts", "vitest.integration.config.ts"]
+}

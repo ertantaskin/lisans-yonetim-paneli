@@ -34,7 +34,7 @@ describe('products: productCapacityChange (kapasite guard karar fonksiyonu)', ()
   });
 
   it('tek kullanımlık üründe alan düzenlemesi (maxUses hiç gönderilmez) serbesttir', () => {
-    const c = productCapacityChange({ usageMode: 'single', maxUses: null }, { name: 'yeni ad' });
+    const c = productCapacityChange({ usageMode: 'single', maxUses: null }, {});
     expect(c).toEqual({ currentCapacity: 1, nextCapacity: 1, reduced: false });
   });
 

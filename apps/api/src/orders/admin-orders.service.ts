@@ -1176,7 +1176,10 @@ export class AdminOrdersService {
     // §2 (denetim C2): İADE'de MAK kapasitesi havuza DÖNMEZ (false). Adet-düşür/re-assign'de döner (true).
     returnMultiCapacity = true,
   ) {
-    if (units <= 0) return { assignmentId, revoked: 0 };
+    // `partial` BU DALDA DA döner: aksi hâlde dönüş tipi iki farklı şekilli bir union olur ve
+    // çağıran `res.partial` diyemez (test dosyaları tam bu yüzden tip sapması taşıyordu).
+    // Davranış değişmez — units<=0 zaten "hiçbir şey yapılmadı" demektir.
+    if (units <= 0) return { assignmentId, revoked: 0, partial: false };
     return exec.transaction(async (tx) => {
       const [asg] = await tx
         .select()

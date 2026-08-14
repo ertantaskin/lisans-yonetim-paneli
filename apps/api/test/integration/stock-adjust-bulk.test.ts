@@ -62,7 +62,11 @@ describe('createAdjustment — toplu geçersiz kılma', () => {
       configFake,
       autocompleteQueueFake,
     );
-    supplyOps = new SupplyOpsService(db as never);
+    // SupplyOpsService ctor'u 3 bağımlılık ister; bu dosyanın kullandığı metotlar (stok
+    // düzeltme) adminOrders/fulfillment'a DOKUNMAZ, o yüzden ikisi boş geçilir. Tip olarak
+    // da doğru yazılır: eskiden tek argümanla çağrılıyordu ve test dosyaları typecheck'e
+    // girmediği için sapma sessizce yaşıyordu.
+    supplyOps = new SupplyOpsService(db as never, undefined as never, undefined as never);
   });
 
   afterAll(async () => {

@@ -44,7 +44,12 @@ const ACTOR = 'it-bulk-actor';
 const productIds: string[] = [];
 const batchIds: string[] = [];
 
-async function insertBatch(productId: string, status: string): Promise<string> {
+// status: şema enum'u ('active' | 'recalled' | 'voided'). Düz `string` tipi drizzle insert
+// overload'una uymuyordu (test koşuyordu ama TİP olarak sapmıştı).
+async function insertBatch(
+  productId: string,
+  status: 'active' | 'recalled' | 'voided',
+): Promise<string> {
   const [row] = await db
     .insert(schema.batches)
     .values({ productId, label: `it-${tag}-batch`, status, qtyReceived: 0 })
