@@ -95,7 +95,7 @@ export function LicenseItemActions({
             title={lockReason}
           >
             <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${lockReason}`}>
-              <Pencil aria-hidden /> Değiştir
+              <Pencil aria-hidden /> <span className="hidden 2xl:inline">Değiştir</span>
             </Button>
             <Button
               variant="danger-outline"
@@ -103,7 +103,7 @@ export function LicenseItemActions({
               disabled
               aria-label={`Sil — ${lockReason}`}
             >
-              <Trash2 aria-hidden /> Sil
+              <Trash2 aria-hidden /> <span className="hidden 2xl:inline">Sil</span>
             </Button>
           </span>
         </TooltipTrigger>
@@ -120,7 +120,7 @@ export function LicenseItemActions({
         onClick={() => setEditOpen(true)}
         aria-label={`${row.productName} lisansını değiştir`}
       >
-        <Pencil aria-hidden /> Değiştir
+        <Pencil aria-hidden /> <span className="hidden 2xl:inline">Değiştir</span>
       </Button>
       <Button
         variant="danger-outline"
@@ -128,7 +128,7 @@ export function LicenseItemActions({
         onClick={() => setVoidOpen(true)}
         aria-label={`${row.productName} lisansını geçersiz kıl`}
       >
-        <Trash2 aria-hidden /> Sil
+        <Trash2 aria-hidden /> <span className="hidden 2xl:inline">Sil</span>
       </Button>
 
       <EditLicenseSheet
@@ -230,7 +230,7 @@ function ReplaceDeliveredButton({
         <TooltipTrigger asChild>
           <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
             <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${why}`}>
-              <RefreshCw aria-hidden /> Değiştir
+              <RefreshCw aria-hidden /> <span className="hidden 2xl:inline">Değiştir</span>
             </Button>
           </span>
         </TooltipTrigger>

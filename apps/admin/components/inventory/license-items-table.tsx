@@ -522,7 +522,7 @@ export function LicenseItemsTable({
         Hücre bileşenleri (LicenseValueCell/StatusCell/DeliveryCell/LicenseItemActions)
         AYNEN yeniden kullanılır → iki ayrı doğruluk kaynağı oluşmaz.
       */}
-      <div className="space-y-2 md:hidden" aria-busy={loading}>
+      <div className="space-y-2 lg:hidden" aria-busy={loading}>
         {loading && rows.length === 0 ? (
           Array.from({ length: 3 }).map((_, i) => (
             <div key={`mc-sk-${i}`} className="rounded-lg border border-border p-3">
@@ -593,7 +593,7 @@ export function LicenseItemsTable({
 
       {/* ── Tablo (md ve üstü) ── */}
       <div
-        className="hidden rounded-lg border border-border md:block"
+        className="hidden rounded-lg border border-border lg:block"
         aria-busy={loading}
       >
         <Table>
@@ -615,10 +615,10 @@ export function LicenseItemsTable({
               {showProductColumn && <TableHead>Ürün</TableHead>}
               <TableHead>Lisans / Hesap</TableHead>
               <TableHead>Durum</TableHead>
-              <TableHead className="hidden lg:table-cell">Kapasite</TableHead>
-              <TableHead className="hidden xl:table-cell">Parti</TableHead>
-              <TableHead className="hidden md:table-cell">Teslimat</TableHead>
-              <TableHead className="hidden lg:table-cell">Eklenme</TableHead>
+              <TableHead className="hidden 2xl:table-cell">Kapasite</TableHead>
+              <TableHead className="hidden 2xl:table-cell">Parti</TableHead>
+              <TableHead className="hidden xl:table-cell">Teslimat</TableHead>
+              <TableHead className="hidden 2xl:table-cell">Eklenme</TableHead>
               <TableHead className="text-right">
                 <span className="sr-only">İşlemler</span>
               </TableHead>
@@ -690,7 +690,7 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
                   {showProductColumn && (
-                    <TableCell className="max-w-48">
+                    <TableCell className="max-w-36 2xl:max-w-48">
                       <Link
                         href={`/products/${row.productId}`}
                         className="block truncate font-medium text-foreground underline-offset-4 hover:underline"
@@ -723,18 +723,18 @@ export function LicenseItemsTable({
                       DOLU olanlar yazılır; kolonlar görünür olduğunda bu satır kaybolur
                       (aynı bilgiyi iki kez göstermek satırı yine şişirirdi).
                     */}
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground xl:hidden">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground 2xl:hidden">
                       {row.delivered && (
                         <Link
                           href={`/orders/${row.delivered.orderId}`}
-                          className="font-medium tabular-nums text-foreground underline-offset-4 hover:underline md:hidden"
+                          className="font-medium tabular-nums text-foreground underline-offset-4 hover:underline xl:hidden"
                         >
                           #{row.delivered.remoteOrderId || '—'}
                         </Link>
                       )}
                       {row.batchCode && <span className="truncate">{row.batchCode}</span>}
                       {row.usageMode === 'multi' && (
-                        <span className="tabular-nums lg:hidden">
+                        <span className="tabular-nums 2xl:hidden">
                           kalan {row.remainingUses}
                         </span>
                       )}
@@ -745,7 +745,7 @@ export function LicenseItemsTable({
                     <StatusCell row={row} />
                   </TableCell>
 
-                  <TableCell className="hidden whitespace-nowrap tabular-nums text-muted-foreground lg:table-cell">
+                  <TableCell className="hidden whitespace-nowrap tabular-nums text-muted-foreground 2xl:table-cell">
                     {row.usageMode === 'multi' ? (
                       <span title={`${row.useCount} kullanıldı / ${row.maxUses} toplam`}>
                         {row.useCount}/{row.maxUses}
@@ -756,7 +756,7 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
 
-                  <TableCell className="hidden max-w-40 xl:table-cell">
+                  <TableCell className="hidden max-w-40 2xl:table-cell">
                     {row.batchCode ? (
                       <>
                         <div className="truncate text-foreground/90" title={row.batchCode}>
@@ -776,11 +776,11 @@ export function LicenseItemsTable({
                     )}
                   </TableCell>
 
-                  <TableCell className="hidden max-w-64 md:table-cell">
+                  <TableCell className="hidden max-w-64 xl:table-cell">
                     <DeliveryCell row={row} />
                   </TableCell>
 
-                  <TableCell className="hidden whitespace-nowrap tabular-nums text-xs text-muted-foreground lg:table-cell">
+                  <TableCell className="hidden whitespace-nowrap tabular-nums text-xs text-muted-foreground 2xl:table-cell">
                     {fmtDateTime(row.createdAt)}
                   </TableCell>
 
@@ -987,7 +987,7 @@ function LicenseValueCell({ row }: { row: LicenseInventoryRow }) {
         // kaybolmaz. md ÜSTÜ (tablo): TEK SATIR — `break-all` tabloda min-content'i tek
         // karaktere indirip kolonu 140px'e eziyordu (1440px'te bile iki satır; ölçüldü).
         // Kolonun `min-w-[19rem]` tabanıyla 29 karakterlik anahtar tek satıra sığar.
-        className="block flex-1 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90 md:whitespace-nowrap md:break-normal"
+        className="block flex-1 whitespace-normal break-all font-mono text-sm leading-snug text-foreground/90 lg:whitespace-nowrap lg:break-normal"
         title={row.value}
       >
         {row.value}
