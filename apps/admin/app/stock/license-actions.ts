@@ -2,6 +2,7 @@
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiRaw, apiSend } from '../../lib/api';
 import { getActor } from '../../lib/session';
+import { LICENSE_PAGE_SIZES } from '../../lib/license-page-sizes';
 
 /**
  * Lisans envanteri sunucu aksiyonları (§12/§13).
