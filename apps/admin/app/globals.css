@@ -233,6 +233,21 @@
   background-color: color-mix(in oklch, var(--foreground) 32%, transparent);
 }
 
+/* Kaydırma çubuğunu GİZLE (kaydırma çalışmaya devam eder).
+ *
+ * Kenar menüsü için: menü ile içerik kartı arasında oluk YOK (inset deseninde kart menüye
+ * bitişik başlar), bu yüzden 10px'lik çubuk tam sınıra oturup zeminle aynı renkteki alanda
+ * "başıboş dikey çizgi" gibi görünüyordu — kullanıcı bunu "çizgi geçişi bozuk" diye bildirdi.
+ * Referans (shadcnspace) da menü içeriğinde `no-scrollbar` kullanıyor. Yalnız BURAYA uygulanır;
+ * tablo/sayfa kaydırıcıları çubuklu kalır (orada keşfedilebilirlik önemli). */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* ── Klavye odak göstergesi — PANELİN TEK KAYNAĞI (WCAG 1.4.11, §17) ──────────
  *
  * KATMANSIZ OLMASI BİLİNÇLİ: Tailwind v4 tüm utility'leri `@layer utilities` içine koyar ve

@@ -62,11 +62,17 @@ export function SiteHeader() {
     // `md:rounded-t-xl` KOŞULSUZ: başlığın üstünde bir bant varsa (auth-kapalı uyarısı) köşe
     // kesiği kartın KENDİ zeminini açar — başlıkla aynı renk olduğu için görünmez; bant
     // kaydırılıp gidince de kartın üst köşesi doğru yuvarlak kalır.
-    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:top-2 md:rounded-t-xl md:px-4">
+    // `md:px-6`: yatay dolgu ana içerikle (`main` px-4 md:px-6) AYNI → üst bar öğeleri sayfa
+    // içeriğiyle tek dikey eksende. Eskiden 16px vs 24px idi ve başlık çubuğu 17px kayık duruyordu.
+    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-4 md:top-2 md:rounded-t-xl md:px-6">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-1 h-5" />
 
-      <Breadcrumb className="hidden sm:block">
+      {/* `min-w-0 flex-1 overflow-hidden`: breadcrumb ESNER ve taşarsa KENDİ İÇİNDE kırpılır.
+          Eskiden sabit genişlikteydi → dar/orta ekranda sağdaki kontrolleri dışarı itiyordu
+          (ölçüldü, 789px + açık menü: tema düğmesi x=791, üst barın sağ kenarı 771 → düğme
+          üst barın DIŞINDA kalıp erişilemez oluyordu). */}
+      <Breadcrumb className="hidden min-w-0 flex-1 overflow-hidden sm:block">
         <BreadcrumbList>
           <BreadcrumbItem>
             <BreadcrumbLink asChild>
@@ -94,7 +100,9 @@ export function SiteHeader() {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2">
+      {/* `shrink-0`: sağ blok ASLA kırpılmaz — kırpılırsa tema/bildirim gibi tek erişim yolu
+          olan kontroller ulaşılamaz hale gelir. Esneme payı breadcrumb'dan alınır (yukarı bak). */}
+      <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
         {/*
           Arama tetiği: dar ekranda YALNIZ ikon (kare, h-8 — diğer üst bar öğeleriyle aynı
           yükseklik), `sm` ve üstünde metin + kısayol rozeti. Eskiden `w-full max-w-56` idi
@@ -107,7 +115,9 @@ export function SiteHeader() {
           title="Ara (Ctrl+K)"
           // Referans deseni: gerçek bir arama ALANI gibi görünür (h-9, rounded-lg, shadow-xs,
           // solda ikon). Dar ekranda yine yalnız ikon — üst bardaki diğer öğeleri ezmesin.
-          className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground sm:w-56 sm:justify-start sm:gap-2 sm:px-3 sm:text-sm"
+          // Genişlik kademeli: orta genişlikte 176px, geniş ekranda 224px — sabit 224px,
+          // açık menüyle birlikte orta ekranda sağ bloğu taşırıyordu.
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground shadow-xs transition-colors hover:bg-accent hover:text-accent-foreground sm:w-44 sm:justify-start sm:gap-2 sm:px-3 sm:text-sm lg:w-56"
         >
           <Search className="size-4 shrink-0" />
           <span className="hidden flex-1 text-left sm:inline">Ara…</span>

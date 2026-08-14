@@ -110,8 +110,11 @@ export function SidebarProvider({
         // `has-data-[variant=inset]:bg-sidebar`: inset düzeninde SAYFA zemini sidebar rengine
         // döner; içerik `SidebarInset` içinde yüzen beyaz bir karta oturur (shadcnspace deseni —
         // referansta ölçüldü: wrapper `has-data-[variant=inset]:bg-sidebar`, main `m-2 rounded-xl`).
+        // `has-data-[variant=inset]:gap-1`: kenar menü ile yüzen içerik kartı arasında 4px oluk
+        // (referansta ölçüldü). Oluksuz halde kartın 1px outline'ı menünün kenarına yapışıyor ve
+        // sınır "ezik" görünüyordu. Mobilde menü `display:none` olduğundan gap etkisizdir.
         className={cn(
-          'group/sidebar-wrapper flex min-h-svh w-full overflow-x-clip has-data-[variant=inset]:bg-sidebar',
+          'group/sidebar-wrapper flex min-h-svh w-full overflow-x-clip has-data-[variant=inset]:bg-sidebar has-data-[variant=inset]:gap-1',
           className,
         )}
         {...props}
@@ -309,7 +312,7 @@ export function SidebarContent({ className, ...props }: React.ComponentProps<'di
         // Dikey kaydırma İKİ modda da açık. Eskiden ikon modunda kapatılıyordu; 25 menü öğesi
         // ikon modunda ~1170px yer kapladığı için kısa ekranlarda alttaki öğeler kırpılıyor VE
         // kaydırılamıyordu (Şablonlar/Sürümler/Dağıtımlar/Ayarlar/Rehber erişilemezdi).
-        'flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden',
+        'no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden',
         className,
       )}
       {...props}
