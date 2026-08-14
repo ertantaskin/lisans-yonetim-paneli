@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS "product_categories_name_lower_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "product_categories_name_lower_idx" ON "product_categories" USING btree (lower(translate("name", 'İIı', 'iii')));

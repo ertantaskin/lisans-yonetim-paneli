@@ -27,9 +27,23 @@ export const productCategories = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  // Ad benzersizliği BÜYÜK/küçük harf duyarsız: "Office" varken "office" eklenememeli
-  // (ikiz kategori, bu tablonun var oluş sebebini boşa çıkarırdı).
-  (t) => [uniqueIndex('product_categories_name_lower_idx').on(sql`lower(${t.name})`)],
+  /**
+   * Ad benzersizliği — TÜRKÇE-DUYARLI (dev'de ÖLÇÜLDÜ, düz `lower()` YETMİYOR):
+   * en_US.utf8 collation'da `lower('WINDOWS LİSANSLARI')` = "windows lisanslari" ama
+   * `lower('windows lisansları')` = "windows lisansları" → İKİSİ FARKLI sayılıyordu ve
+   * "windows LİSANSLARI" ikinci kayıt olarak KABUL EDİLİYORDU (201). Oysa bu tablonun tek
+   * varlık sebebi ikiz kategoriyi engellemek.
+   *
+   * `translate(name,'İIı','iii')` dört varyantı (i · ı · İ · I) tek karaktere indirger,
+   * sonra `lower()` kalan harfleri (Ş/Ğ/Ç/Ö/Ü dahil — Unicode collation bunları doğru
+   * çeviriyor, ölçüldü) küçültür. BİLİNÇLİ YAN ETKİ: "Sıra" ile "Sira" da çakışır —
+   * Türkçe bir panelde bu iki ad zaten birbirine karıştırılacak isimlerdir.
+   */
+  (t) => [
+    uniqueIndex('product_categories_name_lower_idx').on(
+      sql`lower(translate(${t.name}, 'İIı', 'iii'))`,
+    ),
+  ],
 );
 
 export type ProductCategory = typeof productCategories.$inferSelect;
