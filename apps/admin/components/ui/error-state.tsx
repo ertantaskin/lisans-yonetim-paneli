@@ -66,7 +66,7 @@ export function ErrorState({ error, reset, title, description }: ErrorStateProps
 
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
-      <span className="flex size-12 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--destructive)_12%,transparent)] text-destructive">
+      <span className="flex size-12 items-center justify-center rounded-full bg-[color-mix(in_oklch,var(--destructive-vivid)_12%,transparent)] text-destructive">
         <TriangleAlert className="size-6" />
       </span>
       <h1 className="text-lg font-semibold text-foreground">{title ?? 'Bir şeyler ters gitti'}</h1>

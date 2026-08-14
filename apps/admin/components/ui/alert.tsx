@@ -17,13 +17,16 @@ const alertVariants = cva(
         /* Bilgi (mavi) — rozet `variant="info"` ile AYNI hue. Eskiden bu isim GRİ bir kutu
            üretiyordu; rozet mavi olunca aynı adın iki farklı rengi olurdu (tasarım
            sistemi tutarsızlığı). Sessiz kutu artık `muted`. */
-        info: 'border-info/40 bg-[color-mix(in_oklch,var(--info)_12%,transparent)] text-foreground [&>svg]:text-info',
+        /* Zemin rozetle AYNI canlı tabandan (`-vivid`) türetilir → aynı ekrandaki uyarı
+           kutusu ile durum rozeti aynı maviyi/yeşili gösterir. Oran rozetten DÜŞÜK (%10):
+           uyarı büyük bir yüzeydir, rozetle aynı doygunlukta olursa sayfayı bastırır. */
+        info: 'border-info/40 bg-[color-mix(in_oklch,var(--info-vivid)_10%,transparent)] text-foreground [&>svg]:text-info',
         success:
-          'border-success/40 bg-[color-mix(in_oklch,var(--success)_12%,transparent)] text-foreground [&>svg]:text-success',
+          'border-success/40 bg-[color-mix(in_oklch,var(--success-vivid)_10%,transparent)] text-foreground [&>svg]:text-success',
         warning:
-          'border-warning/40 bg-[color-mix(in_oklch,var(--warning)_12%,transparent)] text-foreground [&>svg]:text-warning',
+          'border-warning/40 bg-[color-mix(in_oklch,var(--warning-vivid)_10%,transparent)] text-foreground [&>svg]:text-warning',
         destructive:
-          'border-destructive/40 bg-[color-mix(in_oklch,var(--destructive)_10%,transparent)] text-foreground [&>svg]:text-destructive',
+          'border-destructive/40 bg-[color-mix(in_oklch,var(--destructive-vivid)_9%,transparent)] text-foreground [&>svg]:text-destructive',
       },
     },
     defaultVariants: { variant: 'default' },

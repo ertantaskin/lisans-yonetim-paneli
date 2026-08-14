@@ -1536,7 +1536,7 @@ export function ImportWorkbench({
             {/* Düz anahtar yolunda görünmez karakter uyarısı (hesap tablosundaki ile aynı
                 disiplin): sessizce temizlemeyiz, gösterip tek tık sunarız. */}
             {!isAccount && hiddenKeyLines > 0 && (
-              <div className="space-y-2 rounded-md border border-warning/40 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] p-2.5">
+              <div className="space-y-2 rounded-md border border-warning/40 bg-[color-mix(in_oklch,var(--warning-vivid)_10%,transparent)] p-2.5">
                 <p className="flex items-start gap-1.5 text-xs text-foreground">
                   <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
                   <span>
@@ -1638,7 +1638,7 @@ export function ImportWorkbench({
             </div>
 
             {blocked && (
-              <ul className="space-y-1 rounded-md border border-warning/40 bg-[color-mix(in_oklch,var(--warning)_10%,transparent)] p-2.5 text-xs text-foreground">
+              <ul className="space-y-1 rounded-md border border-warning/40 bg-[color-mix(in_oklch,var(--warning-vivid)_10%,transparent)] p-2.5 text-xs text-foreground">
                 {blockers.map((b) => (
                   <li key={b} className="flex items-start gap-1.5">
                     <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />

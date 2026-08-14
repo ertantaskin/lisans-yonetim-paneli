@@ -4,11 +4,13 @@ import { cn } from '../../lib/utils';
 
 type Tone = 'accent' | 'success' | 'warning' | 'danger' | 'neutral';
 
+// Dolgu TEK KAYNAK: rozetle AYNI `--<hue>-fill` token'ı (eskiden burada %14/%16 elle
+// kopyalanmıştı ve rozetlerden bir tık daha sönüktü — aynı ekranda iki farklı yeşil).
 const toneChip: Record<Tone, string> = {
   accent: 'bg-accent text-accent-foreground',
-  success: 'bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-success',
-  warning: 'bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] text-warning',
-  danger: 'bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)] text-destructive',
+  success: 'bg-(--success-fill) text-success',
+  warning: 'bg-(--warning-fill) text-warning',
+  danger: 'bg-(--destructive-fill) text-destructive',
   neutral: 'bg-muted text-foreground/70',
 };
 

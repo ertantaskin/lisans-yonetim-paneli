@@ -1712,3 +1712,32 @@ edildi" olduğu için işlem bekleyen (sıcak) sipariş göze batmıyordu.
   listeden düştü · 1 ayraç + 1 `animate-feed-in`. typecheck 4/4 + check-use-server temiz + admin production
   build (`/dashboard` 9.53→10.5 kB). **Ölçülen sınır:** sekme GERÇEKTEN gizliyken sonner toast'ı DOM'a
   basmıyor (zaten görünmezdi) — o senaryoyu sekme başlığı sayacı karşılar.
+
+**ROZET DİLİ: CANLI YÜZEY + OKUNUR METİN (admin-only, migration YOK):** Kullanıcı: *"sitede kullanılan tüm
+badge'lerin renkleri ve tasarımları daha iyi/canlı olmalı"* (referans: `shadcnspace.com/components/badge` +
+`dashboard.shadcnspace.com`). **REFERANS ÖLÇÜLDÜ, KOPYALANMADI:** rozeti tek renkten kuruyor
+(`bg-teal-500/10 text-teal-500`, `bg-red-500/10 text-red-500`; 20px, `px-2`, `gap-1`, 11-12px/500-600,
+rounded-full) — metin kontrastı hesaplandı: **teal 2.21 · kırmızı 3.30**, yani WCAG AA'nın (4.5) ALTINDA.
+Panelin durum dili tablolarda okunmak zorunda olduğu için canlılık **yüzeye** taşındı, okunabilirlik metinde korundu.
+- **İKİ KATMANLI RENK (yeni kural):** `--<hue>` = metin/ikon (AA zorunlu → koyu kalmak durumunda, tek başına
+  "canlı" olamaz) · **`--<hue>-vivid`** = yalnız `color-mix` ile seyreltilip dolgu/halka üreten canlı taban
+  (asla metin değil → kontrast kısıtı yok). Rozet dolgusunun doygunluğu **1,5–2,3 kat** arttı (oklch C:
+  yeşil 0.0198→0.0391 · mavi 0.0179→0.0351 · amber 0.0208→0.0383 · mor 0.0190→0.0435 · kırmızı 0.0283→0.0428).
+- **sRGB DIŞI 4 RENK DÜZELTİLDİ (sessiz kusur):** eski `--success` (#006e33), `--warning` (#8f5600),
+  `--destructive` (açık #c4000e / koyu) gamut DIŞINDAYDI → tarayıcı kırpıyordu, yani ekrandaki renk yazılan
+  renk değildi ve hue kayıyordu. Yeni değerlerin hepsi gamut içinde (ikili arama ile hue başına max chroma
+  hesaplandı: ör. L=0.50'de yeşil max C=0.133, mor max C=0.269).
+- **TEK KAYNAK `--<hue>-fill` / `--<hue>-ring`:** aynı "soluk tint" dili panelde **%12/13/14/16** olmak üzere
+  DÖRT ayrı oranda kopyalanmıştı (badge · stat-tile · alert · pending/import/live-feed satır zeminleri) →
+  aynı ekranda iki farklı yeşil görünüyordu. Oran artık tek yerde ve temaya göre değişir (açık %18/42,
+  koyu %20/45 — koyu temada aynı yüzde daha sönük okunur). Uyarı kutusu bilinçli olarak DAHA düşük oranda
+  (%9-10): büyük yüzey rozetle aynı doygunlukta olursa sayfayı bastırır.
+- **GEOMETRİ (referanstan):** sabit **h-5 (20px)** — eskiden `py-0.5` ile içeriğe göre 20-22px oynuyordu ve
+  aynı satırdaki iki rozet farklı boyda duruyordu · `px-2` · `gap-1` · 12px/**600** (referansın semantik rozeti
+  de 600; küçük punto renkli metinde kalınlık okunabilirliği kontrast kadar etkiler) · **`whitespace-nowrap`
+  ŞART** (sabit yükseklikte sarma olursa metin pill'in dışına taşar). `/quarantine` süzgeç çipi de bu geometriye
+  hizalandı (kendi yorumunda "badge neutral ile aynı" yazıyordu ama artık sapmıştı).
+- **DOĞRULAMA (tarayıcıda, canvas ile GERÇEK piksel):** açık tema dolgu/metin/kontrast — success #d2f3e5/#04773b
+  **4.77** · info #d1eafb/#0065b0 **4.84** · warning #fdedd3/#935a00 **4.92** · attention #eee0ff/#7935c6 **5.34** ·
+  danger #fdd7da/#c50721 **4.64**; koyu tema **5.35–7.27**. Hepsi AA üstü. /stock'ta 6 rozetin tamamı **20px**
+  (tek yükseklik), 375px mobilde taşma **0** ve yatay kayma **0**. typecheck 4/4 + check-use-server + production build.

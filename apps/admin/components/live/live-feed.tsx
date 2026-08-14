@@ -262,7 +262,7 @@ function FeedRow({
           'hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
           isNew && 'border-l-primary bg-accent/60',
           alert &&
-            'border-l-destructive bg-[color-mix(in_oklch,var(--destructive)_8%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive)_14%,transparent)]',
+            'border-l-destructive bg-[color-mix(in_oklch,var(--destructive-vivid)_8%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive-vivid)_14%,transparent)]',
         )}
       >
         {isNew && <NewChip />}

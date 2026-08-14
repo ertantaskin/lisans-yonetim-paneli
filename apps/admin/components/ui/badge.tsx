@@ -28,28 +28,34 @@ import {
 import { cn } from '../../lib/utils';
 
 /**
- * Rozet görünümü: SOLUK tint + saç teli halka (ring). Halka, düşük doygunluklu zeminin
- * kenarını belirginleştirir — tint'i koyulaştırmadan (yani "bağırmadan") pill'i tabloda
- * okunur kılar. Renkler `--success/--info/--warning/--attention/--destructive` üzerinden
- * gelir; tema değiştiğinde otomatik uyar (koyu temada aynı tint yüzdesi daha açık okunur).
- * Kontrast HESAPLANDI: her ton %14 tint zemini üzerinde AA üstü (5.1–7.8:1).
+ * Rozet görünümü: CANLI tint + saç teli halka (ring) + koyu, okunur metin.
+ *
+ * RENK İKİ KATMANDIR (globals.css, ölçülerek kuruldu):
+ *   • dolgu/halka → `--<hue>-fill` / `--<hue>-ring` (canlı `-vivid` tabandan seyreltilmiş,
+ *     oran temaya göre değişir; TEK KAYNAK — eskiden aynı dil dört ayrı yüzdeyle kopyalanmıştı)
+ *   • metin/ikon  → `--<hue>` (küçük metin ⇒ AA zorunlu, ölçülen 4.66–7.25:1)
+ * Referans (shadcnspace) tek renk kullanıp metni de canlı yapıyor; ölçüldü, kontrast 2.2–3.3
+ * ile AA'nın altında kalıyor → canlılık YÜZEYE alındı, okunabilirlik metinde korundu.
+ *
+ * GEOMETRİ referanstan ölçüldü: **h-5 (20px)** sabit yükseklik · `px-2` · `gap-1` · ikon 12px.
+ * Sabit yükseklik bilinçli: eskiden `py-0.5` ile yükseklik içeriğe göre 20-22px arası
+ * oynuyordu ve aynı tablo satırındaki iki rozet farklı boyda duruyordu. `whitespace-nowrap`
+ * şart — sabit yükseklikte sarma olursa metin pill'in dışına taşar.
+ * Ağırlık 500 → **600**: referansın semantik rozeti de 600; küçük punto renkli metinde
+ * kalınlık okunabilirliği kontrast kadar etkiler.
  */
 const badgeVariants = cva(
-  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset [&_svg]:size-3 [&_svg]:shrink-0',
+  'inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-semibold leading-none ring-1 ring-inset [&_svg]:size-3 [&_svg]:shrink-0',
   {
     variants: {
       variant: {
         neutral: 'bg-secondary text-secondary-foreground ring-border/70',
         accent: 'bg-secondary text-foreground ring-border/70',
-        success:
-          'bg-[color-mix(in_oklch,var(--success)_14%,transparent)] text-success ring-[color-mix(in_oklch,var(--success)_28%,transparent)]',
-        info: 'bg-[color-mix(in_oklch,var(--info)_14%,transparent)] text-info ring-[color-mix(in_oklch,var(--info)_28%,transparent)]',
-        warning:
-          'bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] text-warning ring-[color-mix(in_oklch,var(--warning)_30%,transparent)]',
-        attention:
-          'bg-[color-mix(in_oklch,var(--attention)_14%,transparent)] text-attention ring-[color-mix(in_oklch,var(--attention)_28%,transparent)]',
-        danger:
-          'bg-[color-mix(in_oklch,var(--destructive)_13%,transparent)] text-destructive ring-[color-mix(in_oklch,var(--destructive)_28%,transparent)]',
+        success: 'bg-(--success-fill) text-success ring-(--success-ring)',
+        info: 'bg-(--info-fill) text-info ring-(--info-ring)',
+        warning: 'bg-(--warning-fill) text-warning ring-(--warning-ring)',
+        attention: 'bg-(--attention-fill) text-attention ring-(--attention-ring)',
+        danger: 'bg-(--destructive-fill) text-destructive ring-(--destructive-ring)',
         outline: 'bg-transparent text-muted-foreground ring-border',
       },
     },

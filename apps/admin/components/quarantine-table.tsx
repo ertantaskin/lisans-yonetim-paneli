@@ -1237,7 +1237,9 @@ function FilterChip({
       onClick={onRemove}
       disabled={disabled}
       aria-label={`${label} süzgecini kaldır`}
-      className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground ring-1 ring-inset ring-border/70 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+      // Geometri `ui/badge.tsx` `neutral` ile BİREBİR (h-5 · px-2 · gap-1 · 12px/600):
+      // bu çip rozetlerin yanında duruyor, yarım piksellik fark bile satırı tırtıklı gösterir.
+      className="inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full bg-secondary px-2 text-xs font-semibold leading-none text-secondary-foreground ring-1 ring-inset ring-border/70 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
     >
       {label}
       <X className="size-3" aria-hidden />

@@ -37,7 +37,9 @@
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.514 0.213 27.3);
+  /* sRGB İÇİNDE (eski 0.213/27.3 kırpılıyordu → ekrandaki renk yazılan renk değildi).
+     Dolu kullanımda (bg-destructive + beyaz metin) kontrast 5.89 — AA üstü. */
+  --destructive: oklch(0.52 0.208 25);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
@@ -70,16 +72,48 @@
        warning   amber    → bekliyor          (Bekliyor · Kısmi · Rezerve)
        attention mor      → insan kararı      (İncelemede · Askıda)
        destructive rose   → ölü/hatalı        (Geri alındı · Geçersiz · Başarısız)
-     Kontrast HESAPLANDI (oklch→sRGB→WCAG, %14 tint'li rozet zemini üzerinde):
-     info 5.29 · attention 5.67 (açık); 6.13 · 5.86 (koyu) — hepsi AA üstü, sRGB içinde. */
-  --success: oklch(0.47 0.13 152);
+     İKİ KATMANLI RENK (kullanıcı: "rozetler daha canlı olmalı") — ÖLÇÜLEREK kuruldu:
+       `--<hue>`        = METİN/İKON rengi. Küçük metin olduğu için AA (>=4.5:1) ZORUNLU →
+                          koyu kalmak durumunda; tek başına "canlı" olamaz.
+       `--<hue>-vivid`  = YÜZEY rengi (dolgu + halka). Yalnız `color-mix` ile seyreltilerek
+                          kullanılır, hiçbir zaman metin değildir → kontrast kısıtı YOK, bu
+                          yüzden çok daha doygun seçilebilir.
+     Referans (shadcnspace) rozeti tek renk kullanıyor (`bg-teal-500/10 text-teal-500`) ve
+     ÖLÇÜLDÜ: metin kontrastı 2.21 (teal) / 3.30 (kırmızı) — AA'nın ALTINDA. Bu yüzden
+     KOPYALANMADI; canlılık YÜZEYE taşındı, okunabilirlik metinde korundu.
+
+     Kontrast HESAPLANDI (oklch→sRGB→WCAG, gerçek dolgu zemini üzerinde, hepsi sRGB İÇİNDE):
+       açık: success 4.75 · info 4.82 · warning 4.91 · attention 5.33 · danger 4.66
+       koyu: 7.25 · 6.37 · 6.36 · 6.08 · 5.35
+     (Eski değerlerin BİR KISMI sRGB dışındaydı — tarayıcı kırpıyordu, yani ekrandaki renk
+     yazılan renk değildi: #006e33 success, #8f5600 warning, #c4000e danger.) */
+  --success: oklch(0.5 0.13 152);
   --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.505 0.115 68);
+  --success-vivid: oklch(0.7 0.172 155);
+  --warning: oklch(0.52 0.114 68);
   --warning-foreground: oklch(0.205 0 0);
-  --info: oklch(0.48 0.13 250);
+  --warning-vivid: oklch(0.76 0.163 70);
+  --info: oklch(0.5 0.142 250);
   --info-foreground: oklch(0.985 0 0);
-  --attention: oklch(0.48 0.15 300);
+  --info-vivid: oklch(0.62 0.175 250);
+  --attention: oklch(0.5 0.21 300);
   --attention-foreground: oklch(0.985 0 0);
+  --attention-vivid: oklch(0.62 0.24 300);
+  --destructive-vivid: oklch(0.62 0.238 25);
+
+  /* Rozet/istatistik yüzeyleri — TEK KAYNAK. Panelde aynı "soluk tint" dili %12/13/14/16
+     olmak üzere DÖRT farklı oranda kopyalanmıştı; artık oran burada bir kez tanımlanır ve
+     temaya göre değişir (koyu temada aynı yüzde daha sönük okunduğu için biraz yükselir). */
+  --success-fill: color-mix(in oklch, var(--success-vivid) 18%, transparent);
+  --success-ring: color-mix(in oklch, var(--success-vivid) 42%, transparent);
+  --info-fill: color-mix(in oklch, var(--info-vivid) 18%, transparent);
+  --info-ring: color-mix(in oklch, var(--info-vivid) 42%, transparent);
+  --warning-fill: color-mix(in oklch, var(--warning-vivid) 18%, transparent);
+  --warning-ring: color-mix(in oklch, var(--warning-vivid) 42%, transparent);
+  --attention-fill: color-mix(in oklch, var(--attention-vivid) 18%, transparent);
+  --attention-ring: color-mix(in oklch, var(--attention-vivid) 42%, transparent);
+  --destructive-fill: color-mix(in oklch, var(--destructive-vivid) 18%, transparent);
+  --destructive-ring: color-mix(in oklch, var(--destructive-vivid) 42%, transparent);
 }
 
 /* ── Koyu tema ─────────────────────────────────────────────────────────────── */
@@ -98,7 +132,8 @@
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
+  /* sRGB içinde (eski 0.191/22.216 kırpılıyordu); dolu kullanımda koyu metinle 6.70. */
+  --destructive: oklch(0.72 0.168 22);
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
@@ -120,14 +155,35 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 
-  --success: oklch(0.696 0.17 162.48);
+  /* Koyu temada metin AÇIK, yüzey KOYU olur → `-vivid` burada metinden DAHA KOYU seçilir
+     (aynı hue, düşük L): dolgu kartın üzerinde renkli ama metni yutmayan bir zemin verir.
+     Kontrast (dolgu üzerinde): success 7.25 · info 6.37 · warning 6.36 · attention 6.08 ·
+     danger 5.35 — hepsi AA üstü ve sRGB içinde (ölçüldü). */
+  --success: oklch(0.8 0.168 158);
   --success-foreground: oklch(0.205 0 0);
-  --warning: oklch(0.828 0.189 84.429);
+  --success-vivid: oklch(0.72 0.168 158);
+  --warning: oklch(0.8 0.152 78);
   --warning-foreground: oklch(0.205 0 0);
-  --info: oklch(0.74 0.12 250);
+  --warning-vivid: oklch(0.78 0.16 75);
+  --info: oklch(0.76 0.125 250);
   --info-foreground: oklch(0.205 0 0);
-  --attention: oklch(0.74 0.14 300);
+  --info-vivid: oklch(0.66 0.185 250);
+  --attention: oklch(0.76 0.138 300);
   --attention-foreground: oklch(0.205 0 0);
+  --attention-vivid: oklch(0.66 0.2 300);
+  --destructive-vivid: oklch(0.65 0.218 22);
+
+  /* Koyu temada seyreltilmiş renk daha sönük okunur → oranlar 2-3 puan yüksek. */
+  --success-fill: color-mix(in oklch, var(--success-vivid) 20%, transparent);
+  --success-ring: color-mix(in oklch, var(--success-vivid) 45%, transparent);
+  --info-fill: color-mix(in oklch, var(--info-vivid) 20%, transparent);
+  --info-ring: color-mix(in oklch, var(--info-vivid) 45%, transparent);
+  --warning-fill: color-mix(in oklch, var(--warning-vivid) 20%, transparent);
+  --warning-ring: color-mix(in oklch, var(--warning-vivid) 45%, transparent);
+  --attention-fill: color-mix(in oklch, var(--attention-vivid) 20%, transparent);
+  --attention-ring: color-mix(in oklch, var(--attention-vivid) 45%, transparent);
+  --destructive-fill: color-mix(in oklch, var(--destructive-vivid) 20%, transparent);
+  --destructive-ring: color-mix(in oklch, var(--destructive-vivid) 45%, transparent);
 }
 
 /* ── 2) Tailwind v4 utility eşleme (standart) ──────────────────────────────── */

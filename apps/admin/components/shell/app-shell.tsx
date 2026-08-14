@@ -54,7 +54,7 @@ export function AppShell({
           {authOff && (
             // İçerik kartının EN ÜST öğesi bu olduğunda üst köşeleri yuvarlatan taraf odur
             // (aksi halde kare köşe, yuvarlak kartın dışına taşar).
-            <div className="flex items-center justify-center gap-2 bg-[color-mix(in_oklch,var(--warning)_16%,transparent)] px-4 py-1.5 text-center text-xs font-medium text-warning md:rounded-t-xl">
+            <div className="flex items-center justify-center gap-2 bg-[color-mix(in_oklch,var(--warning-vivid)_16%,transparent)] px-4 py-1.5 text-center text-xs font-medium text-warning md:rounded-t-xl">
               ⚠ Kimlik doğrulama KAPALI — panel herkese açık. Etkinleştirmek için SESSION_SECRET +
               ADMIN_SEED_* ayarlayın.
             </div>

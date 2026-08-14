@@ -14,6 +14,26 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Rozet dili: canlı yüzey + okunur metin (migration YOK)
+
+Kullanıcı: *"tüm badge'lerin renkleri ve tasarımları daha canlı olmalı"* (referans:
+shadcnspace badge sayfası + dashboard). Referans tarayıcıda ÖLÇÜLDÜ: rozeti tek renkten
+kuruyor (`bg-teal-500/10 text-teal-500`) — metin kontrastı **2.21** (teal) / **3.30**
+(kırmızı), yani WCAG AA'nın altında. Bu yüzden kopyalanmadı; canlılık **yüzeye** taşındı.
+
+- **İki katmanlı renk:** `--<hue>` metin/ikon için kalır (AA zorunlu), yeni `--<hue>-vivid`
+  yalnız dolgu/halka üretir (kontrast kısıtı yok → çok daha doygun). Rozet dolgusunun
+  doygunluğu **1,5–2,3 kat** arttı (oklch C: 0.020→0.039 yeşil, 0.019→0.044 mor).
+- **Kontrast ÖLÇÜLDÜ** (tarayıcıda, gerçek dolgu üzerinde): açık tema 4.64–5.34,
+  koyu tema 5.35–7.27 — hepsi AA üstü.
+- **sRGB dışı 4 renk düzeltildi:** eski `success`/`warning`/`destructive` değerleri gamut
+  dışındaydı, tarayıcı kırpıyordu — yani ekrandaki renk yazılan renk değildi.
+- **Tek kaynak `--<hue>-fill` / `--<hue>-ring`:** aynı "soluk tint" dili panelde %12/13/14/16
+  olmak üzere dört ayrı oranda kopyalanmıştı (rozet, StatTile, uyarı kutusu, satır zeminleri);
+  oran artık temaya göre tek yerde tanımlanır.
+- **Geometri referanstan ölçüldü:** sabit **20px** yükseklik (eskiden içeriğe göre 20-22px
+  oynuyordu), `px-2` · `gap-1` · 12px/**600** · `whitespace-nowrap`.
+
 ### Genel Bakış: yeni sipariş artık gözden kaçmıyor (migration YOK)
 
 Kullanıcı geri bildirimi: *"anlık sipariş düşüyor ama yeni sipariş olup olmadığı ekranda pek

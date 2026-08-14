@@ -391,9 +391,9 @@ export default async function DashboardPage() {
                           // (aksiyon var ama BAŞKA ekranda — satır sıradan "Bekliyor" görünmemeli).
                           held &&
                             !mappingNeeded &&
-                            'bg-[color-mix(in_oklch,var(--warning)_7%,transparent)] hover:bg-[color-mix(in_oklch,var(--warning)_12%,transparent)]',
+                            'bg-[color-mix(in_oklch,var(--warning-vivid)_7%,transparent)] hover:bg-[color-mix(in_oklch,var(--warning-vivid)_12%,transparent)]',
                           mappingNeeded &&
-                            'bg-[color-mix(in_oklch,var(--destructive)_7%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive)_12%,transparent)]',
+                            'bg-[color-mix(in_oklch,var(--destructive-vivid)_7%,transparent)] hover:bg-[color-mix(in_oklch,var(--destructive-vivid)_12%,transparent)]',
                         )}
                       >
                         <TableCell className="font-medium text-foreground">{o.remoteOrderId}</TableCell>
