@@ -707,7 +707,14 @@ export function LicenseItemsTable({
                     </TableCell>
                   )}
 
-                  <TableCell className="max-w-72">
+                  {/*
+                    TABAN GENİŞLİK ŞART: `break-all` bir hücrenin min-content genişliğini
+                    TEK KARAKTERE indirir → tablo auto-layout'ta bu kolon eziliyor ve anahtar
+                    beş satıra sarıyordu (1024px'te ölçüldü: kolon 63px, hücre 96px yüksek —
+                    kırpmadan bile kötü). `min-w-52` ile kolon en az 208px alır: 29 karakterlik
+                    anahtar en fazla iki satır olur, hiçbir hane kaybolmaz.
+                  */}
+                  <TableCell className="min-w-52 max-w-72">
                     <LicenseValueCell row={row} />
                     {/*
                       DAR EKRAN ÖZETİ (kullanıcı: "küçük ekranlarda sıkışıyor, yana kaydırma
