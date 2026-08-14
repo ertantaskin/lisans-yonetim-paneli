@@ -47,7 +47,17 @@ export const purchaseOrders = pgTable(
       .notNull()
       .default(sql`now()`),
   },
-  (t) => [index('purchase_orders_status_idx').on(t.status), index('purchase_orders_supplier_idx').on(t.supplierId)],
+  (t) => [
+    index('purchase_orders_status_idx').on(t.status),
+    index('purchase_orders_supplier_idx').on(t.supplierId),
+    /*
+     * Liste sıralaması (`created_at DESC, id DESC`). Bu tablo artık HER stok girişinde bir
+     * satır kazanıyor (otomatik teslim-alma emri) → ekran zamanla tüm tabloyu sıralardı.
+     * İkinci kolon da DESC: yön ayna DEĞİLDİR (0031 dersi) — tie-break ancak aynı yönde
+     * indeksten karşılanır, aksi halde planlayıcı yine tam sıralama yapar.
+     */
+    index('purchase_orders_created_idx').on(t.createdAt.desc(), t.id.desc()),
+  ],
 );
 
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;

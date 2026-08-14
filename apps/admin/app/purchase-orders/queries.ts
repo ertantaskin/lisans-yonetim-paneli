@@ -32,9 +32,24 @@ export interface SupplierOption {
   active: boolean;
 }
 
-/** GET /v1/admin/purchase-orders — tedarikçi + ürün JOIN'li tüm emirler. */
-export async function getPurchaseOrders(): Promise<PurchaseOrderRow[]> {
-  return apiGet<PurchaseOrderRow[]>('/v1/admin/purchase-orders');
+/**
+ * GET /v1/admin/purchase-orders — tedarikçi + ürün JOIN'li emirler.
+ *
+ * ZARF ({items, truncated}): uç bir dönem SINIRSIZ dizi döndürüyordu. `purchase_orders`
+ * artık HER stok girişinde bir satır kazanıyor (otomatik teslim-alma emri), yani liste
+ * zamanla tüm tabloyu çekip her açılışta tam sıralama yapardı. Okuma SAVUNMACI: eski API
+ * (düz dizi) dağıtım sapmasında hâlâ çalışır — admin ve api ayrı imajlardır.
+ */
+export async function getPurchaseOrders(): Promise<{
+  items: PurchaseOrderRow[];
+  truncated: boolean;
+}> {
+  const res = await apiGet<{ items: PurchaseOrderRow[]; truncated: boolean } | PurchaseOrderRow[]>(
+    '/v1/admin/purchase-orders',
+  );
+  return Array.isArray(res)
+    ? { items: res, truncated: false }
+    : { items: res?.items ?? [], truncated: res?.truncated === true };
 }
 
 /** GET /v1/admin/purchase-orders/:id — tek emir (JOIN'li). */

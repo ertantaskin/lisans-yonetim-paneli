@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { notExpiredCond } from '../assignment/assign';
-import { STANDING_STATUSES } from './standing-statuses';
+import { STANDING_STATUSES } from '../assignment/assign';
 
 /** Ürün başına anlık stok satırı (products.service.list mantığı). */
 export interface StockByProduct {
@@ -149,7 +149,7 @@ export class ReportsService {
       SELECT
         p.id AS product_id,
         p.sku AS sku,
-        -- AYAKTA küme TEK KAYNAKTAN (reports/standing-statuses.ts) — costs.deliveredCogs ve
+        -- AYAKTA küme TEK KAYNAKTAN (assignment/assign.ts) — costs.deliveredCogs ve
         -- reorder ile aynı sabit; elle yazılan kopya sapmasın (bu ekranda satış ve maliyet
         -- yan yana okunuyor).
         coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days' AND a.status IN ${STANDING_STATUSES}), 0)::int AS sold7d,

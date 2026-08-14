@@ -500,6 +500,17 @@ export function ReportsSlaView({ data }: { data: SlaReport }) {
             <strong>{fmtNum(data.excluded.bonusLines)}</strong> (mağazadan gelen talep değil).
             Değişimle sonradan verilen taze anahtarlar da süreye eklenmez — ilk teslimat çoktan
             yapılmıştır.
+            {/* Ölçülebilir satırı olmayan sipariş: ne "ölçüldü"ye ne "hâlâ açık"a girer —
+                sayılmasaydı iki sayacın toplamı sipariş sayısını tutmaz, operatör farkı
+                arardı. Alan opsiyonel: eski API ile de çalışır (dağıtım sapması). */}
+            {(data.excluded.ordersWithoutMeasurableLines ?? 0) > 0 && (
+              <>
+                {' '}
+                Ayrıca <strong>{fmtNum(data.excluded.ordersWithoutMeasurableLines ?? 0)}</strong>{' '}
+                siparişin ölçülebilir satırı yok (tüm satırları elenmiş ya da hiç satırı yok);
+                bunlar ne ölçülene ne de hâlâ açık olanlara dahildir.
+              </>
+            )}
           </AlertDescription>
         </div>
       </Alert>

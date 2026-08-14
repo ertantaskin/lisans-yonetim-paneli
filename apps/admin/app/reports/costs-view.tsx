@@ -39,6 +39,12 @@ interface ByMonth {
   month: string;
   currency: string;
   spentCents: number;
+  /**
+   * Maliyeti bilinmeyen (emirsiz ya da birim maliyeti girilmemiş) parti adedi. Uç eskiden
+   * bu partileri INNER JOIN ile SESSİZCE eliyordu → aylık grafik "o ay bu kadar harcandı"
+   * derken bazı alımlar hiç görünmüyordu. Opsiyonel: eski API ile de çalışır.
+   */
+  uncoveredQty?: number;
 }
 interface ByProduct {
   productId: string;
@@ -272,10 +278,22 @@ export function CostsView() {
   // Karışık uyarısı yalnız GERÇEK ayrı para birimi sayısı >1 iken.
   const multiCurrency = currencies.length > 1;
 
+  /**
+   * Aylık harcamada KAPSANAMAYAN adet (emirsiz/maliyetsiz parti). Grafiğe GİRMEZ — parası
+   * bilinmeyen bir alımı 0 ₺ diye çizmek "o ay hiç harcama yok" yalanını söylerdi; sayı
+   * metin olarak yazılır (valuation/wastage'daki dürüstlük deseninin aynısı).
+   */
+  const uncoveredMonthQty = React.useMemo(
+    () => (data?.byMonth ?? []).reduce((s, r) => s + (r.uncoveredQty ?? 0), 0),
+    [data],
+  );
+
   // Aylık harcama (para birimi başına, ay artan) → Datum grupları.
+  // BOŞ para birimi ('') ELENİR: uç artık PO'suz partileri de döndürüyor (LEFT JOIN) ve
+  // onların `spentCents`'i 0'dır → elenmeseydi hepsi sıfır olan bir hayalet grafik grubu çizilirdi.
   const monthGroups = React.useMemo<Array<[string, Datum[]]>>(() => {
     if (!data) return [];
-    return groupByCurrency(data.byMonth).map(([currency, rows]): [string, Datum[]] => [
+    return groupByCurrency(data.byMonth.filter((r) => r.currency !== '')).map(([currency, rows]): [string, Datum[]] => [
       currency,
       [...rows]
         .sort((a, b) => a.month.localeCompare(b.month))
@@ -479,7 +497,11 @@ export function CostsView() {
         <ChartCard
           title="Aylık Tedarik Harcaması"
           icon={CalendarDays}
-          description="Ay bazında satın alma emri harcaması (yalnız maliyet)."
+          description={
+            uncoveredMonthQty > 0
+              ? `Ay bazında satın alma emri harcaması (yalnız maliyet). ${uncoveredMonthQty} kalem maliyeti bilinmediği için grafiğe girmiyor — Stok Girişi'nde tedarikçi ve birim maliyet girilirse kapsanır.`
+              : 'Ay bazında satın alma emri harcaması (yalnız maliyet).'
+          }
           groups={monthGroups}
           multiCurrency={multiCurrency}
         />

@@ -85,6 +85,32 @@ class Wpteslimat_Settings {
     private static function run_diagnostics() {
         $checks = [];
 
+        // KLON/STAGING GUARD (denetim O9). Tanılama, panele HMAC İMZALI bir istek atar
+        // (/v1/orders/bulk-status) ve public /v1/health'i yoklar. Klon/staging'de bu iki yönden
+        // birden yanlıştır:
+        //   1) YAZMA TARAFI ZATEN KAPALI: push/revoke/resync/report-issue/katalog yollarının
+        //      hepsi is_clone() ile durdurulmuş durumda. Buna rağmen tanılama "HMAC geçerli 🟢"
+        //      raporlarsa operatör "bağlantı sağlıklı ama sipariş gitmiyor" gibi TAMAMEN YANLIŞ
+        //      bir teşhise yönlendirilir — oysa tek sebep klon korumasıdır.
+        //   2) CANLI PANELE DOKUNUR: klon, prod'un api_key/hmac_secret'iyle imzalı istek atar;
+        //      nonce üretir, IP/kota sayaçlarını tüketir ve `sites.last_seen_at`i tazeleyerek
+        //      GERÇEK mağazanın sessizlik alarmını yanıltabilir.
+        // Aynı sınıftaki admin_bar_health klonda panele hiç gitmiyordu; bu yol ayrışmıştı.
+        if (self::is_clone()) {
+            return [[
+                'label' => __('Klon/staging koruması', 'wpteslimat'),
+                'ok'    => false,
+                'detail'=> sprintf(
+                    /* translators: 1: mevcut site adresi, 2: bağlanma anındaki adres */
+                    // TEK dize (parçalı `.` birleştirme kullanılmaz — i18n çıkarıcıları yalnız
+                    // tek literal'i okuyabilir, birleştirilmiş metin çeviriye HİÇ girmez).
+                    __('Tanılama ÇALIŞTIRILMADI: site adresi (%1$s) bağlanma anındaki adresten (%2$s) farklı. Panele hiçbir istek gönderilmedi — siparişler de iletilmiyor. Bu kopya bir test/staging sitesiyse durum normaldir; kasıtlı bir taşımaysa yukarıdaki "Bu adrese yeniden bağla" düğmesiyle taban çizgisini sıfırlayın, sonra tanılamayı tekrar çalıştırın.', 'wpteslimat'),
+                    home_url(),
+                    self::bound_home()
+                ),
+            ]];
+        }
+
         // 1) Panel bağlantısı (public /v1/health).
         $h = Wpteslimat_Panel_Client::get('/v1/health', 5);
         $hcode = isset($h['code']) ? (int) $h['code'] : 0;
@@ -389,7 +415,12 @@ class Wpteslimat_Settings {
                 <p><a href="<?php echo esc_url(admin_url('options-general.php?page=wpteslimat&wpteslimat_diag=1')); ?>" class="button"><?php esc_html_e('Yeniden çalıştır', 'wpteslimat'); ?></a></p>
             <?php else: ?>
                 <p><?php esc_html_e('Panel bağlantısı, HMAC kimlik, webhook erişilebilirliği (Cloudflare/WAF), saat kayması ve sürümü canlı test eder.', 'wpteslimat'); ?></p>
-                <?php if ($configured): ?>
+                <?php if ($configured && self::is_clone()): ?>
+                    <?php // Klon/staging: düğme gizlenmez ama ne olacağı ÖNCEDEN söylenir (tanılama
+                          // klonda panele hiç gitmez — bkz. run_diagnostics guard'ı). ?>
+                    <p><em><?php esc_html_e('Klon/staging koruması etkin: tanılama panele istek göndermez, yalnız bu durumu raporlar. Önce yukarıdan taban çizgisini sıfırlayın.', 'wpteslimat'); ?></em></p>
+                    <a href="<?php echo esc_url(admin_url('options-general.php?page=wpteslimat&wpteslimat_diag=1')); ?>" class="button button-secondary"><?php esc_html_e('Tanılamayı çalıştır', 'wpteslimat'); ?></a>
+                <?php elseif ($configured): ?>
                     <a href="<?php echo esc_url(admin_url('options-general.php?page=wpteslimat&wpteslimat_diag=1')); ?>" class="button button-secondary"><?php esc_html_e('Tanılamayı çalıştır', 'wpteslimat'); ?></a>
                 <?php else: ?>
                     <p><em><?php esc_html_e('Önce panele bağlanın.', 'wpteslimat'); ?></em></p>

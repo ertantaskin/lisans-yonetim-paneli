@@ -66,14 +66,36 @@ ENV_FILE="${ENV_FILE:-$ROOT/.env}"
 ENV_POSTGRES_USER=""
 ENV_POSTGRES_DB=""
 ENV_POSTGRES_PASSWORD=""
-read_env_var() { # $1=key → değeri (çevresel tırnaklar soyulur), eval YOK
+read_env_var() { # $1=key → değeri (çevresel tırnaklar + CR soyulur), eval YOK
   local key="$1" ln val
   ln="$(grep -E "^[[:space:]]*${key}=" "$ENV_FILE" 2>/dev/null | tail -n1 || true)"
   [[ -z "$ln" ]] && return 0
   val="${ln#*=}"
+  # CR TEMİZLİĞİ (denetim O7): proje Windows'ta geliştiriliyor; CRLF satır sonlu bir .env'de
+  # değerin SONUNA görünmez bir CR yapışır. POSTGRES_PASSWORD'ın sonundaki CR parolayı bozar
+  # ve tatbikat "kimlik doğrulama hatası" ile düşer — sebebi ekranda GÖRÜNMEYEN bir karakter
+  # olduğu için teşhisi çok pahalıdır. Yalnız CR soyulur; satır-içi '#' yorumu BİLEREK
+  # temizlenmez (parola '#' içerebilir, kesmek sırrı sessizce bozar).
+  val="$(printf '%s' "$val" | tr -d '\r')"
   val="${val%\"}"; val="${val#\"}"   # çift tırnak
   val="${val%\'}"; val="${val#\'}"   # tek tırnak
   printf '%s' "$val"
+}
+
+# Sayısal ayar doğrulayıcı (denetim O7). `BACKUP_KEEP_LAST=14 # iki hafta` gibi bir değer
+# bash'in aritmetik değerlendirmesinde söz dizimi hatası verir; `[[ ... -gt 0 ]]` bunu "hayır"
+# sayar ve ROTASYON SESSİZCE KAPANIR (disk dolar, bir gün prod durur). Değer baştaki rakam
+# dizisine indirgenir; hiç rakam yoksa GÖRÜNÜR uyarıyla varsayılana düşülür.
+num_or_default() { # $1=isim $2=ham değer $3=varsayılan
+  local name="$1" raw="$2" def="$3" clean
+  clean="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  clean="${clean%%[!0-9]*}"
+  if [[ -z "$clean" ]]; then
+    [[ -n "$raw" ]] && echo "UYARI: $name geçersiz ('$raw') — varsayılan $def kullanılıyor." >&2
+    printf '%s' "$def"
+  else
+    printf '%s' "$clean"
+  fi
 }
 if [[ "${SKIP_ENV_FILE:-0}" != "1" && -f "$ENV_FILE" ]]; then
   ENV_POSTGRES_USER="$(read_env_var POSTGRES_USER)"
@@ -89,11 +111,11 @@ DB_NAME="${PG_DB:-${POSTGRES_DB:-${ENV_POSTGRES_DB:-lisanspanel}}}"
 DB_PASSWORD="${PG_PASSWORD:-${POSTGRES_PASSWORD:-${ENV_POSTGRES_PASSWORD:-}}}"
 MAINT_DB="${PG_MAINT_DB:-postgres}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
-BACKUP_KEEP_LAST="${BACKUP_KEEP_LAST:-0}"
+BACKUP_KEEP_LAST="$(num_or_default BACKUP_KEEP_LAST "${BACKUP_KEEP_LAST:-0}" 0)"
 STRICT_COUNTS="${STRICT_COUNTS:-0}"
 BACKUP_ONLY="${BACKUP_ONLY:-0}"
 BACKUP_OFFSITE_CMD="${BACKUP_OFFSITE_CMD:-}"
-BACKUP_OFFSITE_TIMEOUT="${BACKUP_OFFSITE_TIMEOUT:-900}"
+BACKUP_OFFSITE_TIMEOUT="$(num_or_default BACKUP_OFFSITE_TIMEOUT "${BACKUP_OFFSITE_TIMEOUT:-900}" 900)"
 # Panel özetinde raporlanan offsite durumu: kanca tanımlı değilse 'skipped'.
 OFFSITE_STATUS="skipped"
 # BACKUP_ONLY modunda geri-yükleme hiç koşmaz → boş kalır (set -u altında tanımsız kalamaz).
@@ -349,11 +371,21 @@ ok "$DRILL_DB düşürüldü"
 fi  # /BACKUP_ONLY dallanması
 
 # Opsiyonel retention: yalnız bu script'in ürettiği dump'ları buda (guard'lı desen).
-if [[ "$BACKUP_KEEP_LAST" -gt 0 ]]; then
+#
+# FAILS GUARD (denetim O3) — ROTASYON YALNIZ DOĞRULANMIŞ KOŞUMDA ÇALIŞIR.
+# Kusur: rotasyon `FAILS`'e hiç bakmıyordu, arşiv bütünlüğü adımı ise "bad" deyip AKMAYA devam
+# ediyor. Yani sürüm uyuşmazlığı / bozuk arşiv gibi kalıcı bir arızada her gece FAIL raporlanır
+# AMA her gece pencereden bir DOĞRULANMIŞ dump düşerdi: 14 gecede elde yalnız doğrulanamamış
+# dump'lar kalırdı. Yedek yönetiminde altın kural — "yeni kopyayı doğrulayana kadar eskisini
+# ATMA". Disk dolma riski, doğrulanmış tek yedeği kaybetme riskinden KÜÇÜKTÜR (ve bu durum
+# zaten FAIL olarak panele + Telegram'a düşer, sessiz kalmaz).
+if [[ "$BACKUP_KEEP_LAST" -gt 0 && "$FAILS" -eq 0 ]]; then
   mapfile -t OLD < <(ls -1t "$BACKUP_DIR/${DB_NAME}_"*.dump 2>/dev/null | tail -n +"$((BACKUP_KEEP_LAST+1))")
   for f in "${OLD[@]:-}"; do
     [[ -n "$f" && -f "$f" ]] && rm -f "$f" && echo "  eski yedek silindi: $(basename "$f")"
   done
+elif [[ "$BACKUP_KEEP_LAST" -gt 0 ]]; then
+  warn "Rotasyon ATLANDI ($FAILS hata var) — doğrulanmamış koşumda eski yedek SİLİNMEZ. Disk kullanımını izleyin."
 fi
 
 DRILL_END=$(date +%s)

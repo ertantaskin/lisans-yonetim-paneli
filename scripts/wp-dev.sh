@@ -41,7 +41,13 @@ wpc() { $WP_COMPOSE exec -T wpcli wp "$@"; }
 # ── 0) Ön koşullar ───────────────────────────────────────────────────────────
 [ -f .env ] || { warn ".env bulunamadı — 'cp .env.example .env' yapıp doldurun."; exit 1; }
 # .env'den ADMIN_TOKEN oku (panel site oluşturma için).
-ADMIN_TOKEN="$(grep -E '^ADMIN_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d '"'"'"'"'\r' || true)"
+# DÜZELTME (denetim O8'in yan ürünü): buradaki tırnak dizisi (`'"'"'"'"'\r'`) DENGESİZDİ —
+# kapanmayan bir tek tırnak bırakıyor ve betiğin GERİ KALANINI o tırnağın içine alıyordu.
+# `bash -n` bunu "line 97: syntax error near unexpected token `('" olarak bildiriyor; yani
+# `pnpm wp:dev` yardımcısı fiilen ÇALIŞMIYORDU. CI'a kabuk denetimi eklenince ilk yakalanan
+# şey bu oldu (adımın var olma gerekçesinin kendisi). Çift tırnaklı biçim aynı üç karakteri
+# (" ' CR) siler ve okunur: `\"` → ", `'` düz, `\r` tr'ye CR kaçışı olarak geçer.
+ADMIN_TOKEN="$(grep -E '^ADMIN_TOKEN=' .env | head -1 | cut -d= -f2- | tr -d "\"'\r" || true)"
 
 # ── 1) Panel yığını ──────────────────────────────────────────────────────────
 say "Panel yığını ayağa kaldırılıyor (ilk seferde api/admin imajları derlenir — sabırlı olun)…"

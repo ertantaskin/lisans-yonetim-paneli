@@ -115,9 +115,16 @@ host cron: backup-runner.sh → POST .../claim {"targets":["backup","backup-dril
 Sözleşmenin taşıdığı güvenceler (dağıtımla **ortak**, ayrı yol açılmadı):
 * **Aynı anda tek aktif iş** — yedek alınırken dağıtım (ya da tersi) başlatılamaz (409).
   Nedeni yalnız yığılma değil: `deploy.sh` servisleri yeniden başlatırsa dump yarıda kalır.
-* **Zombi temizliği** — 30 dakikadan uzun süren `running` kayıt otomatik `failed` olur ve kilit
-  açılır. **SINIR:** tatbikat 30 dakikayı aşarsa panelde "başarısız" görünür (koşum sürer).
-  DB büyüdüğünde tatbikatı cron'dan/elle koş ve süreyi izle (`Toplam süre` satırı).
+* **Zombi temizliği (HEDEFE GÖRE)** — `running` kalmış kayıt, işin doğasına göre seçilmiş
+  eşiği aşınca otomatik `failed` olur ve kilit açılır: **dağıtım/eklenti 30 dk · `backup`
+  2 saat · `backup-drill` 4 saat**. Tek 30 dk'lık eşik yanlıştı: RTO hedefi **2 saat** olan bir
+  tatbikat 30. dakikada "başarısız" damgalanıp kilidi açıyor, ardından `deploy.sh` tatbikatla
+  aynı anda koşabiliyordu (`docker build/up` ⟷ `pg_restore`). Temizlik hem runner'ın
+  `claim` çağrısında hem de yeni istek yolunda koşar (her iki runner da ölse kilit açılır).
+* **Geç bildirim ezmez (CAS)** — zombi olarak kapatılmış bir işin sonucu sonradan gelirse
+  durum **değişmez**; kayda `[GEÇ BİLDİRİM]` notu düşer ve API logunda `error` seviyesinde
+  görünür. Böyle bir kayıt görürsen: iş eşikten uzun sürmüştür ve o aralıkta başka bir iş
+  koşmuş olabilir — `docs/DEPLOY-LOG.md` ile karşılaştır.
 * **Owner-only** — istek ucu Next `isOwner()` + API `OwnerGuard` ile korunur.
 
 **Runner kurulumu (VPS'te, bir kez):**
@@ -148,11 +155,53 @@ ortamdan **veya** `.env`'den okunur:
 | `BACKUP_OFFSITE_CMD` | — | **Offsite kancası** (§4.4) |
 | `BACKUP_OFFSITE_TIMEOUT` | 900 | Offsite komutu saniye sınırı |
 | `BACKUP_RUNNER_API` | prod API URL | Panel API tabanı |
+| `BACKUP_RUNNER_FAIL_WARN` | 5 | Kaç **ardışık** API hatasından sonra cron loguna büyük uyarı bloğu basılsın |
+
+> **`.env` dosyanız CRLF ise dikkat.** Proje Windows'ta geliştiriliyor; CRLF satır sonlu bir
+> `.env`'de değerin sonuna görünmez bir `\r` yapışır. `ADMIN_TOKEN`'ın sonundaki `\r`
+> **tüm API çağrılarını** reddettirir → yedek hiç alınmaz. Runner ve `backup-drill.sh` artık
+> `\r`'yi soyuyor, ama şüphelenirsen: `file .env` (→ "CRLF line terminators") ya da
+> `grep -c $'\r' .env`. Aynı şekilde `BACKUP_KEEP_LAST=14 # iki hafta` gibi **satır-içi
+> yorum** yazma: sayısal ayarlar artık temizleniyor ve geçersizse uyarı basıyor, ama en
+> temizi yorumu ayrı satıra almaktır.
+
+**Yedek yolu SESSİZ ölmez (§16 alarm zinciri).** Yedek/tatbikat tazeliği artık yalnız
+`/deployments` ekranında değil, **bildirim + (env varsa) Telegram** kanalında da görünür:
+
+| Alarm | Tip | Eşik | Önem | Dedupe |
+|---|---|---|---|---|
+| Yedek bayat / hiç yok | `backup_stale` | > 26 saat | **critical** | 24 saat |
+| Tatbikat bayat / hiç yok | `drill_stale` | > 35 gün | warning | 7 gün |
+
+Tarama 6 saatte bir koşar (`backup-alarm` kuyruğu) ve kendisi patlarsa diğer sweep'ler gibi
+`sweep_failed` kritik alarmı üretir. **Kurulum doğrulaması (bir kez, kurulumdan sonra ŞART):**
+
+```bash
+# Alarm kanalı gerçekten çalışıyor mu? (yalnız bildirim üretir — yedek ALMAZ)
+curl -sS -X POST -H "X-Admin-Token: $ADMIN_TOKEN" \
+  https://<panel-api>/v1/admin/deployments/backup-alarm/run
+# → {"created":N}. Yedek hiç alınmamışsa N>0 ve /notifications'ta 'backup_stale' görünmeli
+#   (Telegram env tanımlıysa mesaj da düşmeli). Bu adım atlanırsa "alarm var sanıp sessiz
+#   kalmak" riski sürer — yedeğin yokluğu ancak ihtiyaç anında fark edilen arıza sınıfıdır.
+```
 
 **Rotasyon (disk):** günlük yedek + rotasyon kapalı = disk **sessizce dolar** ve bir gün prod
 durur. Runner varsayılanı `BACKUP_KEEP_LAST=14` (≈2 hafta günlük yedek). Yalnız bu betiğin
 ürettiği `"<db>_YYYYmmdd-HHMMSS.dump"` dosyaları budanır; başka dosyalara dokunulmaz.
 Disk boyutunu hesapla: `14 × (bir dump boyutu)` — panelde "Boyut" satırı gerçek değeri gösterir.
+
+**Rotasyon YALNIZ hatasız koşumda çalışır.** Koşumda bir `[FAIL]` varsa (ör. arşiv okunamadı,
+sürüm uyuşmazlığı) eski dump'lar **silinmez** ve `[WARN] Rotasyon ATLANDI` basılır. Sebep:
+kalıcı bir arızada her gece FAIL raporlanırken her gece pencereden bir **doğrulanmış** dump
+düşerdi; 14 gecede elde yalnız doğrulanamamış dump kalırdı. Bu durumda **diski izle** ve
+kök nedeni gider (§7.5); disk dolma riski, tek doğrulanmış yedeği kaybetme riskinden küçüktür.
+
+**Runner sessiz kalmaz (çıkış kodları).** `backup-runner.sh` artık HTTP kodunu okur:
+`0` = yapacak iş yoktu / iş koşuldu ve sonucu panele yazıldı · `1` = **panel API'sine
+ulaşılamadı ya da yapılandırma eksik** (log/cron maili). "Kuyrukta aktif iş var" (409) ile
+"401 / ağ hatası" artık ayrı raporlanır; 5 ardışık hatadan sonra loga büyük bir uyarı bloğu
+basılır. Teşhis sırası: `tail -50 /var/log/backup-runner.log` → `ADMIN_TOKEN` geçerli mi →
+`curl -sS <API>/v1/health` → `.env` CRLF mi.
 
 **MASTER_KEY (§3) — yedeğin İÇİNDE DEĞİL:** runner yalnız veritabanını dump eder; `.env`'e ve
 anahtar dosyalarına **dokunmaz**, offsite kancasına da **yalnız dump dosyasının yolunu** verir.
@@ -254,7 +303,8 @@ Her ayın ilk iş günü (öneri) uygulanır. Amaç: yedeğin gerçekten geri y�
 olduğunu, RTO'nun hedefte kaldığını kanıtlamak.
 
 - [ ] **Çalıştır:** panelde **/deployments → Yedekler → "Tatbikat çalıştır"** (owner).
-      SSH alternatifi (runner kurulu değilse ya da 30dk sınırını aşan büyük DB'de):
+      Tatbikatın zombi eşiği **4 saat**'tir (RTO hedefi 2 saat) — 30 dk'yı aşan koşum artık
+      "başarısız" damgalanmaz. SSH alternatifi (runner kurulu değilse):
       ```bash
       bash scripts/backup-drill.sh
       ```
@@ -264,6 +314,13 @@ olduğunu, RTO'nun hedefte kaldığını kanıtlamak.
 - [ ] **Panel bandı söndü mü:** /deployments'ta kırmızı "yedek yok/bayat" ya da sarı "tatbikat
       bayat" bandı kalmamalı. Bant duruyorsa eşik aşılmış demektir — sebebini kapat (cron?
       runner? offsite?), sonraki aya erteleme.
+- [ ] **Alarm kanalı canlı mı:** `/notifications`'ta çözülmemiş `backup_stale` / `drill_stale`
+      kaydı kalmamalı. Kanalın kendisini yılda bir kez tetikleyerek doğrula
+      (`POST /v1/admin/deployments/backup-alarm/run`, §4.3) — **alarmın sessizliği ile
+      alarmın ölmüş olması dışarıdan aynı görünür.**
+- [ ] **Cron logu temiz mi:** `grep -c 'backup-runner:' /var/log/backup-runner.log` ve
+      son 50 satırda `DİKKAT:`/`BAŞARISIZ` bloğu var mı? (Runner artık API hatasında `1`
+      döner ve stderr'e yazar; boş log = cron hiç koşmuyor demektir.)
 - [ ] **RTO gözlemi:** "Geri-yükleme (RTO): Ns" değeri hedefin (7200s) çok altında mı? Trend not et.
 - [ ] **Çifte-atama = 0** satırı PASS mı? (Değilse §7'ye eskale — veri bütünlüğü ihlali.)
 - [ ] **Offsite kopya** güncel mi? Panelde "Dış kopya: **Dışarı kopyalandı**" yazmalı; hedefte

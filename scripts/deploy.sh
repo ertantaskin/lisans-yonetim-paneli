@@ -102,9 +102,15 @@ if [ "$OKH" = 1 ]; then
   # DİSK SIZINTISI TEMİZLİĞİ (denetim bulgusu): her dağıtım yeni imaj katmanı + build cache
   # üretiyor, eskisi ASLA silinmiyordu → tek VPS'te disk doluyor (ölçüldü: 68 GB build cache,
   # 150 GB diskin %56'sı). Disk dolarsa PostgreSQL yazamaz = TÜM teslimat durur.
-  # YALNIZ başarılı dağıtımdan SONRA ve YALNIZ dangling/eski önbellek: çalışan konteynerlerin
-  # imajları ve rollback için gereken ÖNCEKİ imaj etkilenmez (`-a` KULLANILMAZ). Hata olursa
-  # dağıtımı BAŞARISIZ sayma (temizlik kritik değil) → `|| true`.
+  # YALNIZ başarılı dağıtımdan SONRA ve YALNIZ dangling/eski önbellek: ÇALIŞAN konteynerlerin
+  # imajları etkilenmez (`-a` KULLANILMAZ). Hata olursa dağıtımı BAŞARISIZ sayma (temizlik
+  # kritik değil) → `|| true`.
+  #
+  # DÜZELTME (denetim O10): burada eskiden "rollback için gereken ÖNCEKİ imaj etkilenmez"
+  # yazıyordu — YANLIŞ. Yeniden build'den sonra önceki imaj etiketsiz (dangling) kalır ve
+  # `docker image prune -f` tam da onu siler. İşlevsel etkisi YOK, çünkü rollback bu imajı
+  # KULLANMAZ: `git reset --hard <sha>` + yeniden build ile KAYNAKTAN döner. Yorum, olmayan
+  # bir güvenceyi vaat ettiği için düzeltildi (yanlış güven, eksik güvenceden tehlikelidir).
   say "Disk temizliği (dangling imaj + 7 günden eski build cache)…"
   docker image prune -f >/dev/null 2>&1 || true
   docker builder prune -f --filter 'until=168h' >/dev/null 2>&1 || true

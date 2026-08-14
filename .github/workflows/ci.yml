@@ -51,6 +51,29 @@ jobs:
       - name: Birim testleri
         run: pnpm test
 
+      # KABUK BETİKLERİ (denetim O8): üretim DAĞITIM ve YEDEK mantığının TAMAMI `scripts/`
+      # altında yaşıyor (deploy.sh rollback, deploy-runner/backup-runner claim döngüleri,
+      # backup-drill.sh dump+restore) ama CI bu dosyalara hiç bakmıyordu — bozuk bir betik
+      # ancak PROD'da, hem de yedek/rollback gibi en kötü anda ortaya çıkardı. Üstelik
+      # backup-drill.sh `# shellcheck disable=` yönergeleri taşıyor: yazar shellcheck'in
+      # koştuğunu VARSAYMIŞ, oysa hiç koşmuyordu.
+      # `bash -n` zorunlu (sözdizimi); shellcheck varsa uyarı olarak koşar (mevcut betikleri
+      # tek seferde temizlemek bu turun kapsamı değil → CI'ı kırmaz, ama görünür olur).
+      - name: Kabuk betiği denetimi (bash -n + shellcheck)
+        run: |
+          set -euo pipefail
+          COUNT=0
+          while IFS= read -r -d '' f; do
+            bash -n "$f"
+            COUNT=$((COUNT + 1))
+          done < <(find scripts -name '*.sh' -print0)
+          echo "bash -n temiz — $COUNT betik"
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -S warning scripts/*.sh || echo "::warning::shellcheck uyarıları var (CI kırılmadı)"
+          else
+            echo "shellcheck yok — yalnız bash -n koşuldu"
+          fi
+
       # WP EKLENTİSİ PHP SÖZDİZİMİ (denetim bulgusu): eklenti MÜŞTERİ SİTELERİNE dağıtılıyor
       # ama CI onu hiç kontrol etmiyordu — bozuk bir PHP dosyası tüm mağazayı beyaz ekran
       # yapabilirdi (panel testleri PHP'ye dokunmaz). `php -l` her dosyada; ilk hatada CI kırılır.

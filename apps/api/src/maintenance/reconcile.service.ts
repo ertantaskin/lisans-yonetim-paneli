@@ -9,6 +9,7 @@ import { rawRows } from '../db/raw-query';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SweepAlarmService } from './sweep-alarm.service';
 import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
+import { STANDING_STATUSES } from '../assignment/assign';
 
 export const RECONCILE_QUEUE = 'reconcile';
 
@@ -41,7 +42,8 @@ const NOTIFY_DEDUPE_WINDOW_HOURS = 12;
  * alınabilir gizleme, §2 "hak geri gelmez") → sayıma DAHİL. Bu yüzden mutabakat yalnız
  * status='active' saysaydı her suspend/expire yanlış-pozitif kritik alarm üretirdi.
  */
-const STANDING_STATUSES = sql`('active', 'suspended', 'expired')`;
+// TEK KAYNAK: `assignment/assign.ts` — yüklem raporlarda da kullanılıyor; yerel kopya tutmak
+// bu projede "aynı kavramın iki tanımı" sınıfı yanlış sayı üretmişti (import yukarıda).
 
 /** SICAK-yol pencere varsayılanı (gün) — env RECONCILE_WINDOW_DAYS ile geçersiz kılınır. */
 const RECONCILE_WINDOW_DAYS_DEFAULT = 30;

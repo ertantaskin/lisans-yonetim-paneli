@@ -1,0 +1,14 @@
+-- Satın alma emri listesinin sıralama indeksi (denetim bulgusu R3).
+--
+-- `purchase_orders` artık HER stok girişinde bir satır kazanıyor (Stok Girişi ekranında
+-- tedarikçi+maliyet girilince panel "teslim alınmış" bir emir açıyor). Liste ucu sınırsızdı
+-- ve `ORDER BY created_at DESC` için indeks YOKTU → ekran zamanla tüm tabloyu çekip her
+-- açılışta tam sıralama yapacaktı. Uç artık tavan+`truncated` kullanıyor; sıralama da
+-- indeksten karşılansın.
+--
+-- İKİNCİ KOLON DA DESC: indeks yönü ayna DEĞİLDİR (0031 dersi) — `id DESC` tie-break'i ancak
+-- aynı yönde tanımlıysa indeksten okunur, aksi halde planlayıcı yine sıralama adımı ekler.
+--
+-- IF NOT EXISTS: migration boot'ta koşar; yarıda kalmış bir uygulamadan sonra çıplak
+-- CREATE INDEX "already exists" ile patlar ve API HİÇ AÇILMAZ.
+CREATE INDEX IF NOT EXISTS "purchase_orders_created_idx" ON "purchase_orders" USING btree ("created_at" DESC NULLS LAST,"id" DESC NULLS LAST);

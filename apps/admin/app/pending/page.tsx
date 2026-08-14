@@ -46,6 +46,16 @@ interface PendingProductSummary {
  * hiç gelmeyebilir → burada OPSİYONEL okunur ve `=== true` / `Array.isArray` ile savunmacı
  * değerlendirilir (undefined ⇒ işaret çizilmez, uydurma alarm/değer yok).
  */
+/**
+ * `GET /v1/admin/pending` zarfı. Uç bir dönem düz dizi döndürüyordu ve kırpmayı SESSİZCE
+ * yapıyordu (en yeni 200+100 kayıt) → tavan aşıldığında EN ESKİ bekleyen sipariş, yani
+ * müşterinin en uzun süredir beklediği kayıt, uyarısız listeden düşüyordu.
+ */
+interface PendingListResponse {
+  items: PendingOrderRow[];
+  truncated: boolean;
+}
+
 type PendingOrderRow = OrderRow & {
   hasUnmappedLine?: boolean;
   /** §8 dinamik kota: sipariş manuel onay bekliyor — stok girmek bunu TESLİM ETMEZ. */
@@ -110,12 +120,20 @@ function needsMapping(o: PendingOrderRow): boolean {
 export default async function DashboardPage() {
   // Üç çekim BAĞIMSIZ: özet düşse bile tablo çizilir, tablo düşse bile hata açıkça yazılır.
   const [ordersRes, productsRes, summaryRes] = await Promise.allSettled([
-    apiGet<PendingOrderRow[]>('/v1/admin/pending'),
+    // ZARF ({items, truncated}) — düz dizi DEĞİL. Uç artık kırpmayı DÜRÜSTÇE bildiriyor
+    // (eskiden sessizce en yeni 200+100 kaydı döndürüyordu). Aşağıdaki okuma savunmacıdır:
+    // eski API (düz dizi) dağıtım sapmasında hâlâ çalışır — admin ve api ayrı imajlar.
+    apiGet<PendingListResponse | PendingOrderRow[]>('/v1/admin/pending'),
     apiGet<ProductRow[]>('/v1/admin/products'),
     getDashboard(),
   ]);
 
-  const orders: PendingOrderRow[] = ordersRes.status === 'fulfilled' ? (ordersRes.value ?? []) : [];
+  const ordersPayload = ordersRes.status === 'fulfilled' ? ordersRes.value : null;
+  const orders: PendingOrderRow[] = Array.isArray(ordersPayload)
+    ? ordersPayload
+    : (ordersPayload?.items ?? []);
+  /** Sunucu tavanı aşıldı mı — aşıldıysa EN ESKİ bekleyen siparişler listede DEĞİLDİR. */
+  const ordersTruncated = !Array.isArray(ordersPayload) && ordersPayload?.truncated === true;
   const products: ProductRow[] = productsRes.status === 'fulfilled' ? (productsRes.value ?? []) : [];
   const summary: DashboardSummary | null = summaryRes.status === 'fulfilled' ? summaryRes.value : null;
 
@@ -180,8 +198,15 @@ export default async function DashboardPage() {
     .sort((a, b) => b.missing - a.missing || a.name.localeCompare(b.name, 'tr'));
   const demandTop = demand.slice(0, 6);
 
-  // Sayaç > listede görünen ⇒ liste kırpılmış. Sessizce "hepsi bu kadar" izlenimi VERİLMEZ.
-  const listTruncated = unmappedOrders !== null && unmappedOrders > listedNeedsMapping;
+  /*
+   * Liste kırpıldı mı? İKİ sinyal var ve ikisi de gerekli:
+   *  • `ordersTruncated` — SUNUCUNUN kendi bildirdiği kesin bilgi (tavan+1 deseni). Yeni.
+   *  • sayaç > listedeki — özet TÜM kayıtları kapsar; sunucu bayrağı gelmese de (eski API,
+   *    dağıtım sapması) tutarsızlığı yakalar.
+   * Sessizce "hepsi bu kadar" izlenimi VERİLMEZ.
+   */
+  const listTruncated =
+    ordersTruncated || (unmappedOrders !== null && unmappedOrders > listedNeedsMapping);
   /** Eşleme işi var mı? Sayaç YOKSA listedeki işaretli satırlar da tek başına yeter. */
   const showMappingWork = (unmappedOrders ?? 0) > 0 || listedNeedsMapping > 0;
 
@@ -299,6 +324,26 @@ export default async function DashboardPage() {
             "Bekliyor" satırı gibi görünürdü. Operatör stok girip beklerdi ama autoComplete held
             siparişi ATLAR → hiçbir şey olmaz. Aksiyon /review'dadır; band bunu açıkça söyler.
           */}
+          {/*
+            SUNUCU TAVANI AŞILDI: en yeni N kayıt gösteriliyor, EN ESKİ bekleyen siparişler
+            listede DEĞİL. Bu, müşterinin en uzun süredir beklediği kayıtların tam da gözden
+            kaybolduğu durumdur → sessiz bırakılamaz (bu panelde sessiz kırpma bir kez
+            "o müşteri yok" dedirtti).
+          */}
+          {ordersTruncated && (
+            <Alert variant="warning" className="mb-4">
+              <Inbox />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>Liste sunucuda kırpıldı</AlertTitle>
+                <AlertDescription>
+                  Bekleyen sipariş sayısı gösterim tavanını aştı; burada yalnız en yeni kayıtlar
+                  var ve <strong>en eski bekleyenler listede değil</strong>. Kuyruğu eritmek için
+                  önce stok girişi ve eşleme işlerini tamamlayın.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
+
           {listedHeld > 0 && (
             <Alert variant="warning" className="mb-4">
               <ClipboardCheck />

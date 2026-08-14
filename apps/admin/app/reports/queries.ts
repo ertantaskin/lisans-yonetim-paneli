@@ -96,7 +96,17 @@ export interface SlaReport {
   bySite: SlaBreakdownRow[];
   byProduct: SlaBreakdownRow[];
   truncated: { bySite: boolean; byProduct: boolean };
-  excluded: { heldOrders: number; canceledLines: number; bonusLines: number };
+  excluded: {
+    heldOrders: number;
+    canceledLines: number;
+    bonusLines: number;
+    /**
+     * Ölçülebilir satırı olmayan sipariş (hiç satırı yok ya da TÜM satırları elendi).
+     * Ne `measured`'a ne `stillOpen`'a girer → sayılmasa iki sayacın toplamı sipariş
+     * sayısını tutmaz. Opsiyonel: eski API sürümüyle de çalışır (dağıtım sapması).
+     */
+    ordersWithoutMeasurableLines?: number;
+  };
 }
 
 /** Panelin sunduğu pencere seçenekleri (API üst sınırı 90 gün). */

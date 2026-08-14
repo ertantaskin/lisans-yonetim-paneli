@@ -210,7 +210,10 @@ export class DeploymentsService {
     // CASE dalları whitelist'ten üretilir (serbest metin yok → enjeksiyon yolu yok).
     const cases = sql.join(
       (Object.entries(RUNNING_TIMEOUT_MINUTES) as [string, number][]).map(
-        ([t, mins]) => sql`when ${t} then ${mins}`,
+        // `::int` HER dalda AÇIKÇA yazılır: tüm CASE dalları bağlı parametre olduğunda
+        // Postgres ortak tipi 'unknown' üzerinden çözer ve "could not determine data type of
+        // parameter" riski doğar; açık cast bunu kesin kapatır.
+        ([t, mins]) => sql`when ${t} then ${mins}::int`,
       ),
       sql` `,
     );
@@ -220,7 +223,7 @@ export class DeploymentsService {
     const fallback = Math.max(...Object.values(RUNNING_TIMEOUT_MINUTES));
     const killed = await rawRows<{ id: string; target: string }>(this.db, sql`
       with t as (
-        select id, (case target ${cases} else ${fallback} end)::int as tmo
+        select id, (case target ${cases} else ${fallback}::int end)::int as tmo
         from deployments
         where status = 'running'
       )

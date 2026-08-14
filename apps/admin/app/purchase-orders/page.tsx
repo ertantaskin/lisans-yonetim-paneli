@@ -1,6 +1,7 @@
 import { ClipboardList } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { CreatePOSheet } from '@/components/create-po-sheet';
 import { PurchaseOrdersTable } from '@/components/purchase-orders-table';
 import { getPurchaseOrders, getPurchaseOrderFormData, type PurchaseOrderRow } from './queries';
@@ -9,12 +10,15 @@ export const dynamic = 'force-dynamic';
 
 export default async function PurchaseOrdersPage() {
   let orders: PurchaseOrderRow[] = [];
+  /** Sunucu tavanı aşıldı mı — aşıldıysa EN ESKİ emirler listede değildir (sessiz kırpma yasak). */
+  let truncated = false;
   let suppliers: Awaited<ReturnType<typeof getPurchaseOrderFormData>>['suppliers'] = [];
   let products: Awaited<ReturnType<typeof getPurchaseOrderFormData>>['products'] = [];
   let error: string | null = null;
   try {
     const [list, form] = await Promise.all([getPurchaseOrders(), getPurchaseOrderFormData()]);
-    orders = list;
+    orders = list.items;
+    truncated = list.truncated;
     suppliers = form.suppliers;
     products = form.products;
   } catch (e) {
@@ -38,7 +42,23 @@ export default async function PurchaseOrdersPage() {
           </CardContent>
         </Card>
       ) : (
-        <PurchaseOrdersTable orders={orders} />
+        <>
+          {/* Sunucu tavanı aşıldı → EN ESKİ emirler listede yok. Sessiz kırpma bu panelde
+              bir kez "o kayıt yok" dedirtti; bayrak API'den ekrana kadar taşınır. */}
+          {truncated && (
+            <Alert variant="warning" className="mb-4">
+              <ClipboardList />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>Liste sunucuda kırpıldı</AlertTitle>
+                <AlertDescription>
+                  Yalnız en yeni emirler gösteriliyor; daha eskileri bu listede değil. Belirli bir
+                  emri arıyorsanız tedarikçi detayından ya da ilgili partiden ulaşabilirsiniz.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
+          <PurchaseOrdersTable orders={orders} />
+        </>
       )}
     </div>
   );

@@ -13,3 +13,13 @@ docs
 **/.env
 **/.env.*
 !**/.env.example
+
+# YEDEK DUMP'LARI (denetim O6): `backup-drill.sh` varsayılan olarak <repo>/backups altına
+# yazar ve BACKUP_KEEP_LAST=14 ile 14 dump birikir. api/admin servislerinin build context'i
+# repo kökü (`context: .`) olduğu için bu dosyalar HER build'de daemon'a gönderiliyordu
+# (rollback'te bir kez daha). Sızıntı DEĞİL — Dockerfile'lar hedefli COPY kullanıyor — ama
+# dağıtım süresini ve disk/IO baskısını gereksiz yere artırır; deploy.sh'ın 60 sn'lik sağlık
+# penceresi yük altında düşerse SAĞLIKLI bir dağıtım otomatik rollback yiyebilir.
+backups/
+*.dump
+.deploy-history.log

@@ -31,6 +31,25 @@ export function notExpiredCond(alias = 'license_items'): SQL {
 }
 
 /**
+ * "AYAKTA" (canlı) ATAMA STATÜLERİ — TEK KAYNAK, `notExpiredCond` ile aynı gerekçe.
+ *
+ * NEDEN BURADA (denetim bulgusu R4): aynı kavram en az beş yerde elle yazılmıştı ve
+ * kopyalardan biri (`costs.deliveredCogs`) yalnız `'active'` sayıyordu → AYNI EKRANDA
+ * satış hızı "şu kadar birim satıldı" derken maliyet raporu daha az birimin maliyetini
+ * gösteriyordu. Yüklem tek yerde durur, her tüketici import eder.
+ *
+ * TANIM:
+ *   • `active`    — müşteride, çalışıyor.
+ *   • `suspended` — müşteride ama GEÇİCİ gizlenmiş (§4). Teslim EDİLMİŞTİR, iade değildir
+ *     (iade ayrı bir statüdür: `revoked`) → teslimat/maliyet defterinden düşmez.
+ *   • `expired`   — süreli hesabın ömrü doldu. Yine teslim edilmişti ve §2 gereği "hak geri
+ *     gelmez" (kalem havuza dönmez) → maliyeti oluşmuştur.
+ * HARİÇ: `revoked` (gerçek iade) ve `replaced` (değişimde net'lenen eski atama) — sayılsalardı
+ * iade edilen/değiştirilen anahtar hem satış hem maliyet olarak ÇİFT görünürdü.
+ */
+export const STANDING_STATUSES: SQL = sql`('active', 'suspended', 'expired')`;
+
+/**
  * Atomik stok atama — sistemin kalbi (MIMARI.md §2).
  *
  *   UPDATE license_items SET status='assigned', assigned_at=now()

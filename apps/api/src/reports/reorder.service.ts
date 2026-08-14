@@ -3,7 +3,7 @@ import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { notExpiredCond } from '../assignment/assign';
-import { STANDING_STATUSES } from './standing-statuses';
+import { STANDING_STATUSES } from '../assignment/assign';
 
 /**
  * YENİDEN-SİPARİŞ ÖNERİSİ — "tedarik süresi içinde tükenecekler".

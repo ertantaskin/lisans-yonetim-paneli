@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { notExpiredCond } from '../assignment/assign';
-import { STANDING_STATUSES } from './standing-statuses';
+import { STANDING_STATUSES } from '../assignment/assign';
 
 /**
  * ANAHTAR-BAŞI MALİYETİ KULLANIMA ORANLA (denetim bulgusu).
@@ -389,7 +389,7 @@ export class CostsService {
    *
    * AYAKTA KÜMESİ (denetim bulgusu R4): yüklem `a.status = 'active'` idi; oysa panelin
    * "ayakta" tanımı HER YERDE `active | suspended | expired` (reconcile mutabakatı,
-   * reports velocity, ürün hızları — bkz. reports/standing-statuses.ts).
+   * reports velocity, ürün hızları — bkz. assignment/assign.ts).
    *  • `suspended` anahtar müşterinin ELİNDEDİR, yalnız geçici olarak gizlenmiştir (§4) —
    *    iade DEĞİLDİR; maliyeti oluşmuştur.
    *  • Süresi dolmuş (`expired`) süreli hesap da teslim EDİLMİŞTİ ve §2 gereği hak geri
@@ -422,7 +422,7 @@ export class CostsService {
         )::int AS uncovered_units
       FROM assignments a
       JOIN license_items li ON li.id = a.license_item_id
-      /* AYAKTA atamalar — TEK KAYNAK (reports/standing-statuses.ts). Bkz. metot jsdoc'u:
+      /* AYAKTA atamalar — TEK KAYNAK (assignment/assign.ts). Bkz. metot jsdoc'u:
          yalnız 'active' saymak askıdaki ve süresi dolmuş TESLİMATLARI maliyetten düşürüyordu. */
       WHERE a.status IN ${STANDING_STATUSES} AND a.delivered_at IS NOT NULL
       GROUP BY coalesce(li.cost_currency, '')
