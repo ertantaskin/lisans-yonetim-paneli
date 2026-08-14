@@ -2027,3 +2027,106 @@ sonra beş paralel işçi + merkezî tümleştirme.
   prod SMTP hâlâ `mailpit` (mailler gerçek müşteriye ULAŞMIYOR — panel bunu kritik alarmla söylüyor) ·
   yedek cron'u + **offsite kancası** (`BACKUP_OFFSITE_CMD`) kurulmalı; artık kurulmazsa panel `backup_stale`
   alarmı üretiyor.
+
+**PANEL + EKLENTİ TAM DENETİMİ + GERÇEK MAĞAZA SENARYOSU (commit 4b05be1→8173186, migration 0042,
+eklenti v1.0.6, dev'de CANLI + doğrulandı; PROD DAĞITIMI BEKLİYOR — `main`'e push izin katmanınca
+engellendi, kullanıcı onayı gerekiyor):** Kullanıcı "hem panel hem eklenti tarafını incele, eksikleri
+tamamla, stabil/güvenli/performanslı yap, performans+güvenlik testlerini de yap, WordPress ve panel
+için birden fazla ürün varyasyonu ekleyip MAK/normal key/Office 365 hesap teslimatını satışa hazırmış
+gibi baştan sona test et" dedi. 5 denetim ajanı (WP eklentisi · güvenlik-2026 · performans · ürün-tipi
+doğruluğu · test-kapsamı) + 6 düzeltme işçisi + gerçek WooCommerce E2E.
+- **[YÜKSEK — YÜK TESTİNDE ORTAYA ÇIKTI, kod okunarak GÖRÜLEMEZDİ] Bağlantı havuzu kilitlenmesi.**
+  `createOrder` transaction'ı İÇİNDEN `products.resolveMapping`/`getById` KÖK havuzu (`this.db`)
+  kullanıyordu. postgres.js'te `transaction()` bir bağlantıyı rezerve eder; kök havuzdan sorgu
+  İKİNCİ bir bağlantı ister. Havuz `max:10` → 10 eşzamanlı sipariş 10 bağlantının hepsini tutar,
+  her biri 11.'yi bekler, hiçbiri serbest kalmaz → **KALICI KİLİTLENME**; bağlantılar "idle in
+  transaction" kalır ve ancak `idle_in_transaction_session_timeout` (60sn) hepsini öldürünce çözülür.
+  O pencerede `/v1/health` bile `db:false` → **sipariş trafiği TÜM paneli deviriyor**. **ÖLÇÜM:**
+  k6 100 VU → **0 tamamlanan iterasyon**, PG logunda 60sn'de bir havuzun tamamı `FATAL`. **DÜZELTME
+  SONRASI aynı test: 7.171 istek / 354 istek-sn / 0 hata / 14.334 check geçti / 50 stoktan tam 50
+  sipariş (çifte satış 0) / idle-in-transaction ölümü 0.** Executor artık tx'ten geçirilir
+  (`getById`/`resolveMapping`/`resolveLineScale`/`sites.getById`+`rekey`). **DERS
+  [[denetim-regresyon-dersleri]]:** transaction gövdesinden servis çağırırken o servisin İÇERİDE
+  hangi bağlantıyı kullandığını doğrula; `this.db` re-entry havuz boyutu kadar eşzamanlılıkta kilitler.
+  Tarama betiği: transaction gövdelerinde `this.db` + `await this.<servis>.<metot>()` araması.
+- **[YÜKSEK] connect-code yetki yükselmesi:** uç `OwnerGuard` taşımıyordu; `rotate-secret` ile AYNI
+  gücü veriyor (`sites.rekey` → creds guard'sız public `/v1/connect/claim`ten teslim edilir) →
+  owner-olmayan admin herhangi bir sitenin api_key+hmac_secret'ını alıp site-facing `reveal`
+  imzalayabiliyordu (A1/A3 "düz metin yalnız owner" kararı TAMAMEN atlanıyordu). API guard +
+  Next action `isOwner()` + sayfa kapısı.
+- **[YÜKSEK] `parseAccountPayload` fallback'i `secret:false`** işaretliyordu → `maskAccountFields`
+  değere hiç dokunmuyor. `kind: key → account` çevrilen üründe o ürünün TÜM anahtarları owner-olmayan
+  admine / WP meta box'a / Ctrl+K aramasına **düz metin** çıkıyordu. Fallback artık `secret:true`
+  (fail-safe yön). İkinci katman: canlı kalem varken `kind` değişimi 409.
+- **[YÜKSEK] `payloadSchema` canlı stokla serbestçe değişiyordu** → (a) alan yeniden adlandırma
+  200 kalemde kullanıcı adını HER YÜZEYDEN siliyor (ciphertext duruyor, sinyal yok), (b) `secret`
+  bayrağını düşürmek geriye dönük parola ifşası + tedarikçi fişine KALICI donma, (c) şemaya alan
+  eklemek kanonik JSON'un alan kümesini değiştirip `payload_hash`i saptırıyor → **dedupe kaçıyor,
+  aynı hesap iki müşteriye satılıyor**. Kapasite guard'ının birebir deseniyle 409.
+- **[YÜKSEK] Maskeli değer yazımı:** owner-olmayan admin envanterde hesap kaydını düzenlerse form
+  maskeli gelir; tek alanı düzeltip kaydedince `••••••` GERÇEK parola olarak şifrelenir (satılmamış
+  lisans sessizce imha, geri dönüş yok). Otoriter kapı sunucuda: `looksMasked()` → 400.
+- **[PERF] MAK atama birim başına ayrı UPDATE'ti** (`for i<units`) → qty=200 = 200 ardışık
+  round-trip, hepsi tek tx'te kilitler tutulurken. `consumeMultiUseCapacity` artık
+  `LEAST(want, max_uses-use_count)` ile ANAHTAR başına toplu alır (`taken` CTE'de, GÜNCELLEMEDEN
+  ÖNCEKİ satırdan — RETURNING'de NEW döner, oraya yazmak yanlış olurdu). **ÖLÇÜM: süre artık adetle
+  ölçeklenmiyor** (50 adet 30ms, 200 adet 34ms; öncesi 200 adet 127ms).
+- **migration 0042 (7 indeks + 2 düşürme):** `license_items_alloc_idx` (atama sorgusunun TAM
+  karşılığı — `created_at`/`seq` indekste olmadığı için aday satır başına heap erişimi yapılıyordu;
+  `expires_at IS NULL` çoğunlukta olduğundan presorted prefix tek dev gruba düşüp LIMIT devreye
+  girmeden TÜM available satırlar sıralanıyordu — 0030'da `seq` tie-break eklenmiş, indeksi
+  eklenmemişti) · `orders_open_status_idx` (**orders.status üzerinde HİÇ indeks yoktu** → /pending
+  ana ekranı) · `license_items_dead_at_idx` (karantina `coalesce()` İFADE sıralaması) ·
+  `order_lines_pending_fifo_idx` · `replacement_requests_order_idx` + `_email_lower_idx` ·
+  `mappings_product_idx` (ikisi de indekssiz FK). Düşürülen: `license_items_fefo_idx`,
+  `order_lines_pending_product_idx` (yenilerinin ÖN EKİ + kısmi koşulu birebir aynı).
+- **[WP v1.0.6 — E2E'de ÖLÇÜLDÜ]** Çok ürünlü siparişte müşteri sayfası DÜZ LİSTE basıyordu: ürün
+  adı yok, MAK anahtarının kaç aktivasyon taşıdığı hiçbir yerde yazmıyor (9 aktivasyon alan müşteri
+  2 çıplak anahtar görüyor). **Aynı siparişin MAİLİ bunu DOĞRU yapıyordu** (ürün adı + "(3 adet)")
+  → üç yüzeyden biri geride kalmıştı. Sayfa + `.txt` artık `remoteLineId` ile gruplu (ürün adı
+  WooCommerce'in KENDİ kaleminden, panele sorulmadan) + `units>1` etiketi. · Hesap alanları
+  çözülemezse teslim edilmiş sipariş KALICI "Teslimat hazırlanıyor" diyordu (ilerleme çubuğu
+  "3/3" derken) → düz değere düşer. · Retry SONSUZDU (sabit 300sn, 401'de bile) → §4'teki
+  1dk/5dk/30dk + 3 deneme; 401/403'te HİÇ retry (yapılandırma hatası) + tek kalıcı not.
+- **[Diğer düzeltmeler]** mail `canceled` filtresi (okuma yolu yazma yolundan iyi korunuyordu) +
+  `valid_until` değişkeni · `siteReveal` süre filtresi (docstring simetriyi vaat ediyordu, kod
+  yapmıyordu) · `expiredHidden` bayrağı sweep koşunca KAYBOLUYORDU (`status IN ('active','expired')`) ·
+  hesap payload'ı `maskSecret`'e verilince parolanın KUYRUĞU sızıyordu → account'ta `payload:null` ·
+  `withinWarranty` lisansın kendi süresini saymıyordu (süresi dolmuş `keep` lisans "garanti içi"
+  görünüp BEDAVA yenileniyordu, 12 ay tekrarlanabilir) · stok import `.trim()` (kalem düzenleme
+  trimliyordu, import ETMİYORDU → sondaki boşluk `payload_hash`i saptırıp mükerrer denetimini
+  kaçırıyor, aynı anahtar İKİNCİ kez stoğa girebiliyordu — dev'de kanıtlandı: düzeltmeden sonra
+  `duplicates:1`) · webhook worker `concurrency:5` · envanter `count(*) OVER ()` tavanlandı ·
+  retention +3 tablo · şablon test maili hız sınırı · dağıtım claim/finish OwnerGuard · login/logout
+  `Origin` yoksa RED (+`Sec-Fetch-Site` yedeği) · Dockerfile `|| pnpm install` yedeği KALDIRILDI
+  (lockfile sabitlemesini sessizce iptal ediyordu) · prod imajı budandı (**626→145 paket**,
+  `src`/`test` çıktı) · scrypt N=2^14→2^17 (format parametre taşır, ESKİ hash'ler doğrulanmaya
+  devam eder, girişte sessiz rehash) · `brace-expansion`/`js-yaml` override (`pnpm audit --prod` temiz).
+- **KENDİ REGRESYONUM (dev'de yakalandı):** budanmış imaj `pino-pretty`yi (devDependency) kaybetti;
+  kod yalnız `NODE_ENV`'e bakıyordu → prod imajı NODE_ENV≠production ile koşturulan DEV stack'inde
+  API **BOOT ETMEDİ**. `require.resolve` ile çalışma-anı denetimi + JSON'a düşüş (bir log
+  biçimlendiricisinin yokluğu servisi düşürmemeli). **DERS:** imajdan bağımlılık budarken o
+  bağımlılığı KOŞULLU kullanan kodun koşulunu da gözden geçir; dev stack'i prod imajını farklı
+  NODE_ENV ile koşturabilir.
+- **KENDİ HATAM (5. kez):** `sql` şablonunun İÇİNDEKİ yorumda backtick — üstelik "backtick kullanma"
+  diye yazdığım uyarı cümlesinde de tekrarladım (typecheck iki kez yakaladı).
+- **E2E (gerçek WooCommerce, dev):** panelde 3 ürün (tek-kullanım key · MAK max_uses=5 · Office 365
+  hesap payloadSchema username/password[secret]/recovery + validity 365g) + WC'de **varyasyonlu ürün**
+  (Retail/MAK varyasyonları) + basit hesap ürünü; katalog senkronu → varyasyon-özel eşleme →
+  **karışık sipariş** (Retail×2 + MAK×3 + hesap×1) → 205ms'de fulfilled; MAK tek atama `units=3`,
+  hesap `valid_until` +365g. **Kısmi iade** (1 MAK birimi) → satır qty 3→2, atama units 3→2,
+  `use_count` 3'te KALDI (§2 doğru). **Kısmi teslimat** (9 MAK + 5 hesap, stok 7+2) → iki anahtara
+  bölünmüş 7 birim + 2 hesap, "9/14 teslim edildi". **Otomatik tamamlama** (stok girişi → hesap
+  satırı tamamlandı). **Sorun Bildir → destek kuyruğu** (talep açıldı; stok tükendiği için approve
+  409 "stok yok" — DOĞRU davranış). Müşteri sayfası + mail + meta box + panel detayı karşılaştırıldı.
+- **Doğrulama:** typecheck 4/4 + check-use-server 25/86 · shared 35/35 · api birim 142/142 ·
+  admin birim 135/135 · admin production build · **VPS izole test DB: entegrasyon 383/383 (69 dosya,
+  +26 yeni) + yarış 3/3** · PHP-lint 12/12 · dev stack yeniden derlendi, `/v1/health` 200 v1.1.0,
+  0042'nin 7 indeksi canlı + 2 gereksiz indeks düşmüş, api+admin **healthy**, boot hatası 0.
+- **KALAN (bilinçli, raporlandı):** maliyet raporunda zaman penceresi yok (uç sözleşmesi değişir) ·
+  MAK kusurlu anahtar için panelde çalışan değişim yolu yok (üç yol da 400 verir, gerekçesi kodda
+  yazılı; "elle işleyin" talimatının panelde karşılığı yok) · `depleted` kovası hiçbir stok ekranında
+  görünmüyor (multi+validity_days "kiralık slot" ürününde sermaye görünmez oluyor) · hesap ürününde
+  "parola değişti" için doğru araç yok (değişim BAŞKA hesap verir, eskisi müşterinin elinde çalışmaya
+  devam eder) · `payload_suffix_hash` hesap ürününde kanonik JSON'un son 5 hanesi → tam-anahtar/son-hane
+  araması account'ta HER ZAMAN boş döner.

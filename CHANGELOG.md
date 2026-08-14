@@ -14,6 +14,91 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Panel + eklenti tam denetimi ve gerçek mağaza senaryosu testi (migration 0042, eklenti 1.0.6)
+
+Panel ve WP eklentisi beş bağımsız lensle (WP eklentisi · güvenlik · performans · ürün tipi
+doğruluğu · test kapsamı) tarandı; her bulgu çürütme denemesinden geçirildi. Ardından gerçek bir
+WooCommerce mağazasında uçtan uca satış senaryosu koşuldu: **varyasyonlu ürün** (Retail/MAK),
+**çok kullanımlı MAK anahtarı**, **Office 365 hesabı** (kullanıcı adı + gizli parola + kurtarma
+adresi + 1 yıl geçerlilik) — tek siparişte karışık olarak, kısmi teslimat, kısmi iade, otomatik
+tamamlama ve değişim talebi dahil.
+
+**En ciddi bulgu yük testinde ortaya çıktı — kod okunarak görülemezdi.**
+
+- **Bağlantı havuzu kilitlenmesi (kullanılabilirlik).** `createOrder` transaction'ı içinden ürün
+  eşlemesi ve ürün kaydı **kök havuzdan** okunuyordu. Transaction zaten bir bağlantı rezerve
+  ettiği için bu ikinci bir bağlantı istiyordu; havuz 10 bağlantılık olduğundan **10 eşzamanlı
+  sipariş** tüm bağlantıları "idle in transaction" durumunda kilitliyor, hiçbiri serbest kalmıyor
+  ve ancak 60 saniyelik Postgres zaman aşımı hepsini öldürünce çözülüyordu. O süre boyunca
+  `/v1/health` bile `db:false` dönüyordu — yani sipariş trafiği **tüm paneli** deviriyordu.
+  Ölçüldü: 100 eşzamanlı kullanıcı → **0 tamamlanan sipariş**, Postgres logunda 60 saniyede bir
+  havuzun tamamının `FATAL` düşmesi. Düzeltmeden sonra aynı test: **7.171 istek, 354 istek/sn,
+  sıfır hata, 14.334 doğrulamanın tamamı geçti**, 50 stoktan tam 50 sipariş karşılandı (çifte
+  satış = 0), havuz ölümü **0**.
+
+**Güvenlik**
+
+- **Yetki yükselmesi:** "bağlan kodu" ucu owner kontrolü taşımıyordu. Owner olmayan bir yönetici
+  herhangi bir mağazanın kimlik bilgilerini yeniletip alabiliyor, o kimlikle mağaza uçlarını
+  imzalayarak **düz metin lisans/parola** okuyabiliyordu — "düz metin yalnız owner" kararı
+  tamamen atlanıyordu. Aynı gücü veren `rotate-secret` zaten owner-only'ydi; asimetri kapandı.
+- **Geriye dönük düz metin ifşası:** hesap alanları çözülemediğinde üretilen yedek görünüm alanı
+  "gizli değil" işaretliyordu. Bir anahtar ürünü hesap tipine çevrildiğinde o ürünün **tüm**
+  anahtarları maskesiz görünüyordu. Yedek görünüm artık gizli sayılıyor (güvenli yön).
+- **Sessiz lisans imhası:** owner olmayan yönetici maskeli görünen bir hesap kaydını düzenlerse
+  maske metni (`••••••`) gerçek parola olarak şifreleniyordu. Sunucu artık maskeli değeri reddediyor.
+- **Ürün şeması koruması:** stokta canlı kalem varken alan silme/yeniden adlandırma, "gizli"
+  bayrağını düşürme ve ürün tipi değişimi 409 ile reddediliyor (sessiz veri kaybı, geriye dönük
+  parola ifşası ve mükerrer denetiminin kaçması bu üç değişimden doğuyordu).
+- Dağıtım kuyruğunu tüketen uçlar, şablon test maili (hız sınırı) ve giriş/çıkış `Origin` kapısı
+  sıkılaştırıldı; prod imajı geliştirme bağımlılıklarından arındırıldı (626 → 145 paket);
+  Dockerfile'ların lockfile sabitlemesini sessizce iptal eden yedeği kaldırıldı; parola
+  türetme maliyeti 2026 önerisine çıkarıldı (eski parolalar çalışmaya devam eder, girişte
+  sessizce yenilenir).
+
+**Performans**
+
+- **Çok kullanımlı (MAK) atama** birim başına ayrı bir veritabanı turu yapıyordu: 200 adetlik bir
+  satır = 200 ardışık `UPDATE`, hepsi tek transaction içinde kilitler tutulurken. Artık anahtar
+  başına toplu alınıyor. Ölçüldü: süre artık **adetle ölçeklenmiyor** (50 adet 30 ms, 200 adet 34 ms).
+- **migration 0042** — yedi sıcak yol indeksi: atama sorgusunun tam karşılığı (sıralama anahtarları
+  indekste değildi, aday satır başına heap erişimi yapılıyordu), "Bekleyen Teslimatlar" (sipariş
+  durumu üzerinde hiç indeks yoktu), kusurlu stok sıralaması (ifade indeksi), tamamlama motorunun
+  FIFO taraması, indekssiz iki yabancı anahtar ve müşteri e-postası araması. Yenilerinin kapsadığı
+  iki gereksiz indeks düşürüldü.
+- Geri-kanal webhook işçisi tek iş yerine beşe çıkarıldı (erişilemeyen tek mağaza tüm kuyruğu
+  baş-blokluyordu); envanter sayımı tavanlandı (her sayfa görüntülemesinde tüm tabloyu sayıyordu);
+  bildirim/dağıtım/bağlan-kodu tabloları için budama eklendi.
+
+**Müşteri deneyimi (eklenti 1.0.6)**
+
+- Çok ürünlü siparişte müşteri sayfası **düz bir liste** basıyordu: hangi anahtarın hangi ürüne ait
+  olduğu görünmüyor, çok kullanımlı anahtarın kaç aktivasyon taşıdığı hiçbir yerde yazmıyordu
+  (9 aktivasyon satın alan müşteri 2 çıplak anahtar görüyordu). Aynı siparişin **e-postası bunu
+  doğru yapıyordu** — üç yüzeyden biri geride kalmıştı. Sayfa ve `.txt` indirmesi artık ürün adına
+  göre gruplu ve kullanım hakkını yazıyor.
+- Hesap alanları çözülemediğinde teslim edilmiş sipariş müşteriye kalıcı olarak "Teslimat
+  hazırlanıyor" diyordu (ilerleme çubuğu ise "3/3 teslim edildi"). Artık düz değere düşülüyor.
+- Panele iletilemeyen istekler **sonsuza dek** 5 dakikada bir tekrar deneniyor ve her denemede
+  siparişe not yazıyordu (yanlış imza durumunda günde ~288 not/iş). Artık 1dk/5dk/30dk, en fazla
+  3 deneme; 401/403'te hiç denenmiyor (yapılandırma hatasıdır) ve tek kalıcı uyarı yazılıyor.
+
+**Doğruluk**
+
+- Teslimat e-postası iptal edilmiş satır filtresini uygulamıyordu (okuma yolu yazma yolundan iyi
+  korunuyordu); mağaza panelindeki "Göster" süresi dolmuş lisansı açabiliyordu; "süreniz doldu"
+  bildirimi süpürme işi koşar koşmaz kayboluyordu; hesap payload'ı maskelenirken parolanın son
+  karakterleri sızıyordu; garanti penceresi lisansın kendi süresini hesaba katmıyordu (süresi
+  dolmuş lisans "garanti içi" görünüp bedava yenileniyordu); stok girişi ile kalem düzenleme
+  farklı normalizasyon uyguluyordu (baştaki/sondaki boşluk mükerrer denetimini kaçırıyor, aynı
+  anahtar ikinci kez stoğa girebiliyordu).
+
+**Test kapsamı** — denetim, çok kullanımlı ürünün **satış** yolunun ve **karışık tipli siparişin**
+hiç test edilmediğini ortaya çıkardı (MAK yalnız iade/red yollarında testliydi). 26 yeni entegrasyon
+testi eklendi: MAK satışı (kapasite aşımı invaryantı dahil), MAK eşzamanlılığı, karışık tipli tek
+sipariş, süre türetimi, hesap iadesi semantiği, şema değişimi koruması, süre görünürlüğü.
+Toplam entegrasyon **383/383**, birim 142/142, yarış 3/3.
+
 ### Proje geneli 6-lensli denetim: 40 doğrulanmış bulgu (migration 0041)
 
 Altı lens (auth/2FA · veri ifşası/RBAC · sipariş invaryantları · rapor/DB · arayüz · ops/betik/WP)
