@@ -27,6 +27,7 @@ import { CryptoService } from '../crypto/crypto.service';
 import {
   auditLog,
   batches,
+  fulfillmentEvents,
   licenseItems,
   orderLines,
   orders,
@@ -792,7 +793,14 @@ export class StockService {
         batchId: null,
         payloadEnc: this.crypto.encrypt(plaintext, CryptoService.licenseItemAad(id)),
         payloadHash: this.crypto.payloadHash(plaintext),
-        payloadSuffixHash: this.crypto.payloadSuffixHash(plaintext),
+        // HESAP ÜRÜNÜNDE SON-5 ARAMASI ANLAMSIZ (denetim bulgusu) — bu yüzden hash YAZILMAZ.
+        // `plaintext` burada KANONİK JSON'dur (`{"password":"…","username":"…"}`), dolayısıyla
+        // son 5 hane parolanın/kullanıcı adının sonu değil, JSON'un kuyruğudur (`ne"}` gibi) →
+        // operatörün "parolanın son 5 hanesi" diye arattığı şey ASLA eşleşmez. Üstelik kuyruğun
+        // 2 karakteri (`"}`) SABİT olduğu için efektif entropi 5→3'e düşer, yani yazılan değer
+        // hem işe yaramaz hem de zayıf bir parmak izidir. NULL bırakmak dürüst olandır; arama
+        // ipucu metni de hesap ürününde bu aramanın geçerli olmadığını söyler.
+        payloadSuffixHash: accountSchema ? null : this.crypto.payloadSuffixHash(plaintext),
         maxUses,
         expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
         status: 'available',
@@ -2344,7 +2352,9 @@ export class StockService {
 
       const changed = newHash !== row.payload_hash;
       const payloadEnc = this.crypto.encrypt(plaintext, CryptoService.licenseItemAad(id));
-      const suffixHash = this.crypto.payloadSuffixHash(plaintext);
+      // Hesap ürününde son-5 hash'i YAZILMAZ — import yolundaki gerekçenin aynısı (kanonik
+      // JSON'un kuyruğu aranabilir bir şey değildir). İki yazma yolu aynı kuralı uygular.
+      const suffixHash = row.kind === 'account' ? null : this.crypto.payloadSuffixHash(plaintext);
       const [updated] = await rawRows<{ id: string }>(tx, sql`
         UPDATE license_items
         SET payload_enc = ${payloadEnc},
@@ -2372,6 +2382,154 @@ export class StockService {
         value: row.kind === 'account' ? null : plaintext,
         fields,
         changed,
+      };
+    });
+  }
+
+  /**
+   * TESLİM EDİLMİŞ HESABIN kimlik bilgilerini YERİNDE günceller (§11, denetim boşluğu).
+   *
+   * NEDEN AYRI BİR UÇ: hesap ürününde sağlayıcı tarafında parola değişebilir (ya da operatör
+   * güvenlik gereği döndürür). Panelde bugüne dek bunun DOĞRU aracı yoktu:
+   *   · `updateLicenseItemPayload` teslim edilmiş kalemi 409'lar (DOĞRU — müşterinin gördüğü
+   *     değerle DB'yi sessizce ayırmamalı),
+   *   · "Değiştir" (replace) ise BAŞKA bir hesap atar; eski hesap müşterinin elinde ÇALIŞMAYA
+   *     DEVAM eder (kimlik bilgilerini zaten kopyalamıştır) ve müşterinin o hesapta biriktirdiği
+   *     veri kaybolur. Yani anahtar ürününde doğru olan çözüm hesap ürününde YANLIŞ.
+   * Bu uç aradaki boşluğu kapatır: AYNI kalem, AYNI atama, YENİ kimlik bilgileri.
+   *
+   * KISITLAR (bilinçli, hepsi güvenlik/denetim gereği):
+   *   · yalnız `kind='account'` — anahtar ürününde "değişen anahtar" farklı bir lisanstır, replace kullanılır,
+   *   · yalnız CANLI ataması olan kalem — teslim edilmemişte zaten normal düzenleme yolu çalışır,
+   *   · sebep ZORUNLU (denetim izine yazılır),
+   *   · maskeli değer YASAK (aynı `looksMasked` kapısı — owner-olmayanın maskeli formu kaydetmesi
+   *     lisansı sessizce imha ederdi),
+   *   · mükerrer kontrolü korunur (aynı kimlik bilgisi iki kalemde olamaz).
+   *
+   * Müşteriye BİLDİRİM: bu servis mail göndermez; etkilenen sipariş id'lerini DÖNDÜRÜR ve
+   * çağıran (admin UI) operatöre "teslimat mailini yeniden gönder" yolunu sunar. Böylece
+   * bildirim kararı — ve mailin ne zaman gideceği — operatörde kalır (§15 "insan onaylar").
+   */
+  async rotateAccountCredentials(
+    id: string,
+    input: { fields: Record<string, string>; reason: string },
+    actor: string,
+  ) {
+    const reason = (input.reason ?? '').trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('Sebep zorunludur (en az 3 karakter).');
+    }
+    // Maskeli değer kapısı — `updateLicenseItemPayload` ile AYNI kural (tek yerde tanımlı olmalı
+    // ki iki yazma yolu ayrışmasın; ayrışma bu projede tekrar eden bir hata sınıfıdır).
+    if (Object.values(input.fields ?? {}).some((v) => typeof v === 'string' && looksMasked(v))) {
+      throw new BadRequestException(
+        'Maskeli değer kaydedilemez. Görüntüleme yetkiniz olmadığı için alanlar maskeli geldi; ' +
+          'tam değerleri girin veya owner yetkisi isteyin.',
+      );
+    }
+
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'license_item:' + id}))`);
+
+      const [row] = await rawRows<{
+        id: string;
+        product_id: string;
+        kind: string;
+        payload_schema: unknown;
+      }>(tx, sql`
+        SELECT li.id, li.product_id, p.kind::text AS kind, p.payload_schema
+        FROM license_items li
+        JOIN products p ON p.id = li.product_id
+        WHERE li.id = ${id} LIMIT 1 FOR UPDATE OF li;
+      `);
+      if (!row) throw new NotFoundException('Lisans bulunamadı.');
+      if (row.kind !== 'account') {
+        throw new BadRequestException(
+          'Bu işlem yalnız hesap ürünlerinde geçerlidir. Anahtar ürününde değişen bir anahtar ' +
+            'AYRI bir lisanstır — sipariş detayından "Değiştir" akışını kullanın.',
+        );
+      }
+
+      // CANLI atama şartı: bu uç teslim edilmiş kalemi hedefler. Teslim edilmemiş kalemde
+      // olağan düzenleme yolu (updateLicenseItemPayload) zaten çalışır ve daha az yetki ister.
+      const live = await rawRows<{ n: number; order_ids: string[] }>(tx, sql`
+        SELECT count(*)::int AS n,
+               coalesce(array_agg(DISTINCT a.order_id) FILTER (WHERE a.order_id IS NOT NULL), '{}') AS order_ids
+        FROM assignments a
+        WHERE a.license_item_id = ${id} AND a.status IN ('active', 'suspended');
+      `);
+      const liveCount = Number(live[0]?.n ?? 0);
+      if (liveCount === 0) {
+        throw new ConflictException(
+          'Bu lisansın canlı teslimatı yok — normal "Değiştir" (düzenleme) akışını kullanın.',
+        );
+      }
+
+      const parsed = AccountPayloadSchema.safeParse(row.payload_schema);
+      if (!parsed.success) {
+        throw new BadRequestException(
+          'Ürünün hesap alan şeması (payload_schema) geçersiz — güncelleme yapılamaz.',
+        );
+      }
+      let plaintext: string;
+      try {
+        plaintext = serializeAccountPayload(parsed.data, input.fields);
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : String(err));
+      }
+
+      const newHash = this.crypto.payloadHash(plaintext);
+      const dupe = await rawRows<{ id: string }>(tx, sql`
+        SELECT id FROM license_items WHERE payload_hash = ${newHash} AND id <> ${id} LIMIT 1;
+      `);
+      if (dupe.length > 0) {
+        throw new ConflictException('Bu kimlik bilgileri sistemde başka bir kayıtta zaten var.');
+      }
+
+      // AAD (`license_item:<id>`) KORUNUR → ciphertext satır-taşıma hâlâ imkânsız.
+      // Hesap ürününde son-5 hash'i yazılmaz (bkz. import yolundaki gerekçe).
+      const payloadEnc = this.crypto.encrypt(plaintext, CryptoService.licenseItemAad(id));
+      await tx.execute(sql`
+        UPDATE license_items
+        SET payload_enc = ${payloadEnc}, payload_hash = ${newHash}, payload_suffix_hash = NULL
+        WHERE id = ${id};
+      `);
+
+      const orderIds = (live[0]?.order_ids ?? []).filter(Boolean);
+      // Sipariş zaman çizelgesinde GÖRÜNÜR iz: operatör "bu hesabın parolası ne zaman
+      // değişti" sorusunu panelden yanıtlayabilsin (sır NOTA GİRMEZ, yalnız sebep).
+      for (const orderId of orderIds) {
+        await tx.insert(fulfillmentEvents).values({
+          orderId,
+          type: 'account_credentials_rotated',
+          message: `Hesap kimlik bilgileri güncellendi — ${reason}`,
+        });
+      }
+      await tx.insert(auditLog).values({
+        action: 'adjust',
+        actor,
+        targetType: 'license_item',
+        targetId: id,
+        meta: {
+          op: 'rotate_credentials',
+          reason,
+          liveAssignments: liveCount,
+          source: 'license_inventory',
+        },
+      });
+
+      return {
+        id,
+        productId: row.product_id,
+        liveAssignments: liveCount,
+        /** Çağıran bu siparişlerin teslimat mailini yeniden gönderebilir (karar operatörde). */
+        orderIds,
+        fields: parseAccountPayload(parsed.data, plaintext).map((f) => ({
+          key: f.key,
+          label: f.label,
+          value: f.value,
+          secret: f.secret,
+        })),
       };
     });
   }

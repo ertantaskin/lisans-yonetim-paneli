@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
+  Archive,
   Package,
   KeyRound,
   ShieldAlert,
@@ -118,6 +119,13 @@ export default async function ProductDetailPage({
   const lowStock =
     product.lowStockThreshold != null && stock.available <= product.lowStockThreshold;
 
+  /*
+    API'nin SONRADAN eklediği iki alan savunmacı okunur (api ve admin ayrı imajlar; eski api
+    bunları göndermez). Alan gelmezse sayı 0 olur → ekran bugünkü gibi davranır, KIRILMAZ.
+  */
+  const depletedCount = stock.depleted ?? 0;
+  const expiredCapacity = stock.expiredAvailable ?? 0;
+
   return (
     <div className="space-y-6">
       {/* Başlık */}
@@ -183,6 +191,12 @@ export default async function ProductDetailPage({
         <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
           <Boxes className="size-4 text-muted-foreground" aria-hidden /> Stok durumu
         </h2>
+        {/*
+          KOVALAR TOPLANMAZ: "Kullanılabilir" bir KAPASİTE toplamıdır (MAK'ta 1 anahtar 500
+          hak taşır), diğerleri SATIR sayar; üstelik kısmen satılmış bir MAK anahtarı hem
+          stokta hem müşterilerde görünür. Bu yüzden sayılar yan yana durur, "toplam = a+b+c"
+          aritmetiği KURULMAZ (bu panelde "satılmış 6 birim" yanılgısını üreten hata buydu).
+        */}
         <StatStrip
           items={[
             {
@@ -194,7 +208,40 @@ export default async function ProductDetailPage({
             },
             { icon: KeyRound, label: stockStateLabel('assigned'), value: stock.assigned },
             { icon: Ban, label: stockStateLabel('revoked'), value: stock.revoked },
-            { icon: Clock, label: stockStateLabel('expired'), value: stock.expired },
+            {
+              icon: Clock,
+              label: stockStateLabel('expired'),
+              value: stock.expired,
+              /*
+                Satır sayısının yanında ATANAMAZ KAPASİTEYİ de yazarız: MAK ürününde "2 kalem"
+                aslında 800 kullanım hakkı olabilir, yalnız satır sayısı kaybın büyüklüğünü
+                gizlerdi. `expiredAvailable` opsiyonel (eski api imajı göndermeyebilir) →
+                yoksa ipucu hiç basılmaz, ekran kırılmaz.
+              */
+              hint:
+                expiredCapacity > 0 ? `${expiredCapacity} kullanım hakkı atanamıyor` : undefined,
+              tone: stock.expired > 0 ? 'warning' : 'default',
+            },
+            /*
+              KAPASİTESİ BİTEN (depleted) — "Tükenmiş" tek başına belirsiz olduğu için etiket
+              ne olduğunu söyler: kullanım hakları bitmiş MAK anahtarı. Bu duruma YALNIZ çok
+              kullanımlı ürün düşer (tek kullanımlıkta atanan anahtar 'assigned' olur), o
+              yüzden single üründe gereksiz "0" göstermemek için koşullu; ama sayı sıfır
+              DEĞİLSE (ör. sonradan tipi değişmiş eski veri) her hâlükârda gösterilir —
+              amaç zaten "sermaye görünmez kalmasın".
+              §11 kiralık slot ürününde kapasite süre bitişinde havuza DÖNMEZ (bilinçli),
+              yani bu kova kalıcıdır; ipucu operatöre bunun bir hata olmadığını söyler.
+            */
+            ...(product.usageMode === 'multi' || depletedCount > 0
+              ? [
+                  {
+                    icon: Archive,
+                    label: 'Kapasitesi biten',
+                    value: depletedCount,
+                    hint: 'kullanım hakkı kalmadı',
+                  },
+                ]
+              : []),
             { icon: ShieldAlert, label: stockStateLabel('voided'), value: stock.voided },
           ]}
         />

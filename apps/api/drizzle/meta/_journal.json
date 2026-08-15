@@ -302,6 +302,13 @@
       "when": 1786742036590,
       "tag": "0042_hot_path_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786798086313,
+      "tag": "0043_cost_window_indexes",
+      "breakpoints": true
     }
   ]
 }

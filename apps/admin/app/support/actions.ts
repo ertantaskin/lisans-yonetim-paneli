@@ -19,6 +19,29 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const NOTE_MAX = 4000;
 
 /**
+ * MAK (çok kullanımlı) ürünlerde API onayı REDDEDER ve yalnız "elle işleyin" der — bu
+ * talimatın panelde karşılığı yoktu (operatör ne yapacağını bilmiyordu).
+ *
+ * NEDEN reddediliyor (red DOĞRUDUR, kaldırılmaz): revoke, kapasiteyi AYNI paylaşımlı
+ * anahtara iade eder → taze atama yine o kusurlu anahtarı seçerdi.
+ *
+ * NOT: sipariş detayı bu durumu düğmeyi hiç sunmayarak ÖNLER
+ * (`app/orders/[id]/order-actions.tsx` → MULTI_REPLACE_BLOCKED — kanonik metin oradadır).
+ * /support kuyruğunda aynı gate kurulamıyor çünkü `GET /v1/admin/replacements` yanıtı ürünün
+ * `usage_mode` alanını taşımıyor; bu yüzden en azından HATA MESAJI reçeteyle zenginleştirilir.
+ */
+const MULTI_RECIPE =
+  ' Yapılacak: mağaza sipariş ekranındaki “+1 Bonus” ile müşteriye ek aktivasyon verin,' +
+  ' kusurlu anahtarı Kusurlu Stok akışıyla tedarikçiye bildirin. Ayrıntı: Kullanım Rehberi →' +
+  ' “Değişim ve garanti”.';
+
+/** API hata metnini operatörün uygulayabileceği hâle getirir (bilinen durumlar için). */
+function explainError(e: unknown, fallback: string): string {
+  const msg = e instanceof Error && e.message ? e.message : fallback;
+  return msg.includes('MAK') ? msg + MULTI_RECIPE : msg;
+}
+
+/**
  * Durum değişikliğinden sonra tazelenecek yollar. Destek talebi İKİ ekranda görünür
  * (/support kuyruğu + /orders/[id] destek kartı) → ikisi de tazelenmezse operatör
  * bayat durum görür ("onayladım ama siparişte hâlâ açık" şikâyeti).
@@ -44,7 +67,7 @@ export async function approveReplacementAction(
     revalidateSupport(orderId);
     return { ok: true, message: 'Değişim onaylandı, yeni lisans atandı.' };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Onaylanamadı' };
+    return { ok: false, error: explainError(e, 'Onaylanamadı') };
   }
 }
 

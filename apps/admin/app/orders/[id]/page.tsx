@@ -74,6 +74,12 @@ type Assignment = OrderDetail['assignments'][number] & {
   remoteLineId?: string | null;
   replaced?: boolean;
   replaceReason?: string | null;
+  /**
+   * Ürünün kullanım modu (`single` | `multi`). MAK (`multi`) atamada otomatik değişim ucu
+   * 400 döner → "Değiştir" düğmesi kapatılır (bkz. order-actions.tsx). Eski API imajı bu
+   * alanı döndürmezse `undefined` gelir ve gate uygulanmaz (mevcut davranış korunur).
+   */
+  usageMode?: string | null;
 };
 
 type HistoryRow = OrderDetail['history'][number] & {
@@ -93,10 +99,19 @@ type AuditRow = {
   createdAt: string;
 };
 
+/**
+ * Destek/değişim talebi satırı — `usageMode` backend'in EKLEMELİ alanıdır (detail() talebin
+ * satırından/atamasından çözer). MAK (`multi`) üründe "Onayla (değiştir)" ucu 400 döner.
+ */
+type Replacement = OrderDetail['replacements'][number] & {
+  usageMode?: string | null;
+};
+
 type Detail = Omit<
   OrderDetail,
-  'order' | 'lines' | 'assignments' | 'history' | 'auditTrail'
+  'order' | 'lines' | 'assignments' | 'history' | 'auditTrail' | 'replacements'
 > & {
+  replacements: Replacement[];
   order: OrderDetail['order'] & {
     /** Mağaza yönetim panelinde siparişi açan link (SALT LİNK — panel mağazaya bağlanmaz). */
     storeAdminUrl?: string | null;
@@ -170,6 +185,7 @@ function LicenseRow({
           orderId={orderId}
           status={a.status}
           siblingActiveCount={siblingActiveCount}
+          usageMode={a.usageMode}
         />
       </div>
     </div>

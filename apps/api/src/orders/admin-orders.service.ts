@@ -656,6 +656,11 @@ export class AdminOrdersService {
           productPolicy: products.fulfillmentPolicy,
           productStockless: products.stockless,
           productReleaseAt: products.releaseAt,
+          // O8: satırın ürününün kullanım modu — destek talebi satırlarına (aşağıda)
+          // `usageMode` türetmek için gerekli. Talep tablosunda ürün bağı YOKTUR
+          // (replacement_requests yalnız line_id/assignment_id taşır) → ek sorgu yerine
+          // BU satır sorgusundan haritalanır (N+1 yok, yeni round-trip yok).
+          productUsageMode: products.usageMode,
           // MULTI/MAK dahil kapasite: Σ(max_uses − use_count) (products.list ile AYNI semantik).
           //
           // notExpiredCond('li'): atama sorgusu (assign.ts) stok ömrü dolmuş kalemi ZATEN
@@ -693,6 +698,12 @@ export class AdminOrdersService {
           productKind: products.kind,
           productName: products.name,
           payloadSchema: products.payloadSchema,
+          // O8: ürünün kullanım modu (single | multi). `replaceAssignment` MAK'ı (multi)
+          // REDDEDER (paylaşımlı anahtar yeniden atanamaz) → UI "Değiştir" düğmesini bu
+          // alana bakarak KAPATIR. `maxUses > 1` ile KARIŞTIRMA: red kararının ölçütü
+          // ürünün usage_mode'udur, kalemin kapasitesi değil (tek-kullanımlık üründe de
+          // teorik olarak max_uses>1 bir kalem bulunabilir → yanlış gate olurdu).
+          usageMode: products.usageMode,
         })
         .from(assignments)
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
@@ -828,6 +839,16 @@ export class AdminOrdersService {
         at: h.createdAt ?? null,
       });
     }
+    // O8: satır → ürünün kullanım modu (single|multi) ve atama → satır haritaları. Destek
+    // taleplerine `usageMode` türetmek için kullanılır (talep tablosunda ürün bağı yok).
+    // Kaynak zaten çekilmiş satır/atama listeleridir → ek sorgu YOK.
+    const usageModeByLine = new Map<string, string>();
+    for (const l of lineRows) {
+      if (l.productUsageMode) usageModeByLine.set(l.id, l.productUsageMode);
+    }
+    const lineIdByAssignment = new Map<string, string>();
+    for (const a of asgRows) lineIdByAssignment.set(a.id, a.lineId);
+
     // Soyağacı satırının ESKİ atamasını (aynı lisans satırını taşıyan terminal atama) çöz.
     const terminalAsgByLicenseItem = new Map<string, string>();
     for (const a of asgRows) {
@@ -908,7 +929,21 @@ export class AdminOrdersService {
         };
       }),
       emails,
-      replacements: replacementRows,
+      // O8: destek/değişim talepleri — "Onayla (değiştir)" AYNI değişim makinesini çalıştırır ve
+      // MAK (multi) üründe 400 ile reddeder. Karar UI'da verilebilsin diye talebe ürünün
+      // `usageMode`'u EKLENİR (eklemeli alan; mevcut alan adları korunur).
+      // Çözüm sırası: satır → (satır yoksa) atamanın satırı. İkisi de yoksa null = BİLİNMİYOR;
+      // UI o durumda gate uygulamaz (mevcut davranış korunur) — yetkili kapı zaten API'dir,
+      // `replacements.approve` MAK'ı her hâlükârda reddeder. Bu alan yalnız SUNUM içindir.
+      replacements: replacementRows.map((r) => {
+        const lineId =
+          r.lineId ??
+          (r.assignmentId ? (lineIdByAssignment.get(r.assignmentId) ?? null) : null);
+        return {
+          ...r,
+          usageMode: lineId ? (usageModeByLine.get(lineId) ?? null) : null,
+        };
+      }),
       history: historyRows.map((h) => {
         const oldPlain =
           h.oldPayloadEnc && h.oldLicenseItemId
@@ -1011,6 +1046,9 @@ export class AdminOrdersService {
           // multi (MAK) kalan kapasite görünürlüğü.
           maxUses: a.itemMaxUses,
           useCount: a.itemUseCount,
+          // O8: 'multi' ise otomatik değişim ucu 400 döner → UI düğmeyi hiç sunmasın
+          // ("tıklanıp hata veren düğme, hiç sunulmayandan kötüdür").
+          usageMode: a.usageMode,
         };
       }),
       events,

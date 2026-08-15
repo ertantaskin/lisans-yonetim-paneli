@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.0.6
+Stable tag: 1.0.7
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,13 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.0.7 =
+* Sipariş ekranındaki lisans özeti çok kullanımlı (MAK) anahtarda YANILTICIYDI: kalem sayıyordu,
+  yani 3 aktivasyonluk tek anahtar "1 lisans" görünüyordu — operatör eksik teslimat sanıp bedava
+  bonus verebiliyordu. Artık "2 lisans (toplam 5 kullanım hakkı)" biçiminde birim de yazıyor.
+* Anahtar satırındaki kullanım sayacı "Anahtar geneli: 12/500" diye etiketlendi (bu sayaç anahtarın
+  TÜM siparişlerdeki toplamıdır, o siparişin değil) ve siparişe düşen birim ayrıca gösteriliyor.
 
 = 1.0.6 =
 * Müşteri sayfasında lisanslar artık ÜRÜNE göre gruplanıp ürün adıyla başlıklanıyor (çok ürünlü

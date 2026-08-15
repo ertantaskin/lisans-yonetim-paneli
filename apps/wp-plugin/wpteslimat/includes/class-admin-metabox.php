@@ -353,8 +353,29 @@ class Wpteslimat_Admin_Metabox {
             }
         }
         if ($is_bonus) echo '<span class="wpt-meta wpt-meta--bonus">' . esc_html__('Bonus', 'wpteslimat') . '</span>';
+
+        // Bu ATAMANIN bu siparişe verdiği kullanım hakkı (birim). MAK'ta tek atama birden çok
+        // aktivasyon taşır (qty=3 → tek satır, 3 hak) — satırda yazmazsa operatör "1 lisans"
+        // görüp eksik teslimat sanıyor ve bedava "+1 Bonus" veriyordu.
+        $units = isset($a['units']) ? max(1, (int) $a['units']) : 1;
+        if ($units > 1) {
+            echo '<span class="wpt-meta">'
+                . sprintf(esc_html__('Bu siparişte %d kullanım hakkı', 'wpteslimat'), $units)
+                . '</span>';
+        }
         if (!empty($a['maxUses']) && (int) $a['maxUses'] > 1) {
-            echo '<span class="wpt-meta">' . esc_html((int) ($a['useCount'] ?? 0)) . '/' . esc_html((int) $a['maxUses']) . ' kullanım</span>';
+            // O11: bu sayaç ANAHTARIN GENELİDİR (tüm siparişler/müşteriler toplamı), bu
+            // siparişin harcaması DEĞİL. Etiketsiz "12/500 kullanım" çipi "bu müşteri 12
+            // kullanım harcadı" diye okunuyordu → anlamı çipin İÇİNE yazıldı.
+            echo '<span class="wpt-meta" title="'
+                . esc_attr__('Bu sayaç anahtarın tüm siparişlerdeki toplam kullanımıdır; yalnız bu siparişe ait değildir.', 'wpteslimat')
+                . '">'
+                . sprintf(
+                    esc_html__('Anahtar geneli: %1$d/%2$d kullanım', 'wpteslimat'),
+                    (int) ($a['useCount'] ?? 0),
+                    (int) $a['maxUses']
+                )
+                . '</span>';
         }
         if (!empty($a['validUntil'])) {
             echo '<span class="wpt-meta">' . esc_html__('Geçerlilik:', 'wpteslimat') . ' ' . esc_html(Wpteslimat_My_Account::format_date($a['validUntil'])) . '</span>';
@@ -437,14 +458,25 @@ class Wpteslimat_Admin_Metabox {
         $mine = self::assignments_for_line($view, $item_id);
 
         // Özet sayaç: toplam + aktif/askıda (bir bakışta durum).
+        //
+        // O11 (units semantiği): sayaç YALNIZ KALEM sayıyordu. MAK'ta qty=3 tek atamaya
+        // düşer (units=3) → mağaza operatörü "1 lisans" görüyor, müşteri ise mailde
+        // "(3 adet)" ve hesabında "3 kullanım hakkı" görüyordu. Operatör eksik teslimat
+        // sanıp "+1 Bonus" verdiğinde BEDAVA lisans çıkıyordu. Artık birim toplamı da
+        // sayılır; tek kullanımlık üründe (tüm units=1) metin AYNEN eski hâlinde kalır
+        // (gürültü eklenmez).
         $total = count($mine);
-        $active = 0; $suspended = 0;
+        $active = 0; $suspended = 0; $units_total = 0;
         foreach ($mine as $a) {
             $s = isset($a['status']) ? $a['status'] : '';
             if ($s === 'active') $active++;
             elseif ($s === 'suspended') $suspended++;
+            $units_total += isset($a['units']) ? max(1, (int) $a['units']) : 1;
         }
-        $summary = $total . ' ' . esc_html__('lisans', 'wpteslimat');
+        $summary = intval($total) . ' ' . esc_html__('lisans', 'wpteslimat');
+        if ($units_total > $total) {
+            $summary .= ' ' . sprintf(esc_html__('(toplam %d kullanım hakkı)', 'wpteslimat'), $units_total);
+        }
         if ($active > 0)    $summary .= ' · ' . $active . ' ' . esc_html__('aktif', 'wpteslimat');
         if ($suspended > 0) $summary .= ' · ' . $suspended . ' ' . esc_html__('askıda', 'wpteslimat');
 

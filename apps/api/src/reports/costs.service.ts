@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { notExpiredCond } from '../assignment/assign';
@@ -20,6 +20,95 @@ import { STANDING_STATUSES } from '../assignment/assign';
  */
 const PRORATED_COST = (units: string, cost: string, maxUses: string) =>
   sql.raw(`(${cost}::numeric * ${units} / GREATEST(${maxUses}, 1))`);
+
+/**
+ * ── ZAMAN PENCERESİ (denetim bulgusu O7) ────────────────────────────────────────────────
+ *
+ * NEDEN: `deliveredCogs`/`wastage` (ve tedarikçi/ürün/ay kırılımları) hiçbir tarih süzgeci
+ * ALMIYORDU. `/reports/costs` her açılışta `assignments × license_items` (sistemin en hızlı
+ * büyüyen tablosu: sipariş × satır × birim) ve `stock_adjustments × license_items × batches ×
+ * purchase_orders` zincirini BAŞTAN SONA tarıyordu. Rapor semantiği ZATEN "dönem maliyeti" —
+ * pencere yanlış değil, EKSİKTİ.
+ *
+ * VARSAYILAN KARARI — "son 12 ay" (tüm zamanlar DEĞİL):
+ *  • Varsayılanı "tüm zamanlar" bırakmak bulguyu KAPATMAZ: operatör hiçbir zaman elle tarih
+ *    seçmez, yani sıcak yol (menüden tıklayıp raporu açmak) yine sınırsız tarama olurdu.
+ *  • 12 ay bu raporun kendi diliyle uyumlu: aylık harcama zaten bir zaman serisi olarak
+ *    çiziliyor ve tedarik kararları yıllık mevsimsellikle okunuyor.
+ *  • SESSİZ KIRPMA YASAK (bu projenin değişmez kuralı): uygulanan pencere yanıtta `window`
+ *    ile DÖNER ve ekranın başlığında yazılır; "Tüm zamanlar" tek tıkla seçilebilir
+ *    (`?all=1`). Yani daraltma görünür ve geri alınabilir.
+ *
+ * ÜST SINIR BİLEREK AÇIK: varsayılanda yalnız ALT sınır konur (`to = null`). Üst sınırı
+ * "şimdi" ile kapatmak, ileri tarihli teslim-alma damgası taşıyan partileri (stok girişi
+ * `now + 24s`'e kadar kabul ediyor) sessizce dışarıda bırakırdı.
+ */
+export interface CostWindow {
+  /** Alt sınır (DAHİL, ISO). null = alt sınır yok. */
+  from: string | null;
+  /** Üst sınır (DAHİL, ISO). null = üst sınır yok. */
+  to: string | null;
+  /** Operatör açıkça "tüm zamanlar" seçti mi (hiçbir sınır uygulanmaz). */
+  allTime: boolean;
+  /** Parametre verilmedi → varsayılan pencere uygulandı (ekran bunu açıkça yazar). */
+  isDefault: boolean;
+  /** Varsayılan pencerenin uzunluğu (ay) — ekran metni için TEK KAYNAK. */
+  defaultMonths: number;
+}
+
+/** `getCostReport` parametreleri — hepsi opsiyonel (bkz. CostWindow). */
+export interface CostReportParams {
+  /** ISO tarih/zaman ya da `YYYY-MM-DD` (gün başı olarak yorumlanır). */
+  from?: string;
+  /** ISO tarih/zaman ya da `YYYY-MM-DD` (gün SONU olarak yorumlanır). */
+  to?: string;
+  /** true → hiçbir tarih sınırı uygulanmaz (eski davranış). */
+  allTime?: boolean;
+}
+
+/** Yalnız gün taşıyan girdi (`<input type="date">` çıktısı) — saat bilgisi yok. */
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Satın alma emrinin HARCAMA anı (bySupplier/byProduct pencere kolonu).
+ *
+ * NEDEN `coalesce`: harcama teslim alındığında gerçekleşir (`spentCents` zaten
+ * `qty_received` ile çarpılıyor), bu yüzden birincil kolon `received_at`'tir — ve bu,
+ * ay kırılımının kullandığı `batches.received_at` ile AYNI takvimi verir (operatör stok
+ * girişinde geçmiş bir teslim tarihi yazdığında iki blok aynı aya düşer; `created_at`
+ * kullansaydık aynı ekranda iki farklı ay görünürdü).
+ *
+ * NEDEN yedek `created_at`: `received_at` YALNIZ emir tamamen teslim alındığında dolar
+ * (`purchase-orders.service`), KISMEN teslim alınmış emirde NULL'dur ama `qty_received > 0`
+ * olduğu için harcaması vardır. Yedeksiz bir süzgeç o emirleri SESSİZCE düşürürdü.
+ *
+ * İNDEKS NOTU: ifade indeksi yok (rapor bu yüzden yalnız `purchase_orders`ı tarar; tablo
+ * diğerlerine göre küçüktür). Gerekli DDL entegratöre raporlandı.
+ */
+const PO_SPENT_AT = 'coalesce(po.received_at, po.created_at)';
+
+/**
+ * Tarih sınırını ISO dizeye çevirir; ayrıştırılamayan/boş değerde null (sınır uygulanmaz).
+ *
+ * GÜN GİRDİSİ KENARI: `<input type="date">` "2026-08-15" gönderir. `new Date('2026-08-15')`
+ * UTC gece yarısıdır → üst sınır olarak kullanılsaydı O GÜNÜN TAMAMI kapsam dışı kalırdı
+ * (operatör "bugüne kadar" seçer, bugünün kayıtlarını göremezdi — sessiz eksik veri).
+ * Bu yüzden gün girdisi YEREL gün başına (from) / gün sonuna (to) genişletilir.
+ */
+function parseBound(value: string | undefined, edge: 'start' | 'end'): string | null {
+  const s = (value ?? '').trim();
+  if (!s) return null;
+  if (DATE_ONLY_RE.test(s)) {
+    const [y, m, d] = s.split('-').map(Number);
+    const dt =
+      edge === 'start'
+        ? new Date(y, m - 1, d, 0, 0, 0, 0)
+        : new Date(y, m - 1, d, 23, 59, 59, 999);
+    return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+  }
+  const dt = new Date(s);
+  return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+}
 
 /** Tedarikçi bazında harcama satırı (para birimi başına AYRI). */
 export interface CostBySupplier {
@@ -111,6 +200,16 @@ export interface CostDeliveredCogs {
  */
 export interface CostReport {
   generatedAt: string;
+  /**
+   * Uygulanan zaman penceresi (bkz. CostWindow). AKIŞ blokları (bySupplier/byMonth/
+   * byProduct/wastage/deliveredCogs) bu pencereyle sınırlıdır.
+   *
+   * `valuation` İSTİSNADIR ve BİLEREK penceresizdir: "stok değeri" bir DÖNEM AKIŞI değil,
+   * ŞU ANKİ pozisyondur. Pencereyle daraltmak "elimizdeki stok 3 ayda azaldı" gibi okunan
+   * yanlış bir sayı üretirdi (kalemin ne zaman girdiği, bugün elde olup olmadığını
+   * değiştirmez). Ekran bunu açıkça yazar.
+   */
+  window: CostWindow;
   bySupplier: CostBySupplier[];
   byMonth: CostByMonth[];
   byProduct: CostByProduct[];
@@ -127,20 +226,85 @@ export interface CostReport {
  */
 @Injectable()
 export class CostsService {
+  /** Parametre verilmediğinde uygulanan pencere (ay). Gerekçe: CostWindow jsdoc'u. */
+  static readonly DEFAULT_WINDOW_MONTHS = 12;
+
   constructor(@Inject(DB) private readonly db: Database) {}
 
-  /** Tüm maliyet bloklarını paralel toplayıp tek rapor nesnesi döndürür. */
-  async getCostReport(): Promise<CostReport> {
+  /**
+   * İstenen pencereyi normalleştirir.
+   *
+   * GEÇERSİZ TARİH → O SINIR UYGULANMAZ; geriye HİÇ geçerli sınır kalmazsa VARSAYILAN
+   * pencere devreye girer ("sınırsız"a düşmez). Gerekçe: bozuk bir girdinin ödülü tam-tablo
+   * taraması olmamalı — bu bulgunun (O7) kendisi zaten sınırsız taramaydı. SLA'nın
+   * `normalizeDays` deseniyle aynı yön: rapor OKUMA yolunda bozuk değer ekranı 400 ile
+   * boşaltmaz, varsayılana düşer ve uygulanan pencere yanıtta görünür. Denetim (400)
+   * controller katmanında yapılır.
+   *
+   * `from > to` DÜZELTİLMEZ (takas edilmez): sessiz düzeltme, operatörün yazdığı aralıktan
+   * BAŞKA bir aralığın rakamlarını göstermek olurdu. Sonuç boş döner ve ekran hangi
+   * pencerenin uygulandığını yazdığı için durum kendini açıklar.
+   */
+  private resolveWindow(params: CostReportParams): CostWindow {
+    const defaultMonths = CostsService.DEFAULT_WINDOW_MONTHS;
+    if (params.allTime) {
+      return { from: null, to: null, allTime: true, isDefault: false, defaultMonths };
+    }
+    const from = parseBound(params.from, 'start');
+    const to = parseBound(params.to, 'end');
+    if (from || to) {
+      return { from, to, allTime: false, isDefault: false, defaultMonths };
+    }
+    // Varsayılan: YALNIZ alt sınır (üst sınır açık — bkz. CostWindow jsdoc'u).
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setMonth(start.getMonth() - defaultMonths);
+    return {
+      from: start.toISOString(),
+      to: null,
+      allTime: false,
+      isDefault: true,
+      defaultMonths,
+    };
+  }
+
+  /**
+   * Tek bir tarih kolonu için pencere yüklemi.
+   *
+   * ISO DİZE + AÇIK `::timestamptz` (Date NESNESİ DEĞİL): bu fragmanlar ham `sql` şablonuyla
+   * kurulup `rawRows` üzerinden sürücüye gidiyor; oraya bir `Date` konduğunda postgres.js
+   * bind aşamasında ERR_INVALID_ARG_TYPE atar ve uç HER ZAMAN 500 döner (typecheck/build
+   * bunu YAKALAMAZ — bu projede `/audit` tarih süzgecinde yaşandı, yalnız entegrasyon testi
+   * yakaladı). Cast ŞART: cast'siz parametre `text` bind edilir, `timestamptz` ile
+   * karşılaştırma 42883 verir. `audit.service` ile BİREBİR aynı desen.
+   *
+   * `expr` YALNIZ bu dosyada tanımlı sabit kolon ifadeleridir (kullanıcı girdisi DEĞİL) →
+   * `sql.raw` güvenli.
+   */
+  private windowCond(expr: string, w: CostWindow): SQL {
+    const conds: SQL[] = [sql`true`];
+    if (w.from) conds.push(sql`${sql.raw(expr)} >= ${w.from}::timestamptz`);
+    if (w.to) conds.push(sql`${sql.raw(expr)} <= ${w.to}::timestamptz`);
+    return sql.join(conds, sql` AND `);
+  }
+
+  /**
+   * Tüm maliyet blokları (pencere ile sınırlı; `valuation` hariç — ANLIK pozisyon).
+   * Parametresiz çağrı varsayılan pencereyi (son 12 ay) uygular.
+   */
+  async getCostReport(params: CostReportParams = {}): Promise<CostReport> {
+    const window = this.resolveWindow(params);
     const [bySupplier, byMonth, byProduct, valuation, wastage, deliveredCogs] = await Promise.all([
-      this.bySupplier(),
-      this.byMonth(),
-      this.byProduct(),
+      this.bySupplier(window),
+      this.byMonth(window),
+      this.byProduct(window),
       this.valuation(),
-      this.wastage(),
-      this.deliveredCogs(),
+      this.wastage(window),
+      this.deliveredCogs(window),
     ]);
     return {
       generatedAt: new Date().toISOString(),
+      window,
       bySupplier,
       byMonth,
       byProduct,
@@ -161,8 +325,10 @@ export class CostsService {
    * (`unitCostCents ≤ 2e9`, `qtyOrdered ≤ 1e6`), yani 500 adet × 43.000 ₺ gibi GERÇEKÇİ
    * bir alım raporu ham 500'e düşürebilirdi. Aynı kusur tedarikçi karnesinde bulundu
    * (`procurement/suppliers.service.ts`) ve orada bir regresyon testiyle kilitlendi.
+   *
+   * PENCERE: `coalesce(po.received_at, po.created_at)` — gerekçe PO_SPENT_AT jsdoc'unda.
    */
-  private async bySupplier(): Promise<CostBySupplier[]> {
+  private async bySupplier(w: CostWindow): Promise<CostBySupplier[]> {
     const list = await rawRows<{
       supplier_id: string;
       supplier: string;
@@ -178,6 +344,7 @@ export class CostsService {
         count(*)::int AS po_count
       FROM purchase_orders po
       JOIN suppliers s ON s.id = po.supplier_id
+      WHERE ${this.windowCond(PO_SPENT_AT, w)}
       GROUP BY po.supplier_id, s.name, po.currency
       ORDER BY spent_cents DESC, s.name ASC;
     `);
@@ -202,8 +369,12 @@ export class CostsService {
    * yok sayılıyordu — panelin başka hiçbir yerinde bu boşluk raporlanmıyordu. Artık LEFT JOIN
    * + `uncoveredQty`: miktar görünür, parasal toplama KATILMAZ (uydurma maliyet yazılmaz).
    * Para birimi bilinmiyorsa satır '' currency ile döner (valuation/deliveredCogs deseni).
+   *
+   * PENCERE: `b.received_at` (teslim alma anı — kova zaten bu kolondan üretiliyor).
+   * Kolon FONKSİYONA SARILMADAN süzülür → `batches_received_idx` kullanılabilir kalır;
+   * ay etiketi yalnız SELECT/GROUP BY tarafında `to_char` ile üretilir (SLA'daki desen).
    */
-  private async byMonth(): Promise<CostByMonth[]> {
+  private async byMonth(w: CostWindow): Promise<CostByMonth[]> {
     const list = await rawRows<{
       month: string;
       currency: string;
@@ -222,7 +393,7 @@ export class CostsService {
           AS uncovered_qty
       FROM batches b
       LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
-      WHERE b.received_at IS NOT NULL
+      WHERE b.received_at IS NOT NULL AND ${this.windowCond('b.received_at', w)}
       GROUP BY to_char(b.received_at, 'YYYY-MM'), coalesce(po.currency, '')
       ORDER BY month ASC, currency ASC;
     `);
@@ -237,8 +408,11 @@ export class CostsService {
   /**
    * Ürün × para birimi bazında harcama + teslim alınan miktar. spentCents = teslim
    * alınan miktar × birim maliyet.
+   *
+   * PENCERE: bySupplier ile AYNI kolon (PO_SPENT_AT) — iki kırılım aynı emir kümesini
+   * saymazsa aynı ekranda toplamları tutmayan iki grafik çıkardı.
    */
-  private async byProduct(): Promise<CostByProduct[]> {
+  private async byProduct(w: CostWindow): Promise<CostByProduct[]> {
     const list = await rawRows<{
       product_id: string;
       product: string;
@@ -254,6 +428,7 @@ export class CostsService {
         coalesce(sum(po.qty_received), 0)::int AS qty_received
       FROM purchase_orders po
       JOIN products p ON p.id = po.product_id
+      WHERE ${this.windowCond(PO_SPENT_AT, w)}
       GROUP BY po.product_id, p.name, po.currency
       ORDER BY spent_cents DESC, p.name ASC;
     `);
@@ -279,6 +454,11 @@ export class CostsService {
    *  2. Stok ömrü dolmuş (expires_at ≤ now) kalemler atama sorgusunda ZATEN dışlanıyor →
    *     "değerlenen satılabilir stok"a girmezler; `expiredUnits/expiredCents` olarak ayrı
    *     raporlanır (notExpiredCond — atama yoluyla TEK KAYNAK).
+   *
+   * PENCERESİZ (BİLİNÇLİ): bu blok bir DÖNEM AKIŞI değil, ŞU ANKİ pozisyondur — "elimde
+   * bugün duran satılabilir stoğun maliyeti". Tarih aralığıyla daraltmak, bugün elde olan
+   * ama pencereden önce girmiş kalemleri yok sayıp "stok değerimiz düştü" yalanını
+   * söylerdi. `WHERE li.status = 'available'` zaten kısmi indekslerle karşılanıyor.
    */
   private async valuation(): Promise<CostValuation[]> {
     const remaining = 'GREATEST(li.max_uses - li.use_count, 0)';
@@ -341,8 +521,14 @@ export class CostsService {
    * supply-ops recall bu şekilde yazar) — anahtar sayısı değil. Anahtar başına maliyetle
    * doğrudan çarpmak zayiatı max_uses katı gösteriyordu; artık kapasite oranı kadar
    * yazılır (tek kullanımda qty=1, max_uses=1 → sonuç değişmez).
+   *
+   * PENCERE: `sa.created_at` = DÜZELTMENİN yazıldığı an (void/damage/recall olayının
+   * tarihi). Kalemin stoğa GİRİŞ tarihi DEĞİL: "bu dönemde ne kadar zayi verdik" sorusunun
+   * cevabı olayın kendi tarihine bağlıdır (üç yıl önce alınmış bir anahtar bu ay imha
+   * edildiyse zayiat BU AYINDIR). Tablo append-only ve büyüyor; süzgeç `license_items ×
+   * batches × purchase_orders` zincirini kurmadan ÖNCE satırları eler.
    */
-  private async wastage(): Promise<CostWastage[]> {
+  private async wastage(w: CostWindow): Promise<CostWastage[]> {
     const wastedCost = PRORATED_COST('abs(sa.qty)', 'po.unit_cost_cents', 'li.max_uses');
     const list = await rawRows<{
       currency: string;
@@ -363,6 +549,7 @@ export class CostsService {
       LEFT JOIN batches b ON b.id = li.batch_id
       LEFT JOIN purchase_orders po ON po.id = b.purchase_order_id
       WHERE sa.action IN ('void', 'damage', 'recall')
+        AND ${this.windowCond('sa.created_at', w)}
       GROUP BY coalesce(po.currency, '')
       ORDER BY currency ASC;
     `);
@@ -397,8 +584,16 @@ export class CostsService {
    * İkisi de dışlandığı için AYNI EKRANDAKİ satış hızı (velocity) ile COGS ÇELİŞİYORDU:
    * bir anahtar askıya alınır alınmaz "satıldı ama maliyeti yok" gibi görünüyordu.
    * `revoked`/`replaced` HÂLÂ hariç (gerçek iade + değişimde net'lenen eski atama).
+   *
+   * PENCERE: `a.delivered_at` = TESLİM anı (sorgu zaten `IS NOT NULL` süzüyor, yani
+   * kolonun tanımlı olduğu kümede çalışıyoruz). `created_at` seçilmedi: bu blok "bu dönemde
+   * teslim edilen malın maliyeti"ni ölçer, atamanın satır olarak yazıldığı anı değil.
+   *
+   * İNDEKS: `delivered_at` İNDEKSSİZ (SLA servisi de bu yüzden `created_at` kullanıyor).
+   * Pencere yine de tarama BOYUTUNU düşürür ama tam kazanç için kısmi indeks gerekir —
+   * DDL entegratöre raporlandı (migration bu iş kapsamında EKLENMEDİ).
    */
-  private async deliveredCogs(): Promise<CostDeliveredCogs[]> {
+  private async deliveredCogs(w: CostWindow): Promise<CostDeliveredCogs[]> {
     const cogs = PRORATED_COST('a.units', 'li.unit_cost_cents', 'li.max_uses');
     const list = await rawRows<{
       currency: string;
@@ -425,6 +620,7 @@ export class CostsService {
       /* AYAKTA atamalar — TEK KAYNAK (assignment/assign.ts). Bkz. metot jsdoc'u:
          yalnız 'active' saymak askıdaki ve süresi dolmuş TESLİMATLARI maliyetten düşürüyordu. */
       WHERE a.status IN ${STANDING_STATUSES} AND a.delivered_at IS NOT NULL
+        AND ${this.windowCond('a.delivered_at', w)}
       GROUP BY coalesce(li.cost_currency, '')
       ORDER BY currency ASC;
     `);

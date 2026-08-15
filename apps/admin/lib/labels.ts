@@ -624,3 +624,21 @@ export const deployStatusMeta = (s: string): DeployStatusMeta =>
   DEPLOY_STATUS[s] ?? { variant: 'neutral', label: 'Bilinmiyor' };
 
 export const deployStatusLabel = (s: string): string => deployStatusMeta(s).label;
+
+/**
+ * MAK/çok kullanımlı lisansta otomatik değişimin NEDEN yapılamadığı + operatörün gerçek reçetesi.
+ *
+ * TEK KAYNAK: aynı kural üç ekranda birden sunuluyor (sipariş detayı · destek talebi · envanter).
+ * Metin kopyalansaydı biri güncellenip diğerleri bayat kalırdı — bu projede "aynı kavram iki
+ * sözlükte" sınıfı çelişki daha önce yaşandı.
+ *
+ * NEDEN uç reddediyor: revoke, kapasiteyi AYNI paylaşımlı anahtara geri iade eder → taze atama
+ * büyük olasılıkla yine o kusurlu anahtarı seçer. Yani RED DOĞRUDUR, kaldırılmaz; eksik olan
+ * operatöre yapabileceğini söylemekti.
+ */
+export const MULTI_REPLACE_BLOCKED =
+  'Çok kullanımlı (MAK) lisansta otomatik değişim yapılamaz: geri alınan kapasite aynı ' +
+  'paylaşımlı anahtara döner, yeni atama yine o kusurlu anahtarı seçerdi. Yapılacak: ' +
+  'mağaza sipariş ekranındaki “+1 Bonus” ile müşteriye ek aktivasyon verin, kusurlu ' +
+  'anahtarı Kusurlu Stok akışıyla tedarikçiye bildirin. (“İptal” kullanmayın — o iade ' +
+  'semantiğidir, müşterinin hakkı yanar.)';

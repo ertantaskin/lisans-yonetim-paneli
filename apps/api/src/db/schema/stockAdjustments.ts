@@ -35,6 +35,13 @@ export const stockAdjustments = pgTable(
      * Ayrıca yeni "değişim fişi" akışı aday toplarken aynı yolu izliyor.
      */
     index('stock_adjustments_license_item_idx').on(t.licenseItemId),
+    // MALİYET RAPORU "zayi" bloğu dönem penceresi: `WHERE created_at >= …` + zayi sayılan
+    // eylemler. Kısmi indeks: `correct` (sayım düzeltmesi) zayi DEĞİLDİR ve rapora girmez,
+    // dolayısıyla indeks dışında bırakılır. Yüklem servisteki filtreyle BİREBİR aynı olmalı —
+    // ayrışırsa planlayıcı kısmi indeksi kullanamaz (sessiz performans kaybı).
+    index('stock_adjustments_created_idx')
+      .on(t.createdAt)
+      .where(sql`${t.action} IN ('void', 'damage', 'recall')`),
   ],
 );
 

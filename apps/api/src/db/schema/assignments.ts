@@ -47,6 +47,13 @@ export const assignments = pgTable(
     // `created_at >= now() - interval '30 days'` — index YOKKEN tüm assignments seq-scan
     // ediliyordu (denetim/perf). Zaman-pencereli tarama artık index'ten karşılanır.
     index('assignments_created_idx').on(t.createdAt),
+    // MALİYET RAPORU dönem penceresi (/reports/costs "Teslim Edilen Mal Maliyeti"):
+    // `WHERE delivered_at >= …`. `delivered_at` üzerinde indeks YOKTU — SLA servisi tam bu
+    // yüzden `created_at` üzerinden çalışıyor. Kısmi indeks: teslim edilmemiş atamalar
+    // (delivered_at NULL) bu sorguya hiç girmez, dolayısıyla indeks küçük kalır.
+    index('assignments_delivered_at_idx')
+      .on(t.deliveredAt)
+      .where(sql`${t.deliveredAt} IS NOT NULL`),
   ],
 );
 

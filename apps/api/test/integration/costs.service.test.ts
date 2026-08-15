@@ -31,39 +31,66 @@ import {
 const tag = randomUUID().slice(0, 8);
 const CUR1 = `T1${tag.slice(0, 4)}`; // benzersiz — başka veriyle çakışmaz
 const CUR2 = `T2${tag.slice(0, 4)}`;
+const CUR3 = `T3${tag.slice(0, 4)}`; // yalnız zaman penceresi testinde
 let db: Db;
 let end: () => Promise<void>;
 let crypto: CryptoService;
 let costs: CostsService;
 let site: CreatedSite;
 
-/** Tek satırlı sipariş + verilen kaleme AKTİF + teslim edilmiş atama ekler. */
-async function attachDeliveredAssignment(orderId: string, lineId: string, licenseItemId: string): Promise<void> {
+/**
+ * Tek satırlı sipariş + verilen kaleme AKTİF + teslim edilmiş atama ekler.
+ * `deliveredAt` verilmezse "şimdi" (zaman penceresi testleri geçmiş bir an geçirir).
+ */
+async function attachDeliveredAssignment(
+  orderId: string,
+  lineId: string,
+  licenseItemId: string,
+  deliveredAt: Date = new Date(),
+): Promise<void> {
   await db.insert(schema.assignments).values({
     orderId,
     lineId,
     licenseItemId,
     units: 1,
     status: 'active',
-    deliveredAt: new Date(),
+    deliveredAt,
   });
 }
 
+/** "N ay önce" (gün ortası — yerel gün sınırı kaymalarından etkilenmesin). */
+function monthsAgo(months: number): Date {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  d.setMonth(d.getMonth() - months);
+  return d;
+}
+
+/** Date → `YYYY-MM-DD` (yerel) — API'nin gün girdisi biçimi. */
+function dayStr(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/*
+ * Bağlantı/temizlik DOSYA düzeyinde: aşağıda İKİ describe var ve hook'lar ilk describe'ın
+ * içinde kalsaydı `afterAll` (end()) ikinci describe koşmadan bağlantıyı kapatırdı.
+ */
+beforeAll(async () => {
+  const conn = makeDb();
+  db = conn.db;
+  end = conn.end;
+  crypto = makeCrypto();
+  costs = new CostsService(db as never);
+  site = await createSite(db, crypto, { tag });
+});
+
+afterAll(async () => {
+  await cleanupByTag(db, tag);
+  await end();
+});
+
 describe('CostsService.deliveredCogs (teslim edilen maliyet, para birimi ayrımı)', () => {
-  beforeAll(async () => {
-    const conn = makeDb();
-    db = conn.db;
-    end = conn.end;
-    crypto = makeCrypto();
-    costs = new CostsService(db as never);
-    site = await createSite(db, crypto, { tag });
-  });
-
-  afterAll(async () => {
-    await cleanupByTag(db, tag);
-    await end();
-  });
-
   it('iki farklı para birimi AYRI satır; cogs doğru toplanır; NULL-cost uncovered AYRI sayılır', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
     // 4 kalem: CUR1×2 (1000+2000), CUR2×1 (500), NULL-cost×1.
@@ -104,5 +131,129 @@ describe('CostsService.deliveredCogs (teslim edilen maliyet, para birimi ayrım�
     const rEmpty = rows.find((r) => r.currency === '');
     expect(rEmpty).toBeDefined();
     expect(rEmpty!.uncoveredUnits).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * ENTEGRASYON — zaman penceresi (denetim bulgusu O7).
+ *
+ * Neden entegrasyon şart: pencere fragmanı HAM `sql` şablonuyla kuruluyor. Oraya bir `Date`
+ * NESNESİ konsa postgres.js bind aşamasında ERR_INVALID_ARG_TYPE atar ve uç HER ZAMAN 500
+ * döner — `tsc` ve `next build` bunu YAKALAMAZ (bu projede `/audit` tarih süzgecinde yaşandı).
+ * Bu testler ISO dize + `::timestamptz` desenini kilitler.
+ *
+ * `getCostReport()` ALTI sorguyu birden koşar → bySupplier/byProduct/byMonth/wastage
+ * pencerelerinde bir SQL/bind hatası olsaydı bu testler de patlardı (kapsam bedava gelmiyor,
+ * ama sessiz kalmıyor da).
+ */
+describe('CostsService zaman penceresi (varsayılan / tüm zamanlar / açık aralık)', () => {
+  let oldItem: string;
+  let freshItem: string;
+
+  beforeAll(async () => {
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
+    const [a, b] = await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 2,
+      tag,
+      status: 'assigned',
+      payloadPrefix: 'WIN',
+    });
+    oldItem = a!;
+    freshItem = b!;
+    // Aynı BENZERSİZ para birimi → iki satır tek kovada toplanır, başka veriyle karışmaz.
+    await db
+      .update(schema.licenseItems)
+      .set({ unitCostCents: 700, costCurrency: CUR3 })
+      .where(eq(schema.licenseItems.id, oldItem));
+    await db
+      .update(schema.licenseItems)
+      .set({ unitCostCents: 300, costCurrency: CUR3 })
+      .where(eq(schema.licenseItems.id, freshItem));
+
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: 2,
+      tag,
+    });
+    // 18 ay önce teslim → varsayılan 12 aylık pencerenin DIŞINDA.
+    await attachDeliveredAssignment(order.orderId, order.lineId, oldItem, monthsAgo(18));
+    await attachDeliveredAssignment(order.orderId, order.lineId, freshItem);
+  });
+
+  const cur3 = (rows: Array<{ currency: string; cogsCents: number; deliveredUnits: number }>) =>
+    rows.find((r) => r.currency === CUR3);
+
+  it('parametresiz çağrı VARSAYILAN pencereyi (son 12 ay) uygular ve bunu window ile bildirir', async () => {
+    const report = await costs.getCostReport();
+
+    // Sessiz kırpma YASAK: uygulanan pencere yanıtta görünür olmalı.
+    expect(report.window.isDefault).toBe(true);
+    expect(report.window.allTime).toBe(false);
+    expect(report.window.defaultMonths).toBe(12);
+    expect(report.window.from).toBeTruthy();
+    // Üst sınır BİLEREK açık (ileri tarihli teslim-alma damgaları düşmesin).
+    expect(report.window.to).toBeNull();
+
+    const row = cur3(report.deliveredCogs);
+    expect(row).toBeDefined();
+    expect(row!.cogsCents).toBe(300); // 18 ay öncesi HARİÇ
+    expect(row!.deliveredUnits).toBe(1);
+  });
+
+  it('allTime → hiçbir tarih sınırı yok (pencere öncesi kayıtlar geri gelir)', async () => {
+    const report = await costs.getCostReport({ allTime: true });
+
+    expect(report.window.allTime).toBe(true);
+    expect(report.window.from).toBeNull();
+    expect(report.window.to).toBeNull();
+
+    const row = cur3(report.deliveredCogs);
+    expect(row!.cogsCents).toBe(1000); // 700 + 300
+    expect(row!.deliveredUnits).toBe(2);
+  });
+
+  it('açık from/to aralığı YALNIZ o dönemi kapsar (gün girdisi ISO bind ile 500 üretmez)', async () => {
+    const report = await costs.getCostReport({
+      from: dayStr(monthsAgo(19)),
+      to: dayStr(monthsAgo(17)),
+    });
+
+    expect(report.window.isDefault).toBe(false);
+    expect(report.window.allTime).toBe(false);
+
+    const row = cur3(report.deliveredCogs);
+    expect(row).toBeDefined();
+    expect(row!.cogsCents).toBe(700); // yalnız eski teslimat
+    expect(row!.deliveredUnits).toBe(1);
+  });
+
+  it('yalnız from verilirse üst sınır açık kalır; eski kayıt dışarıda kalır', async () => {
+    const report = await costs.getCostReport({ from: dayStr(monthsAgo(1)) });
+    expect(report.window.to).toBeNull();
+    const row = cur3(report.deliveredCogs);
+    expect(row!.cogsCents).toBe(300);
+  });
+
+  it('gün girdisi olarak verilen `to` O GÜNÜ KAPSAR (gün sonuna genişletilir)', async () => {
+    // Taze teslimat BUGÜN yapıldı; `to=bugün` UTC gece yarısı olarak yorumlansaydı
+    // bugünün kayıtları sessizce dışarıda kalırdı (operatörün göremediği eksik veri).
+    const today = new Date();
+    const report = await costs.getCostReport({ from: dayStr(today), to: dayStr(today) });
+    const row = cur3(report.deliveredCogs);
+    expect(row).toBeDefined();
+    expect(row!.deliveredUnits).toBe(1);
+    expect(row!.cogsCents).toBe(300);
+  });
+
+  it('bozuk tarih VARSAYILAN pencereye düşer ("sınırsız"a değil) ve rapor 500 vermez', async () => {
+    // Servis savunmalı davranır (400 üretmek controller'ın işi), AMA bozuk girdinin ödülü
+    // tam-tablo taraması olmamalı — bulgunun (O7) kendisi zaten sınırsız taramaydı.
+    const report = await costs.getCostReport({ from: 'bu-bir-tarih-degil' });
+    expect(report.window.isDefault).toBe(true);
+    expect(report.window.from).toBeTruthy();
+    const row = cur3(report.deliveredCogs);
+    expect(row!.deliveredUnits).toBe(1); // 18 ay öncesi yine HARİÇ
   });
 });

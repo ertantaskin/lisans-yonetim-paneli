@@ -1,7 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
 import { apiPost, apiRaw, apiSend } from '../../lib/api';
-import { getActor } from '../../lib/session';
+import { getActor, isOwner } from '../../lib/session';
 import { LICENSE_PAGE_SIZES } from '../../lib/license-page-sizes';
 
 /**
@@ -326,6 +326,53 @@ export async function updateLicenseItemAction(input: {
     await apiSend('PATCH', `/v1/admin/license-items/${id}`, body, await getActor());
     revalidateInventory(input?.productId);
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
+  }
+}
+
+/**
+ * TESLİM EDİLMİŞ hesabın kimlik bilgilerini YERİNDE günceller (sağlayıcıda parola değişti).
+ *
+ * NEDEN AYRI: "Değiştir" (replace) hesap ürününde YANLIŞ araçtır — müşteriye BAŞKA bir hesap
+ * verir, eski hesap müşterinin elinde çalışmaya devam eder ve müşterinin o hesapta biriktirdiği
+ * veri kaybolur. Bu akış AYNI kalemi ve AYNI atamayı korur, yalnız kimlik bilgilerini yeniler.
+ *
+ * OWNER-ONLY: uç düz metin kimlik bilgisi kabul eder ve müşteride ÇALIŞAN bir lisansı
+ * değiştirir. API'de de `OwnerGuard` vardır (savunma-derinliği); birincil kapı buradadır.
+ */
+export async function rotateAccountCredentialsAction(input: {
+  id: string;
+  fields: Record<string, string>;
+  reason: string;
+  productId?: string;
+}): Promise<LicenseMutationResult & { orderIds?: string[] }> {
+  if (!(await isOwner())) {
+    return {
+      ok: false,
+      error:
+        'Bu işlem için owner yetkisi gerekir — teslim edilmiş bir lisansın kimlik bilgilerini değiştirir.',
+    };
+  }
+  const id = String(input?.id ?? '').trim();
+  if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz lisans kaydı.' };
+  const reason = String(input?.reason ?? '').trim();
+  if (reason.length < 3) return { ok: false, error: 'Sebep zorunludur (en az 3 karakter).' };
+
+  const fields: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input?.fields ?? {})) fields[String(k)] = String(v ?? '');
+  if (Object.keys(fields).length === 0) {
+    return { ok: false, error: 'Hesap alanları boş olamaz.' };
+  }
+
+  try {
+    const res = (await apiPost(
+      `/v1/admin/license-items/${id}/rotate-credentials`,
+      { fields, reason: reason.slice(0, 500) },
+      await getActor(),
+    )) as { orderIds?: string[] } | null;
+    revalidateInventory(input?.productId);
+    return { ok: true, orderIds: res?.orderIds ?? [] };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
   }

@@ -32,6 +32,8 @@ export interface ReplacementRow {
   /** İlgili panel ürünü (satırdan/atamadan çözülür) — "Onayla" bu üründen stok ister. */
   productId: string | null;
   productName: string | null;
+  /** Ürünün kullanım modu — MAK/multi üründe değişim akışı reddedilir (düğme kapatılır). */
+  usageMode?: string | null;
   productSku: string | null;
   customerEmail: string;
   reason: string;
@@ -82,6 +84,7 @@ function normalize(r: RawReplacementRow): ReplacementRow {
     // Ürün alanları eski API'de YOK → uydurma değer basma; ekran '—' gösterir.
     productId: r.productId ?? null,
     productName: r.productName ?? null,
+    usageMode: r.usageMode ?? null,
     productSku: r.productSku ?? null,
     customerEmail: r.customerEmail ?? '',
     reason: r.reason ?? '',

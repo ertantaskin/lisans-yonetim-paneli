@@ -13,6 +13,7 @@ import {
   MessageCircleQuestion,
   MessageSquare,
   Repeat2,
+  ShieldAlert,
   ShieldCheck,
   ShoppingBag,
   Sparkles,
@@ -26,10 +27,16 @@ import {
   requestInfoReplacementAction,
   type ActionState,
 } from '../../app/support/actions';
-import { aiCategoryLabel, aiPriorityLabel, supportStatusLabel } from '../../lib/labels';
+import {
+  MULTI_REPLACE_BLOCKED,
+  aiCategoryLabel,
+  aiPriorityLabel,
+  supportStatusLabel,
+} from '../../lib/labels';
 import { formatDate, relativeTime } from '../../lib/utils';
 import { useAnnouncer } from '../a11y/announcer';
 import { Alert, AlertDescription, AlertTitle } from '../ui/alert';
+
 import { Badge, StatusBadge, type BadgeProps } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Label, Textarea } from '../ui/input';
@@ -358,13 +365,30 @@ function SupportDetailBody({ row }: { row: ReplacementRow }) {
           </p>
         ) : mode === 'idle' ? (
           <>
+            {/*
+              MAK/çok kullanımlı üründe API değişimi 400 ile REDDEDER (kapasite aynı paylaşımlı
+              anahtara döner → aynı kusurlu anahtar yeniden atanır). Düğmeyi burada da kapat:
+              tıklanıp hata veren düğme, hiç sunulmayandan kötüdür. "Reddet" AÇIK kalır —
+              operatör talebi açıklamayla kapatabilmeli.
+            */}
+            {row.usageMode === 'multi' && (
+              <Alert>
+                <ShieldAlert aria-hidden />
+                <AlertDescription>{MULTI_REPLACE_BLOCKED}</AlertDescription>
+              </Alert>
+            )}
             <p className="text-xs text-muted-foreground">
               <strong className="font-medium text-foreground">Onaylamak</strong> eski lisansı geri
               alır ve aynı üründen TAZE bir lisans atar. Stok yoksa işlem yapılmaz (eski lisans
               korunur).
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => setMode('approve')} disabled={pending}>
+              <Button
+                size="sm"
+                onClick={() => setMode('approve')}
+                disabled={pending || row.usageMode === 'multi'}
+                title={row.usageMode === 'multi' ? MULTI_REPLACE_BLOCKED : undefined}
+              >
                 <CheckCircle2 /> Onayla (değişim yap)
               </Button>
               <Button

@@ -31,11 +31,20 @@ export interface ProductRecord {
 export interface ProductDetail {
   product: ProductRecord;
   stock: {
+    /** SATILABİLİR kalan KAPASİTE (Σ max_uses−use_count) — satır sayısı DEĞİL. */
     available: number;
     assigned: number;
     revoked: number;
+    /** Satılamaz hale gelmiş kalem sayısı (status='expired' VEYA stokta görünüp ömrü dolmuş). */
     expired: number;
+    /**
+     * Kapasitesi bitmiş (use_count ≥ max_uses) MAK anahtarı sayısı. API bu alanı SONRADAN
+     * ekledi → eski api imajında gelmeyebilir (api ve admin ayrı dağıtılır) → opsiyonel okunur.
+     */
+    depleted?: number;
     voided: number;
+    /** Stokta görünüp ömrü dolmuş, yani ATANAMAZ kapasite (satır değil, hak sayısı). */
+    expiredAvailable?: number;
   };
   batches: Array<{
     id: string;

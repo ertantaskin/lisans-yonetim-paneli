@@ -118,6 +118,12 @@ export interface AdminReplacementRow {
   productId: string | null;
   productName: string | null;
   productSku: string | null;
+  /**
+   * Ürünün kullanım modu (`single` | `multi`). MAK/çok kullanımlı üründe değişim akışı
+   * REDDEDİLİR (kapasite aynı paylaşımlı anahtara döner) — destek ekranı "Onayla" düğmesini
+   * bu bilgiyle kapatır. `null` = bilinmiyor ⇒ UI kapı UYGULAMAZ (yetkili kapı API`de).
+   */
+  usageMode: string | null;
   customerEmail: string;
   reason: string;
   status: ReplacementRequest['status'];
@@ -151,6 +157,7 @@ interface AdminReplacementSqlRow {
   product_id: string | null;
   product_name: string | null;
   product_sku: string | null;
+  usage_mode: string | null;
   customer_email: string;
   reason: string;
   status: ReplacementRequest['status'];
@@ -341,6 +348,7 @@ export class ReplacementsService {
           p.id AS product_id,
           p.name AS product_name,
           p.sku AS product_sku,
+          p.usage_mode::text AS usage_mode,
           rr.customer_email,
           rr.reason,
           rr.status,
@@ -406,6 +414,7 @@ export class ReplacementsService {
       productId: r.product_id ?? null,
       productName: r.product_name ?? null,
       productSku: r.product_sku ?? null,
+      usageMode: r.usage_mode ?? null,
       customerEmail: r.customer_email,
       reason: r.reason,
       status: r.status,

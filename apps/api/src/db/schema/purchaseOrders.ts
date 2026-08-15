@@ -57,6 +57,13 @@ export const purchaseOrders = pgTable(
      * indeksten karşılanır, aksi halde planlayıcı yine tam sıralama yapar.
      */
     index('purchase_orders_created_idx').on(t.createdAt.desc(), t.id.desc()),
+    // MALİYET RAPORU tedarikçi/ürün kırılımı dönem penceresi. Harcama TESLİMDE gerçekleşir →
+    // rapor `coalesce(received_at, created_at)` ile pencereler (kısmi teslim alınan emirde
+    // `received_at` boştur, o yüzden yedek). Bu bir İFADEdir: yukarıdaki `_created_idx` onu
+    // karşılamaz, ifade indeksi ŞARTTIR ve sorgudaki ifade BİREBİR aynı yazılmalıdır.
+    index('purchase_orders_spent_at_idx').on(
+      sql`coalesce(${t.receivedAt}, ${t.createdAt})`,
+    ),
   ],
 );
 

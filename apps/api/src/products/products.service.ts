@@ -33,12 +33,34 @@ export interface ProductDetail {
     available: number;
     assigned: number;
     revoked: number;
+    /**
+     * SATILAMAZ HALE GELMİŞ kalem sayısı — envanter listesinin `?status=expired` süzgeciyle
+     * BİREBİR aynı yüklem: `status='expired'` VEYA (`status='available'` AMA stok ömrü dolmuş).
+     *
+     * NEDEN GENİŞLETİLDİ (denetim bulgusu): eskiden yalnız `status='expired'` satırları
+     * sayılıyordu ve `license_items.status`a 'expired' yazan HİÇBİR kod yolu yok (süre-bitişi
+     * motoru `assignments.status`u değiştirir, kalemin durumunu değil) → ürün detayı DAİMA
+     * "Süresi dolan: 0" gösteriyordu. Şeritteki sayı artık aynı isimli süzgecin döndürdüğü
+     * listeyle örtüşür; "ekranda 0 yazıyor ama listede 12 kalem var" çelişkisi biter.
+     */
     expired: number;
+    /**
+     * Çok kullanımlı (MAK) anahtarın kapasitesi bitti → `use_count >= max_uses`. Satır sayısıdır.
+     *
+     * NEDEN AYRI GÖSTERİLİR: bu kalemler `available` kapasitesine GİRMEZ ve §11 "kiralık slot"
+     * ürününde (multi + validity_days) kapasite süre bitişinde havuza DÖNMEZ (bilinçli karar) →
+     * anahtar sonsuza dek `depleted` kalır. Kova hiçbir ekranda gösterilmediği için o ürüne
+     * yatırılan sermaye panelden görünmez oluyordu ("Kullanılabilir 0" dışında iz yoktu).
+     */
+    depleted: number;
     voided: number;
     /**
      * status='available' AMA stok ömrü (expires_at) dolmuş → ATANAMAZ kapasite.
      * `available` toplamından HARİÇtir; sessizce kaybolmasın diye ayrı raporlanır
      * (operatör "stok neden düştü?" sorusunun cevabını panelde görür).
+     *
+     * `expired` SATIR sayarken bu KAPASİTE sayar (MAK'ta 1 satır 500 hak taşıyabilir) —
+     * ikisi farklı BİRİMDİR, toplanmaz.
      */
     expiredAvailable: number;
   };
@@ -559,22 +581,29 @@ export class ProductsService {
 
   /**
    * license_items status kırılımı. available = SATILABİLİR kalan kapasite (Σ max_uses−use_count,
-   * products.list/reports ile AYNI semantik); assigned/revoked/expired/voided = satır sayısı.
+   * products.list/reports ile AYNI semantik); assigned/revoked/expired/depleted/voided = satır sayısı.
    *
    * Kapasite toplamı atama koşuluyla (notExpiredCond) HİZALI: stok ömrü dolmuş kalemler
    * atanamadıkları için 'available' toplamına GİRMEZ; kaybolmasınlar diye `expiredAvailable`
    * olarak ayrı raporlanır.
+   *
+   * DİKKAT — KOVALAR TOPLANMAZ: kısmen satılmış bir MAK anahtarı hem `available` kapasitesine
+   * (kalan hakları) hem müşteri tarafındaki sayımlara girer; ayrıca `available` KAPASİTE,
+   * diğerleri SATIR sayar. Ekranlar bu sayıları yan yana gösterir, "toplam = a + b + c"
+   * aritmetiği KURMAZ (bu proje "satılmış 6 birim" yanılgısını tam olarak öyle üretmişti).
    */
   private async detailStock(id: string): Promise<ProductDetail['stock']> {
     const list = await rawRows<{
       status: string;
       cnt: number;
+      expired_cnt: number;
       remaining: number;
       expired_remaining: number;
     }>(this.db, sql`
       SELECT
         status,
         count(*)::int AS cnt,
+        count(*) FILTER (WHERE NOT ${notExpiredCond()})::int AS expired_cnt,
         coalesce(sum(max_uses - use_count) FILTER (WHERE ${notExpiredCond()}), 0)::int AS remaining,
         coalesce(sum(max_uses - use_count) FILTER (WHERE NOT ${notExpiredCond()}), 0)::int
           AS expired_remaining
@@ -582,10 +611,14 @@ export class ProductsService {
       WHERE product_id = ${id}
       GROUP BY status;
     `);
-    const by: Record<string, { cnt: number; remaining: number; expiredRemaining: number }> = {};
+    const by: Record<
+      string,
+      { cnt: number; expiredCnt: number; remaining: number; expiredRemaining: number }
+    > = {};
     for (const r of list) {
       by[r.status] = {
         cnt: Number(r.cnt),
+        expiredCnt: Number(r.expired_cnt),
         remaining: Number(r.remaining),
         expiredRemaining: Number(r.expired_remaining),
       };
@@ -594,7 +627,14 @@ export class ProductsService {
       available: by['available']?.remaining ?? 0,
       assigned: by['assigned']?.cnt ?? 0,
       revoked: by['revoked']?.cnt ?? 0,
-      expired: by['expired']?.cnt ?? 0,
+      /*
+       * 'expired' ENUM DEĞERİNİ YAZAN KOD YOLU YOK (bkz. arayüz notu) — bu yüzden sayı
+       * envanter süzgeciyle aynı şekilde kurulur: gerçek 'expired' satırları + stokta
+       * görünüp ömrü dolmuş satırlar. İki küme AYRIKtır (biri status='expired', diğeri
+       * status='available'), o yüzden toplamak çift sayım üretmez.
+       */
+      expired: (by['expired']?.cnt ?? 0) + (by['available']?.expiredCnt ?? 0),
+      depleted: by['depleted']?.cnt ?? 0,
       voided: by['voided']?.cnt ?? 0,
       expiredAvailable: by['available']?.expiredRemaining ?? 0,
     };

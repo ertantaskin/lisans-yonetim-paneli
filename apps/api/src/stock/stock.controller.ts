@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { z } from 'zod';
 import { AdminGuard } from '../auth/admin.guard';
+import { OwnerGuard } from '../auth/owner.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminRole, canRevealPlaintext } from '../auth/admin-role.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
@@ -160,6 +161,17 @@ const UpdateLicenseItemBody = z
 type UpdateLicenseItemBody = z.infer<typeof UpdateLicenseItemBody>;
 
 /**
+ * TESLİM EDİLMİŞ hesabın kimlik bilgisi güncellemesi (sağlayıcıda parola değişti / operatör
+ * döndürdü). Yalnız hesap ürünü; sebep zorunlu. `value` YOK — anahtar ürününde değişen bir
+ * anahtar AYRI bir lisanstır ve replace akışıyla yönetilir.
+ */
+const RotateCredentialsBody = z.object({
+  fields: z.record(z.string(), z.string()),
+  reason: z.string().trim().min(3).max(500),
+});
+type RotateCredentialsBody = z.infer<typeof RotateCredentialsBody>;
+
+/**
  * Admin: şifreli stok import + lisans envanteri (§12/§13).
  * Prefix bilerek 'admin': stok yolları 'admin/stock/*' olarak KORUNUR (mevcut sözleşme
  * değişmez), lisans envanteri ise kaynak-adına uygun 'admin/license-items' altında durur.
@@ -275,5 +287,22 @@ export class StockController {
     @AdminActor() actor: string,
   ) {
     return this.stock.updateLicenseItemPayload(id, body, actor);
+  }
+
+  /**
+   * TESLİM EDİLMİŞ hesabın kimlik bilgilerini YERİNDE günceller (sağlayıcıda parola değişti).
+   *
+   * OWNER-ONLY: uç düz metin kimlik bilgisi KABUL eder ve doğrulanmış hâlini geri döndürür;
+   * projenin A1/A3 kararı gereği (düz metin yalnız owner) `reveal` uçlarıyla aynı kapıda durur.
+   * Ayrıca müşteride ÇALIŞAN bir lisansı değiştirir — geri alınamaz bir işlemdir.
+   */
+  @UseGuards(OwnerGuard)
+  @Post('license-items/:id/rotate-credentials')
+  rotateCredentials(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodBody(RotateCredentialsBody)) body: RotateCredentialsBody,
+    @AdminActor() actor: string,
+  ) {
+    return this.stock.rotateAccountCredentials(id, body, actor);
   }
 }

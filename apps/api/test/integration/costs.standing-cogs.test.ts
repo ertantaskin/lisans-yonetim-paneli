@@ -173,7 +173,13 @@ describe('CostsService — ayakta COGS kümesi (R4) + aylık kapsanamayan (R9)',
       },
     ]);
 
-    const report = await costs.getCostReport();
+    /*
+     * `allTime` ŞART: rapor artık parametresiz çağrıldığında VARSAYILAN pencereyi (son 12 ay)
+     * uygular (denetim bulgusu O7 — penceresiz tam-tablo taraması). Bu testin ayrıştırıcı
+     * kovası 2001-03 olduğu için varsayılan pencerede satır DÖNMEZ; ölçülmek istenen davranış
+     * (R9 kapsanamayan parti) pencereden bağımsızdır → sınır açıkça kaldırılır.
+     */
+    const report = await costs.getCostReport({ allTime: true });
     const rows = report.byMonth.filter((r) => r.month === OLD_MONTH);
 
     const priced = rows.find((r) => r.currency === CUR);

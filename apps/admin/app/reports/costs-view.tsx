@@ -11,7 +11,6 @@ import {
   YAxis,
 } from 'recharts';
 import {
-  Loader2,
   TriangleAlert,
   Coins,
   Warehouse,
@@ -19,6 +18,7 @@ import {
   Building2,
   Boxes,
   CalendarDays,
+  CalendarRange,
   Truck,
   type LucideIcon,
 } from 'lucide-react';
@@ -71,8 +71,22 @@ interface DeliveredCogs {
   deliveredUnits: number;
   uncoveredUnits: number;
 }
+/**
+ * Uygulanan zaman penceresi (API `CostWindow` ile BİREBİR).
+ *
+ * OPSİYONEL (dağıtım sapması): admin, API'den ÖNCE dağıtılırsa alan gelmez — ekran hata
+ * kartına düşmemeli, yalnız pencere bandını göstermez. Bu projenin standart savunması.
+ */
+interface CostWindow {
+  from: string | null;
+  to: string | null;
+  allTime: boolean;
+  isDefault: boolean;
+  defaultMonths: number;
+}
 interface CostReport {
   generatedAt: string;
+  window?: CostWindow;
   bySupplier: BySupplier[];
   byMonth: ByMonth[];
   byProduct: ByProduct[];
@@ -80,6 +94,8 @@ interface CostReport {
   wastage: Wastage[];
   deliveredCogs: DeliveredCogs[];
 }
+
+export type { CostReport, CostWindow };
 
 // Grafik renk döngüsü (globals.css --chart-1..6, iki tema uyumlu).
 const CHART_COLORS = [
@@ -110,14 +126,22 @@ function fmtDateTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('tr-TR', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
-/** Hata gövdesinden okunabilir mesaj (proxy {error} veya Nest {message}). */
-function errText(body: unknown, fallback: string): string {
-  if (body && typeof body === 'object') {
-    const b = body as { error?: unknown; message?: unknown };
-    if (typeof b.error === 'string') return b.error;
-    if (typeof b.message === 'string') return b.message;
-  }
-  return fallback;
+/** ISO → tr-TR gün (saat yok — pencere sınırları gün hassasiyetinde okunur). */
+function fmtDay(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('tr-TR', { dateStyle: 'medium' });
+}
+
+/**
+ * Uygulanan pencerenin insan-okur karşılığı. SESSİZ KIRPMA YASAK: rapor daraltılmışsa
+ * ekranda YAZAR (varsayılan pencere dahil — operatör hiçbir şey seçmemiş olsa bile).
+ */
+function windowText(w: CostWindow): string {
+  if (w.allTime) return 'Tüm zamanlar (tarih sınırı yok)';
+  if (w.from && w.to) return `${fmtDay(w.from)} – ${fmtDay(w.to)}`;
+  if (w.from) return `${fmtDay(w.from)} tarihinden bugüne`;
+  if (w.to) return `${fmtDay(w.to)} tarihine kadar`;
+  return 'Tüm zamanlar (tarih sınırı yok)';
 }
 
 // Grafik datum'u (para birimi başına gruplanır → tek eksende karıştırılmaz).
@@ -232,33 +256,13 @@ function ChartCard({
   );
 }
 
-export function CostsView() {
-  const [data, setData] = React.useState<CostReport | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await fetch('/api/reports/costs', { cache: 'no-store' });
-        const body = (await res.json().catch(() => null)) as CostReport | { error?: string } | null;
-        if (!res.ok || !body || !('generatedAt' in body)) {
-          if (alive) setError(errText(body, `Maliyet raporu alınamadı (${res.status}).`));
-          return;
-        }
-        if (alive) setData(body);
-      } catch {
-        if (alive) setError('Ağ hatası — maliyet raporu alınamadı.');
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
+/**
+ * Maliyet raporu sunumu. Veri SUNUCUDA çekilir (sayfa bileşeni) ve prop olarak gelir:
+ * zaman penceresi adres çubuğundan (`?months=`/`?from=&to=`/`?all=1`) sürüldüğü için
+ * paylaşılabilir/yer imlenebilir olmalı — istemci içi fetch bunu URL'e yansıtamazdı.
+ * Bu bileşen yalnız recharts yüzünden 'use client'.
+ */
+export function CostsView({ data }: { data: CostReport }) {
   // Para birimi kümesi + karışık mı? (tüm bölümlerin birleşimi)
   // NOT: boş ('') currency GERÇEK bir para birimi değil — maliyeti bağlanamayan
   // (partiye/PO'ya/snapshot'a bağlı olmayan) kayıtların kovasıdır. Kümeden çıkarılır ki
@@ -337,25 +341,28 @@ export function CostsView() {
     ]);
   }, [data]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
-        Maliyet raporu yükleniyor…
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <Alert variant="destructive">
-        <TriangleAlert />
-        <AlertDescription>{error}</AlertDescription>
+  const w = data.window;
+  /*
+   * Pencere bandı: rapor DARALTILMIŞSA (hatta operatör hiçbir şey seçmemiş olsa bile —
+   * varsayılan 12 ay) ekran bunu YAZAR. "Tüm zamanlar" seçiliyken band gösterilmez:
+   * gösterilecek bir daraltma yoktur.
+   */
+  const windowBanner =
+    w && !w.allTime ? (
+      <Alert variant="info">
+        <CalendarRange />
+        <div>
+          <AlertTitle>Seçili dönem: {windowText(w)}</AlertTitle>
+          <AlertDescription>
+            {w.isDefault
+              ? `Tarih seçilmedi → varsayılan olarak son ${w.defaultMonths} ay gösteriliyor. Daha eski kayıtlar bu tablolara GİRMİYOR; tümünü görmek için yukarıdan "Tüm zamanlar" seçin.`
+              : 'Harcama, fire ve teslim edilen maliyet YALNIZ bu dönemi kapsar; dönem dışı kayıtlar tablolara girmez.'}{' '}
+            <strong>Stok Değeri</strong> istisnadır: elde BUGÜN duran stoğun maliyetidir, tarih
+            aralığından etkilenmez.
+          </AlertDescription>
+        </div>
       </Alert>
-    );
-  }
-
-  if (!data) return null;
+    ) : null;
 
   const hasAny =
     data.valuation.length > 0 ||
@@ -366,12 +373,25 @@ export function CostsView() {
     (data.deliveredCogs?.length ?? 0) > 0;
 
   if (!hasAny) {
+    /*
+     * BOŞ SONUCUN İKİ FARKLI ANLAMI VAR ve karıştırılırsa operatör "kayıt yok" sanır:
+     * (a) sistemde gerçekten maliyet kaydı yok, (b) kayıt var ama SEÇİLİ DÖNEM dışında.
+     * Pencere uygulanmışken metin (b) ihtimalini açıkça söyler (bu projenin "boş tabloda
+     * 'kayıt yok' ile 'süzgeçle eşleşen yok' ayrılır" kuralı).
+     */
     return (
-      <EmptyState
-        icon={Coins}
-        title="Maliyet verisi yok"
-        description="Henüz teslim alınmış satın alma emri veya maliyet kaydı bulunmuyor."
-      />
+      <div className="space-y-6">
+        {windowBanner}
+        <EmptyState
+          icon={Coins}
+          title={w && !w.allTime ? 'Seçili dönemde maliyet kaydı yok' : 'Maliyet verisi yok'}
+          description={
+            w && !w.allTime
+              ? 'Bu tarih aralığında teslim alınmış satın alma emri veya maliyet kaydı bulunmuyor. Aralığı genişletin ya da "Tüm zamanlar" seçin.'
+              : 'Henüz teslim alınmış satın alma emri veya maliyet kaydı bulunmuyor.'
+          }
+        />
+      </div>
     );
   }
 
@@ -385,6 +405,8 @@ export function CostsView() {
 
   return (
     <div className="space-y-6">
+      {windowBanner}
+
       {multiCurrency && (
         <Alert variant="info">
           <Coins />
@@ -412,7 +434,8 @@ export function CostsView() {
               value={money(v.valuedCents, v.currency)}
               icon={Warehouse}
               tone="accent"
-              hint={`${fmtNum(v.valuedUnits)} birim maliyetli`}
+              // ANLIK pozisyon — tarih aralığı bu kartı DEĞİŞTİRMEZ (bkz. pencere bandı).
+              hint={`${fmtNum(v.valuedUnits)} birim maliyetli · dönemden bağımsız`}
             />
           ))}
         {data.wastage

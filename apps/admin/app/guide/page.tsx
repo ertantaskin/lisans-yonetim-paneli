@@ -570,10 +570,43 @@ export default function GuidePage() {
           <li><strong>Müşteri talebi:</strong> müşteri My Account&apos;ta &quot;Sorun Bildir&quot; ile talep açar → <R href="/support">Destek</R> kuyruğunda görünür. Onayla / Reddet / Bilgi İste yapabilirsiniz. Onay için tek teknik şart <strong>stok</strong>tur.</li>
           <li><strong>Garanti penceresi kararı size aittir:</strong> panel her talebe &quot;Garanti içi / Garanti dışı&quot; rozetini bilgi olarak basar (teslim tarihi + ürünün garanti gün sayısı; lisansın geçerlilik süresi dolmuşsa garanti içi sayılmaz). Bu rozet onayı <em>engellemez</em> — garanti dışı bir talebi de onaylayabilirsiniz. İlke aynı: <strong>&quot;sistem önerir, insan onaylar.&quot;</strong></li>
           <li><strong>Proaktif değişim:</strong> müşteri beklemeden, sipariş detayında bir atamayı <strong>&quot;Değiştir&quot;</strong> ile aynı üründen taze bir key ile değiştirebilirsiniz. Eski key karantinaya alınır, değişim geçmişi tutulur.</li>
+          <li><strong>Hesap ürününde parola değiştiyse &quot;Değiştir&quot; kullanmayın.</strong> Değişim müşteriye <em>başka bir hesap</em> verir; eski hesap müşterinin elinde çalışmaya devam eder (bilgileri zaten kopyalamıştır) ve müşterinin o hesapta biriktirdiği veri kaybolur. Doğru araç: envanterde (ürün detayı → Envanter) o kalemin satırındaki <strong>&quot;Kimlik bilgilerini güncelle&quot;</strong>. Aynı hesap, aynı atama, yeni bilgiler — sebep denetim kaydına ve siparişin zaman çizelgesine yazılır. <strong>Owner yetkisi gerekir</strong> ve müşteri yeni bilgileri otomatik görmez: güncelleme sonrası siparişten <R href="/orders">teslimat mailini yeniden gönderin</R>.</li>
+          <li>
+            <strong>Çok kullanımlı (MAK) lisansta otomatik değişim YOKTUR.</strong> Panel bunu
+            bilerek reddeder: MAK&apos;ta bir anahtar birden çok aktivasyon taşır, geri alınan
+            kapasite <em>aynı</em> paylaşımlı anahtara döner — yeni atama yine o kusurlu anahtarı
+            seçerdi. Bu yüzden &quot;Değiştir&quot; düğmesi MAK atamalarında kapalı gelir ve destek
+            talebi &quot;Onayla&quot; ile çözülemez.
+          </li>
         </Bullets>
+        <p className="font-medium text-foreground">MAK lisansta kusurlu anahtar: ne yapmalı?</p>
+        <Steps>
+          <li>
+            <strong>Müşteriyi çalışır hâle getirin:</strong> mağazanın sipariş ekranındaki ürün
+            kaleminin altında <strong>&quot;+1 Bonus&quot;</strong> ile ek aktivasyon verin. Bonus
+            ayrı (sentetik) bir satıra yazılır — mağaza adedi şişmez, iade uzlaştırması etkilenmez.
+          </li>
+          <li>
+            <strong>Kusurlu anahtarı kapatın:</strong> anahtar hâlâ stoktaysa lisans envanterinden{' '}
+            <strong>geçersiz kılın</strong> (sebep zorunlu) — böylece bir daha satılmaz ve{' '}
+            <R href="/quarantine">Kusurlu Stok</R> havuzuna düşer.
+          </li>
+          <li>
+            <strong>Tedarikçiye bildirin:</strong> <R href="/quarantine">Kusurlu Stok</R> →
+            &quot;Bildirilecekler&quot; sekmesinden değişim fişi kesin, tedarikçi yanıtını fişe
+            işleyin.
+          </li>
+          <li>
+            <strong>Destek talebini kapatın:</strong> talebi &quot;Reddet&quot; ile <em>ne yaptığınızı
+            yazarak</em> kapatın (gerekçe müşteriye görünür; ör. &quot;ek aktivasyon tanımlandı&quot;).
+          </li>
+        </Steps>
         <Tip>
           Değişimde eski key iptal edilir ama satır &quot;iade&quot; sayılmaz; taze key aynı siparişe atanır.
-          Stok yoksa işlem güvenle durur (eski key korunur) ve size bildirilir.
+          Stok yoksa işlem güvenle durur (eski key korunur) ve size bildirilir.{' '}
+          <strong>&quot;İptal&quot; değişim aracı DEĞİLDİR:</strong> iade semantiğinde koşar — müşterinin
+          hakkı yanar ve MAK&apos;ta o birim kapasite kalıcı kaybolur. Kusurlu lisans için
+          &quot;Değiştir&quot; (tek kullanımlık) ya da yukarıdaki MAK akışını kullanın.
         </Tip>
       </Section>
 

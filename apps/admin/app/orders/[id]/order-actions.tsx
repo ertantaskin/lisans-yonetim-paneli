@@ -12,7 +12,29 @@ import {
 } from './actions';
 import { Button } from '../../../components/ui/button';
 import { useConfirm } from '../../../components/ui/confirm';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '../../../components/ui/tooltip';
 import { useAnnouncer } from '../../../components/a11y/announcer';
+
+/**
+ * MAK (çok kullanımlı) atamada otomatik değişimin NEDEN yapılamadığı + operatörün GERÇEKTEN
+ * ne yapması gerektiği. Tek kaynak: envanterdeki (license-item-actions.tsx) gate ile aynı
+ * kural, ama burada reçete de yazılır (kod dört yerde "elle işleyin" diyordu; panelde
+ * karşılığı yoktu).
+ *
+ * NEDEN uç reddediyor: revoke, kapasiteyi AYNI paylaşımlı anahtara geri iade eder → taze
+ * atama büyük olasılıkla yine o kusurlu anahtarı seçer. Bu yüzden red DOĞRUDUR, kaldırılmaz.
+ */
+// TEK KAYNAK lib/labels — burada yalnız yeniden dışa aktarılır (mevcut çağıranlar kırılmasın).
+// DİKKAT: düz `export { X } from '…'` adı YEREL olarak BAĞLAMAZ (bu dosyada da kullanılıyor).
+import { MULTI_REPLACE_BLOCKED } from '../../../lib/labels';
+export { MULTI_REPLACE_BLOCKED };
+
+/** Ürünün kullanım modu MAK mı? (alan gelmezse gate uygulanmaz — eski API imajı toleransı) */
+const isMultiUsage = (usageMode?: string | null) => usageMode === 'multi';
 
 /** Mutasyon sonucunu ekran okuyucuya duyurur (WCAG 4.1.3): hata → assertive. */
 function announceResult(announce: (t: string, o?: { assertive?: boolean }) => void, state: MutationState) {
@@ -81,11 +103,19 @@ export function AssignmentActions({
   orderId,
   status,
   siblingActiveCount,
+  usageMode,
 }: {
   assignmentId: string;
   orderId: string;
   status: string;
   siblingActiveCount?: number;
+  /**
+   * Ürünün kullanım modu (`single` | `multi`). `multi` (MAK) ise "Değiştir" ucu 400 döner →
+   * düğme devre dışı + sebep ipucu ile sunulur (envanter tablosundaki desenin aynısı;
+   * tıklanıp hata veren düğme, hiç sunulmayandan kötüdür). Alan gelmezse (eski API imajı)
+   * eski davranış korunur.
+   */
+  usageMode?: string | null;
 }) {
   const [pending, startTransition] = React.useTransition();
   const [state, setState] = React.useState<MutationState | null>(null);
@@ -135,8 +165,13 @@ export function AssignmentActions({
       confirmLabel: 'İptal et',
       reason: {
         label: 'İptal sebebi',
-        placeholder: 'ör. iade, dolandırıcılık, kusurlu key',
-        hint: 'Boş bırakılırsa "admin iptali" yazılır. Sebep denetim kaydına düşer.',
+        // "kusurlu key" örneği KALDIRILDI (yanıltıcıydı): bu uç İADE semantiğinde koşar —
+        // müşterinin hakkı yanar, MAK'ta 1 birim kapasite de kalıcı kaybolur. Kusurlu bir
+        // kalem için doğru araç "Değiştir" (tek kullanımlık) ya da MAK'ta "+1 Bonus"tur.
+        placeholder: 'ör. müşteri iadesi, sipariş iptali, dolandırıcılık şüphesi',
+        hint:
+          'Bu işlem İADE anlamına gelir (hak geri alınır). Kusurlu bir lisansı yenilemek için' +
+          ' "Değiştir" kullanın. Boş bırakılırsa "admin iptali" yazılır; sebep denetim kaydına düşer.',
       },
     });
     if (!res0) return;
@@ -179,6 +214,11 @@ export function AssignmentActions({
     });
   };
 
+  // MAK (multi) → otomatik değişim ucu 400 döner. Düğme SUNULUR ama devre dışıdır ve sebebi
+  // ipucunda GERÇEK reçeteyle yazar (envanterdeki desenle aynı; düğmeyi tamamen gizlemek
+  // "neden yok?" sorusunu doğururdu).
+  const multiBlocked = isMultiUsage(usageMode);
+
   return (
     <div className="flex flex-col items-end gap-1">
       {dialog}
@@ -194,15 +234,40 @@ export function AssignmentActions({
             >
               <PauseCircle /> Askıya Al
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void replace()}
-              disabled={pending}
-            >
-              <RefreshCw /> Değiştir
-            </Button>
+            {multiBlocked ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  {/* Devre dışı düğme pointer olayı üretmez → tooltip için odaklanabilir
+                      sarmalayıcı (license-item-actions.tsx ile aynı çözüm). */}
+                  <span
+                    tabIndex={0}
+                    className="inline-flex rounded-md"
+                    title={MULTI_REPLACE_BLOCKED}
+                  >
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled
+                      aria-label={`Değiştir — ${MULTI_REPLACE_BLOCKED}`}
+                    >
+                      <RefreshCw /> Değiştir
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-80">{MULTI_REPLACE_BLOCKED}</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void replace()}
+                disabled={pending}
+              >
+                <RefreshCw /> Değiştir
+              </Button>
+            )}
             <Button
               type="button"
               variant="danger-outline"

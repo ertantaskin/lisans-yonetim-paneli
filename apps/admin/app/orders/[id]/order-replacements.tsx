@@ -14,6 +14,9 @@ import {
   rejectReplacementForOrderAction,
   type MutationState,
 } from './actions';
+// MAK gate metni TEK KAYNAK: atama aksiyonlarıyla aynı kural, aynı reçete (iki ekranda
+// çelişen açıklama üretmemek için kopyalanmadı).
+import { MULTI_REPLACE_BLOCKED } from './order-actions';
 import { Button } from '../../../components/ui/button';
 import { Badge, StatusBadge } from '../../../components/ui/badge';
 import { useConfirm } from '../../../components/ui/confirm';
@@ -32,6 +35,12 @@ export interface OrderReplacement {
   lineId: string | null;
   assignmentId: string | null;
   createdAt: string;
+  /**
+   * Talebin ürününün kullanım modu (`single` | `multi`) — backend `detail()` talebin
+   * satırından/atamasından çözer. `multi` (MAK) ise "Onayla (değiştir)" ucu 400 döner,
+   * bu yüzden düğme kapatılır. Alan gelmezse (eski API imajı) gate uygulanmaz.
+   */
+  usageMode?: string | null;
 }
 
 function isActionable(status: string) {
@@ -63,6 +72,8 @@ function ReplacementRow({
   const [open, setOpen] = React.useState(isActionable(r.status));
   const announce = useAnnouncer();
   const { confirm, dialog } = useConfirm();
+  // Çok kullanımlı (MAK) üründe otomatik değişim YOK — bkz. MULTI_REPLACE_BLOCKED.
+  const multiBlocked = r.usageMode === 'multi';
 
   const run = (fn: () => Promise<MutationState>) => {
     setState(null);
@@ -170,6 +181,15 @@ function ReplacementRow({
             </p>
           )}
 
+          {/* MAK (multi): "Onayla" değişim makinesini çalıştırır ve API 400 döner. Sebep +
+              GERÇEK reçete burada yazılır; düğme aşağıda devre dışı kalır. */}
+          {multiBlocked && isActionable(r.status) && (
+            <p className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs text-warning">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span>{MULTI_REPLACE_BLOCKED}</span>
+            </p>
+          )}
+
           {!r.assignmentId && isActionable(r.status) && (
             <p className="flex items-start gap-1.5 text-xs text-warning">
               <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -196,7 +216,16 @@ function ReplacementRow({
 
           {isActionable(r.status) && (
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" onClick={() => void approve()} disabled={pending}>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void approve()}
+                // MAK'ta uç 400 verir → düğme hiç tıklanabilir olmasın. "Reddet" AÇIK kalır:
+                // operatörün talebi bir açıklamayla kapatabilmesi gerekir.
+                disabled={pending || multiBlocked}
+                title={multiBlocked ? MULTI_REPLACE_BLOCKED : undefined}
+                aria-label={multiBlocked ? `Onayla (değiştir) — ${MULTI_REPLACE_BLOCKED}` : undefined}
+              >
                 <CheckCircle2 aria-hidden /> {pending ? 'İşleniyor…' : 'Onayla (değiştir)'}
               </Button>
               <Button

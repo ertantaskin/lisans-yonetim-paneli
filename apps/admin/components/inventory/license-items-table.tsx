@@ -68,10 +68,16 @@ const STICKY_ACTIONS = 'sticky-actions z-10 border-l border-border/60';
  * hangi durumların sunulacağı seçilir; ham enum kullanıcıya ÇIKMAZ.
  * 'expired' = STOK ÖMRÜ dolmuş kalem (API bu süzgeci `status='expired'` VEYA `expires_at ≤ now`
  * olarak yorumlar) — "stokta görünüp satılamayan" kalemleri tek listede toplar.
+ *
+ * 'depleted' (denetim bulgusu): kapasitesi bitmiş MAK anahtarı. Listede seçenek OLMADIĞI için
+ * bu kalemler HİÇBİR ekranda listelenemiyordu — oysa §11 "kiralık slot" ürününde kapasite
+ * süre bitişinde havuza dönmez (bilinçli karar), yani anahtar kalıcı olarak bu kovada kalır ve
+ * o ürüne yatırılan sermaye panelden görünmez oluyordu. API süzgeci zaten destekliyordu
+ * (LICENSE_ITEM_STATUSES); eksik olan yalnız UI seçeneğiydi.
  */
 const STATUS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '', label: 'Tümü' },
-  ...['available', 'assigned', 'expired', 'quarantined', 'voided'].map((v) => ({
+  ...['available', 'assigned', 'depleted', 'expired', 'quarantined', 'voided'].map((v) => ({
     value: v,
     label: statusLabel(v),
   })),
@@ -643,11 +649,20 @@ export function LicenseItemsTable({
         />
       </div>
 
+      {/*
+        DÜRÜSTLÜK NOTU (denetim bulgusu): "anahtarın tamamı / son 5 hanesi" araması YALNIZ
+        anahtar-benzeri ürünlerde çalışır. Hesap ürününde saklanan düz metin kanonik bir
+        JSON'dur ({"password":"…","username":"…"}) — "son 5 hane" parolanın değil JSON'un
+        kuyruğudur, dolayısıyla operatörün aradığı şey ASLA eşleşmez. Eskiden bu metin bunu
+        söylemiyordu ve panel operatöre var olmayan bir yetenek vaat ediyordu.
+      */}
       <p className="text-xs text-muted-foreground">
         Aranabilenler: <strong>anahtarın tamamı</strong> ya da <strong>son 5 hanesi</strong>,
         ürün adı/SKU, müşteri e-postası, mağaza sipariş numarası, parti kodu. Anahtarlar şifreli
         saklandığı için parça arama (ortadan birkaç hane) yapılamaz — tam değer veya son 5 hane
-        gerekir; büyük/küçük harf ve boşluk farkı sorun değildir.
+        gerekir; büyük/küçük harf ve boşluk farkı sorun değildir.{' '}
+        <strong>Hesap ürünlerinde</strong> anahtar/son-hane araması çalışmaz (kimlik bilgileri
+        çok alanlı saklanır); bu kalemleri ürün, müşteri e-postası veya sipariş numarasıyla arayın.
       </p>
 
       {error && (
@@ -793,6 +808,7 @@ export function LicenseItemsTable({
                         row={row}
                         payloadSchema={productId ? payloadSchema : undefined}
                         onDone={reloadAfterMutation}
+                        masked={data?.masked}
                       />
                     </div>
                   </div>
@@ -834,7 +850,14 @@ export function LicenseItemsTable({
               <TableHead>Durum</TableHead>
               <TableHead className="hidden 2xl:table-cell">Kapasite</TableHead>
               <TableHead className="hidden 2xl:table-cell">Parti</TableHead>
-              <TableHead className="hidden xl:table-cell">Teslimat</TableHead>
+              {/* Başlıkta da söylenir: bu kolon kalem başına TEK teslimat gösterir (MAK
+                  anahtarı birden çok müşteriye gitmiş olabilir — satırda fark yazılır). */}
+              <TableHead
+                className="hidden xl:table-cell"
+                title="Kalem başına tek teslimat gösterilir; çok kullanımlı (MAK) anahtarda diğerleri satırda belirtilir."
+              >
+                Teslimat
+              </TableHead>
               <TableHead className="hidden 2xl:table-cell">Eklenme</TableHead>
               <TableHead className={cn('text-right', STICKY_ACTIONS)}>
                 <span className="sr-only">İşlemler</span>
@@ -986,6 +1009,7 @@ export function LicenseItemsTable({
                       row={row}
                       payloadSchema={productId ? payloadSchema : undefined}
                       onDone={reloadAfterMutation}
+                      masked={data?.masked}
                       compact
                     />
                   </TableCell>
@@ -1289,10 +1313,25 @@ function CopyButton({
  * Teslimat hücresi — kalem bir siparişe verilmişse müşteri/site/sipariş bağlantısı.
  * Mağaza linki (`storeAdminUrl`) YALNIZ backend üretebildiyse görünür ve yeni sekmede
  * açılır: panel mağazaya bağlanmaz/oturum açmaz, SALT URL yönlendirmesidir (§17).
+ *
+ * TEK ATAMA GÖSTERİLİR (denetim bulgusu, düşük): sunucu her kalem için `LATERAL … LIMIT 1`
+ * ile YALNIZ BİR atama çeker. Tek kullanımlıkta bu doğrudur (kalemde zaten tek atama olabilir),
+ * ama MAK anahtarı onlarca müşteriye teslim edilmiş olabilir → satır bunlardan yalnız birini
+ * gösterir ve eskiden "daha var" sinyali YOKTU (operatör anahtarı tek müşteriye ait sanıyordu).
+ * Mevcut veriyle yapılabilecek en dürüst sunum: `useCount` (bu anahtardan tüketilen TOPLAM hak)
+ * gösterilen atamanın payından (`units`) büyükse fark açıkça yazılır. Sayı UYDURULMAZ, YENİ API
+ * ALANI İSTENMEZ — yalnız satırın kendi alanlarından türer.
  */
 function DeliveryCell({ row }: { row: LicenseInventoryRow }) {
   const d = row.delivered;
   if (!d) return <span className="text-muted-foreground">—</span>;
+
+  /*
+   * Fark yalnız çok kullanımlıkta doğabilir. `useCount − units` "kaç atama var" DEMEZ (bir
+   * atama birden çok birim alabilir, iade edilmiş atamalar MAK'ta kapasiteyi geri vermez —
+   * §2), yalnız "başka teslimat(lar) da var" der. Metin de tam olarak bunu iddia eder.
+   */
+  const otherUnits = row.usageMode === 'multi' ? row.useCount - d.units : 0;
 
   return (
     <div className="space-y-0.5 text-xs">
@@ -1332,6 +1371,18 @@ function DeliveryCell({ row }: { row: LicenseInventoryRow }) {
       </div>
       {d.assignmentStatus !== 'active' && (
         <div className="text-muted-foreground">{assignmentStatusLabel(d.assignmentStatus)}</div>
+      )}
+      {otherUnits > 0 && (
+        <div
+          className="text-muted-foreground"
+          title={
+            `Bu anahtardan toplam ${row.useCount} kullanım hakkı tüketildi; yukarıdaki teslimat` +
+            ` bunun ${d.units} tanesine ait. Kalan ${otherUnits} hak başka teslimat(lar)a gitti —` +
+            ' liste kalem başına yalnız BİR teslimat gösterebiliyor. Tümü için siparişleri açın.'
+          }
+        >
+          ve {otherUnits} kullanım hakkı daha başka teslimatlarda
+        </div>
       )}
     </div>
   );

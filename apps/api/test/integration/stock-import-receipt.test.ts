@@ -275,7 +275,13 @@ describe('StockService.import + newBatch (otomatik teslim-alma: parti + satın a
   it('(2) maliyet raporu bağlantısı: bySupplier harcaması + byMonth 2026-08 kovası', async () => {
     // (1) ile AYNI veri — özelliğin gerekçesi tam olarak bu rapor satırlarının oluşmasıdır.
     expect(receipt).not.toBeNull();
-    const report = await new CostsService(db as never).getCostReport();
+    /*
+     * `allTime` BİLEREK: rapor artık parametresiz çağrıldığında son 12 ayı gösterir (denetim
+     * bulgusu O7). Bu testin `RECEIVED_AT`'i SABİT bir tarihtir — pencereye bağlı kalsaydı
+     * takvim ilerledikçe (o tarih 12 ayı geçince) test kendiliğinden kırılırdı. Ölçülen şey
+     * "stok girişi doğru rapor satırlarını üretiyor mu", pencere davranışı değil.
+     */
+    const report = await new CostsService(db as never).getCostReport({ allTime: true });
 
     const supplierRow = report.bySupplier.find(
       (r) => r.supplierId === receipt!.supplierId && r.currency === CUR_MAIN,

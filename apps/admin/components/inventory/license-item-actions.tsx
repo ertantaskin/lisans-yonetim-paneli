@@ -1,9 +1,10 @@
 'use client';
 import * as React from 'react';
-import { Ban, Pencil, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
+import { Ban, KeyRound, Pencil, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   replaceDeliveredLicenseAction,
+  rotateAccountCredentialsAction,
   updateLicenseItemAction,
   voidLicenseItemAction,
   type LicenseInventoryRow,
@@ -63,6 +64,7 @@ export function LicenseItemActions({
   payloadSchema,
   onDone,
   compact = false,
+  masked,
 }: {
   row: LicenseInventoryRow;
   /**
@@ -73,6 +75,12 @@ export function LicenseItemActions({
   payloadSchema?: PayloadFieldDef[] | null;
   /** Başarılı işlemden sonra tabloyu tazelemek için. */
   onDone: () => void;
+  /**
+   * Değerler MASKELİ mi (owner DEĞİLİZ)? Teslim edilmiş hesabın kimlik bilgisi güncellemesi
+   * owner-only'dir; maskeli görüntüde operatör zaten tam değerleri BİLMEZ, dolayısıyla düğme
+   * sebebiyle kapalı sunulur (tıklanıp 403 veren düğme, hiç sunulmayandan kötüdür).
+   */
+  masked?: boolean;
   /**
    * Yoğun TABLO satırında etiketler gizlenir (ikon + aria-label/title kalır): iki metin
    * düğmesi kolona 197px yüklüyor ve 1600px ekranda bile tabloyu 162px yana kaydırıyordu
@@ -88,7 +96,15 @@ export function LicenseItemActions({
   // Bu dal ÖNCE gelir: geri çekilmiş bir partide operatör satır satır karar verirken
   // devre dışı iki düğme yerine yapılabilecek TEK işlemi görmeli.
   if (row.delivered && LIVE_ASSIGNMENT.has(row.delivered.assignmentStatus)) {
-    return <ReplaceDeliveredButton row={row} onDone={onDone} compact={compact} />;
+    return (
+      <ReplaceDeliveredButton
+        row={row}
+        onDone={onDone}
+        compact={compact}
+        payloadSchema={payloadSchema}
+        masked={masked}
+      />
+    );
   }
 
   if (!editable) {
@@ -168,14 +184,19 @@ function ReplaceDeliveredButton({
   compact = false,
   row,
   onDone,
+  payloadSchema,
+  masked,
 }: {
   row: LicenseInventoryRow;
   onDone: () => void;
   /** Tabloda etiketler gizlenir (ikon + aria-label kalır) — bkz. LicenseItemActions. */
   compact?: boolean;
+  payloadSchema?: PayloadFieldDef[] | null;
+  masked?: boolean;
 }) {
   const { confirm, dialog } = useConfirm();
   const [busy, setBusy] = React.useState(false);
+  const [rotateOpen, setRotateOpen] = React.useState(false);
   const d = row.delivered!;
   const isMulti = row.usageMode === 'multi';
   // API `replaceAssignment` YALNIZ aktif atamayı kabul eder (askıdakini 400 ile reddeder —
@@ -235,17 +256,36 @@ function ReplaceDeliveredButton({
         ' "Geri aç" deyin, sonra değiştirin. (Askıyı sessizce kaldırmamak için bilinçli.)'
       : 'Çok kullanımlı (MAK) kalem otomatik değiştirilemez — aynı paylaşımlı kayıt yeniden' +
         ' atanırdı. Siparişten elle işleyin.';
+    // "Değiştir" kapalı olsa bile HESAP kaleminde kimlik bilgisi güncellemesi ANLAMLI kalır
+    // (askıdaki atamada da, MAK'ta da lisans hâlâ müşteridedir) — bu yüzden rotasyon düğmesi
+    // bu dalda da sunulur; aksi halde operatörün elinde hiçbir araç kalmazdı.
     return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
-            <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${why}`}>
-              <RefreshCw aria-hidden /> <span className={compact ? "sr-only" : undefined}>Değiştir</span>
-            </Button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-64">{why}</TooltipContent>
-      </Tooltip>
+      <div className="flex items-center justify-end gap-1.5">
+        <RotateCredentialsButton
+          row={row}
+          payloadSchema={payloadSchema}
+          masked={masked}
+          compact={compact}
+          onOpen={() => setRotateOpen(true)}
+        />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
+              <Button variant="outline" size="sm" disabled aria-label={`Değiştir — ${why}`}>
+                <RefreshCw aria-hidden /> <span className={compact ? "sr-only" : undefined}>Değiştir</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-64">{why}</TooltipContent>
+        </Tooltip>
+        <RotateCredentialsSheet
+          row={row}
+          payloadSchema={payloadSchema}
+          open={rotateOpen}
+          onOpenChange={setRotateOpen}
+          onDone={onDone}
+        />
+      </div>
     );
   }
 
@@ -272,6 +312,13 @@ function ReplaceDeliveredButton({
 
   return (
     <div className="flex items-center justify-end gap-1.5">
+      <RotateCredentialsButton
+        row={row}
+        payloadSchema={payloadSchema}
+        masked={masked}
+        compact={compact}
+        onOpen={() => setRotateOpen(true)}
+      />
       {compact ? (
         <Tooltip>
           <TooltipTrigger asChild>{button}</TooltipTrigger>
@@ -280,8 +327,198 @@ function ReplaceDeliveredButton({
       ) : (
         button
       )}
+      <RotateCredentialsSheet
+        row={row}
+        payloadSchema={payloadSchema}
+        open={rotateOpen}
+        onOpenChange={setRotateOpen}
+        onDone={onDone}
+      />
       {dialog}
     </div>
+  );
+}
+
+/**
+ * "Kimlik bilgilerini güncelle" düğmesi — YALNIZ teslim edilmiş HESAP kaleminde.
+ *
+ * NEDEN AYRI BİR EYLEM: hesap ürününde "Yenisiyle değiştir" YANLIŞ araçtır. Müşteriye BAŞKA
+ * bir hesap verir; eski hesap müşterinin elinde ÇALIŞMAYA DEVAM eder (kimlik bilgilerini zaten
+ * kopyalamıştır) ve müşterinin o hesapta biriktirdiği veri kaybolur. Sağlayıcı parolayı
+ * döndürdüğünde doğru işlem AYNI hesabı güncellemektir — panelde bunun aracı yoktu.
+ */
+function RotateCredentialsButton({
+  row,
+  payloadSchema,
+  masked,
+  compact,
+  onOpen,
+}: {
+  row: LicenseInventoryRow;
+  payloadSchema?: PayloadFieldDef[] | null;
+  masked?: boolean;
+  compact: boolean;
+  onOpen: () => void;
+}) {
+  if (row.kind !== 'account') return null;
+  // Şema bilinmiyorsa (global envanter listesi) form alanları kurulamaz → ürün detayına yönlendir.
+  const noSchema = !payloadSchema || payloadSchema.length === 0;
+  const blocked = masked || noSchema;
+  const why = masked
+    ? 'Kimlik bilgisi güncellemesi owner yetkisi gerektirir (değerler size maskeli gösteriliyor).'
+    : 'Alan şeması bu listede bilinmiyor — ürün detayındaki envanter sekmesinden yapın.';
+  const label = 'Kimlik bilgilerini güncelle';
+
+  if (blocked) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
+            <Button variant="outline" size="sm" disabled aria-label={`${label} — ${why}`}>
+              <KeyRound aria-hidden />{' '}
+              <span className={compact ? 'sr-only' : undefined}>{label}</span>
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64">{why}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="outline" size="sm" onClick={onOpen} aria-label={label}>
+          <KeyRound aria-hidden /> <span className={compact ? 'sr-only' : undefined}>{label}</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-72">
+        Sağlayıcıda parola değiştiyse AYNI hesabı güncelle (müşteriye başka hesap verilmez).
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Kimlik bilgisi güncelleme formu — şema alanları + zorunlu sebep. */
+function RotateCredentialsSheet({
+  row,
+  payloadSchema,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  row: LicenseInventoryRow;
+  payloadSchema?: PayloadFieldDef[] | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onDone: () => void;
+}) {
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [values, setValues] = React.useState<Record<string, string>>({});
+  const [reason, setReason] = React.useState('');
+  const schema = payloadSchema ?? [];
+
+  // Açılışta alanları SIFIRDAN başlat: mevcut değerlerle ön-doldurmak owner-olmayan görünümde
+  // maske metnini forma taşırdı (sunucu bunu 400'ler ama kullanıcıyı hataya sürüklemenin anlamı
+  // yok) ve owner'da da "değişmedi sanılan" alanın sessizce eski değerle yazılmasına yol açardı.
+  React.useEffect(() => {
+    if (open) {
+      setValues({});
+      setReason('');
+      setError(null);
+    }
+  }, [open]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setPending(true);
+    try {
+      const res = await rotateAccountCredentialsAction({
+        id: row.id,
+        fields: values,
+        reason,
+        productId: row.productId,
+      });
+      if (res.ok) {
+        const n = res.orderIds?.length ?? 0;
+        toast.success(
+          n > 0
+            ? `Kimlik bilgileri güncellendi. Müşteriye yeni bilgileri iletmek için ${n} siparişin teslimat mailini yeniden gönderin.`
+            : 'Kimlik bilgileri güncellendi.',
+        );
+        onOpenChange(false);
+        onDone();
+      } else {
+        setError(res.error ?? 'İşlem başarısız.');
+      }
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>Kimlik bilgilerini güncelle</SheetTitle>
+          <SheetDescription>
+            Müşterinin elindeki AYNI hesap güncellenir — başka bir hesap atanmaz, atama ve
+            sipariş değişmez. Sağlayıcıda parola döndüğünde kullanın.
+          </SheetDescription>
+        </SheetHeader>
+        <form onSubmit={submit} className="space-y-4 p-4 pt-0">
+          <RecordSummary row={row} />
+          <Alert>
+            <ShieldAlert aria-hidden />
+            <AlertDescription>
+              Müşteri yeni bilgileri OTOMATİK görmez — güncelleme sonrası siparişin teslimat
+              mailini yeniden göndermeniz gerekir.
+            </AlertDescription>
+          </Alert>
+          {schema.map((f) => (
+            <Field
+              key={f.key}
+              label={f.label || f.key}
+              htmlFor={`rot-${row.id}-${f.key}`}
+              hint={f.secret ? 'Gizli alan — tam değeri girin.' : undefined}
+            >
+              <Input
+                id={`rot-${row.id}-${f.key}`}
+                value={values[f.key] ?? ''}
+                onChange={(ev) => setValues((v) => ({ ...v, [f.key]: ev.target.value }))}
+                required={f.required}
+                autoComplete="off"
+              />
+            </Field>
+          ))}
+          <Field
+            label="Güncelleme sebebi"
+            htmlFor={`rot-reason-${row.id}`}
+            hint="Denetim kaydına ve siparişin zaman çizelgesine yazılır."
+          >
+            <Textarea
+              id={`rot-reason-${row.id}`}
+              value={reason}
+              onChange={(ev) => setReason(ev.target.value)}
+              required
+              minLength={3}
+              rows={3}
+            />
+          </Field>
+          {error && (
+            <Alert variant="destructive">
+              <ShieldAlert aria-hidden />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          <Button type="submit" disabled={pending}>
+            {pending ? 'Güncelleniyor…' : 'Güncelle'}
+          </Button>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }
 
