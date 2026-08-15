@@ -77,11 +77,39 @@ YOKTU → `{{valid_until}}` yazan operatör "desteklenmiyor, gönderimde boş ç
 alıyordu; oysa değişken çalışıyor ve panelin kendi sunucu-taraflı önizlemesi onu geçerli
 sayıyordu (aynı ekranda iki cevap). Liste `@lisans/shared`'a taşındı, iki taraf oradan okuyor.
 
+**Yayın sonrası, kendi kodumun denetiminde bulunanlar.** (a) Rehber gövdesi atama satırlarının
+LEFT JOIN'indeydi ve SATIR BAŞINA tekrarlanıyordu: 50 anahtarlı siparişte 4.000 karakterlik metin
+50 kez (≈200 KB) taşınıyordu — üstelik bu uç yalnız sayfa render'ında değil mağazanın canlı
+yoklamasında da (8-60 sn'de bir) çağrılıyor. Gövde aynı `Promise.all` içindeki bağımsız
+`selectDistinct`'e taşındı: ek round-trip yok, taşınan veri sabit. (b) Rehber yolu tamamen
+testsizdi → 5 davranış kilitlendi; kontrol denemesiyle iptal-satır filtresi kaldırılınca tam o
+testin kırmızıya düştüğü görüldü. (c) Alan ipucu "sağda görünür" diyordu ama önizleme dar
+ekranda altta durur; sınırın gerekçesi de sayacın altında ikinci bir paragraf olarak kalıyordu.
+
 Doğrulama: typecheck 4/4 · üç kapı temiz (`use-server` 26/90, nest-wiring 42/69, env 44) ·
-birim **57 + 135 + 152** · build 3/3 · şema sapması yok (`db:generate` "No schema changes";
-0045'in damgası 0044'ten büyük — bu projede tekrarlayan `when` tuzağı kontrol edildi).
-KOŞULAMAYAN: PHP-lint + WP davranış testleri (bu makinede PHP yok) ve entegrasyon/yarış paketi
-(docker/PG/Redis yok) — CI ve VPS izole test DB'sinde koşulmalı.
+birim **57 + 135 + 152** · build 3/3 · şema sapması yok (0045'in damgası 0044'ten büyük — bu
+projede tekrarlayan `when` tuzağı kontrol edildi) · VPS izole test DB **entegrasyon 401/401 +
+yarış 3/3** · PHP-lint 13/13 + eklenti davranış testleri 108/108 · `pnpm audit --prod` temiz ·
+31 rota 200 · prod `/v1/health` 200 v1.1.0, api 0 ERROR · eklenti v1.1.0 yayınlandı.
+
+### Dış kopya (offsite) yokluğu artık alarm üretiyor (migration YOK)
+
+Yedek **tazeliği** ve **tatbikat** için alarm vardı, **dış kopya için yoktu**. Sonuç: yedekler
+düzenli alınır, tatbikat geçer, iki alarm da susar — ama her dump yalnız yedeklemenin sebebi
+olan makinede durur. Sunucu kaybedilirse veri de MASTER_KEY de gider ve "yedeğimiz var" sanısı
+gerçek bir kurtarma imkânı olmadan sürer. Durum `/deployments` ekranında rozet olarak
+görünüyordu, ama rozet yalnız bakana yarar. Canlı ölçüm: prod'da `BACKUP_OFFSITE_CMD` tanımsız.
+
+İki durum ayrı şiddet taşır, çünkü yapılacak iş farklıdır: kanca **kurulu değilse** `warning`
+ve 7 gün dedupe (sürekli bir durum, alarm yorgunluğu yaratmamalı); kanca **kurulu ama
+başarısızsa** `critical` ve 24 saat dedupe — operatör dış kopyanın alındığını sanıyor, ve
+yanlış güven hiç güvenmemekten tehlikelidir. Yalnız başarılı son yedeğe bakılır: yedek zaten
+alınamıyorsa asıl sorun `backupStale`'dir ve o alarm ayrıca çalışır.
+
+Yeni bildirim tipi etiket sözlüğüne de eklendi — eklenmeseydi operatöre ham `backup_offsite`
+kodu görünürdü (bir önceki turda düzeltilen kusurun aynısı). Üç şıklı entegrasyon testi
+(warning / critical / yanlış pozitif üretmez), kontrol denemesiyle kırmızı olduğu doğrulandı ve
+alarmın canlıda gerçekten düştüğü görüldü.
 
 ### Denetim: havuz kilitlenmesi, sessiz ölen arka plan işi, üç otomatik kapı (migration YOK)
 

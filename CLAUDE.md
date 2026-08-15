@@ -2208,8 +2208,8 @@ Kullanıcı "geri kalan tüm eksikleri tamamla, güncellemeleri yayınla" dedi �
   hâlâ `mailpit` (mailler gerçek müşteriye ULAŞMIYOR; panel bunu her boot'ta kritik alarmla söyler) ·
   yedeğin **offsite kancası** (`BACKUP_OFFSITE_CMD`).
 
-**KURULUM/ETKİNLEŞTİRME REHBERLERİ + TESLİMAT ARAYÜZÜ (migration 0045, eklenti 1.1.0; PROD'A GİTMEDİ
-— commit yok, kullanıcı onayı bekliyor):** Kullanıcı "sipariş verildiğinde WP tarafında kurulum/
+**KURULUM/ETKİNLEŞTİRME REHBERLERİ + TESLİMAT ARAYÜZÜ (commit 3a88390→226aed0, CANLI prod+dev,
+migration 0045, eklenti v1.1.0 yayınlandı):** Kullanıcı "sipariş verildiğinde WP tarafında kurulum/
 etkinleştirme rehberi de gösterilmeli (Office 365 / Office 2021-2019 / Windows 10-11), daha güzel bir
 teslimat UI/UX gerek, mail olarak da gideceği için karakter sınırını ona göre ayarla, panelden ürüne
 göre ayarlanabilsin" dedi ve gerçek bir Office 365 talimat metni verdi.
@@ -2254,12 +2254,38 @@ göre ayarlanabilsin" dedi ve gerçek bir Office 365 talimat metni verdi.
   tutuyordu ve ayrışmıştı — API `valid_until` besliyor, editörde o alan YOKTU → `{{valid_until}}` yazan
   operatör YANLIŞ "desteklenmiyor" uyarısı alıyor, panelin sunucu-taraflı önizlemesi ise onu geçerli
   sayıyordu (aynı ekranda iki cevap). Liste `@lisans/shared`'a taşındı.
+- **YAYIN SONRASI DÜZELTMELER (kendi kodumun denetimi):** **[PERF]** rehber gövdesi atama satırlarının
+  LEFT JOIN'indeydi → SATIR BAŞINA tekrarlanıyordu (50 anahtarlı siparişte 4.000 karakterlik metin 50 kez
+  ≈200 KB) ve bu uç yalnız sayfa render'ında değil mağazanın CANLI YOKLAMASINDA da (8-60 sn) çağrılıyor →
+  aynı `Promise.all` içinde BAĞIMSIZ `selectDistinct`'e taşındı (ek round-trip YOK; `selectDistinct` sıra
+  garanti etmediği için başlığa göre sıralanır). **[TEST]** rehber yolu tamamen testsizdi → 5 davranış
+  kilitlendi; **kontrol denemesi** ile iptal-satır filtresi kaldırılınca tam o testin kırmızıya düştüğü
+  görüldü. **[UX]** ipucu "Sağda görünür" diyordu ama önizleme dar ekranda ALTTA; sınır gerekçesi de
+  sayacın altında ikinci paragraf kalıyordu (`Field` yardımı çocuklardan SONRA basar) → ipucuna taşındı.
 - **Doğrulama:** typecheck 4/4 · üç kapı temiz (use-server 26/90 · nest-wiring 42/69 · env 44) · birim
-  **57+135+152** · build 3/3 · şema sapması yok (`db:generate` "No schema changes"; 0045 damgası 0044'ten
-  BÜYÜK — `when` tuzağı kontrol edildi) · **tarayıcıda ölçüldü:** kullanıcının verdiği gerçek Office 365
-  metni açık+koyu temada doğru render, numaralandırma 1→2→3 devam ediyor, 360px kapta yatay kayma **0**,
-  taşan öğe **0**, kırpılan anahtar **0**. **KOŞULAMAYAN:** PHP-lint + WP davranış testleri (bu makinede
-  PHP yok) ve entegrasyon/yarış paketi (docker/PG/Redis yok) → CI + VPS izole test DB'sinde koşulmalı.
+  **57+135+152** · build 3/3 · şema sapması yok (0045 damgası 0044'ten BÜYÜK — `when` tuzağı kontrol
+  edildi) · VPS izole test DB **entegrasyon 401/401 + yarış 3/3** · PHP-lint **13/13** + eklenti davranış
+  testleri **108/108** · `pnpm audit --prod` temiz · **31 rota 200** (hata sınırına düşen yok) ·
+  **tarayıcıda ölçüldü:** kullanıcının verdiği gerçek Office 365 metni açık+koyu temada doğru render,
+  numaralandırma 1→2→3, 360px kapta yatay kayma **0** / taşan öğe **0** / kırpılan anahtar **0**;
+  panelde canlı önizleme + e-posta sekmesi çalışıyor · **dev GERÇEK E2E:** 3 ürünlü sipariş #67 →
+  mağaza sayfasında üç kart, her birinde kendi rehberi, `<ol start="2">` numaralandırma; teslimat maili
+  iki rehberi TEKİLLEŞTİRİLMİŞ taşıyor (Windows rehberi iki üründe ama bir kez) · prod `/v1/health` 200
+  **v1.1.0**, migration tracking 46, api **0 ERROR** · **eklenti v1.1.0 yayınlandı** (201, 115.794 bayt;
+  public update ucu https ile 1.1.0 servis ediyor, zip 200 → müşteri siteleri güncelleyebilir).
+
+**DIŞ KOPYA (OFFSITE) ALARMI — kendi alarm tasarımımızdaki boşluk (commit 226aed0, CANLI, migration YOK):**
+Yedek TAZELİĞİ ve TATBİKAT için alarm vardı, **dış kopya için YOKTU** → yedekler düzenli alınır, tatbikat
+geçer, iki alarm da susar; ama her dump YALNIZ yedeklemenin sebebi olan makinede durur. Sunucu
+kaybedilirse veri de MASTER_KEY de gider ve "yedeğimiz var" sanısı gerçek kurtarma imkânı OLMADAN sürer.
+Durum `/deployments` ekranında rozetti — **rozet yalnız BAKANA yarar**. CANLI ÖLÇÜM: prod'da
+`BACKUP_OFFSITE_CMD` tanımsız. İki durum AYRI şiddet: `skipped` (kanca yok) → **warning** + 7 gün dedupe
+(sürekli durum, alarm yorgunluğu yaratmamalı); `failed` (kanca kurulu ama çalışmıyor) → **critical** +
+24 saat dedupe, çünkü operatör dış kopyanın ALINDIĞINI sanıyor ve yanlış güven hiç güvenmemekten
+tehlikelidir. Yalnız BAŞARILI son yedeğe bakılır (yedek zaten alınamıyorsa asıl sorun `backupStale`;
+aynı arıza iki başlıkla bildirilmez). Yeni tip `labels.ts`'e eklendi (eklenmeseydi ham `backup_offsite`
+görünürdü — geçen turda düzeltilen kusurun aynısı). 3 şıklı entegrasyon testi + **kontrol denemesi**
+(kırmızı doğrulandı) + **canlıda tetiklenip düştüğü görüldü** (`created:1`).
 
 **ADIM ADIM İNCELEME: HAVUZ KİLİTLENMESİ + SESSİZ ÖLEN İŞ + ÜÇ OTOMATİK KAPI (migration YOK, PROD'A
 GİTMEDİ — kullanıcı onayı bekliyor):** Kullanıcı "projeyi genel olarak adım adım incele eksiklerini
