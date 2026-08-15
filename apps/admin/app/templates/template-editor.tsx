@@ -20,18 +20,19 @@ import { useConfirm } from '../../components/ui/confirm';
 import { Combobox } from '../../components/ui/combobox';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { Card } from '../../components/ui/card';
+import { DELIVERY_TEMPLATE_SAMPLE_VARS, DELIVERY_TEMPLATE_TOKENS } from '@lisans/shared';
 
-/** Önizleme için örnek değişkenler — API SAMPLE_VARS ile aynı (§6). */
-const SAMPLE_VARS: Record<string, string> = {
-  order_no: '10042',
-  site_name: 'ornek-site.com',
-  product_name: 'Windows 11 Pro',
-  units: '1',
-  customer_email: 'musteri@ornek.com',
-  items: '• Windows 11 Pro: XXXXX-XXXXX-XXXXX-XXXXX-XXXXX',
-};
+/**
+ * Önizleme için örnek değişkenler — API ile AYNI KAYNAKTAN (`@lisans/shared`).
+ *
+ * ÖNCEDEN BURADA KOPYASI VARDI VE AYRIŞMIŞTI: API `valid_until` besliyor ama bu kopyada o
+ * alan yoktu → `{{valid_until}}` yazan operatör "desteklenmiyor, gönderimde boş çıkar"
+ * uyarısı alıyordu; oysa değişken çalışıyordu ve panelin kendi sunucu-taraflı önizlemesi
+ * (templates.preview → unknownVars) onu geçerli sayıyordu. Aynı ekranda iki cevap.
+ */
+const SAMPLE_VARS = DELIVERY_TEMPLATE_SAMPLE_VARS;
 
-const TOKENS = Object.keys(SAMPLE_VARS);
+const TOKENS = DELIVERY_TEMPLATE_TOKENS;
 
 /** {{degisken}} token değişimi — API renderTemplate ile birebir. */
 function render(template: string, vars: Record<string, string>): string {

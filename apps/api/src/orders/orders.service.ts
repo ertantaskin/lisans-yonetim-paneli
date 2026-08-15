@@ -6,8 +6,14 @@ import type {
   AssignmentResult,
   OrderLineResult,
   DeliveryItem,
+  RenderedGuide,
 } from '@lisans/shared';
-import { ORDER_HTTP_STATUS, AccountPayloadSchema, parseAccountPayload } from '@lisans/shared';
+import {
+  ORDER_HTTP_STATUS,
+  AccountPayloadSchema,
+  parseAccountPayload,
+  renderGuide,
+} from '@lisans/shared';
 import { NotFoundException } from '@nestjs/common';
 import { DB, type Database } from '../db/db.module';
 import {
@@ -17,6 +23,7 @@ import {
   licenseItems,
   orderLines,
   orders,
+  productGuides,
   products,
   type Order,
   type Site,
@@ -128,11 +135,19 @@ export class OrdersService {
           productKind: products.kind,
           payloadSchema: products.payloadSchema,
           onExpiry: products.onExpiry,
+          // §7 kurulum rehberi. LEFT JOIN ile ALINIR (ayrı sorgu DEĞİL): bu uç mağaza
+          // sayfasını 5 sn zaman aşımıyla SENKRON render ediyor; round-trip sayısı bilerek
+          // düşük tutuluyor (yukarıdaki Promise.all'ın gerekçesiyle aynı). Gövde satır
+          // başına tekrarlanır ama yanıtta TEKİLLEŞTİRİLİR (aşağıya bkz.).
+          guideId: productGuides.id,
+          guideTitle: productGuides.title,
+          guideBody: productGuides.body,
         })
         .from(assignments)
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
         .innerJoin(products, eq(orderLines.productId, products.id))
+        .leftJoin(productGuides, eq(products.guideId, productGuides.id))
         .where(
           and(
             eq(assignments.orderId, order.id),
@@ -208,6 +223,8 @@ export class OrdersService {
         validUntil: r.validUntil ? r.validUntil.toISOString() : null,
         expired: r.validUntil ? r.validUntil.getTime() < now : false,
         kind: r.productKind,
+        // Rehberin yalnız KİMLİĞİ kaleme yazılır; metni `guides` dizisinde bir kez durur.
+        guideId: r.guideId,
       };
       // Hesap ürünü: şemaya göre alan-alan çöz (müşteri kendi lisansını tam görür).
       const schema =
@@ -219,6 +236,28 @@ export class OrdersService {
       return { ...base, payload: plain, fields: null };
     });
 
+    /*
+     * §7 kurulum/etkinleştirme rehberleri — TEKRARSIZ liste.
+     *
+     * Satır sorgusu rehber gövdesini her atama için tekrar getirir (LEFT JOIN); yanıt
+     * bunları rehber kimliğine göre teke indirir. Aynı rehbere bağlı 10 anahtarlı bir
+     * siparişte 4.000 karakterlik metin 10 kez değil BİR kez gider.
+     *
+     * Render (mini-biçimleme → güvenli HTML) PANELDE, tek uygulamayla yapılır: eklenti
+     * ikinci bir ayrıştırıcı taşımaz (iki uygulama er geç ayrışır ve aynı metin iki
+     * yüzeyde farklı görünür — bu projede tekrarlayan bir hata sınıfı). Sıra deterministik:
+     * satırların geliş sırası (license_items.seq) korunur.
+     */
+    const guides: RenderedGuide[] = [];
+    const seenGuides = new Set<string>();
+    for (const r of rows) {
+      if (!r.guideId || seenGuides.has(r.guideId)) continue;
+      seenGuides.add(r.guideId);
+      guides.push(
+        renderGuide({ id: r.guideId, title: r.guideTitle ?? '', body: r.guideBody ?? '' }),
+      );
+    }
+
     // F4: `held` (heldForReview) alanı — WP eklentisi İnceleme Kuyruğu durumunu (my-account bildirimi/
     // metabox rozeti) bu bayraktan okur. Eklemeli; mevcut alanlar (status/mailStatus/deliveries) değişmez.
     return {
@@ -227,6 +266,7 @@ export class OrdersService {
       held: order.heldForReview,
       mailStatus,
       deliveries,
+      guides,
       fulfilled: Number(agg?.fulfilled ?? 0),
       total: Number(agg?.total ?? 0),
       suspended: Number(flags?.suspended ?? 0) > 0,

@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.0.7
+Stable tag: 1.1.0
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,19 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.1.0 =
+* KURULUM / ETKİNLEŞTİRME REHBERİ: panelde ürüne bağlanan talimat metni artık müşterinin
+  sipariş sayfasında, o ürünün kartı içinde katlanır bir bölüm olarak görünüyor ve indirilen
+  .txt dosyasına da yazılıyor (teslimat e-postasına eklenmesi panel tarafında yapılır).
+  Anahtarı teslim etmek yetmiyordu: "Office 365'e nasıl giriş yaparım", "Windows anahtarını
+  nereye girerim" soruları destek yükünün büyük kısmıydı.
+* Teslimat görünümü KART yapısına geçti: her ürün kendi kartında (başlıkta lisans adedi),
+  anahtarlar sarmalı kod bloklarında — uzun anahtarların son haneleri artık kırpılmıyor.
+  Renkler tema-nötr (yarı saydam katmanlar) → koyu temalarda da okunur (eski sabit açık gri
+  zemin koyu temada metni yutuyordu).
+* Rehber HTML'i panelden geliyor olsa da eklentide `wp_kses` allow-list'iyle ikinci kez
+  süzülür (yalnız h4/p/ol/ul/li/strong/em/a/br/code; yalnız http-https bağlantı).
 
 = 1.0.7 =
 * Sipariş ekranındaki lisans özeti çok kullanımlı (MAK) anahtarda YANILTICIYDI: kalem sayıyordu,

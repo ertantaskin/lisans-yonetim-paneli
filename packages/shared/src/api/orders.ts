@@ -114,8 +114,30 @@ export const DeliveryItem = z.object({
   payload: z.string().nullable(),
   /** account için yapılandırılmış alanlar; diğer tiplerde null. */
   fields: z.array(DeliveryField).nullable(),
+  /**
+   * Bu kalemin ürününe bağlı kurulum/etkinleştirme rehberinin kimliği (§7); rehber yoksa null.
+   *
+   * Rehberin METNİ burada TAŞINMAZ — yanıtın üst düzeyindeki `guides` dizisinde BİR KEZ
+   * bulunur. Aynı rehber 10 anahtara bağlıysa 4.000 karakterlik metni 10 kez göndermek,
+   * mağaza sayfasını 5 sn zaman aşımıyla senkron render eden bu ucu gereksiz yorardı.
+   */
+  guideId: z.string().uuid().nullable().optional(),
 });
 export type DeliveryItem = z.infer<typeof DeliveryItem>;
+
+/** Teslimatla birlikte gönderilen kurulum rehberi — panel tarafında render edilmiştir. */
+export const DeliveryGuide = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+  /**
+   * Güvenli HTML (yalnız h4/p/ol/ul/li/strong/a/br; ham girdi kaçırılmıştır).
+   * Mağaza eklentisi bunu KENDİ `wp_kses` allow-list'iyle ikinci kez süzer.
+   */
+  html: z.string(),
+  /** Düz metin karşılığı — .txt indirme ve panel dışı yüzeyler için. */
+  text: z.string(),
+});
+export type DeliveryGuide = z.infer<typeof DeliveryGuide>;
 
 export const DeliveriesResponse = z.object({
   orderId: z.string().uuid(),
@@ -132,5 +154,11 @@ export const DeliveriesResponse = z.object({
   suspended: z.boolean().optional(),
   /** §7 — onExpiry='hide' ürünün süresi geçmiş ataması vardı (müşteriye "süreniz doldu"). */
   expiredHidden: z.boolean().optional(),
+  /**
+   * §7 kurulum/etkinleştirme rehberleri — siparişteki ürünlere bağlı, TEKRARSIZ liste.
+   * Teslimat kalemleri `guideId` ile buraya bağlanır. Rehberi olmayan siparişte boş dizi
+   * (alan hiç gelmeyebilir → eski panel sürümüne karşı okuyucular savunmacı davranmalı).
+   */
+  guides: z.array(DeliveryGuide).optional(),
 });
 export type DeliveriesResponse = z.infer<typeof DeliveriesResponse>;

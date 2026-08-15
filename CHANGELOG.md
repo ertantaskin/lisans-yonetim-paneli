@@ -14,6 +14,144 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Kurulum / etkinleştirme rehberleri + teslimat arayüzü yenilemesi (migration 0045, eklenti 1.1.0)
+
+Lisans anahtarını teslim etmek yetmiyordu: müşteri "Office 365'e nasıl giriş yaparım",
+"Windows anahtarını nereye girerim" cevabını alamadığı için destek yükü oluşuyordu. Artık
+operatör talimatı panelde bir kez yazıyor, ürüne bağlıyor; teslimatla birlikte otomatik gidiyor.
+
+**Veri modeli.** Yeni `product_guides` tablosu + `products.guide_id` (`ON DELETE SET NULL`).
+Metin ürüne GÖMÜLMEDİ: "Office 2021 etkinleştirme" anlatısı onlarca SKU'da aynıdır, gömülü
+olsaydı tek bir adım değişince onlarca ürünü elle güncellemek gerekirdi (ve biri unutulunca
+müşteriye YANLIŞ talimat giderdi). Başlık benzersizliği Türkçe-duyarlı (`translate(title,'İIı','iii')`
+— düz `lower()` "OFFICE KURULUMU" ile "office kurulumu"nu ayrı sayıyor, `product_categories`
+ile aynı ölçülmüş gerekçe). Rehber silinince ürün silinmez, rehbersiz kalır ve kaç ürünün
+etkilendiği onay kutusunda yazılır.
+
+**Üç yüzey, TEK render.** Mağaza sipariş sayfası (HTML), teslimat e-postası (düz metin) ve
+müşterinin indirdiği `.txt` aynı koddan beslenir (`packages/shared/domain/guide.ts`). Eklenti
+PHP'de ikinci bir ayrıştırıcı TAŞIMAZ — iki uygulama er geç ayrışır ve aynı metin iki yüzeyde
+farklı görünür (bu projede tekrar eden bir hata sınıfı). Biçimleme markdown'ın küçük ve güvenli
+bir alt kümesidir: ham girdi önce kaçırılır, sonra yalnız tanınan kalıplar (`1.` adım listesi,
+`-` madde, `##` başlık, `**kalın**`, `https://` bağlantı) etikete çevrilir → rehber metni
+müşterinin tarayıcısında script çalıştıramaz. Eklenti üretilen HTML'i ayrıca `wp_kses`
+allow-list'iyle süzer (savunma derinliği).
+
+**Karakter sınırı 4.000 — sayı e-posta istemcisinden geriye doğru hesaplandı.** Gmail bir
+e-postayı 102 KB'ı aşınca kırpar ve kırpılan yer genelde mesajın SONUDUR, yani tam da rehberin
+bulunduğu yer. Türkçe metinde 4.000 karakter en kötü ~7 KB; şablon + anahtar listesi ~2-6 KB;
+quoted-printable ~1,3 kat şişirir → 3 rehberli siparişte en kötü ~30 KB. E-postaya en fazla
+3 rehber ve toplam 12.000 karakter konur; sınıra takılan rehber SESSİZCE düşürülmez, müşteriye
+kalanları nerede bulacağı yazılır. Sınırın SEBEBİ panelde de yazılıdır.
+
+**Mevcut şablonlarda rehber sessizce kaybolmuyor.** Şablonda `{{guides}}` varsa blok tam oraya
+yerleşir; YOKSA mailin sonuna eklenir (`withGuides`). Yalnız token'a güvenilseydi, veritabanında
+zaten kayıtlı olan ve bu token'ı içermeyen şablonlarla çalışan operatör rehberin gittiğini
+SANIR, müşteri hiç göremezdi ve hata da alınmazdı. Kontrol denemesiyle doğrulandı (fix geri
+alınınca test KIRMIZI).
+
+**Numaralandırma kusuru (render sırasında bulundu).** Adımlar arasına boş satır koymak çok doğal
+bir yazım biçimi ama her boş satır yeni bir blok açıyor → her adım kendi `<ol>`'u oluyor ve HTML
+numarayı 1'den YENİDEN başlatıyordu: müşteri "1. 1. 1." görürdü, üstelik aynı metnin düz metin
+sürümü doğru numaraları gösteriyordu (iki yüzey sessizce ayrışıyordu). `start` özniteliğiyle
+yazılan numara korunur; eklentinin kses listesi `ol` için `start`'a izin verir (vermezse
+öznitelik sessizce silinir ve kusur geri gelir).
+
+**Panel.** Yeni `/guides` ekranı: başlık + metin, **canlı önizleme** (mağaza görünümü ↔ e-posta
+görünümü sekmeli), karakter sayacı, biçimleme yardımı ve **hazır taslaklar** (Office 365,
+Office 2021/2019, Windows 10/11, genel hesap). Hiçbir ürüne bağlı olmayan rehber müşteriye ASLA
+ulaşmaz → listede "Ürüne bağlı değil" uyarısıyla işaretlenir (sessiz kayıp koruması). Ürün
+formuna rehber alanı eklendi (serbest metin değil, listeden seçim); mevcut seçim listede yoksa
+seçenek olarak basılır — aksi halde kaydetmek ürünü sessizce rehbersiz bırakırdı.
+
+**Mağaza teslimat görünümü kart yapısına geçti** (eklenti 1.1.0): her ürün kendi kartında
+(başlıkta lisans adedi), anahtarlar sarmalı kod bloklarında — uzun anahtarların son haneleri
+artık kırpılmıyor. Renkler tema-nötr yarı saydam katmanlar; eski sabit açık gri zemin koyu
+temalarda metni yutuyordu. Rehber, o ürünün kartı içinde katlanır bölüm olarak durur (tek ürünlü
+siparişte açık gelir). Tarayıcıda ölçüldü: açık+koyu temada okunur, 360px kapta yatay kayma 0,
+taşan öğe 0, kırpılan anahtar 0.
+
+**Yol boyunca kapatılan sapma.** Şablon editörü "desteklenen değişkenler" listesinin KENDİ
+kopyasını tutuyordu ve ayrışmıştı: API `valid_until` besliyor ama editörün kopyasında o alan
+YOKTU → `{{valid_until}}` yazan operatör "desteklenmiyor, gönderimde boş çıkar" uyarısı
+alıyordu; oysa değişken çalışıyor ve panelin kendi sunucu-taraflı önizlemesi onu geçerli
+sayıyordu (aynı ekranda iki cevap). Liste `@lisans/shared`'a taşındı, iki taraf oradan okuyor.
+
+Doğrulama: typecheck 4/4 · üç kapı temiz (`use-server` 26/90, nest-wiring 42/69, env 44) ·
+birim **57 + 135 + 152** · build 3/3 · şema sapması yok (`db:generate` "No schema changes";
+0045'in damgası 0044'ten büyük — bu projede tekrarlayan `when` tuzağı kontrol edildi).
+KOŞULAMAYAN: PHP-lint + WP davranış testleri (bu makinede PHP yok) ve entegrasyon/yarış paketi
+(docker/PG/Redis yok) — CI ve VPS izole test DB'sinde koşulmalı.
+
+### Denetim: havuz kilitlenmesi, sessiz ölen arka plan işi, üç otomatik kapı (migration YOK)
+
+Proje adım adım yeniden incelendi. Doğrulama temeli önce ÖLÇÜLDÜ (neyin bozuk olduğunu
+bilmeden aramamak için): typecheck 4/4, birim **148 + 135 + 35**, `pnpm audit --prod` temiz,
+migration `_journal` sıra ihlali yok, rota/menü/rehber kapsamı tam, env geçirme tam,
+etiket sözlükleri API'nin ürettiği değerlerin tamamını karşılıyor. Aşağıdakiler bulunan
+gerçek kusurlardır.
+
+**Fiş kesme, ağır yük altında tüm paneli kilitleyebilirdi.** `supplier-claims.create`
+transaction'ının İÇİNDEN `listQuarantine` kök bağlantı havuzunu kullanıyordu. postgres.js'te
+`transaction()` havuzdan bir bağlantı rezerve eder; gövdeden kök havuza sorgu atmak İKİNCİ bir
+bağlantı ister. Koddaki gerekçe "advisory-lock bağlantı açlığını da sınırlar (aynı anda en
+fazla bir fiş kesme)" diyordu ve bu **akıl yürütme yanlıştı**: kilit yalnız kaç transaction'ın
+kilidi GEÇTİĞİNİ sınırlar, kaçının BAĞLANTI TUTTUĞUNU değil. Eşzamanlı istekler (çift tık,
+birkaç operatör, retry) kilidi beklerken havuzu (max 10) doldurursa kazanan istek ikinci
+bağlantıyı alamaz ve hiçbiri ilerleyemez → `idle_in_transaction_session_timeout` (60 sn)
+hepsini öldürene dek `/v1/health` dahil tüm panel bağlantısız kalır. Bu arıza sınıfı
+`createOrder` yolunda daha önce k6 ile ölçülmüştü (100 VU → 0 tamamlanan iterasyon).
+`listQuarantine` artık opsiyonel bir executor alıyor ve fiş kesme kendi `tx`'ini geçiyor.
+İki incelik: (a) görüntüleme-audit'inin "best-effort yutma"sı YALNIZ kök havuzda geçerli —
+transaction içinde patlayan bir ifade tüm transaction'ı abort eder (25P02) ve yutmak bunu
+gizleyip sonraki her ifadeyi anlaşılmaz biçimde düşürürdü, o yüzden tx yolunda hata propage
+edilir; (b) üç id-toplama sorgusu tx içinde SIRALI koşar — kod tabanında bir transaction
+gövdesinde `Promise.all` kullanan başka örnek yok, doğrulanamayan bir desene bağlanmadı.
+
+**Arka plan stok tamamlama işi sessizce ölebiliyordu.** Stok girişi inline olarak yalnız
+CAP (vars. 200) satır tamamlar, gerisini `stock-autocomplete` kuyruğuna devreder. Bu
+işleyicinin `@OnWorkerEvent('failed')` alarmı YOKTU — üstelik hem işleyici hem kuyruk dosyası
+"kalıcı başarısızlıklar /ops dead-letter'da görünür" DİYORDU; bu yanlış: `/ops` yalnız
+`outbox_events` + `email_log` okur, BullMQ'nun başarısız işlerine hiç bakmaz. Yani stok
+girilmiş olmasına rağmen bekleyen siparişler teslim edilmeyebilir, müşteri lisansını almaz ve
+hiçbir alarm çıkmazdı; operatör bunu ancak şikâyetle fark ederdi. Diğer süpürmelerle aynı
+desende kritik alarm eklendi (yalnız SON denemede — ara denemelerde alarm, sonradan başarılı
+olan geçici DB hatalarını kritik bildirime çevirirdi) ve iki yanlış yorum düzeltildi.
+
+**Tie-break eksikleri (projenin kendi kuralı: LIMIT'li her ORDER BY'ın tie-break'i olmalı).**
+En önemlisi `resolveMapping`: `mappings_site_remote_uniq` unique index'i NULL varyasyonu ayrı
+saydığı için varyasyonsuz mükerrer eşleme satırı mümkündür (uygulamada advisory-lock ile
+engelleniyor, eski/elle veri taşıyabilir) ve eşit `created_at`'te hangi ürünün teslim
+edileceği keyfiydi; `/mappings` ekranının bu seçimi taklit eden sorgusu da aynı sıraya
+hizalandı (ayrışırlarsa panel, teslimatta seçilecek olandan başka bir eşleme gösterir).
+Ayrıca global arama (sipariş), destek kuyruğu (200 tavanlı), eşlemesiz ürün listesi
+(500 tavanlı — çok kalemli siparişlerde `last_seen` eşitliği olağandır) ve katalog listesi
+(5000 tavanlı; varyasyonlar çoğu mağazada ebeveyniyle aynı adı taşır).
+
+**Üç sessiz-arıza sınıfı artık otomatik kapıya bağlandı** (üçü de `pnpm typecheck` ve CI'da
+koşar; üçü de fix geri alınarak KIRMIZI olduğu doğrulandı):
+
+- `scripts/check-nest-wiring.js` — bir sağlayıcının constructor bağımlılığı modülünden
+  görünmüyorsa **API hiç boot etmez**; `tsc`/`next build` bunu yakalamaz. Bu sınıf iki kez
+  yaşandı. Not: aynı denetim önce `Reflect.getMetadata('design:paramtypes')` ile bir birim
+  testi olarak yazıldı ve **hiçbir şeyi denetlemediği** görüldü (esbuild `emitDecoratorMetadata`
+  üretmez → glue kaldırıldığında test yeşil kaldı) — TypeScript AST'ye taşındı.
+- `scripts/check-env-passthrough.js` — kodun okuduğu her çalışma-anı env değişkeni compose'da
+  geçirilmeli ve `.env.example`de belgeli olmalı ("`.env`'e yazdım, hiçbir şey değişmedi"
+  sınıfı; iki kez yaşandı). İlk sürümü yalnız `process.env.X` okumalarına bakıyordu ve 44
+  değişkenin 18'ini görüyordu — görünmeyenler tam da geçmişte unutulanlardı (`RETENTION_*`,
+  `HMAC_IP_FAIL_LIMIT`, `SMTP_*`); `ConfigService.get()` ve `days()/envInt()` yardımcıları da
+  tarandı. Bulduğu tek gerçek boşluk: `APP_VERSION` yalnız yorum satırıydı, atanabilir satırı
+  yoktu → operatör ayarlanabilir olduğunu göremiyordu.
+- `scripts/smoke-routes.sh` — rota listesi artık `app/` ağacıyla otomatik karşılaştırılır.
+  Elle karşılaştırma notu yetmemişti: `categories`, `sites/new` ve `templates/new` üç ayrı
+  turda listeye eklenmeyi unutuldu, yani betik vardı ama yeni ekranları hiç taramıyordu.
+
+Doğrulanmış ama düzeltilmeyen: `dynamic-quota-hold` + `replace-assignment` testlerinde bir
+kez görülen flake'in sebebi **kanıtlanamadı** (uydurulmadı). Tek makul aday, ilk testin 20
+siparişlik döngüsünün yerel gece yarısını geçmesi (`date_trunc('day', now())` bugünü sıfırlar)
+— pencere çok dar, tekrarlatılamadı.
+
 ### Denetim: zaman çizelgesi sırası + görünmeyen etiketler (migration 0044)
 
 Proje baştan sona yeniden denetlendi (doğrulama temeli: typecheck 4/4, birim 148+135+35,

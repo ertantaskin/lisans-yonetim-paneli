@@ -13,6 +13,8 @@ import { CategoryGrid } from '../../components/category-grid';
 import { LicenseItemsTable } from '../../components/inventory/license-items-table';
 import { getCategories } from '../categories/queries';
 import { UNCATEGORIZED, type CategoryRow } from '../../lib/categories';
+import { getGuides } from '../guides/queries';
+import type { GuideOption } from '../../lib/guides';
 import { includesTr } from '../../lib/utils';
 import { SavedViewsMenu } from '../../components/saved-views-menu';
 
@@ -54,6 +56,20 @@ export default async function StockPage({
   } catch {
     // API eski sürümdeyse (dağıtım sapması) ekran kırılmaz: düz ürün tablosuna düşer.
     categoriesUnavailable = true;
+  }
+
+  /*
+   * Kurulum rehberi seçenekleri (§7) — ürün formundaki açılır liste için. Kategoriyle AYNI
+   * gerekçe: ürünün rehberi satır içi "Düzenle"den de değiştirilebilmeli ve liste
+   * geçirilmezse mevcut seçim sessizce SIFIRLANIR (form bunu ayrıca koruyor, bkz.
+   * guideOptions). Uç erişilemezse ekran KIRILMAZ — alan yalnız "Rehber gönderme" sunar
+   * (dağıtım sapmasına dayanıklılık; admin ve api ayrı imajlar, biri önce dağıtılabilir).
+   */
+  let guideOptions: GuideOption[] = [];
+  try {
+    guideOptions = (await getGuides()).map((g) => ({ id: g.id, title: g.title }));
+  } catch {
+    guideOptions = [];
   }
 
   /**
@@ -128,7 +144,7 @@ export default async function StockPage({
             <PackagePlus className="size-4" /> Stok Girişi
           </Link>
         </Button>
-        <ProductCreateSheet categories={selectableCategories} />
+        <ProductCreateSheet categories={selectableCategories} guides={guideOptions} />
       </PageHeader>
 
       {/* Rehber şerit: "panel ürünü ekleniyor, sonra mağaza ürünüyle eşleşiyor" akışı
@@ -240,7 +256,7 @@ export default async function StockPage({
               </Button>
             </EmptyState>
           ) : (
-            <ProductsTable products={visible} categories={selectableCategories} />
+            <ProductsTable products={visible} categories={selectableCategories} guides={guideOptions} />
           )}
         </>
       ) : null}

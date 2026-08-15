@@ -398,6 +398,7 @@ export class ProductsService {
         mappedSites: string[];
         mappingCount: number;
         categoryName: string | null;
+        guideTitle: string | null;
       }
     >
   > {
@@ -454,12 +455,23 @@ export class ProductsService {
     );
     const catName = new Map(catRows.map((c) => [c.id, c.name]));
 
+    // Rehber BAŞLIĞI (§7) — kategori adıyla aynı gerekçe: JOIN değil, küçük ayrı sorgu.
+    // Rehber GÖVDESİ ÇEKİLMEZ: ürün listesi 4.000 karakterlik metinleri taşımamalı
+    // (liste ekranı yalnız "hangi rehber bağlı" bilgisini gösterir).
+    const guideRows = await rawRows<{ id: string; title: string }>(
+      this.db,
+      sql`SELECT id, title FROM product_guides`,
+    );
+    const guideTitle = new Map(guideRows.map((g) => [g.id, g.title]));
+
     return rows.map((r) => {
       const m = byProduct.get(r.product.id);
       return {
         ...r.product,
         // null = Kategorisiz (geçerli durum; ekran ayrı kovada gösterir, ürünü GİZLEMEZ).
         categoryName: r.product.categoryId ? (catName.get(r.product.categoryId) ?? null) : null,
+        // null = rehber yok (geçerli durum: her ürün kurulum talimatı gerektirmez).
+        guideTitle: r.product.guideId ? (guideTitle.get(r.product.guideId) ?? null) : null,
         availableStock: Number(r.availableStock),
         // Eşlemesi olmayan ürün → boş dizi (null değil): ekran "eşleme yok" uyarısını
         // BİLGİYE dayanarak basar, alanın gelmemesiyle karıştırmaz.
@@ -796,7 +808,8 @@ export class ProductsService {
             eq(siteProductMappings.active, true),
           ),
         )
-        .orderBy(asc(siteProductMappings.createdAt))
+        // Tie-break (id) — bkz. ürün-seviyesi daldaki gerekçe.
+        .orderBy(asc(siteProductMappings.createdAt), asc(siteProductMappings.id))
         .limit(1);
       if (row) return { productId: row.productId, bundleQty: row.bundleQty };
     }
@@ -813,7 +826,12 @@ export class ProductsService {
           eq(siteProductMappings.active, true),
         ),
       )
-      .orderBy(asc(siteProductMappings.createdAt))
+      // Tie-break (id) ŞART: `mappings_site_remote_uniq` unique index'i NULL varyasyonu AYRI
+      // sayar (Postgres semantiği) — bu yüzden varyasyonsuz MÜKERRER eşleme satırı mümkündür
+      // (uygulama tarafında advisory-lock ile engelleniyor, ama eski/elle veri taşıyabilir).
+      // Eşit created_at'te tie-break olmadan HANGİ ÜRÜNÜN teslim edileceği keyfi olurdu; ayrıca
+      // /mappings ekranı bu seçimi taklit ediyor → iki taraf aynı satırı seçmeli.
+      .orderBy(asc(siteProductMappings.createdAt), asc(siteProductMappings.id))
       .limit(1);
 
     return row ? { productId: row.productId, bundleQty: row.bundleQty } : null;
@@ -954,7 +972,10 @@ export class ProductsService {
             )
           GROUP BY o.site_id, s.domain, ol.remote_product_id,
                    NULLIF(NULLIF(ol.remote_variation_id, '0'), '')
-          ORDER BY last_seen DESC
+          -- Tie-break ŞART: bir siparişin TÜM satırları tek transaction'da yazılır → aynı
+          -- created_at, yani çok kalemli siparişlerde last_seen EŞİTLİĞİ olağan. Tavan 500;
+          -- tie-break olmadan pencereye hangi eşlemesiz ürünün gireceği keyfi olurdu.
+          ORDER BY last_seen DESC, remote_product_id, remote_variation_id NULLS FIRST
           LIMIT 500
         )
         SELECT g.*, pm.id AS mapping_id, pm.product_id AS mapped_product_id, p.name AS mapped_product_name
@@ -968,11 +989,14 @@ export class ProductsService {
             AND m.remote_product_id = g.remote_product_id
             AND m.active = false
             AND (m.remote_variation_id IS NULL OR m.remote_variation_id = g.remote_variation_id)
-          ORDER BY (m.remote_variation_id IS NOT NULL) DESC, m.created_at
+          -- Tie-break (m.id) resolveMapping ile BİREBİR aynı: iki taraf ayrışırsa panel,
+          -- teslimatta seçilecek olandan BAŞKA bir eşlemeyi gösterir.
+          ORDER BY (m.remote_variation_id IS NOT NULL) DESC, m.created_at, m.id
           LIMIT 1
         ) pm ON true
         LEFT JOIN products p ON p.id = pm.product_id
-        ORDER BY g.last_seen DESC
+        -- Dış sıralama da CTE ile AYNI tie-break'i kullanır → ekranda satır sırası sabit.
+        ORDER BY g.last_seen DESC, g.remote_product_id, g.remote_variation_id NULLS FIRST
       `,
     );
     return rows.map((r) => ({
@@ -1315,8 +1339,12 @@ export class ProductsService {
         LEFT JOIN variation_stats v ON v.remote_product_id = b.remote_product_id
         -- Sıralama: İŞ GEREKTİREN satırlar üstte — gerçekten eşlenmemişler VE eşlemesi PASİF olanlar
         -- (ikisi de teslimat yapmaz). AKTİF eşli satırlar ve ebeveyn satırı (bilgi amaçlı) altta.
+        -- Tie-break ŞART: aynı ada sahip satırlar olağandır (bir varyasyonlu ürünün ebeveyni ve
+        -- varyasyonları çoğu mağazada AYNI adı taşır) ve liste 5000 ile tavanlı → tie-break
+        -- olmadan hem pencere hem satır sırası keyfi olurdu.
         ORDER BY (b.mapping_active IS TRUE
-                  OR (coalesce(b.kind, '') = 'variable' AND b.remote_variation_id IS NULL)), b.name
+                  OR (coalesce(b.kind, '') = 'variable' AND b.remote_variation_id IS NULL)), b.name,
+                 b.remote_product_id, b.remote_variation_id NULLS FIRST
         LIMIT 5000
       `,
     );

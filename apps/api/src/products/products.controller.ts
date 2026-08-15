@@ -17,6 +17,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { ProductsService } from './products.service';
 import { ProductCategoriesService } from './product-categories.service';
+import { ProductGuidesService } from './product-guides.service';
 import { KEY_FORMAT_MAX_LENGTH, checkKeyFormatSafety } from '../stock/stock.service';
 
 /**
@@ -71,6 +72,12 @@ const ProductObject = z.object({
    * kategori olmasın). null/boş = Kategorisiz (geçerli bir durum, ürün gizlenmez).
    */
   categoryId: z.string().uuid().nullable().optional(),
+  /**
+   * Kurulum / etkinleştirme rehberi (§7): `product_guides` kaydının id'si. Metin ürüne
+   * GÖMÜLMEZ — aynı anlatı onlarca SKU'da ortaktır ve tek yerden düzeltilebilmelidir.
+   * null/boş = rehber yok (geçerli durum; her ürün talimat gerektirmez).
+   */
+  guideId: z.string().uuid().nullable().optional(),
 });
 
 const CreateProductBody = ProductObject
@@ -168,11 +175,13 @@ export class ProductsController {
   constructor(
     private readonly products: ProductsService,
     private readonly categories: ProductCategoriesService,
+    private readonly guides: ProductGuidesService,
   ) {}
 
   @Post('products')
   async create(@Body(new ZodBody(CreateProductBody)) body: CreateProductBody) {
     await this.assertCategoryExists(body.categoryId);
+    await this.assertGuideExists(body.guideId);
     return this.products.create(this.toDbInput(body));
   }
 
@@ -187,6 +196,7 @@ export class ProductsController {
     @Body(new ZodBody(UpdateProductBody)) body: UpdateProductBody,
   ) {
     await this.assertCategoryExists(body.categoryId);
+    await this.assertGuideExists(body.guideId);
     return this.products.update(id, this.toDbInput(body));
   }
 
@@ -199,6 +209,15 @@ export class ProductsController {
     const all = await this.categories.list();
     if (!all.some((c) => c.id === categoryId)) {
       throw new NotFoundException('Kategori bulunamadı');
+    }
+  }
+
+  /** Kategori ile AYNI gerekçe: var olmayan rehber id'si opak 500 değil, anlamlı 404 vermeli. */
+  private async assertGuideExists(guideId?: string | null) {
+    if (!guideId) return;
+    const all = await this.guides.list();
+    if (!all.some((g) => g.id === guideId)) {
+      throw new NotFoundException('Kurulum rehberi bulunamadı');
     }
   }
 

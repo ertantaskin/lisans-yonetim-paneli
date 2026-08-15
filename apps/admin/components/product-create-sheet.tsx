@@ -22,9 +22,12 @@ const createInitial: FormState = { ok: false };
  */
 export function ProductCreateSheet({
   categories = [],
+  guides = [],
 }: {
   /** Kategori seçenekleri (`/categories`). Boşsa form yalnız "Kategorisiz" sunar. */
   categories?: Array<{ id: string; name: string }>;
+  /** Kurulum rehberi seçenekleri (`/guides`). Boşsa form yalnız "Rehber gönderme" sunar. */
+  guides?: Array<{ id: string; title: string }>;
 }) {
   const [open, setOpen] = React.useState(false);
   const [state, action, pending] = React.useActionState(createProductAction, createInitial);
@@ -49,7 +52,7 @@ export function ProductCreateSheet({
         </SheetHeader>
         {/* key={open}: her açılışta formu temiz başlat. */}
         <form key={String(open)} action={action} className="space-y-3 p-4 pt-0">
-          <ProductFormFields categories={categories} />
+          <ProductFormFields categories={categories} guides={guides} />
           {state.error && (
             <p role="alert" className="text-sm text-destructive">
               {state.error}

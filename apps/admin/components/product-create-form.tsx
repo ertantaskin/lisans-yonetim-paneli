@@ -42,10 +42,13 @@ function toLocalDatetime(iso: string): string {
 export function ProductFormFields({
   defaults,
   categories = [],
+  guides = [],
 }: {
   defaults?: Partial<ProductRow>;
   /** Seçilebilir kategoriler (`/categories` ekranından yönetilir). Boş dizi = henüz yok. */
   categories?: Array<{ id: string; name: string }>;
+  /** Seçilebilir kurulum rehberleri (`/guides` ekranından yönetilir). Boş dizi = henüz yok. */
+  guides?: Array<{ id: string; title: string }>;
 }) {
   const [kind, setKind] = useState(defaults?.kind ?? 'key');
   const [usageMode, setUsageMode] = useState(defaults?.usageMode ?? 'single');
@@ -80,6 +83,13 @@ export function ProductFormFields({
     if (!current || categories.some((c) => c.id === current)) return categories;
     return [{ id: current, name: defaults?.categoryName ?? 'Mevcut kategori' }, ...categories];
   }, [categories, defaults?.categoryId, defaults?.categoryName]);
+
+  /** Kategori ile AYNI sessiz-veri-kaybı koruması (bkz. yukarıdaki not). */
+  const guideOptions = React.useMemo(() => {
+    const current = defaults?.guideId;
+    if (!current || guides.some((g) => g.id === current)) return guides;
+    return [{ id: current, title: defaults?.guideTitle ?? 'Mevcut rehber' }, ...guides];
+  }, [guides, defaults?.guideId, defaults?.guideTitle]);
 
   return (
     <div className="space-y-6 text-sm">
@@ -133,6 +143,33 @@ export function ProductFormFields({
             {categoryOptions.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        {/* Kurulum rehberi (§7): lisansla BİRLİKTE müşteriye giden talimat. Metin ürüne
+            gömülmez — `/guides` ekranındaki kayda bağlanır (aynı anlatı onlarca SKU'da
+            ortaktır ve tek yerden düzeltilebilmelidir). Boş = rehber gönderilmez. */}
+        <Field
+          label="Kurulum rehberi"
+          htmlFor="p-guide"
+          hint={
+            guides.length > 0
+              ? 'Sipariş sayfasında görünür, teslimat e-postasına eklenir. Boş bırakılırsa bu ürün için talimat gönderilmez.'
+              : 'Henüz rehber yok — Kurulum Rehberleri ekranından ekleyebilirsiniz. Boş bırakabilirsiniz.'
+          }
+        >
+          <select
+            id="p-guide"
+            name="guideId"
+            defaultValue={defaults?.guideId ?? ''}
+            className={`w-full ${selectClass}`}
+          >
+            <option value="">Rehber gönderme</option>
+            {guideOptions.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.title}
               </option>
             ))}
           </select>

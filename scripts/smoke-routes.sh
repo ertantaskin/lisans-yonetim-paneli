@@ -27,12 +27,36 @@ BASE="${1:-http://127.0.0.1:3006}"
 # KAPSAM DENETİMİ (elle): aşağıdaki liste app/ ağacıyla karşılaştırılabilir —
 #   find apps/admin/app -name page.tsx | sed 's|.*app/||; s|/page.tsx$||' | grep -v '\[' | sort
 ROUTES=(
-  dashboard pending review orders stock stock/import categories mappings quarantine quarantine/claims quarantine/records sites
+  dashboard pending review orders stock stock/import categories guides mappings quarantine quarantine/claims quarantine/records sites
   sites/new suppliers purchase-orders batches support customers reports reports/costs reports/sla reports/reorder ai notifications
   ops security audit admins admins/security templates templates/new releases deployments settings guide products
 )
 
 fail=0
+
+# ── KAPSAM DENETİMİ (otomatik) ───────────────────────────────────────────────
+# Yukarıdaki "elle karşılaştırılabilir" notu YETMEDİ: `categories`, `sites/new` ve
+# `templates/new` üç ayrı turda listeye eklenmeyi UNUTULDU — yani betik vardı ama yeni
+# ekranları hiç taramıyordu (değerinin tamamı kapsamında). Artık liste app/ ağacıyla
+# OTOMATİK karşılaştırılır; eksik varsa betik hemen düşer.
+# Repo yoksa (yalnız betik kopyalanmışsa) denetim atlanır — duman testi yine koşar.
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/apps/admin/app"
+if [ -d "$APP_DIR" ]; then
+  # Bilinçli dışarıda: '/' (middleware yönlendirmesi, kendi sayfası yok) ve 'login'
+  # (kimlik doğrulama akışı — hata sınırı testi değil).
+  missing=''
+  while IFS= read -r r; do
+    case " ${ROUTES[*]} " in *" $r "*) ;; *) missing="$missing $r" ;; esac
+  done < <(find "$APP_DIR" -name page.tsx | sed "s|^$APP_DIR/||; s|/page.tsx$||; s|^page.tsx$||" \
+             | grep -v '\[' | grep -v '^$' | grep -vx 'login' | sort)
+  if [ -n "$missing" ]; then
+    echo "✗ KAPSAM EKSİK — bu ekranlar app/ altında var ama ROUTES listesinde yok:"
+    for m in $missing; do echo "    /$m"; done
+    echo "  scripts/smoke-routes.sh içindeki ROUTES dizisine ekleyin (yeni sayfa = yeni satır)."
+    exit 1
+  fi
+fi
+
 printf '%-22s %-6s %s\n' 'ROTA' 'KOD' 'DURUM'
 for r in "${ROUTES[@]}"; do
   body="$(curl -sL -w $'\n%{http_code}' "$BASE/$r" 2>/dev/null)"

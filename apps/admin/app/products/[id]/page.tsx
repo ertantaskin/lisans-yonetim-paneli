@@ -43,6 +43,8 @@ import {
 } from '../../../lib/labels';
 import { getProductDetail, type ProductDetail } from './queries';
 import { getCategories } from '../../categories/queries';
+import { getGuides } from '../../guides/queries';
+import type { GuideOption, GuideRow } from '../../../lib/guides';
 import { UNCATEGORIZED, type CategoryRow } from '../../../lib/categories';
 import { StockAdjustForm } from './stock-adjust-form';
 import { ProductTabs } from './product-tabs';
@@ -74,6 +76,7 @@ export default async function ProductDetailPage({
   let data: ProductDetail | null = null;
   let sites: SiteRow[] = [];
   let categories: CategoryRow[] = [];
+  let guides: GuideRow[] = [];
   let error: string | null = null;
   try {
     // Detay + siteler + kategoriler paralel (siteler eşleme formunun site seçimi için,
@@ -82,10 +85,13 @@ export default async function ProductDetailPage({
     // Kategori ucu KRİTİK DEĞİL: eski API imajında (dağıtım sapması) 404 dönebilir. O yüzden
     // `.catch(() => [])` ile YUTULUR — Promise.all'a çıplak bırakılsaydı tüm ürün detayı hata
     // kartına düşerdi (/stock ekranındaki savunmalı desenin aynısı).
-    [data, sites, categories] = await Promise.all([
+    [data, sites, categories, guides] = await Promise.all([
       getProductDetail(id),
       apiGet<SiteRow[]>('/v1/admin/sites'),
       getCategories().catch(() => [] as CategoryRow[]),
+      // Rehber ucu da KRİTİK DEĞİL (kategoriyle aynı gerekçe): erişilemezse alan yalnız
+      // "Rehber gönderme" sunar, ürün detayı hata kartına DÜŞMEZ.
+      getGuides().catch(() => [] as GuideRow[]),
     ]);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
@@ -114,6 +120,7 @@ export default async function ProductDetailPage({
   const selectableCategories = categories
     .filter((c) => c.id !== UNCATEGORIZED)
     .map((c) => ({ id: c.id, name: c.name }));
+  const guideOptions: GuideOption[] = guides.map((g) => ({ id: g.id, title: g.title }));
 
   // Düşük stok işareti (§12): eşik tanımlı ve kalan available <= eşik.
   const lowStock =
@@ -175,6 +182,7 @@ export default async function ProductDetailPage({
             <ProductEditSheet
               product={{ ...product, availableStock: stock.available }}
               categories={selectableCategories}
+              guides={guideOptions}
               trigger={
                 <Button variant="outline" size="sm">
                   <Pencil /> Düzenle

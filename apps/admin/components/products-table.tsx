@@ -44,6 +44,7 @@ function isPreRelease(row: ProductTableRow): boolean {
 
 const buildColumns = (
   categories: Array<{ id: string; name: string }>,
+  guides: Array<{ id: string; title: string }>,
 ): ColumnDef<ProductTableRow>[] => [
   {
     accessorKey: 'name',
@@ -221,7 +222,7 @@ const buildColumns = (
     enableHiding: false,
     cell: ({ row }) => (
       <div className="flex items-center justify-end gap-1">
-        <ProductEditSheet product={row.original} categories={categories} />
+        <ProductEditSheet product={row.original} categories={categories} guides={guides} />
         <Button asChild variant="ghost" size="sm">
           <Link href={`/products/${row.original.id}`}>
             Detay <ArrowRight />
@@ -235,14 +236,17 @@ const buildColumns = (
 export function ProductsTable({
   products,
   categories = [],
+  guides = [],
 }: {
   products: ProductTableRow[];
   /** Satır içi "Düzenle" panelinde kategori değiştirebilmek için (`/categories` listesi). */
   categories?: Array<{ id: string; name: string }>;
+  /** Aynı panelde kurulum rehberi değiştirebilmek için (`/guides` listesi). */
+  guides?: Array<{ id: string; title: string }>;
 }) {
   // Kategori listesi kolonlara PROP olarak girmek zorunda (düzenleme sheet'i satırda) →
   // kolonlar modül sabiti olamaz; kategori değişince yeniden kurulur.
-  const columns = React.useMemo(() => buildColumns(categories), [categories]);
+  const columns = React.useMemo(() => buildColumns(categories, guides), [categories, guides]);
 
   // kind + eşleme facet seçenekleri veriden türetilir
   const facets: FacetConfig[] = React.useMemo(() => {

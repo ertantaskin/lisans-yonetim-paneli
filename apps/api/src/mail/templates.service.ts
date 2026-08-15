@@ -10,6 +10,8 @@ const DEFAULT_BODY = `Merhaba,
 
 {{items}}
 
+{{guides}}
+
 Herhangi bir sorun olursa yanıtlayabilirsiniz.
 
 İyi günler,

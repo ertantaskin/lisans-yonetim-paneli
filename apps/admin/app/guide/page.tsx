@@ -7,6 +7,7 @@ import {
   Workflow,
   Plug,
   Boxes,
+  BookMarked,
   FolderTree,
   LayoutDashboard,
   PackagePlus,
@@ -39,6 +40,7 @@ const TOC: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'dashboard', label: 'Genel Bakış (canlı iş istasyonu)', icon: LayoutDashboard },
   { id: 'kurulum', label: 'İlk kurulum: site bağlama', icon: Plug },
   { id: 'kategori', label: 'Kategoriler', icon: FolderTree },
+  { id: 'kurulum-rehberi', label: 'Kurulum rehberleri', icon: BookMarked },
   { id: 'urunler', label: 'Ürünler', icon: Boxes },
   { id: 'stokgiris', label: 'Stok girişi', icon: PackagePlus },
   { id: 'esleme', label: 'Ürün eşleştirme', icon: Link2 },
@@ -299,6 +301,61 @@ export default function GuidePage() {
         <Tip>
           Kategori zorunlu değildir. Hiç kategori açmasanız da ürünleriniz{' '}
           <strong>&quot;Kategorisiz&quot;</strong> kartında toplanır — hiçbir ürün kaybolmaz.
+        </Tip>
+      </Section>
+
+      <Section
+        id="kurulum-rehberi"
+        icon={BookMarked}
+        title="Kurulum rehberleri"
+        description="Lisansla birlikte müşteriye giden kurulum ve etkinleştirme talimatı."
+      >
+        <p>
+          Anahtarı teslim etmek çoğu zaman yetmez: müşteri <em>&quot;Office 365&apos;e nasıl giriş
+          yaparım&quot;</em>, <em>&quot;Windows anahtarını nereye girerim&quot;</em> diye sorar.{' '}
+          <R href="/guides">Kurulum Rehberleri</R> ekranında bu talimatı bir kez yazar, ürüne
+          bağlarsınız; teslimatla birlikte otomatik gider.
+        </p>
+        <Bullets>
+          <li>
+            <strong>Üç yüzeyde birden görünür:</strong> mağazadaki sipariş sayfasında (ürün kartının
+            içinde, katlanır bölüm), <strong>teslimat e-postasında</strong> ve müşterinin indirdiği{' '}
+            <strong>.txt</strong> dosyasında. Üçü de aynı metinden üretilir, ayrışmaz.
+          </li>
+          <li>
+            <strong>Rehber ürüne gömülü değildir:</strong> ayrı bir kayıttır ve birden çok ürüne
+            bağlanabilir. &quot;Office 2021 etkinleştirme&quot; anlatısı onlarca SKU&apos;da aynıdır;
+            bir adımı düzelttiğinizde bağlı <strong>tüm</strong> ürünlerde anında geçerli olur.
+          </li>
+          <li>
+            <strong>Hazır taslaklar:</strong> Office 365, Office 2021/2019, Windows 10/11 ve genel
+            hesap teslimatı için başlangıç metinleri hazırdır — tek tıkla doldurup kendinize göre
+            düzenlersiniz.
+          </li>
+          <li>
+            <strong>Biçimleme:</strong> satır başına <code>1.</code> yazmak adım listesi,{' '}
+            <code>-</code> madde listesi, <code>##</code> ara başlık,{' '}
+            <code>**kalın**</code> vurgu üretir. Adresleri <code>https://</code> ile tam yazın ki
+            mağaza sayfasında tıklanabilir olsun. HTML etiketleri çalışmaz (güvenlik).
+          </li>
+          <li>
+            <strong>Uzunluk sınırı 4.000 karakterdir</strong> ve bu bir tercih değil zorunluluktur:
+            uzun e-postaları Gmail gibi istemciler kırpıp &quot;tümünü göster&quot; arkasına atar —
+            kırpılan yer de genelde rehberin bulunduğu sondur. Metin uzuyorsa sadeleştirin veya
+            ikinci bir rehbere bölün.
+          </li>
+          <li>
+            <strong>Hiçbir ürüne bağlı olmayan rehber müşteriye ulaşmaz.</strong> Liste bunu{' '}
+            <em>&quot;Ürüne bağlı değil&quot;</em> etiketiyle işaretler — yazıp bağlamayı unutmak
+            sessiz bir kayıp olurdu.
+          </li>
+        </Bullets>
+        <Tip>
+          Rehber ile <R href="/templates">şablon</R> aynı şey değildir: şablon e-postanın{' '}
+          <strong>çatısıdır</strong> (konu, selamlama, imza) ve site/ürün kapsamlıdır; rehber ürüne
+          bağlı <strong>talimat metnidir</strong> ve mağaza sayfasında da görünür. Şablonunuzda{' '}
+          <code>{'{{guides}}'}</code> yazarsanız rehber tam oraya yerleşir; yazmazsanız e-postanın
+          sonuna eklenir (sessizce kaybolmaz).
         </Tip>
       </Section>
 

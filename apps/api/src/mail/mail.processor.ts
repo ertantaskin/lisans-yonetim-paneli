@@ -4,7 +4,12 @@ import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import { type Transporter } from 'nodemailer';
-import { AccountPayloadSchema, parseAccountPayload } from '@lisans/shared';
+import {
+  AccountPayloadSchema,
+  buildGuideMailBlock,
+  parseAccountPayload,
+  type ProductGuide,
+} from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
 import {
@@ -13,6 +18,7 @@ import {
   licenseItems,
   orderLines,
   orders,
+  productGuides,
   products,
   sites,
 } from '../db/schema';
@@ -41,6 +47,29 @@ export function formatValidUntil(value: Date | string | null | undefined): strin
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/** Şablon gövdesinde `{{guides}}` token'ı geçiyor mu (boşluklu yazım da sayılır). */
+const GUIDES_TOKEN_RE = /\{\{\s*guides\s*\}\}/;
+
+/**
+ * Rehber bloğunu maile YERLEŞTİRİR — şablonda `{{guides}}` yoksa SONA EKLER.
+ *
+ * NEDEN FALLBACK VAR (sessiz kayıp koruması): rehber özelliği eklendiğinde operatörlerin
+ * veritabanında ZATEN kayıtlı şablonları vardır ve hiçbiri bu token'ı içermez. Yalnız
+ * token'a güvenilseydi, panelde rehber tanımlayan operatör onun maile girdiğini SANIR ama
+ * müşteri hiçbir zaman göremezdi — üstelik hata da alınmazdı. (Şablon editörü ayrıca
+ * "desteklenen değişken" listesini gösterir; token'ı bilerek yerleştirmek isteyen operatör
+ * konumu kendisi seçebilir, o durumda bu ek çalışmaz.)
+ *
+ * @param rendered Token'ları değiştirilmiş nihai gövde.
+ * @param template Ham şablon (token aranan yer — render sonrası metinde token kalmaz).
+ * @param guides   Rehber bloğu; boşsa hiçbir şey eklenmez.
+ */
+export function withGuides(rendered: string, template: string, guides: string): string {
+  if (!guides) return rendered;
+  if (GUIDES_TOKEN_RE.test(template)) return rendered;
+  return `${rendered.replace(/\s+$/, '')}\n\n${guides}\n`;
 }
 
 /** Kalemler arasındaki EN YAKIN (en erken) geçerlilik bitişi; hiç yoksa null. */
@@ -158,11 +187,17 @@ export class MailProcessor extends WorkerHost {
           productId: orderLines.productId,
           productKind: products.kind,
           payloadSchema: products.payloadSchema,
+          // §7 kurulum rehberi — anahtarla BİRLİKTE gitmeli. Müşteri "Office 365'e nasıl
+          // giriş yaparım" cevabını mailde bulamazsa destek talebi açıyor.
+          guideId: productGuides.id,
+          guideTitle: productGuides.title,
+          guideBody: productGuides.body,
         })
         .from(assignments)
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .leftJoin(products, eq(orderLines.productId, products.id))
+        .leftJoin(productGuides, eq(products.guideId, productGuides.id))
         .where(
           and(
             eq(assignments.orderId, orderId),
@@ -222,6 +257,24 @@ export class MailProcessor extends WorkerHost {
         })
         .join('\n');
 
+      /*
+       * §7 kurulum/etkinleştirme rehberleri — TEKRARSIZ (aynı rehber birden çok kaleme
+       * bağlıysa bir kez). Sıra satırların sırasıdır (licenseItems.seq) → mail, müşteri
+       * sayfası ve .txt aynı sırayı gösterir.
+       *
+       * Adet/boyut tavanları `buildGuideMailBlock` içinde ve TEK kaynaktan gelir
+       * (packages/shared): sayılar e-posta istemcisinin kırpma eşiğinden geriye doğru
+       * hesaplanmıştır ve sınıra takılan rehber SESSİZCE düşürülmez.
+       */
+      const guideList: ProductGuide[] = [];
+      const seenGuides = new Set<string>();
+      for (const r of rows) {
+        if (!r.guideId || seenGuides.has(r.guideId)) continue;
+        seenGuides.add(r.guideId);
+        guideList.push({ id: r.guideId, title: r.guideTitle ?? '', body: r.guideBody ?? '' });
+      }
+      const guideBlock = buildGuideMailBlock(guideList);
+
       // Şablon: ilk satırın ürününe göre (site override > ürün > varsayılan, §6).
       const tpl = await this.templates.resolve(rows[0]!.productId, order.siteId);
       const vars = {
@@ -236,6 +289,9 @@ export class MailProcessor extends WorkerHost {
         // için en güvenli özettir (kalem kalem doğru tarih zaten `{{items}}` bloğunda yazılıdır).
         // Süresiz üründe BOŞ string (şablon token'ı sessizce kaybolur — mevcut render davranışı).
         valid_until: formatValidUntil(earliestValidUntil(rows.map((r) => r.validUntil))),
+        // §7 kurulum/etkinleştirme rehberi bloğu. Rehbersiz siparişte BOŞ string → token
+        // sessizce kaybolur (mevcut render davranışı), mailde boşluk bırakmaz.
+        guides: guideBlock.text,
       };
 
       // Sandbox (test modu, §14): site.sandbox=true ise gerçek müşteriye mail GİTMEZ —
@@ -248,7 +304,7 @@ export class MailProcessor extends WorkerHost {
         from: mailFrom,
         to: sandbox ? mailFrom : order.customerEmail,
         subject: sandbox ? `[TEST MODU] ${subject}` : subject,
-        text: render(tpl.body, vars),
+        text: withGuides(render(tpl.body, vars), tpl.body, guideBlock.text),
       });
 
       // Mail GİTTİ. Log güncellemesi başarısız olsa bile job'ı FAIL etme (retry = mükerrer).

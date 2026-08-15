@@ -2208,6 +2208,105 @@ Kullanıcı "geri kalan tüm eksikleri tamamla, güncellemeleri yayınla" dedi �
   hâlâ `mailpit` (mailler gerçek müşteriye ULAŞMIYOR; panel bunu her boot'ta kritik alarmla söyler) ·
   yedeğin **offsite kancası** (`BACKUP_OFFSITE_CMD`).
 
+**KURULUM/ETKİNLEŞTİRME REHBERLERİ + TESLİMAT ARAYÜZÜ (migration 0045, eklenti 1.1.0; PROD'A GİTMEDİ
+— commit yok, kullanıcı onayı bekliyor):** Kullanıcı "sipariş verildiğinde WP tarafında kurulum/
+etkinleştirme rehberi de gösterilmeli (Office 365 / Office 2021-2019 / Windows 10-11), daha güzel bir
+teslimat UI/UX gerek, mail olarak da gideceği için karakter sınırını ona göre ayarla, panelden ürüne
+göre ayarlanabilsin" dedi ve gerçek bir Office 365 talimat metni verdi.
+- **Veri modeli:** `product_guides` + `products.guide_id` (**0045**, `ON DELETE SET NULL`). Metin ürüne
+  GÖMÜLMEDİ — aynı anlatı onlarca SKU'da ortaktır; gömülü olsaydı bir adım değişince onlarca ürünü elle
+  güncellemek gerekirdi (biri unutulunca müşteriye YANLIŞ talimat gider). Başlık unique index'i
+  **Türkçe-duyarlı** (`translate(title,'İIı','iii')` — `product_categories`'te ölçülmüş gerekçenin aynısı;
+  ürün formunda seçim yalnız başlıkla yapıldığı için iki özdeş başlık seçilemez hâle getirir).
+- **ÜÇ YÜZEY, TEK RENDER** (`packages/shared/domain/guide.ts`): mağaza sayfası (HTML) · teslimat maili
+  (düz metin) · müşterinin indirdiği `.txt`. Eklenti PHP'de İKİNCİ AYRIŞTIRICI TAŞIMAZ (iki uygulama er
+  geç ayrışır — bu projede tekrarlayan hata sınıfı); paneldeki HTML'i `wp_kses` allow-list'iyle yalnız
+  SÜZER (savunma derinliği). Biçimleme markdown'ın küçük+güvenli alt kümesi: ham girdi önce KAÇIRILIR,
+  sonra yalnız tanınan kalıplar (`1.` adım · `-` madde · `##` başlık · `**kalın**` · `https://` bağlantı)
+  etikete çevrilir → rehber metni müşteri tarayıcısında script çalıştıramaz (owner-olmayan admin de
+  yazabilir, §8 → "içeriği biz yazıyoruz" varsayımı geçersiz).
+- **KARAKTER SINIRI 4.000 — e-posta istemcisinden GERİYE hesaplandı** (kullanıcı "net bilgilerle gel"
+  dedi): Gmail 102 KB'ı aşan maili KIRPAR ve kırpılan yer genelde SONDUR = rehberin yeri. Türkçe metinde
+  4.000 karakter ≈ en kötü 7 KB · şablon+anahtar listesi 2-6 KB · quoted-printable ×1,3 → 3 rehberli
+  siparişte ~30 KB (eşiğin çok altında). Maile en fazla **3 rehber**, toplam **12.000 karakter**; sınıra
+  takılan SESSİZCE düşürülmez (müşteriye "kalanları sipariş sayfanızda" denir). Sınırın SEBEBİ panelde yazılı.
+- **`{{guides}}` + SESSİZ KAYIP KORUMASI:** şablonda token varsa blok oraya, YOKSA mailin SONUNA eklenir
+  (`withGuides`). Yalnız token'a güvenilseydi mevcut (token'sız) şablonlarla çalışan operatör rehberin
+  gittiğini SANIR, müşteri hiç görmezdi, hata da çıkmazdı. **Kontrol denemesiyle doğrulandı** (fix geri
+  alınınca test KIRMIZI).
+- **RENDER SIRASINDA BULUNAN KUSUR:** adımlar arasına boş satır koymak (çok doğal yazım) her adımı ayrı
+  `<ol>` yapıyor ve HTML numarayı 1'den YENİDEN başlatıyordu → müşteri "1. 1. 1." görürdü, üstelik aynı
+  metnin DÜZ METİN sürümü doğru numaraları gösteriyordu (iki yüzey sessizce ayrışıyordu). `start`
+  özniteliğiyle yazılan numara korunur; kses listesi `ol` için `start`'a izin VERMELİ (vermezse öznitelik
+  sessizce silinir ve kusur geri gelir) — ikisi birlikte düzeltildi + regresyon testi.
+- **Panel `/guides`:** başlık + metin, **canlı önizleme** (mağaza ↔ e-posta sekmeli, müşterinin göreceği
+  HTML'in TA KENDİSİ — aynı paylaşılan fonksiyon), karakter sayacı, biçimleme yardımı, **hazır taslaklar**
+  (Office 365 / Office 2021-2019 / Windows 10-11 / genel hesap). **Hiçbir ürüne bağlı olmayan rehber
+  müşteriye ASLA ulaşmaz** → "Ürüne bağlı değil" uyarısı. Ürün formunda rehber alanı (serbest metin YOK,
+  listeden seçim; mevcut seçim listede yoksa seçenek olarak basılır — yoksa kaydetmek ürünü sessizce
+  rehbersiz bırakırdı, kategori alanındaki aynı koruma). Menü: Envanter altında, ikon `/guide` (Kullanım
+  Rehberi) ile ÇAKIŞMASIN diye bilerek farklı. `/guide` rehber sayfasına yeni bölüm.
+- **Mağaza teslimat görünümü KART yapısına geçti (eklenti 1.1.0):** ürün başına kart (başlıkta lisans
+  adedi), anahtarlar SARMALI kod bloğunda (uzun anahtarın son haneleri artık kırpılmıyor), rehber o
+  kartın içinde katlanır bölüm (tek ürünlü siparişte açık). Renkler **tema-nötr yarı saydam katman** —
+  eski sabit `#f6f7f7` zemin koyu temalarda metni yutuyordu.
+- **Yol boyunca kapatılan sapma:** şablon editörü "desteklenen değişkenler" listesinin KENDİ kopyasını
+  tutuyordu ve ayrışmıştı — API `valid_until` besliyor, editörde o alan YOKTU → `{{valid_until}}` yazan
+  operatör YANLIŞ "desteklenmiyor" uyarısı alıyor, panelin sunucu-taraflı önizlemesi ise onu geçerli
+  sayıyordu (aynı ekranda iki cevap). Liste `@lisans/shared`'a taşındı.
+- **Doğrulama:** typecheck 4/4 · üç kapı temiz (use-server 26/90 · nest-wiring 42/69 · env 44) · birim
+  **57+135+152** · build 3/3 · şema sapması yok (`db:generate` "No schema changes"; 0045 damgası 0044'ten
+  BÜYÜK — `when` tuzağı kontrol edildi) · **tarayıcıda ölçüldü:** kullanıcının verdiği gerçek Office 365
+  metni açık+koyu temada doğru render, numaralandırma 1→2→3 devam ediyor, 360px kapta yatay kayma **0**,
+  taşan öğe **0**, kırpılan anahtar **0**. **KOŞULAMAYAN:** PHP-lint + WP davranış testleri (bu makinede
+  PHP yok) ve entegrasyon/yarış paketi (docker/PG/Redis yok) → CI + VPS izole test DB'sinde koşulmalı.
+
+**ADIM ADIM İNCELEME: HAVUZ KİLİTLENMESİ + SESSİZ ÖLEN İŞ + ÜÇ OTOMATİK KAPI (migration YOK, PROD'A
+GİTMEDİ — kullanıcı onayı bekliyor):** Kullanıcı "projeyi genel olarak adım adım incele eksiklerini
+gider" dedi. Önce doğrulama temeli ÖLÇÜLDÜ: typecheck 4/4 · birim **148+135+35** · `pnpm audit --prod`
+temiz · migration `_journal` sıra ihlali YOK (0044'ün damgası artık gerçek saatin GERİSİNDE → uydurma
+gelecek-damga tuzağı kendiliğinden kapandı) · rota↔menü↔rehber kapsamı tam · etiket sözlükleri API'nin
+ürettiği değer kümesinin TAMAMINI karşılıyor · 8 süpürmenin hepsi `upsertSoleJobScheduler` kullanıyor.
+Bulunan gerçek kusurlar:
+- **[ORTA] Fiş kesme ağır yükte TÜM paneli kilitleyebilirdi.** `supplier-claims.create` transaction'ının
+  İÇİNDEN `listQuarantine` KÖK havuzu kullanıyordu. Koddaki gerekçe ("advisory-lock bağlantı açlığını da
+  sınırlar — aynı anda en fazla bir fiş kesme") **YANLIŞTI**: kilit kaç transaction'ın kilidi GEÇTİĞİNİ
+  sınırlar, kaçının BAĞLANTI TUTTUĞUNU değil. Kilidi bekleyen N istek havuzu (max 10) doldurursa kazanan
+  İKİNCİ bağlantıyı alamaz → 60 sn `idle_in_transaction` timeout'una kadar `/v1/health` dahil her şey
+  bağlantısız (createOrder'da k6 ile ÖLÇÜLEN sınıfın aynısı). `QuarantineQuery.exec` eklendi, fiş kesme
+  `tx` geçiyor. İKİ İNCELİK: (a) görüntüleme-audit'inin best-effort YUTMASI yalnız kök havuzda geçerli —
+  tx içinde patlayan ifade tüm tx'i abort eder (25P02), yutmak yalnız GİZLER → tx yolunda hata propage
+  edilir; (b) üç id-toplama sorgusu tx'te SIRALI koşar (kod tabanında transaction gövdesinde `Promise.all`
+  kullanan BAŞKA örnek yok — doğrulayamadığım desene sıcak yol bağlanmadı).
+- **[ORTA] Arka plan stok tamamlama işi SESSİZCE ölüyordu.** `AutocompleteProcessor`'da
+  `@OnWorkerEvent('failed')` YOKTU ve hem işleyici hem kuyruk dosyası "kalıcı başarısızlıklar /ops
+  dead-letter'da görünür" DİYORDU — YANLIŞ: `/ops` yalnız `outbox_events`+`email_log` okur, BullMQ
+  başarısız işlerine HİÇ bakmaz. Stok GİRİLMİŞ olmasına rağmen CAP'in (200) ötesindeki bekleyen siparişler
+  teslim edilmez, müşteri lisansını almaz, alarm çıkmazdı. SweepAlarm eklendi (YALNIZ son denemede —
+  ara denemede alarm, sonradan başarılı olan geçici DB hatalarını kritik bildirime çevirirdi) + iki yanlış
+  yorum düzeltildi + `StockModule → NotificationsModule` glue'su (bu glue olmadan **API HİÇ BOOT ETMEZDİ**).
+- **[DÜŞÜK] Tie-break eksikleri.** En önemlisi `resolveMapping`: `mappings_site_remote_uniq` NULL varyasyonu
+  AYRI saydığı için varyasyonsuz MÜKERRER eşleme mümkündür ve eşit `created_at`'te hangi ÜRÜNÜN teslim
+  edileceği keyfiydi; `/mappings`'in bu seçimi taklit eden sorgusu da AYNI sıraya hizalandı (ayrışırsa panel
+  teslimatta seçilecekten BAŞKA eşleme gösterir). + global arama · destek kuyruğu (200) · eşlemesiz ürün
+  listesi (500; çok kalemli siparişte `last_seen` eşitliği OLAĞAN) · katalog listesi (5000).
+- **ÜÇ SESSİZ-ARIZA SINIFI ARTIK OTOMATİK KAPIDA** (`pnpm typecheck` + CI; üçü de fix geri alınarak
+  KIRMIZI olduğu DOĞRULANDI): `scripts/check-nest-wiring.js` (eksik DI glue → API boot etmez; `tsc`
+  yakalamaz — bu sınıf 2 kez yaşandı) · `scripts/check-env-passthrough.js` (kodun okuduğu env compose'da
+  geçmeli + `.env.example`de belgeli olmalı; 2 kez yaşandı) · `smoke-routes.sh` rota kapsamı artık `app/`
+  ağacıyla OTOMATİK karşılaştırılıyor (elle not YETMEDİ: categories/sites-new/templates-new üç ayrı turda
+  unutulmuştu). **DERS (yeni):** DI denetimi ÖNCE `Reflect.getMetadata('design:paramtypes')` ile birim
+  testi olarak yazıldı ve **hiçbir şeyi denetlemiyordu** — esbuild/vitest `emitDecoratorMetadata` ÜRETMEZ,
+  metadata boş döner, döngü hiç çalışmaz, test yeşil kalır. Kontrol denemesi (glue'yu kaldır → KIRMIZI mı?)
+  bunu yakaladı → TypeScript AST'ye taşındı. Aynı ders `check-env-passthrough`ta tekrarlandı: ilk sürüm 44
+  değişkenin 18'ini görüyordu ve GÖRMEDİKLERİ tam da geçmişte unutulanlardı (`RETENTION_*`,
+  `HMAC_IP_FAIL_LIMIT`, `SMTP_*` — bunlar `ConfigService.get()`/`this.days()` ile okunuyor). **Az denetleyen
+  denetleyici, denetleyici yokluğundan BETERDİR** (yanlış güven verir).
+- Kendi hatam: `sql` şablonu İÇİNDE ters tırnak (projede **7. kez**; tsc TS1005 ile yakaladı).
+  Doğrulama: typecheck 4/4 + 3 kapı temiz · birim 148+135+35 · build 3/3. **Entegrasyon/yarış paketi
+  KOŞULMADI** (bu makinede docker/PG yok) → VPS izole test DB'sinde koşulmalı; fiş kesme yolu için
+  entegrasyon testi EKLENMEDİ (koşulamayacağım bir test yazıp "geçiyor" dememek için).
+
 **DENETİM: ZAMAN ÇİZELGESİ SIRASI + GÖRÜNMEYEN ETİKETLER (commit 5e593f6, CANLI prod+dev, migration 0044):**
 Kullanıcı "güncel hâli adım adım inceleyip eksikleri tespit et; güvenlik/performans/kullanım/bug'ları
 eksiksiz düzelt" dedi. **Önce doğrulama temeli ÖLÇÜLDÜ** (neyin gerçekten bozuk olduğunu bilmeden aramamak

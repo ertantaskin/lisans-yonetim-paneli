@@ -12,6 +12,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { fulfillmentPolicyEnum, onExpiryEnum, productKindEnum, usageModeEnum } from './enums';
 import { productCategories } from './productCategories';
+import { productGuides } from './productGuides';
 
 /**
  * products — tek çekirdek, tüm ürün tipleri (§11).
@@ -34,6 +35,19 @@ export const products = pgTable(
      * (ürün stok/sipariş taşır). Silme onayında "N ürün Kategorisiz olacak" yazılır.
      */
     categoryId: uuid('category_id').references(() => productCategories.id, {
+      onDelete: 'set null',
+    }),
+
+    /**
+     * Kurulum / etkinleştirme rehberi (§7) — müşteriye teslimatla BİRLİKTE giden talimat.
+     *
+     * Metin ürüne GÖMÜLMEZ, `product_guides` kaydına bağlanır: aynı anlatı onlarca SKU'da
+     * ortaktır (bkz. productGuides.ts). `ON DELETE SET NULL` — rehber silinince ürün
+     * silinmez, yalnız rehbersiz kalır (kategori alanıyla aynı karar).
+     *
+     * null = rehber yok. Bu GEÇERLİ bir durumdur: her ürün talimat gerektirmez.
+     */
+    guideId: uuid('guide_id').references(() => productGuides.id, {
       onDelete: 'set null',
     }),
 
@@ -75,6 +89,9 @@ export const products = pgTable(
     uniqueIndex('products_sku_uniq').on(t.sku),
     // Kategori kartlarının sayaç sorgusu + kategoriye süzülmüş ürün listesi bu indeksi kullanır.
     index('products_category_idx').on(t.categoryId),
+    // Rehber listesindeki "kaç ürün kullanıyor" sayacı + silmeden önceki etki sayımı bu FK'yı
+    // tarar. İndekssiz FK bu projede daha önce (0042) düzeltilen bir bulgu sınıfıydı.
+    index('products_guide_idx').on(t.guideId),
   ],
 );
 

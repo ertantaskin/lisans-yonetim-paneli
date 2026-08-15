@@ -191,17 +191,36 @@ class Wpteslimat_My_Account {
             // gösteriyordu → aynı veri üç yüzeyde farklı). Ürün adı PANELDEN İSTENMEZ: `remoteLineId`
             // WooCommerce sipariş kalemi id'sidir, adı mağaza kendi kaleminden bilir (ek istek yok).
             $groups = self::group_by_line($deliveries, self::item_names($order));
+            $guides = self::guide_map($body);
+            $this->print_styles();
 
-            echo '<table class="woocommerce-table shop_table"><tbody>';
+            /*
+             * ÜRÜN BAŞINA KART (§7 teslimat deneyimi). Eskiden tüm teslimatlar tek bir
+             * `shop_table` içinde düz satırlar hâlinde basılıyordu: çok ürünlü siparişte
+             * hangi anahtarın hangi ürüne ait olduğu ancak gri bir ara satırdan anlaşılıyor,
+             * kurulum talimatı ise hiç yer almıyordu. Kart yapısı ürünü, anahtarlarını ve
+             * o ürünün rehberini TEK bloğa toplar.
+             */
             foreach ($groups as $group) {
+                echo '<div class="wpt-card">';
                 // Başlık YALNIZ kalem gerçekten çözülebildiğinde basılır; çözülemeyen satır (eski
                 // teslimat, silinmiş/bilinmeyen kalem) başlıksız ESKİ davranışa düşer — asla fatal olmaz.
                 if ($group['label'] !== '') {
-                    echo '<tr><td style="background:#f6f7f7;font-weight:600">' . esc_html($group['label']) . '</td></tr>';
+                    echo '<div class="wpt-card__head">';
+                    echo '<span class="wpt-card__title">' . esc_html($group['label']) . '</span>';
+                    // `_n()` KULLANILMIYOR: Türkçede sayıdan sonra çoğul eki gelmez ("3 lisans"),
+                    // iki özdeş biçim yazmak çeviri dosyasına anlamsız bir çoğul kuralı sokardı.
+                    echo '<span class="wpt-card__count">' . esc_html(sprintf(
+                        /* translators: %d = bu üründe teslim edilen lisans kaydı adedi */
+                        __('%d lisans', 'wpteslimat'),
+                        count($group['rows'])
+                    )) . '</span>';
+                    echo '</div>';
                 }
+                echo '<div class="wpt-card__body">';
                 foreach ($group['rows'] as $row) {
                     list($i, $d) = $row;
-                    echo '<tr><td>';
+                    echo '<div class="wpt-item">';
                     $is_account = isset($d['kind']) ? ($d['kind'] === 'account') : (!empty($d['fields']));
                     if ($is_account && !empty($d['fields']) && is_array($d['fields'])) {
                         echo '<div class="wpteslimat-fields">';
@@ -210,17 +229,18 @@ class Wpteslimat_My_Account {
                             $value  = isset($f['value']) ? $f['value'] : '';
                             $secret = !empty($f['secret']);
                             $fid = 'wpt-f-' . intval($i) . '-' . intval($fi);
-                            echo '<div style="margin:2px 0">';
-                            echo '<strong>' . esc_html($label) . ':</strong> ';
+                            echo '<div class="wpt-field">';
+                            echo '<span class="wpt-field__label">' . esc_html($label) . '</span>';
+                            echo '<span class="wpt-field__value">';
                             if ($secret) {
                                 // §7 parola GÖSTER/GİZLE: gerçek değer data-attr'da; görünen varsayılan maskeli.
-                                echo '<code id="' . esc_attr($fid) . '" data-secret="' . esc_attr($value) . '" data-shown="0" style="user-select:all">••••••••</code> ';
-                                echo '<button type="button" class="button button-small wpteslimat-toggle" data-target="' . esc_attr($fid) . '" style="margin-left:6px">' . esc_html__('Göster', 'wpteslimat') . '</button> ';
+                                echo '<code id="' . esc_attr($fid) . '" class="wpt-code" data-secret="' . esc_attr($value) . '" data-shown="0">••••••••</code>';
+                                echo '<button type="button" class="button button-small wpteslimat-toggle" data-target="' . esc_attr($fid) . '">' . esc_html__('Göster', 'wpteslimat') . '</button>';
                             } else {
-                                echo '<code id="' . esc_attr($fid) . '" style="user-select:all">' . esc_html($value) . '</code> ';
+                                echo '<code id="' . esc_attr($fid) . '" class="wpt-code">' . esc_html($value) . '</code>';
                             }
-                            echo '<button type="button" class="button button-small wpteslimat-copy" data-target="' . esc_attr($fid) . '" style="margin-left:6px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
-                            echo '</div>';
+                            echo '<button type="button" class="button button-small wpteslimat-copy" data-target="' . esc_attr($fid) . '">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
+                            echo '</span></div>';
                         }
                         echo '</div>';
                     } else {
@@ -240,8 +260,10 @@ class Wpteslimat_My_Account {
                             echo '<em>' . esc_html__('Lisans bilgileriniz görüntülenemedi — lütfen destek ekibimizle iletişime geçin.', 'wpteslimat') . '</em>';
                         } else {
                             $id = 'wpt-key-' . intval($i);
-                            echo '<code id="' . esc_attr($id) . '" style="user-select:all">' . esc_html($payload) . '</code> ';
-                            echo '<button type="button" class="button wpteslimat-copy" data-target="' . esc_attr($id) . '" style="margin-left:8px">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
+                            echo '<div class="wpt-field__value">';
+                            echo '<code id="' . esc_attr($id) . '" class="wpt-code wpt-code--key">' . esc_html($payload) . '</code>';
+                            echo '<button type="button" class="button wpteslimat-copy" data-target="' . esc_attr($id) . '">' . esc_html__('Kopyala', 'wpteslimat') . '</button>';
+                            echo '</div>';
                         }
                     }
                     // (§11 çok kullanımlı / MAK) Bir anahtar birden çok aktivasyon hakkı taşıyabilir.
@@ -256,20 +278,45 @@ class Wpteslimat_My_Account {
                             ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
                             /* translators: %d = bu anahtardaki kullanım/aktivasyon hakkı adedi */
                             : __('Bu anahtar %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat');
-                        echo '<br><small>' . esc_html(sprintf($units_msg, $units)) . '</small>';
+                        echo '<p class="wpt-note">' . esc_html(sprintf($units_msg, $units)) . '</p>';
                     }
                     if (!empty($d['validUntil'])) {
                         $exp = !empty($d['expired']);
-                        echo '<br><small' . ($exp ? ' style="color:#b45309"' : '') . '>';
+                        echo '<p class="wpt-note' . ($exp ? ' wpt-note--warn' : '') . '">';
                         echo esc_html($exp ? __('Süresi doldu:', 'wpteslimat') : __('Geçerlilik:', 'wpteslimat'));
-                        echo ' ' . esc_html(self::format_date($d['validUntil'])) . '</small>';
+                        echo ' ' . esc_html(self::format_date($d['validUntil'])) . '</p>';
                     }
                     $assignment_id = isset($d['assignmentId']) ? $d['assignmentId'] : (isset($d['id']) ? $d['id'] : '');
                     Wpteslimat_Report_Issue::render_button($order, $assignment_id);
-                    echo '</td></tr>';
+                    echo '</div>';
                 }
+                echo '</div>'; // .wpt-card__body
+
+                /*
+                 * §7 KURULUM / ETKİNLEŞTİRME REHBERİ — anahtarın hemen altında, o ürünün
+                 * kartının içinde. Katlanır (`<details>`) çünkü çok ürünlü siparişte açık
+                 * duran üç rehber sayfayı metin duvarına çevirir; tek ürünlü siparişte
+                 * varsayılan AÇIK gelir (müşterinin arayacağı ilk şey odur).
+                 *
+                 * HTML paneldeki TEK render'dan gelir (packages/shared) ve burada `wp_kses`
+                 * ile İKİNCİ kez süzülür: eklenti panelden gelen işaretlemeye körü körüne
+                 * güvenmez (savunma derinliği — panel bir gün başka bir sürüme geçse bile
+                 * mağaza sayfasına script giremez).
+                 */
+                $guide = self::guide_for_group($group, $guides);
+                if ($guide !== null) {
+                    $open = (count($groups) === 1) ? ' open' : '';
+                    echo '<details class="wpt-guide"' . $open . '>';
+                    echo '<summary class="wpt-guide__summary">' . esc_html(
+                        $guide['title'] !== ''
+                            ? $guide['title']
+                            : __('Kurulum ve etkinleştirme rehberi', 'wpteslimat')
+                    ) . '</summary>';
+                    echo '<div class="wpt-guide__body">' . wp_kses($guide['html'], self::guide_allowed_html(), ['http', 'https']) . '</div>';
+                    echo '</details>';
+                }
+                echo '</div>'; // .wpt-card
             }
-            echo '</tbody></table>';
         }
 
         // §7 canlı tamamlama yoklaması: sipariş HENÜZ TAMAMLANMADIYSA (pending/partial/held) küçük bir
@@ -284,6 +331,112 @@ class Wpteslimat_My_Account {
         $this->print_ui_script();
 
         echo '</section>';
+    }
+
+    /**
+     * Panel yanıtındaki rehber listesini id → rehber haritasına çevirir (§7).
+     *
+     * Panel rehberi TEKRARSIZ gönderir ve teslimat kalemleri ona `guideId` ile bağlanır;
+     * aynı rehber 10 anahtara bağlıysa metin bir kez taşınır. Alan HİÇ GELMEYEBİLİR
+     * (eski panel sürümü / dağıtım sapması) → boş harita, ekran kırılmaz.
+     */
+    private static function guide_map($body) {
+        $out = [];
+        if (!isset($body['guides']) || !is_array($body['guides'])) return $out;
+        foreach ($body['guides'] as $g) {
+            if (!is_array($g) || empty($g['id'])) continue;
+            $html = isset($g['html']) && is_scalar($g['html']) ? (string) $g['html'] : '';
+            if (trim($html) === '') continue; // boş rehber = başlıksız boş kutu; hiç basma
+            $out[(string) $g['id']] = [
+                'title' => isset($g['title']) && is_scalar($g['title']) ? (string) $g['title'] : '',
+                'html'  => $html,
+                'text'  => isset($g['text']) && is_scalar($g['text']) ? (string) $g['text'] : '',
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Bir ürün grubunun rehberi. Gruptaki tüm kayıtlar AYNI ürüne aittir, dolayısıyla aynı
+     * rehberi taşır; yine de İLK boş olmayan kimlik aranır (bonus satırı gibi sentetik
+     * kayıtlar teoride rehbersiz gelebilir — grup o yüzden rehbersiz sayılmamalı).
+     */
+    private static function guide_for_group($group, $guides) {
+        if (empty($guides)) return null;
+        foreach ($group['rows'] as $row) {
+            $d = $row[1];
+            $gid = (isset($d['guideId']) && is_scalar($d['guideId'])) ? (string) $d['guideId'] : '';
+            if ($gid !== '' && isset($guides[$gid])) return $guides[$gid];
+        }
+        return null;
+    }
+
+    /**
+     * Rehber HTML'i için izin verilen etiketler — panelin ürettiği kümeyle BİREBİR aynı
+     * (packages/shared → renderGuideHtml: h4/p/ol/ul/li/strong/em/a/br/code).
+     *
+     * Panel metni zaten kaçırıp yalnız bu etiketleri üretiyor; bu liste İKİNCİ savunma
+     * hattıdır. Panele yeni bir etiket eklenirse burası da güncellenmeli, aksi halde
+     * etiket sessizce silinir (kses tanımadığını atar).
+     */
+    private static function guide_allowed_html() {
+        return [
+            'h4'     => [],
+            'p'      => [],
+            'br'     => [],
+            'strong' => [],
+            'em'     => [],
+            // `start`: paneldeki render, adımlar arasına boş satır konduğunda numaranın
+            // 1'den yeniden başlamasını `start` ile engelliyor. İzin verilmezse kses onu
+            // SESSİZCE siler ve müşteri "1. 1. 1." görür (panel doğru üretmiş olmasına rağmen).
+            'ol'     => ['start' => []],
+            'ul'     => [],
+            'li'     => [],
+            'code'   => [],
+            'a'      => ['href' => [], 'target' => [], 'rel' => []],
+        ];
+    }
+
+    /**
+     * Teslimat kartlarının stili — sayfada BİR KEZ basılır (sipariş kutusundaki deseni izler).
+     *
+     * Renkler TEMA-NÖTR seçildi: sabit beyaz/siyah yerine yarı saydam gri katmanlar
+     * (`rgba(128,128,128,…)`) kullanılıyor. Böylece hem açık hem koyu WooCommerce
+     * temalarında okunur kalır — sabit `#f6f7f7` zemin koyu temada metni yutuyordu.
+     */
+    private function print_styles() {
+        static $printed = false;
+        if ($printed) return;
+        $printed = true;
+        ?>
+        <style>
+        .wpteslimat-deliveries .wpt-card{border:1px solid rgba(128,128,128,.32);border-radius:10px;margin:0 0 14px;overflow:hidden}
+        .wpteslimat-deliveries .wpt-card__head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px;padding:10px 14px;background:rgba(128,128,128,.10);border-bottom:1px solid rgba(128,128,128,.22)}
+        .wpteslimat-deliveries .wpt-card__title{font-weight:600}
+        .wpteslimat-deliveries .wpt-card__count{font-size:.85em;opacity:.75}
+        .wpteslimat-deliveries .wpt-card__body{padding:4px 14px}
+        .wpteslimat-deliveries .wpt-item{padding:10px 0}
+        .wpteslimat-deliveries .wpt-item + .wpt-item{border-top:1px dashed rgba(128,128,128,.28)}
+        .wpteslimat-deliveries .wpt-field{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0}
+        .wpteslimat-deliveries .wpt-field__label{min-width:120px;font-weight:600;font-size:.92em}
+        .wpteslimat-deliveries .wpt-field__value{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+        /* Anahtar TAM görünmeli: kırpma yerine sarma (son haneler kalemi ayırt eden kısımdır). */
+        .wpteslimat-deliveries .wpt-code{user-select:all;word-break:break-all;background:rgba(128,128,128,.14);border-radius:6px;padding:3px 8px;font-size:.95em}
+        .wpteslimat-deliveries .wpt-code--key{font-size:1.02em;letter-spacing:.02em}
+        .wpteslimat-deliveries .wpt-note{margin:4px 0 0;font-size:.85em;opacity:.8}
+        .wpteslimat-deliveries .wpt-note--warn{color:#b45309;opacity:1}
+        .wpteslimat-deliveries .wpt-guide{border-top:1px solid rgba(128,128,128,.22);background:rgba(128,128,128,.05)}
+        .wpteslimat-deliveries .wpt-guide__summary{cursor:pointer;padding:10px 14px;font-weight:600;font-size:.95em;list-style:none}
+        .wpteslimat-deliveries .wpt-guide__summary::-webkit-details-marker{display:none}
+        .wpteslimat-deliveries .wpt-guide__summary::before{content:"\203A";display:inline-block;margin-right:8px;transition:transform .15s}
+        .wpteslimat-deliveries .wpt-guide[open] .wpt-guide__summary::before{transform:rotate(90deg)}
+        .wpteslimat-deliveries .wpt-guide__body{padding:0 14px 12px;font-size:.95em;line-height:1.6}
+        .wpteslimat-deliveries .wpt-guide__body ol,.wpteslimat-deliveries .wpt-guide__body ul{margin:.6em 0;padding-left:1.4em}
+        .wpteslimat-deliveries .wpt-guide__body li{margin:.3em 0}
+        .wpteslimat-deliveries .wpt-guide__body h4{margin:.8em 0 .3em;font-size:1em}
+        @media (prefers-reduced-motion:reduce){.wpteslimat-deliveries .wpt-guide__summary::before{transition:none}}
+        </style>
+        <?php
     }
 
     /** Kopyala + Göster/Gizle davranışı (enqueue yerine tek-seferlik hafif inline script). */
@@ -469,6 +622,7 @@ class Wpteslimat_My_Account {
         // Ekran render'ıyla AYNI gruplama/etiketleme: indirilen dosya da hangi anahtarın hangi
         // ürüne ait olduğunu göstermeli (iki yüzey ayrışırsa müşteri hangisine güveneceğini bilemez).
         $groups = self::group_by_line($deliveries, self::item_names($order));
+        $guides = self::guide_map($body);
 
         $lines = [];
         $lines[] = sprintf('# Sipariş #%d — %s', $order_id, wp_date('Y-m-d H:i'));
@@ -506,6 +660,21 @@ class Wpteslimat_My_Account {
                 if (!empty($d['validUntil'])) {
                     $lines[] = __('Geçerlilik:', 'wpteslimat') . ' ' . self::format_date($d['validUntil']);
                 }
+                $lines[] = '';
+            }
+
+            /*
+             * §7 kurulum rehberi — indirilen dosyaya da yazılır. Müşteri çoğu zaman bu .txt'yi
+             * saklıyor ve yeniden kurulum gerektiğinde ona bakıyor; talimat yalnız web sayfasında
+             * kalsaydı dosya tek başına işe yaramazdı. DÜZ METİN sürümü kullanılır (panel HTML'i
+             * değil) — üç yüzey de aynı kaynaktan beslenir, ayrışamaz.
+             */
+            $guide = self::guide_for_group($group, $guides);
+            if ($guide !== null && trim($guide['text']) !== '') {
+                $lines[] = $guide['title'] !== ''
+                    ? '--- ' . $guide['title'] . ' ---'
+                    : '--- ' . __('Kurulum ve etkinleştirme rehberi', 'wpteslimat') . ' ---';
+                $lines[] = $guide['text'];
                 $lines[] = '';
             }
         }

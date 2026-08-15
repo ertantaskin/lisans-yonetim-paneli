@@ -4,6 +4,7 @@ import { desc, eq } from 'drizzle-orm';
 import { type Transporter } from 'nodemailer';
 import { DB, type Database } from '../db/db.module';
 import { deliveryTemplates, emailLog, products, sites } from '../db/schema';
+import { DELIVERY_TEMPLATE_SAMPLE_VARS } from '@lisans/shared';
 import { createMailTransport } from '../mail/mail.transport';
 
 /**
@@ -23,19 +24,15 @@ export function usedTemplateVars(template: string): string[] {
   return [...set];
 }
 
-/** Önizleme/test için varsayılan örnek değişkenler (§6 token seti). */
-export const SAMPLE_VARS: Record<string, string> = {
-  order_no: '10042',
-  site_name: 'ornek-site.com',
-  product_name: 'Windows 11 Pro',
-  units: '1',
-  customer_email: 'musteri@ornek.com',
-  items: '• Windows 11 Pro: XXXXX-XXXXX-XXXXX-XXXXX-XXXXX',
-  // Süreli hesap ürünlerinde lisansın bitiş tarihi (siparişteki EN YAKIN bitiş). Süresiz
-  // üründe boş kalır. Bu sözlük aynı zamanda "desteklenen değişken" listesidir — mail
-  // gerçekten beslediği hâlde buraya eklenmezse editör onu "desteklenmiyor" diye uyarır.
-  valid_until: '01.09.2027 21:00',
-};
+/**
+ * Önizleme/test için varsayılan örnek değişkenler (§6 token seti).
+ *
+ * TEK KAYNAK `@lisans/shared` (template-vars): bu sözlük aynı zamanda "desteklenen değişken"
+ * listesidir ve admin şablon editörü de aynı listeyi kullanır. İki tarafta ayrı ayrı
+ * tutulduğunda ayrışmıştı (editörde `valid_until` yoktu → geçerli bir token'a "desteklenmiyor"
+ * uyarısı çıkıyordu). Ad burada KORUNUYOR — mevcut çağıranlar ve testler bu isimden okuyor.
+ */
+export const SAMPLE_VARS: Record<string, string> = DELIVERY_TEMPLATE_SAMPLE_VARS;
 
 export interface TemplateInput {
   subject: string;

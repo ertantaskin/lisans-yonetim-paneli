@@ -218,6 +218,13 @@ export interface ProductRow {
    */
   categoryId?: string | null;
   categoryName?: string | null;
+  /**
+   * Kurulum/etkinleştirme rehberi (§7) — `/guides` kaydının id'si. null = rehber yok
+   * (geçerli durum). `guideTitle` API'de ad tablosundan çözülür; eski API sürümünde
+   * ALAN GELMEYEBİLİR → okuyanlar `?? null` ile savunmacı davranır (categoryName deseni).
+   */
+  guideId?: string | null;
+  guideTitle?: string | null;
 }
 
 export interface SiteRow {

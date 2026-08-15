@@ -22,6 +22,7 @@ import {
   ShieldAlert,
   ShieldOff,
   Sparkles,
+  BookMarked,
   BookOpen,
   Rocket,
   ScrollText,
@@ -61,6 +62,13 @@ export const NAV: NavSection[] = [
       // Kategoriler ürün listesinin GİRİŞ seviyesini belirler (kullanıcı kararı: ad tek
       // yerden yönetilsin) → Stok & Ürünler'in hemen altında, aynı grupta.
       { label: 'Kategoriler', href: '/categories', icon: FolderTree },
+      // Kurulum rehberleri de ÜRÜN yapılandırmasıdır (ürün formundan seçilir) → kategorinin
+      // yanında, Envanter grubunda. Teslimat ŞABLONU (mail gövdesi) ile karıştırılmamalı:
+      // şablon mailin çatısıdır ve site/ürün kapsamlıdır; rehber ürüne bağlı TALİMAT metnidir
+      // ve mağaza sayfasında da görünür.
+      // İKON BİLEREK FARKLI: `/guide` (Kullanım Rehberi — operatörün okuduğu panel kılavuzu)
+      // da BookOpen kullanıyor; iki komşu kavram aynı ikonla ayırt edilemezdi.
+      { label: 'Kurulum Rehberleri', href: '/guides', icon: BookMarked },
       // Stok girişi operasyonun EN SIK yapılan işi ama menüde hiç yoktu → operatör önce
       // ürünü bulup detayına inmek zorundaydı (keşfedilebilirlik sorunu). Artık kendi
       // ekranı var; ürün/parti seçimi ekranın içinde yapılır (?product= / ?batch= ile de gelir).

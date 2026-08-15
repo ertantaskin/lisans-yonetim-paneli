@@ -1,6 +1,6 @@
 import type { ConfigService } from '@nestjs/config';
 import { describe, expect, it } from 'vitest';
-import { MailProcessor } from './mail.processor';
+import { MailProcessor, withGuides } from './mail.processor';
 import {
   MAIL_DELIVERY_JOB,
   MAIL_NOTICE_JOB,
@@ -135,5 +135,40 @@ describe('MailProcessor: kuyruk işi adına göre dallanma', () => {
 
     expect(selectCalls()).toBe(1); // teslimat dalı email_log'u okudu
     expect(calls).toHaveLength(0); // bildirim dalı ÇAĞRILMADI
+  });
+});
+
+/**
+ * §7 kurulum rehberi — ŞABLONDA `{{guides}}` YOKSA blok mailin sonuna eklenir.
+ *
+ * NEDEN KİLİTLENİYOR: rehber özelliği eklendiğinde operatörlerin veritabanında ZATEN
+ * kayıtlı şablonları var ve hiçbiri bu token'ı içermiyor. Yalnız token'a güvenilseydi,
+ * panelde rehber tanımlayan operatör onun maile girdiğini SANIR, müşteri hiç göremezdi
+ * ve hata da alınmazdı (sessiz kayıp — bu projede tekrar eden bir hata sınıfı).
+ */
+describe('withGuides — rehber bloğunun maile yerleşmesi', () => {
+  const guides = '── Office 365 ──\n1. office.com adresine gidin';
+
+  it('şablonda token YOKSA blok SONA eklenir', () => {
+    const out = withGuides('Merhaba,\n\nAnahtar: ABC\n', 'Merhaba,\n\nAnahtar: {{items}}\n', guides);
+    expect(out).toContain('Anahtar: ABC');
+    expect(out.trimEnd().endsWith('1. office.com adresine gidin')).toBe(true);
+  });
+
+  it('şablonda token VARSA tekrar eklenmez (operatör konumu kendi seçmiştir)', () => {
+    // Render zaten token'ı bloğa çevirdi; ikinci kez eklemek maili çift rehberli yapardı.
+    const rendered = `Merhaba,\n\n${guides}\n\nİyi günler`;
+    const out = withGuides(rendered, 'Merhaba,\n\n{{guides}}\n\nİyi günler', guides);
+    expect(out).toBe(rendered);
+    expect(out.match(/Office 365/g)).toHaveLength(1);
+  });
+
+  it('boşluklu token yazımı da tanınır', () => {
+    const rendered = `x ${guides}`;
+    expect(withGuides(rendered, 'x {{ guides }}', guides)).toBe(rendered);
+  });
+
+  it('rehber yoksa gövdeye DOKUNULMAZ (boş satır bırakmaz)', () => {
+    expect(withGuides('Merhaba\n', 'Merhaba\n', '')).toBe('Merhaba\n');
   });
 });

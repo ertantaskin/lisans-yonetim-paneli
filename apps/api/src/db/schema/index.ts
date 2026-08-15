@@ -4,6 +4,7 @@ export * from './adminUsers';
 export * from './sites';
 export * from './siteConnectTokens';
 export * from './productCategories';
+export * from './productGuides';
 export * from './products';
 export * from './licenseItems';
 export * from './orders';
