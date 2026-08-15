@@ -73,7 +73,9 @@ export class SearchService {
       FROM orders
       WHERE remote_order_id ILIKE ${pattern} ESCAPE '\\'
          OR customer_email ILIKE ${pattern} ESCAPE '\\'
-      ORDER BY created_at DESC
+      -- Tie-break (id) ŞART: eşit created_at'te LIMIT 10 penceresine hangi satırların gireceği
+      -- aksi halde KEYFİ olur ve aynı arama iki çağrıda farklı sonuç verebilir.
+      ORDER BY created_at DESC, id DESC
       LIMIT 10;
     `);
     return list.map((r) => ({

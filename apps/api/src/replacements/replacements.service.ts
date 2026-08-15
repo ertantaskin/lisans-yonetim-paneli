@@ -398,7 +398,10 @@ export class ReplacementsService {
           GROUP BY customer_email
         ) c ON c.customer_email = rr.customer_email
         WHERE true ${statusWhere}
-        ORDER BY rr.created_at DESC
+        -- Tie-break (id) ŞART: liste 200 ile TAVANLI ve kırpılma operatöre uyarı olarak
+        -- gösteriliyor; eşit created_at'te pencereye hangi taleplerin gireceği tie-break
+        -- olmadan keyfi olurdu (aynı ekran her yenilemede farklı talep gösterebilir).
+        ORDER BY rr.created_at DESC, rr.id DESC
         LIMIT 200;
       `,
     );

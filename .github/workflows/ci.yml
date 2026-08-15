@@ -38,6 +38,20 @@ jobs:
       - name: 'use server' export denetimi
         run: pnpm check:use-server
 
+      # Nest DI kablolaması: bir sağlayıcının constructor bağımlılığı, modülünden görünmüyorsa
+      # API ÇALIŞMA ANINDA hiç boot etmez (`tsc`/`next build` yakalamaz — ikisi de tip düzeyinde
+      # geçerlidir). Bu sınıf iki kez yaşandı (SecurityProcessor ve AutocompleteProcessor →
+      # SweepAlarmService). Build'den ÖNCE koşar: hata mesajı eksik import'u da söyler.
+      - name: Nest modül kablolama denetimi
+        run: pnpm check:nest-wiring
+
+      # Kodun okuduğu her çalışma-anı env değişkeni compose'da GEÇİRİLMELİ ve .env.example'de
+      # belgeli olmalı. Aksi halde operatör `.env`e yazar, hata çıkmaz, kod sessizce varsayılana
+      # düşer ("ayarladım ama çalışmıyor"). Bu sınıf iki kez yaşandı (SITE_SILENCE_HOURS ve
+      # admin REQUIRE_AUTH/TZ/APP_VERSION + api RETENTION_*/HMAC_IP_FAIL_LIMIT).
+      - name: Ortam değişkeni geçirme denetimi
+        run: pnpm check:env
+
       - name: Build
         run: pnpm build
 

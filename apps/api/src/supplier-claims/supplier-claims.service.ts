@@ -197,13 +197,22 @@ export class SupplierClaimsService {
       `);
       if (!supplier) throw new NotFoundException('Tedarikçi bulunamadı');
 
-      // NOT (bilinçli): `listQuarantine` kendi bağlantısından (this.db) okur, `tx`'ten DEĞİL.
-      // Doğruluğu bozmaz — advisory-lock eşzamanlı diğer fiş kesmeyi BLOKLADIĞI için o
-      // transaction'ın satırları henüz commit EDİLMEMİŞTİR ve zaten görünmez; biz de kendi
-      // insert'lerimizden ÖNCE okuyoruz. Kilit ayrıca bağlantı açlığını da sınırlar (aynı anda
-      // en fazla bir fiş kesme). Sorguyu tx'e taşımak `listQuarantine`'i (üç sebep kaynağını
-      // coalesce eden, denetimden geçmiş tek kaynak) parametreleştirmeyi gerektirirdi.
+      // Adaylar BU TRANSACTION'IN bağlantısından okunur (`exec: tx`).
+      //
+      // DÜZELTİLDİ (denetim): eskiden `listQuarantine` kök havuzdan (this.db) okuyordu ve
+      // gerekçe olarak "advisory-lock bağlantı açlığını da sınırlar (aynı anda en fazla bir fiş
+      // kesme)" yazıyordu. Bu AKIL YÜRÜTME YANLIŞTI: kilit yalnız kaç transaction'ın kilidi
+      // GEÇTİĞİNİ sınırlar, kaçının BAĞLANTI TUTTUĞUNU değil. Eşzamanlı N fiş-kesme isteği
+      // (çift tık, birkaç operatör, retry) kilidi beklerken N bağlantıyı rezerve tutar; havuz
+      // (max 10) dolduğunda kilidi kazanan istek İKİNCİ bağlantıyı ALAMAZ ve hiçbiri ilerleyemez
+      // → `idle_in_transaction_session_timeout` (60 sn) hepsini öldürene dek tüm panel
+      // bağlantısız kalır. Aynı sınıf `createOrder` yolunda k6 ile ölçülmüştü (100 VU → 0
+      // tamamlanan iterasyon). Tek çözüm: transaction gövdesinden kök havuza SORGU ATMAMAK.
+      //
+      // Doğruluk DEĞİŞMEDİ: kendi insert'lerimizden ÖNCE okuyoruz, eşzamanlı diğer fiş kesme
+      // zaten kilitte bekliyor (satırları commit edilmemiş → görünmez).
       const pool = await this.adminOrders.listQuarantine({
+        exec: tx,
         supplierId: input.supplierId,
         from: input.from,
         to: input.to,

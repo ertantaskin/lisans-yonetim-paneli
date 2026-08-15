@@ -29,7 +29,10 @@ export interface AutocompleteJob {
  *  - attempts/backoff: geçici DB hatasında tekrar dener (autoCompleteProduct idempotent → güvenli).
  *  - removeOnComplete=true: iş bitince ANINDA silinir → `jobId=productId` dedupe kimliği hemen
  *    serbest kalır (aynı ürün yeniden import edilince yeni backlog için tekrar kuyruğa alınabilir).
- *  - removeOnFail=500: kalıcı başarısızlıklar /ops dead-letter'da görünür kalsın (kuyruk hijyeni, §16).
+ *  - removeOnFail=500: başarısız işler Redis'te sınırlı sayıda tutulur (kuyruk hijyeni, §16) →
+ *    olay sonrası BullMQ'dan incelenebilir. DİKKAT: bu kayıtlar `/ops` ekranında GÖRÜNMEZ —
+ *    orası yalnız `outbox_events` + `email_log` okur. Panelde görünürlüğü AutocompleteProcessor'ın
+ *    `@OnWorkerEvent('failed')` alarmı sağlar (son denemede kritik bildirim + Telegram).
  *
  * DEDUPE (jobId): import her seferinde `queue.add(..., { jobId: productId })` çağırır → aynı ürün
  * için ZATEN kuyrukta/çalışan bir iş varsa BullMQ ikinciyi eklemez (import seli altında yığılma yok).

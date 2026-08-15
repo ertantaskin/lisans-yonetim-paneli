@@ -185,6 +185,19 @@ export interface QuarantineQuery {
    * satırların SAYISI, SIRASI ve diğer TÜM alanları birebir aynı kalır.
    */
   preview?: boolean;
+  /**
+   * SORGULARIN KOŞACAĞI BAĞLANTI — çağıran bir transaction İÇİNDEYSE `tx` GEÇİLMELİDİR.
+   *
+   * NEDEN (havuz kilitlenmesi, ölçülmüş arıza sınıfı): postgres.js'te `transaction()` havuzdan
+   * BİR bağlantı rezerve eder. Transaction gövdesinden kök havuza (`this.db`) sorgu atmak İKİNCİ
+   * bir bağlantı ister; havuzdaki tüm bağlantılar (max 10) benzer şekilde bekleyen transaction'lar
+   * tarafından tutuluyorsa hiçbiri ilerleyemez → `idle_in_transaction_session_timeout` (60 sn)
+   * hepsini öldürene kadar TÜM panel bağlantısız kalır (`/v1/health` bile db:false). Aynı hata
+   * `createOrder` yolunda k6 ile ÖLÇÜLMÜŞTÜ: 100 VU → 0 tamamlanan iterasyon.
+   *
+   * Verilmezse kök havuz kullanılır (transaction dışı okuma yolları — controller/export — aynen çalışır).
+   */
+  exec?: Database;
 }
 
 @Injectable()
@@ -2171,6 +2184,9 @@ export class AdminOrdersService {
    * aksi halde tarih süzgeci satırları kırptığında liste EKSİKKEN uyarı `false` çıkıyordu (G6).
    */
   async listQuarantine(params: QuarantineQuery = {}) {
+    // Tüm okumalar BU executor üzerinden koşar: çağıran transaction içindeyse kendi `tx`'ini
+    // geçer (bkz. QuarantineQuery.exec — havuz kilitlenmesi notu), yoksa kök havuz.
+    const exec: Database = params.exec ?? this.db;
     // (Denetim A1/M1) Düz-metin yetkisi: controller canRevealPlaintext(role)'ü geçer. Servis
     // varsayılanı true (geriye dönük: reveal geçmeyen iç çağrılar — CSV export vb. — tam metin alır;
     // export owner-only rota; owner-olmayan gate controller'da). owner-OLMAYAN admin → maskeli.
@@ -2270,9 +2286,14 @@ export class AdminOrdersService {
           ? sql`${col} >= ${fromIso}::timestamptz AND ${col} <= ${toIso}::timestamptz`
           : sql`${col} >= ${fromIso}::timestamptz`;
 
-      const [historyIdRows, auditIdRows, adjIdRows] = await Promise.all([
+      // Üç id-toplama sorgusu. Kök havuzda PARALEL koşar (üç ayrı bağlantı — mevcut davranış).
+      // Çağıranın transaction'ı içindeysek SIRALI koşarlar: orada tek bir bağlantı vardır ve
+      // kod tabanında bir transaction gövdesinde `Promise.all` kullanan BAŞKA örnek yok —
+      // doğrulayamadığım bir desene sıcak yolu bağlamak yerine sıralı koşuyoruz (üç küçük
+      // indeksli sorgu; fiş kesme elle tetiklenen, nadir bir işlemdir).
+      const idQueries = [
         // Değişim (assignment_history) — ana sorgudaki join ile AYNI anahtar: old_license_item_id.
-        this.db
+        exec
           .select({ id: assignmentHistory.oldLicenseItemId })
           .from(assignmentHistory)
           .where(
@@ -2283,7 +2304,7 @@ export class AdminOrdersService {
           )
           .limit(eventCap + 1),
         // Düz-revoke (audit_log) — hedef ATAMA id'si; ana sorguda assignments.id ile eşleşir.
-        this.db
+        exec
           .select({ id: auditLog.targetId })
           .from(auditLog)
           .where(
@@ -2295,7 +2316,7 @@ export class AdminOrdersService {
           )
           .limit(eventCap + 1),
         // Stok düzeltme (recall/void/damage) — voided kalemlerin tek zaman kaynağı.
-        this.db
+        exec
           .select({ id: stockAdjustments.licenseItemId })
           .from(stockAdjustments)
           .where(
@@ -2306,7 +2327,10 @@ export class AdminOrdersService {
             ),
           )
           .limit(eventCap + 1),
-      ]);
+      ] as const;
+      const [historyIdRows, auditIdRows, adjIdRows] = params.exec
+        ? [await idQueries[0], await idQueries[1], await idQueries[2]]
+        : await Promise.all(idQueries);
 
       const capped =
         historyIdRows.length > eventCap ||
@@ -2336,7 +2360,7 @@ export class AdminOrdersService {
     // satırı için tekrar koşuyordu. `outcome <> 'rejected'` yüklemi `supplier_claim_items_open_uniq`
     // KISMİ UNIQUE INDEX'iyle birebir aynı olduğundan license_item başına EN FAZLA BİR satır
     // döner → bu join satır ÇOĞALTMAZ (yukarıdaki openClaimExists ile aynı tanım).
-    const claimLink = this.db
+    const claimLink = exec
       .select({
         licenseItemId: supplierClaimItems.licenseItemId,
         claimId: supplierClaimItems.claimId,
@@ -2349,7 +2373,7 @@ export class AdminOrdersService {
       .where(sql`${supplierClaimItems.outcome} <> 'rejected'`)
       .as('claim_link');
 
-    const rows = await this.db
+    const rows = await exec
       .select({
         licenseItemId: licenseItems.id,
         payloadEnc: licenseItems.payloadEnc,
@@ -2426,7 +2450,7 @@ export class AdminOrdersService {
     const auditReasonByAsg = new Map<string, string>();
     const auditAtByAsg = new Map<string, Date>();
     if (asgIds.length) {
-      const reasonRows = await this.db
+      const reasonRows = await exec
         .select({
           targetId: auditLog.targetId,
           meta: auditLog.meta,
@@ -2460,7 +2484,7 @@ export class AdminOrdersService {
     // tedarikçiye giden fiş raporunda gerekçe ayrımı olarak yazılır.
     const adjActionByLi = new Map<string, string>();
     if (liIds.length) {
-      const adjRows = await this.db
+      const adjRows = await exec
         .select({
           licenseItemId: stockAdjustments.licenseItemId,
           reason: stockAdjustments.reason,
@@ -2617,9 +2641,15 @@ export class AdminOrdersService {
     // `preview` de ŞART: önizleme kapalıyken payload HİÇ çözülmez, yani ortada görüntülenen
     // bir sır yoktur — kayıt yazmak denetim izini YALAN sayımlarla kirletir (operatör
     // "5000 anahtar görüntülendi" görür, oysa hiçbiri gösterilmedi).
+    //
+    // HATA YUTMA KAPSAMI (`exec`): best-effort YUTMA YALNIZ kök havuzda geçerlidir. Çağıranın
+    // transaction'ı içindeysek yutmak DAHA KÖTÜDÜR: Postgres'te transaction içinde patlayan bir
+    // ifade tüm transaction'ı ABORT durumuna sokar (25P02) — catch bunu geri almaz, yalnız
+    // gizler; sonraki HER ifade anlaşılmaz bir hatayla düşer. O yüzden tx yolunda hata
+    // PROPAGE edilir (çağıran rollback eder, sebep görünür kalır).
     if (reveal && preview && out.length > 0) {
-      try {
-        await this.db.insert(auditLog).values({
+      const writeAudit = () =>
+        exec.insert(auditLog).values({
           action: 'reveal',
           actor: params.actor || 'admin',
           targetType: 'quarantine',
@@ -2635,8 +2665,14 @@ export class AdminOrdersService {
             truncated,
           },
         });
-      } catch {
-        /* audit yazımı başarısız → liste yine de döner */
+      if (params.exec) {
+        await writeAudit();
+      } else {
+        try {
+          await writeAudit();
+        } catch {
+          /* audit yazımı başarısız → liste yine de döner (kök havuz: tx zehirlenmesi yok) */
+        }
       }
     }
 
