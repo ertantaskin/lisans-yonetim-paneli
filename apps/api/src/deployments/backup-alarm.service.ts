@@ -25,10 +25,17 @@ const SWEEP_EVERY_MS = 6 * 60 * 60 * 1000;
  */
 const BACKUP_ALERT_DEDUPE_HOURS = 24;
 const DRILL_ALERT_DEDUPE_HOURS = 7 * 24;
+/**
+ * Dış kopya KURULU DEĞİL uyarısı SÜREKLİ bir durumdur, olay değil — haftada bir hatırlatır.
+ * (Kanca kurulu ama BAŞARISIZ olduğunda `BACKUP_ALERT_DEDUPE_HOURS` kullanılır: orada
+ * operatör dış kopyanın alındığını SANIYOR, yani daha acil ve daha sık hatırlatılmalı.)
+ */
+const OFFSITE_SKIPPED_DEDUPE_HOURS = 7 * 24;
 
 /** Bildirim tipleri — /notifications süzgeci ve dedupe anahtarı. */
 export const BACKUP_STALE_TYPE = 'backup_stale';
 export const DRILL_STALE_TYPE = 'drill_stale';
+export const OFFSITE_ALERT_TYPE = 'backup_offsite';
 
 /**
  * YEDEK TAZELİK ALARMI (§16 DR) — "yedek yolu sessizce ölebilir" bulgusunun kapatılması.
@@ -122,6 +129,50 @@ export class BackupAlarmService implements OnModuleInit {
           "Doğrulanmamış yedek, ihtiyaç anına kadar 'yedek' sanılır. Panelden 'backup-drill' " +
           'tetikleyin — docs/RUNBOOK-DR.md §6.',
         { drillAgeDays: s.drillAgeDays, thresholdDays: s.thresholds.drillMaxAgeDays },
+      );
+    }
+
+    /*
+     * DIŞ KOPYA (offsite) — alarm tasarımındaki kendi boşluğumuz.
+     *
+     * Yedek tazeliği ve tatbikat için alarm vardı; dış kopya için YOKTU. Sonuç: yedekler
+     * düzenli alınır, tatbikat geçer, iki alarm da susar — ama her dump YALNIZ yedeklemenin
+     * sebebi olan makinede durur. Sunucu kaybedilirse veri de MASTER_KEY de gider; "yedeğimiz
+     * var" sanısı gerçek bir kurtarma imkânı OLMADAN sürer. Panelde `/deployments` ekranında
+     * rozet olarak görünüyordu, ama rozet yalnız BAKANA yarar.
+     *
+     * İKİ DURUM AYRI CÜMLE, AYRI ŞİDDET (yapılacak iş farklı):
+     *  • 'skipped' → kanca hiç kurulmamış: operatör bunu bilerek seçmiş OLABİLİR → `warning`,
+     *    uzun dedupe (haftada bir hatırlatma; alarm yorgunluğu yaratmaz).
+     *  • 'failed'  → kanca KURULU ama çalışmıyor: operatör dış kopyanın ALINDIĞINI SANIYOR.
+     *    Yanlış güven, hiç güvenmemekten tehlikelidir → `critical`, kısa dedupe.
+     *
+     * Yalnız BAŞARILI son yedeğe bakılır: yedek zaten alınamıyorsa asıl sorun backupStale'dir
+     * ve o alarm ayrıca çalışır (aynı arızayı iki başlıkla bildirmeyiz).
+     */
+    const offsite = s.lastBackupSuccess?.offsite ?? null;
+    if (offsite === 'failed') {
+      created += await this.alert(
+        OFFSITE_ALERT_TYPE,
+        BACKUP_ALERT_DEDUPE_HOURS,
+        'critical',
+        'Dış kopya BAŞARISIZ (yedek yalnız bu sunucuda)',
+        'Yedek alındı ama dış kopya komutu (BACKUP_OFFSITE_CMD) başarısız oldu — dump yalnız ' +
+          'bu sunucuda duruyor. Sunucu kaybedilirse veri de MASTER_KEY de kurtarılamaz. ' +
+          'Kanca çıktısını kontrol edin: docs/RUNBOOK-DR.md §4.4.',
+        { offsite },
+      );
+    } else if (offsite === 'skipped') {
+      created += await this.alert(
+        OFFSITE_ALERT_TYPE,
+        OFFSITE_SKIPPED_DEDUPE_HOURS,
+        'warning',
+        'Dış kopya kurulu değil (yedek yalnız bu sunucuda)',
+        'Yedekler alınıyor ama BACKUP_OFFSITE_CMD tanımsız — dump yalnız bu sunucuda duruyor. ' +
+          'Sunucu kaybedilirse yedek de birlikte gider. Hedef ve kimlik bilgisi sizde: ' +
+          'docs/RUNBOOK-DR.md §4.4. MASTER_KEY yedeğin İÇİNDE DEĞİLDİR — ayrı kasada iki ' +
+          'çevrimdışı kopya tutun.',
+        { offsite },
       );
     }
 

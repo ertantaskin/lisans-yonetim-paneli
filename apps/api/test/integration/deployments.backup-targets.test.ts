@@ -13,6 +13,7 @@ import {
 } from '../../src/deployments/deployments.service';
 import { DeploymentsController } from '../../src/deployments/deployments.controller';
 import { OwnerGuard } from '../../src/auth/owner.guard';
+import { BackupAlarmService, OFFSITE_ALERT_TYPE } from '../../src/deployments/backup-alarm.service';
 
 /**
  * ENTEGRASYON — 'backup' / 'backup-drill' hedefleri (§16 DR). Gerçek PG.
@@ -380,5 +381,65 @@ describe('DeploymentsService — yedek hedefleri (integration)', () => {
     expect(s2.lastBackupAttempt?.status).toBe('failed');
     // Yaş hâlâ başarılı TATBİKAT'tan geliyor (≈60 dk), başarısız denemeden değil.
     expect(s2.backupAgeHours).toBeGreaterThan(0.5);
+  });
+
+  /**
+   * DIŞ KOPYA ALARMI (§16 DR) — alarm tasarımındaki kendi boşluğumuzun kapatılması.
+   *
+   * Yedek tazeliği ve tatbikat için alarm VARDI, dış kopya için YOKTU: yedekler düzenli
+   * alınır, tatbikat geçer, iki alarm da susar — ama her dump YALNIZ yedeklemenin sebebi
+   * olan makinede durur. Durum panelde rozet olarak görünüyordu, ama rozet yalnız BAKANA
+   * yarar. Bu test alarmın gerçekten ateşlediğini ve iki durumu FARKLI şiddetle bildirdiğini
+   * kilitler; (c) şıkkı yanlış-pozitif üretmediğini kanıtlar.
+   */
+  it('dış kopya: kanca yoksa warning, kanca başarısızsa critical; başarılıysa alarm YOK', async () => {
+    const seen: Array<{ type: string; severity: string }> = [];
+    const notifications = {
+      create: async (n: { type: string; severity: string }) => {
+        seen.push({ type: n.type, severity: n.severity });
+      },
+    };
+    // Kuyruk yalnız onModuleInit'te kullanılır (burada çağrılmaz) → güvenli stub.
+    // Dedupe sorgusu GERÇEK DB'ye gider; bu yüzden her şıktan önce o tipteki kayıtlar silinir.
+    const alarm = new BackupAlarmService(
+      db as never,
+      { add: async () => undefined } as never,
+      svc,
+      notifications as never,
+    );
+
+    /** Tek bir başarılı yedek kaydı bırakır (verilen offsite işaretiyle) ve alarmı koşturur. */
+    async function runWith(offsite: string): Promise<void> {
+      seen.length = 0;
+      await db.execute(sql`DELETE FROM notifications WHERE type = ${OFFSITE_ALERT_TYPE}`);
+      await db.execute(sql`DELETE FROM deployments WHERE target IN ('backup','backup-drill')`);
+      await seedFinished({
+        target: 'backup',
+        status: 'success',
+        agoMinutes: 30,
+        log: `BACKUP_FILE=/opt/backups/a.dump\nBACKUP_OFFSITE=${offsite}`,
+      });
+      // Tatbikat kaydı YOK → drill_stale de yanar; süzgeç yalnız dış-kopya tipine bakar.
+      await alarm.checkFreshness();
+    }
+
+    // (a) Kanca KURULU DEĞİL → 'warning' (operatör bunu bilerek seçmiş olabilir).
+    await runWith('skipped');
+    expect(seen.filter((n) => n.type === OFFSITE_ALERT_TYPE)).toEqual([
+      { type: OFFSITE_ALERT_TYPE, severity: 'warning' },
+    ]);
+
+    // (b) Kanca KURULU ama BAŞARISIZ → 'critical': operatör dış kopyanın alındığını SANIYOR.
+    //     Yanlış güven, hiç güvenmemekten tehlikelidir.
+    await runWith('failed');
+    expect(seen.filter((n) => n.type === OFFSITE_ALERT_TYPE)).toEqual([
+      { type: OFFSITE_ALERT_TYPE, severity: 'critical' },
+    ]);
+
+    // (c) Dış kopya BAŞARILI → dış-kopya alarmı YOK (yanlış pozitif üretmez).
+    await runWith('ok');
+    expect(seen.filter((n) => n.type === OFFSITE_ALERT_TYPE)).toEqual([]);
+
+    await db.execute(sql`DELETE FROM notifications WHERE type = ${OFFSITE_ALERT_TYPE}`);
   });
 });

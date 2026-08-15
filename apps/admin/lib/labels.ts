@@ -593,6 +593,8 @@ const NOTIFICATION_TYPE: Record<string, string> = {
    */
   backup_stale: 'Yedek bayat',
   drill_stale: 'Geri yükleme tatbikatı bayat',
+  // Dış kopya kurulu değil / başarısız — yedek yalnız sunucunun kendisinde duruyor.
+  backup_offsite: 'Dış kopya sorunu',
   /**
    * Üretimde mail hedefi yakalayıcıya (mailpit/localhost) bakıyor → teslimat mailleri GERÇEK
    * müşteriye ULAŞMIYOR (MailConfigGuardService, `critical`). Etiketi eksikti ve bu alarm

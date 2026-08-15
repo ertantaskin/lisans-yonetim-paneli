@@ -222,7 +222,15 @@ function GuideForm({
           label="Rehber metni"
           htmlFor={`guide-body-${uid}`}
           required
-          hint="Müşterinin adım adım izleyeceği talimat. Sağda müşterinin göreceği hâli canlı görünür."
+          /*
+           * Sınırın SEBEBİ ipucuna taşındı (eskiden alanın İÇİNDE, sayacın altındaydı):
+           * `Field` yardım metnini çocuklardan SONRA basar, bu yüzden açıklama sayacın
+           * altında ikinci bir paragraf olarak kalıyor ve sıralama karışıyordu.
+           *
+           * "Sağda görünür" DEMİYOR: önizleme yalnız geniş ekranda sağdadır; dar ekranda
+           * ALTTA durur (lg altı tek kolon). Yönü söyleyen metin, ekranın yarısında yanlış olur.
+           */
+          hint="Müşterinin adım adım izleyeceği talimat; yazdıkça önizlemede müşterinin göreceği hâli belirir. Uzunluk sınırı e-posta içindir: uzun mesajları Gmail gibi istemciler kırpıp “tümünü göster” arkasına atar — kırpılan yer de genelde rehberin bulunduğu sondur."
         >
           <Textarea
             id={`guide-body-${uid}`}
@@ -249,14 +257,6 @@ function GuideForm({
               </span>
             )}
           </div>
-          {/*
-           * Sınırın SEBEBİ yazılı: operatör "neden 4.000?" diye sormasın ve sınırı keyfî
-           * sanıp metni kırpmak yerine ikinci bir rehbere bölmeyi düşünsün.
-           */}
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Sınır e-posta içindir: uzun mesajları Gmail gibi istemciler kırpıp “tümünü
-            göster” arkasına atar — kırpılan yer de genelde rehberin bulunduğu sondur.
-          </p>
         </Field>
 
         <div className="min-w-0">
