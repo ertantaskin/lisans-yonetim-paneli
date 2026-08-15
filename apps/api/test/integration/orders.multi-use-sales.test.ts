@@ -285,4 +285,92 @@ describe('MAK/çok kullanımlık satış yolu (entegrasyon)', () => {
     `)) as unknown as Array<{ used: string }>;
     expect(Number(agg!.used)).toBe(2);
   });
+
+  /*
+   * (a4) ALL-OR-NOTHING + MAK → `releaseAllocations` KÜME-TABANLI yolunun asıl aritmetiği.
+   *
+   * NEDEN EKLENDİ (çürütme denetiminin bulduğu boşluk): `releaseAllocations` tek `UPDATE …
+   * FROM (VALUES …)` ifadesine çevrildi, ama testlerin hiçbiri onu MAK ürününde koşturmuyordu —
+   * `makScenario` `fulfillmentPolicy` parametresini kabul ettiği hâlde dört çağrısı da
+   * varsayılan `partial-auto` veriyordu. Sonuç: `GREATEST(0, use_count − v.units)` aritmetiği,
+   * `assigned_at`'in KORUNDUĞU dal ve İKİ FARKLI anahtar için toplu VALUES geri verimi hiç
+   * çalıştırılmıyordu. Tek-kullanımlıkta `use_count` hep 0 olduğu için o yol bunları kanıtlamaz.
+   *
+   * Kurulum: 2 anahtar × 5 = 10 kapasite; önce 7 birim satılır (5 + 2 → İKİ anahtar), sonra
+   * all-or-nothing satırda 6 birim istenir. Kalan 3 < 6 → hiçbir şey teslim edilmez ve o turda
+   * ayrılan 3 birim (2 + 1, iki AYRI anahtardan) tek ifadeyle geri verilmelidir.
+   */
+  it('(a4) all-or-nothing + MAK: karşılanamayan satır İKİ anahtarın kapasitesini de tam geri verir', async () => {
+    const { site, productId, makeDto } = await makScenario({
+      keys: 2,
+      maxUses: 5,
+      fulfillmentPolicy: 'all-or-nothing',
+    });
+
+    // 1) 7 birim: 1. anahtar 5 (tükendi), 2. anahtar 2.
+    const first = await orders.createOrder(site, makeDto(7));
+    expect(first.body.lines[0]!.fulfilledQty).toBe(7);
+    const afterFirst = await keysOf(productId);
+    expect(afterFirst.map((k) => k.useCount)).toEqual([5, 2]);
+    expect(afterFirst[0]!.status).toBe('depleted');
+    const key2AssignedAt = afterFirst[1]!.assignedAt;
+    expect(key2AssignedAt).not.toBeNull();
+
+    // 2) 6 birim isteniyor ama yalnız 3 kaldı → all-or-nothing: HİÇBİR ŞEY teslim edilmez.
+    const second = await orders.createOrder(site, makeDto(6));
+    expect(second.body.lines[0]!.fulfilledQty).toBe(0);
+    expect(second.body.assignments).toHaveLength(0);
+
+    // 3) KAPASİTE TAM GERİ DÖNDÜ — bu turda ayrılan 3 birim (2. anahtardan 3) iade edildi.
+    const afterSecond = await keysOf(productId);
+    expect(afterSecond.map((k) => k.useCount)).toEqual([5, 2]);
+
+    // 4) `assigned_at` KORUNDU: 2. anahtar hâlâ BAŞKA müşterilere teslim edilmiş durumda
+    //    (use_count > 0) → "ilk teslim" damgası silinmemeli. Eski (koşulsuz NULL'layan)
+    //    davranış envanterde teslim tarihini boşaltıyordu.
+    expect(afterSecond[1]!.assignedAt).not.toBeNull();
+    //    Tükenmiş 1. anahtar geri verimden ETKİLENMEDİ (o tura hiç girmedi).
+    expect(afterSecond[0]!.status).toBe('depleted');
+    expect(afterSecond[0]!.assignedAt).not.toBeNull();
+
+    // 5) Ürün genelinde aşım yok.
+    const [agg] = (await db.execute<{ used: string }>(sql`
+      SELECT coalesce(sum(use_count), 0)::text AS used FROM license_items
+      WHERE product_id = ${productId}
+    `)) as unknown as Array<{ used: string }>;
+    expect(Number(agg!.used)).toBe(7);
+  });
+
+  /*
+   * (a5) EŞİTSİZ birim dağılımı → `assignmentId ↔ units` eşleşmesi.
+   *
+   * NEDEN EKLENDİ: toplu INSERT'te atama id'leri `licenseItemId` üzerinden eşleniyor
+   * (RETURNING'in giriş sırasını koruduğu YAZILI garanti değil). Mevcut MAK testlerinde
+   * birimler her zaman EŞİTTİ ({2,2}, {5,5}) — bir eşleşme hatası görünmezdi. Burada
+   * dağılım bilerek eşitsiz ({5,2}): yanıttaki her atamanın `units` değeri, DB'deki AYNI
+   * id'nin `units` değeriyle birebir tutmalı.
+   */
+  it('(a5) eşitsiz dağılım: yanıttaki her assignmentId, DB satırıyla aynı units taşır', async () => {
+    const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
+
+    const res = await orders.createOrder(site, makeDto(7)); // 5 + 2 → eşitsiz
+    expect(res.httpStatus).toBe(201);
+    expect(res.body.assignments).toHaveLength(2);
+    expect(res.body.assignments.map((a) => a.units).sort((x, y) => x - y)).toEqual([2, 5]);
+
+    // Yanıttaki id'ler TEKİL olmalı (mükerrer id, kayıp bir atamanın işaretiydi).
+    const ids = res.body.assignments.map((a) => a.assignmentId);
+    expect(new Set(ids).size).toBe(2);
+
+    // Her id'nin DB'deki units'i yanıtla AYNI mı (eşleşme gerçekten doğru mu).
+    const rows = await assignmentsOf(res.body.orderId);
+    const dbUnitsById = new Map(rows.map((r) => [r.id, r.units]));
+    for (const a of res.body.assignments) {
+      expect(dbUnitsById.get(a.assignmentId)).toBe(a.units);
+    }
+
+    // Kapasite dağılımı da eşitsiz olmalı (kurulum gerçekten amaçlanan şekli üretti mi).
+    const keys = await keysOf(productId);
+    expect(keys.map((k) => k.useCount)).toEqual([5, 2]);
+  });
 });

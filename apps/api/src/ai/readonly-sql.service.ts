@@ -236,7 +236,14 @@ const NONSCALAR_TYPE_OIDS = new Set<number>([
  *   - nitelikli dal `\w+\s*\.\s*\*` nokta ister (count(* içinde nokta yok),
  *   - çıplak dal yıldızın SELECT'ten hemen sonra (opsiyonel DISTINCT) gelmesini ister.
  */
-const WILDCARD_RE = /\b\w+\s*\.\s*\*|\bselect\s+(?:distinct\s+)?\*/i;
+/*
+ * `DISTINCT ON (...)` de kapsanır: eski kalıp `select` sonrası doğrudan `*` beklediği için
+ * `SELECT DISTINCT ON (id) * FROM ...` metin kapısını atlıyordu. Sömürülebilir DEĞİLDİ —
+ * dönen kolon adları ayrıca sır listesine karşı süzülüyor, yani sır taşıyan her tablo yine
+ * 400 alıyordu — ama "metin katmanı tam" iddiasında bir boşluktu; katmanlardan birinin
+ * eksik olduğunu bilerek bırakmak, sonraki bir değişiklikte tek savunma hattı hâline gelir.
+ */
+const WILDCARD_RE = /\b\w+\s*\.\s*\*|\bselect\s+(?:distinct\s+(?:on\s*\([^)]*\)\s*)?)?\*/i;
 
 /**
  * PostgreSQL unicode-escape sözdizimi kapısı (savunma-derinliği): `U&'\0061dmin'` (string) ve

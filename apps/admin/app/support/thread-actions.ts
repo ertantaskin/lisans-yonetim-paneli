@@ -32,7 +32,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export async function fetchThreadAction(
   requestId: string,
-): Promise<{ ok: boolean; messages?: ThreadMessage[]; error?: string }> {
+): Promise<{ ok: boolean; messages?: ThreadMessage[]; error?: string; truncated?: boolean }> {
   const id = String(requestId || '').trim();
   if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz talep' };
   try {
@@ -40,11 +40,14 @@ export async function fetchThreadAction(
     // DEĞİL. Sarmalı açmadan state'e yazmak `messages.map is not a function` ile TÜM destek
     // ekranını error boundary'ye düşürüyordu. Her iki şekli de kabul et: eski/yeni API sürümleri
     // arasında deploy sapması olsa da ekran çalışmaya devam etsin.
-    const data = await apiGet<{ messages?: ThreadMessage[] } | ThreadMessage[]>(
-      `/v1/admin/replacements/${id}/messages`,
-    );
+    const data = await apiGet<
+      { messages?: ThreadMessage[]; truncated?: boolean } | ThreadMessage[]
+    >(`/v1/admin/replacements/${id}/messages`);
     const messages = Array.isArray(data) ? data : (data?.messages ?? []);
-    return { ok: true, messages };
+    // Kırpma SESSİZ KALMAZ: uzun yazışmada en eski mesajlar düşürülür ve ekran bunu söyler
+    // (eski API'de alan gelmez → `false`, yani yanlış uyarı basılmaz).
+    const truncated = Array.isArray(data) ? false : (data?.truncated ?? false);
+    return { ok: true, messages, truncated };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Yazışma alınamadı' };
   }

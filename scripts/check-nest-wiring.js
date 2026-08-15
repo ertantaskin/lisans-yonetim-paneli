@@ -245,6 +245,19 @@ function main() {
           global: decs.some((d) => decoratorName(d) === 'Global'),
           imports: arrayProp(arg, 'imports').map(moduleRefName).filter(Boolean),
           providers: arrayProp(arg, 'providers').map(providerEntry).filter(Boolean),
+          /*
+           * CONTROLLERS — AYRI tutulur ama AYNI şekilde denetlenir.
+           *
+           * `controllers:` uzun süre HİÇ taranmıyordu; oysa Nest bir controller'ın constructor
+           * bağımlılığını sağlayıcıyla BİREBİR aynı şekilde (modülün providers + imports'undan)
+           * çözer ve çözemezse API ÇALIŞMA ANINDA hiç boot etmez — yani kapının var olma sebebi
+           * olan arıza sınıfı tam da kapının kör noktasındaydı (`tsc`/`next build` görmez).
+           *
+           * `providers`'a KATILMAZ: bir controller enjekte edilebilir bir token DEĞİLDİR;
+           * `visible` kümesine eklemek, bir sağlayıcının controller'a bağımlılığını yanlışlıkla
+           * "çözülmüş" gösterirdi.
+           */
+          controllers: arrayProp(arg, 'controllers').map(providerEntry).filter(Boolean),
           exports: arrayProp(arg, 'exports').map(moduleRefName).filter(Boolean),
           queues: registeredQueueRefs(arrayProp(arg, 'imports')),
         });
@@ -336,7 +349,9 @@ function main() {
     for (const p of m.providers) visible.add(p.token);
     for (const imp of m.imports) for (const t of exportedTokens(imp)) visible.add(t);
 
-    for (const provider of m.providers) {
+    // Sağlayıcılar VE controller'lar aynı çözümleme kurallarına tabidir (ikisi de modülün
+    // providers + import edilen modüllerin exports'undan çözülür).
+    for (const provider of [...m.providers, ...m.controllers]) {
       const implName = provider.impl;
       if (!implName) continue; // useFactory/useValue — constructor denetimi konusu değil
       const cls = classes.get(implName);

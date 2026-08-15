@@ -22,6 +22,7 @@ import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
 import { notExpiredCond, releaseAllocations } from '../assignment/assign';
+import { insertAssignments } from './assignment-insert';
 import { recomputeOrderStatus } from './order-status';
 import { fillTarget, lineStatusFor, remainingUnits } from './fill-target';
 
@@ -169,28 +170,19 @@ export class FulfillmentService {
       // gidiş-dönüş, transaction içinde ve kilitler tutulurken). Sıra `allocations`
       // dizisinden gelir; RETURNING'in giriş sırasını koruduğuna GÜVENİLMEZ, eşleme
       // `licenseItemId` üzerinden yapılır (bir dizide aynı kalem iki kez geçmez).
-      const createdAssignmentIds: string[] = [];
-      if (allocations.length > 0) {
-        const inserted = await tx
-          .insert(assignments)
-          .values(
-            allocations.map((alloc) => ({
-              orderId: line.orderId,
-              lineId: line.id,
-              licenseItemId: alloc.licenseItemId,
-              units: alloc.units,
-              validUntil,
-              status: 'active' as const,
-              deliveredAt: new Date(),
-            })),
-          )
-          .returning({ id: assignments.id, licenseItemId: assignments.licenseItemId });
-        const idByItem = new Map(inserted.map((r) => [r.licenseItemId, r.id]));
-        for (const alloc of allocations) {
-          const id = idByItem.get(alloc.licenseItemId);
-          if (id) createdAssignmentIds.push(id);
-        }
-      }
+      const deliveredAt = new Date();
+      const idByItem = await insertAssignments(
+        tx,
+        allocations.map((alloc) => ({
+          orderId: line.orderId,
+          lineId: line.id,
+          licenseItemId: alloc.licenseItemId,
+          units: alloc.units,
+          validUntil,
+          deliveredAt,
+        })),
+      );
+      const createdAssignmentIds = allocations.map((a) => idByItem.get(a.licenseItemId)!);
 
       const fulfilledAfter = line.fulfilledQty + added;
       const status = lineStatusFor({ ...line, fulfilledQty: fulfilledAfter });

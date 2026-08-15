@@ -43,7 +43,7 @@ export class AdminReplacementsController {
   /** Onayla → eskiyi geri al + yenisini ata. Stok yoksa 409. */
   @Post(':id/approve')
   approve(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(ApproveBody)) body: z.infer<typeof ApproveBody>,
     @AdminActor() actor: string,
   ) {
@@ -55,7 +55,7 @@ export class AdminReplacementsController {
 
   @Post(':id/reject')
   reject(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(NoteBody)) body: z.infer<typeof NoteBody>,
     @AdminActor() actor: string,
   ) {
@@ -65,7 +65,7 @@ export class AdminReplacementsController {
 
   @Post(':id/request-info')
   requestInfo(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(NoteBody)) body: z.infer<typeof NoteBody>,
     @AdminActor() actor: string,
   ) {

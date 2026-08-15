@@ -1,5 +1,6 @@
 import { Body, Controller, Get, HttpCode, Post, Query, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
+import { truncateUtf16Safe } from '@lisans/shared';
 import { HmacGuard } from '../auth/hmac.guard';
 import { CurrentSite } from '../auth/current-site.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
@@ -39,13 +40,16 @@ const SyncCatalogBody = z.object({
       z.object({
         remoteProductId: z.string().min(1).max(64),
         remoteVariationId: z.string().max(64).nullish(),
+        // Kırpma `truncateUtf16Safe` ile: düz `slice` kesim noktası bir surrogate ÇİFTİNİN
+        // ortasına denk gelirse yalnız-surrogate bırakır ve ad DB'ye `…�` olarak SESSİZCE
+        // bozuk yazılır (dev'de gerçek istekle ölçüldü: 'A' + 260 emoji → son karakter U+FFFD).
         name: z
           .string()
           .min(1)
-          .transform((s) => s.slice(0, 500)),
+          .transform((s) => truncateUtf16Safe(s, 500)),
         sku: z
           .string()
-          .transform((s) => s.slice(0, 120))
+          .transform((s) => truncateUtf16Safe(s, 120))
           .nullish()
           .catch(null),
         kind: z.string().max(40).nullish(),

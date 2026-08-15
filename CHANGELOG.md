@@ -14,6 +14,51 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### 2. tur: kendi düzeltmelerimin çürütülmesi + kalan alanlar (migration YOK)
+
+Bir önceki partinin düzeltmeleri dağıtıldıktan sonra, onları **doğrulamak değil kırmak** için
+iki ajan koşuldu; ayrıca ilk turda derin taranmayan altı alan tarandı. Çekirdek invaryantlar
+(çifte satış / haksız geri alma) **kırılamadı**; bulunanlar dayanıklılık, kapsam ve dürüstlük
+sınıfında — ve üçü doğrudan **benim önceki düzeltmelerimin açtığı yollardı.**
+
+**Toplu INSERT'e geçiş eskiden var olmayan bir tavan getirmişti.** PostgreSQL Bind mesajı
+parametre sayısını int16'da taşır (65535); satır başına 7 kolonla ~9.362 tahsisten sonra
+`MAX_PARAMETERS_EXCEEDED` üretiliyor ve **tüm sipariş 500 ile geri alınıyordu** — eski birim-başına
+döngüde böyle bir sınır yoktu, yani performans düzeltmesi yeni bir kırılma noktası açmıştı. Bu kod
+tabanı aynı tuzağı katalog senkronunda zaten 500'lük dilimlerle çözüyordu; aynı desen uygulandı ve
+iki çağırandaki kopya tek dosyaya toplandı. Aynı sınıf `releaseAllocations`'ta da vardı.
+
+**Yazdığım guard ölü koddu.** "Atama kaydı okunamadı" throw'u, belgelediği arızayı — dizide
+mükerrer kalem — yakalamıyordu: Map araması başarılı olur, bir atama id'si sessizce kaybolurdu.
+Guard gerçek invaryanta bağlandı: *her tahsis için ayrı bir kayıt okundu mu*.
+
+**Kırpma düzeltmem surrogate çiftini bölüyordu.** `.slice(0, N)` kesim noktası bir surrogate
+çiftinin ortasına denk geldiğinde yalnız-surrogate kalıyor, Node onu U+FFFD'ye çeviriyor ve ürün
+adı veritabanına `…�` olarak **sessizce bozuk** yazılıyordu (dev'de gerçek istekle ölçüldü). Paylaşılan
+`truncateUtf16Safe` yazıldı; aynı kusur sipariş `remoteName` yolunda da vardı. Testin içinde kontrol
+denemesi var: eski `slice` çıktısının bozuk olduğu aynı testte kanıtlanıyor.
+
+**Yeni yazdığım CI kapısı da eksikti.** "Geçerli YAML" ile "Actions'ın kabul ettiği workflow" aynı
+şey değil: `runs-on` taşımayan iş, `run:`/`uses:` içermeyen adım ve **YAML anchor** (js-yaml çözer,
+Actions reddeder — bu yazım projede `docker-compose.yml`'de kullanılıyor) dosyayı yine sessizce ölü
+bırakırdı. Yalnız elle tetiklenen bir iş akışı da eklendi. Ayrıca DI kapısı `controllers:` dizisini
+hiç taramıyordu — oysa bir controller bağımlılığı da API'yi boot ettirmez, yani kapının var olma
+sebebi kör noktasındaydı (kapsam 69 → 130 bağımlılık).
+
+**Test boşluğu:** `releaseAllocations`'ın MAK yolu hiç koşmuyordu (yardımcı politika parametresini
+kabul ediyor ama dört çağrısı da varsayılanı veriyordu), ve tüm MAK testlerinde birimler eşit
+olduğu için bir id↔units eşleşme hatası görünmezdi. İki test eklendi.
+
+**Kalan alanlardan:** yedek özeti `backup` ve `backup-drill` satırlarını ortak 30 satırlık pencerede
+okuyordu → gecelik yedek + aylık tatbikat kurulumunda tatbikat pencereden düşüyor ve DR alarmı
+"hiç başarılı tatbikat kaydı yok" diye **erken ve yanlış gerekçeyle** çalıyordu. Destek yazışması
+`ASC ... LIMIT 500` ile en **yeni** mesajları sessizce düşürüyordu — bir destek ekranında görülmesi
+en kritik satır sonuncusudur. `/reports` ile `/reports/reorder` iki farklı "satış" tanımı kullanıyor
+ve aynı ürün için çelişen tükenme tahmini üretiyordu. Tedarikçi fişindeki düz metin anahtar anlık
+görüntüsü hiç budanmıyordu (şifreli `payload_enc` ile asimetrik); kapanmış fişlerde artık maskeleniyor,
+satır ve fiş izi korunuyor. AI hız sınırı IP başınaydı ama panel çağrıları proxy'lendiği için tek
+global kovaya çöküyordu (bir operatör hepsini kilitliyordu), günlük özet ucunda ise hiç sınır yoktu.
+
 ### Proje geneli 6-lensli denetim: CI'ın 19 gündür ölü olduğu bulundu (migration YOK, eklenti 1.1.1)
 
 Altı bağımsız lens (en yeni kod · güvenlik/RBAC · performans/DB · çekirdek para yolu ·

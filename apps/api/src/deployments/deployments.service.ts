@@ -398,14 +398,33 @@ export class DeploymentsService {
    * (`scripts/backup-drill.sh` "PANEL ÖZETİ" bloğu) — bu yüzden migration gerekmez.
    */
   async backupSummary(): Promise<BackupSummary> {
-    const rows = await this.db
-      .select()
-      .from(deployments)
-      .where(inArray(deployments.target, [...BACKUP_RUNNER_TARGETS]))
-      .orderBy(desc(deployments.createdAt))
-      .limit(30);
+    /*
+     * HEDEF BAŞINA AYRI PENCERE — ortak `limit(30)` DR alarmına YALAN söyletiyordu.
+     *
+     * RUNBOOK kurulumunda `backup` GECELİK, `backup-drill` AYLIK koşar. Tek 30 satırlık ortak
+     * pencere pratikte ~30 gecelik yedek demektir → ~29 günden eski BAŞARILI tatbikat pencereden
+     * düşer, `lastDrillSuccess` null olur ve `BackupAlarmService` "HİÇ başarılı tatbikat kaydı
+     * yok" metniyle `drill_stale` uyarısı üretir — oysa eşik 35 gün ve 30 gün önce başarılı bir
+     * tatbikat VARDIR. Aynı yalan `/deployments` ekranında da görünürdü. Alarmın erken ve YANLIŞ
+     * GEREKÇEYLE çalması, alarma olan güveni bitirir (bu panelde alarm tasarımının ilk kuralı).
+     *
+     * Her hedef kendi penceresinden okunur; `recent` listesi ikisinin birleşiminden en yeni 10.
+     */
+    const perTarget = await Promise.all(
+      [...BACKUP_RUNNER_TARGETS].map((target) =>
+        this.db
+          .select()
+          .from(deployments)
+          .where(eq(deployments.target, target))
+          .orderBy(desc(deployments.createdAt), desc(deployments.id))
+          .limit(30),
+      ),
+    );
 
-    const jobs = rows.map(toBackupJob);
+    const jobs = perTarget
+      .flat()
+      .map(toBackupJob)
+      .sort((a, b) => (finishedOrCreated(b)?.getTime() ?? 0) - (finishedOrCreated(a)?.getTime() ?? 0));
     const pick = (target: string, onlySuccess: boolean): BackupJobInfo | null =>
       jobs.find((j) => j.target === target && (!onlySuccess || j.status === 'success')) ?? null;
 

@@ -38,6 +38,11 @@ export interface RetentionReport {
   emailMasked: number;
   /** email_log: N günden eski SİLİNEN satır. */
   emailDeleted: number;
+  /**
+   * supplier_claim_items: KAPANMIŞ fişte N günden eski `key_snapshot` MASKELENEN satır.
+   * Satır SİLİNMEZ (fiş izi ve tedarikçi karnesi korunur) — yalnız düz metin anahtar silinir.
+   */
+  claimKeysMasked: number;
   /** audit_log: gürültü auto-reveal (meta.auto=true) N günden eski SİLİNEN satır. */
   auditRevealDeleted: number;
   /** audit_log: (yalnız RETENTION_AUDIT_ALL_DAYS set ise) N günden eski TÜM SİLİNEN satır. */
@@ -132,6 +137,9 @@ export class RetentionService implements OnModuleInit {
     const notificationAllDays = this.optionalDays('RETENTION_NOTIFICATION_ALL_DAYS'); // null = KAPALI
     const deploymentDays = this.days('RETENTION_DEPLOYMENT_DAYS', 365);
     const connectTokenDays = this.days('RETENTION_CONNECT_TOKEN_DAYS', 7);
+    // Kapanmış tedarikçi fişinde düz metin anahtarın maskeleneceği yaş (varsayılan 1 yıl:
+    // uyuşmazlık penceresi kapandıktan sonra kanıt metnine ihtiyaç kalmaz).
+    const claimKeyMaskDays = this.days('RETENTION_CLAIM_KEY_MASK_DAYS', 365);
 
     // (1) fulfillment_events — sipariş timeline'ı ~2×sipariş hızında büyür; N günden eski sil.
     const fulfillmentEventsDeleted = await this.pruneBatched(
@@ -212,6 +220,38 @@ export class RetentionService implements OnModuleInit {
           WHERE created_at < now() - (${emailMaskDays} * interval '1 day')
             AND to_email NOT LIKE '%***@%'
             AND to_email NOT LIKE '%@redacted.invalid'
+          LIMIT ${BATCH_SIZE}
+        )
+        RETURNING id;
+      `,
+    );
+
+    /*
+     * (4c) supplier_claim_items.key_snapshot — KAPANMIŞ fişlerde DÜZ METİN anahtarın temizlenmesi.
+     *
+     * Bu kolon, tedarikçiye gönderilen raporun kanıtı olsun diye ölü anahtarın DÜZ METİN anlık
+     * görüntüsünü tutar (kasıtlı: fiş bir ay sonra da birebir aynı dosyayı vermeli). Ama
+     * `license_items.payload_enc` ŞİFRELİYKEN bu kolon şifresizdir ve hiç budanmıyordu → düz
+     * metin lisans değerleri veritabanında SÜRESİZ birikiyordu (yedeklerde de). Asimetri gerçek
+     * bir maruziyet: aynı sırrın bir kopyası korumasız duruyor.
+     *
+     * TASARIM: satır SİLİNMEZ (fiş izi, tedarikçi karnesi ve "bu anahtar bildirildi mi?"
+     * yüklemi bozulmamalı) — yalnız KAPANMIŞ (closed/canceled) fişlerin N günden eski
+     * kalemlerinde anahtar metni maskeye çevrilir. Açık fişe DOKUNULMAZ: rapor hâlâ indirilebilir
+     * olmalı. İdempotans: maskelenen satır bir daha yükleme girmez (LIKE süzgeci).
+     */
+    const claimKeysMasked = await this.pruneBatched(
+      'supplier_claim_items(key mask)',
+      sql`
+        UPDATE supplier_claim_items
+        SET key_snapshot = '[saklama süresi doldu]'
+        WHERE ctid IN (
+          SELECT sci.ctid FROM supplier_claim_items sci
+          JOIN supplier_claims sc ON sc.id = sci.claim_id
+          WHERE sc.status IN ('closed', 'canceled')
+            AND coalesce(sc.closed_at, sc.created_at) < now() - (${claimKeyMaskDays} * interval '1 day')
+            AND sci.key_snapshot IS NOT NULL
+            AND sci.key_snapshot <> '[saklama süresi doldu]'
           LIMIT ${BATCH_SIZE}
         )
         RETURNING id;
@@ -361,6 +401,7 @@ export class RetentionService implements OnModuleInit {
       securityEventsDeleted,
       emailMasked,
       emailDeleted,
+      claimKeysMasked,
       auditRevealDeleted,
       auditAllDeleted,
       notificationsDeleted,
@@ -370,7 +411,8 @@ export class RetentionService implements OnModuleInit {
     };
     this.logger.log(
       `Saklama koşusu bitti: fulfillment=${fulfillmentEventsDeleted} sil, outbox=${outboxDeleted} sil, ` +
-        `security=${securityEventsDeleted} sil, email=${emailMasked} maske/${emailDeleted} sil, ` +
+        `security= sil, email= maske/ sil, ` +
+        `fis anahtari= maske, ` +
         `audit auto-reveal=${auditRevealDeleted} sil` +
         (auditAllDays !== null ? `, audit tam=${auditAllDeleted} sil (${auditAllDays}g)` : '') +
         `, bildirim=${notificationsDeleted} sil` +

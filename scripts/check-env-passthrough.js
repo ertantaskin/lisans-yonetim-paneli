@@ -166,6 +166,24 @@ function envReads(files) {
       if (resolved) add(resolved, f);
       else warnings.push(`${where} — config.get(${m[1]}): ad sabit değil (dinamik), çözülemedi.`);
     }
+    /*
+     * (5) ÇÖZÜLEMEYEN biçimler — SESSİZCE ATLAMA, uyar.
+     *
+     * Bu kapının tüm değeri kapsamında: göremediği bir okuma biçimi, tam da korumak için var
+     * olduğu sessiz arızayı (compose'dan düşen env → zod varsayılanı devreye girer → `.env`
+     * sessizce yok sayılır) üretir. Aşağıdaki iki biçim eskiden ne `reads`'e ne `warnings`'e
+     * giriyordu, yani kapı "temiz" derken kör noktadaydı. CI'ı KIRMAZLAR (uyarı), ama görünür
+     * olurlar; kod bu biçimlerden birine geçerse fark edilir.
+     */
+    for (const m of text.matchAll(/(?:this\.)?\b\w*[Cc]onfig\w*\.get(?:OrThrow)?(?:<[^>]*>)?\(\s*`/g)) {
+      void m;
+      warnings.push(`${where} — config.get(\`şablon dizesi\`): env adı statik değil, çözülemedi.`);
+    }
+    for (const m of text.matchAll(/(?:const|let|var)\s*\{[^}]*\}\s*=\s*process\.env/g)) {
+      void m;
+      warnings.push(`${where} — 'const { ... } = process.env' destructuring: adlar çözülemedi.`);
+    }
+
     // (3) env/ayar yardımcıları.
     for (const m of text.matchAll(
       /\b(\w*(?:env|config|days|setting)\w*)\(\s*['"]([A-Z0-9_]+)['"]/gi,

@@ -428,6 +428,10 @@ describe('RetentionService.runRetention — idempotans', () => {
       securityEventsDeleted: 0,
       emailMasked: 0,
       emailDeleted: 0,
+      // Kapanmış tedarikçi fişindeki düz metin anahtar maskesi de idempotent olmalı: maskelenen
+      // satır ('[saklama süresi doldu]') bir daha yükleme girmez, aksi halde günlük iş her
+      // koşuda aynı satırları yeniden yazardı (ve sayaç asla 0'a inmezdi).
+      claimKeysMasked: 0,
       auditRevealDeleted: 0,
       auditAllDeleted: 0,
       notificationsDeleted: 0,
@@ -435,5 +439,92 @@ describe('RetentionService.runRetention — idempotans', () => {
       deploymentsDeleted: 0,
       connectTokensDeleted: 0,
     });
+  });
+});
+
+/*
+ * TEDARİKÇİ FİŞİ — düz metin anahtarın maskelenmesi (§9).
+ *
+ * NEDEN VAR: `supplier_claim_items.key_snapshot`, tedarikçiye gönderilen raporun kanıtı olsun
+ * diye ölü anahtarın DÜZ METİN kopyasını tutar. `license_items.payload_enc` ŞİFRELİYKEN bu kolon
+ * şifresizdir ve hiç budanmıyordu → düz metin lisans değerleri veritabanında (ve her yedekte)
+ * SÜRESİZ birikiyordu. İdempotans testi tek başına YETMEZ: maskeleme adımı hiç çalışmasa da o
+ * test geçerdi (veri yokken tüm sayaçlar zaten 0). Bu test gerçek davranışı kilitler.
+ */
+describe('RetentionService — tedarikçi fişi düz metin anahtar maskesi', () => {
+  it('KAPANMIŞ ve eski fişte maskeler; AÇIK fişe ve YENİ kapanmışa DOKUNMAZ', async () => {
+    const claimTag = `${tagPrefix(tag)}-claim-${randomUUID().slice(0, 6)}`;
+    const KEY = 'GERCEK-ANAHTAR-1234';
+    const MASK = '[saklama süresi doldu]';
+
+    /** Fiş + tek kalem kurar. `closedAt` null ise fiş AÇIK sayılır. */
+    async function seedClaim(opts: {
+      status: 'closed' | 'canceled' | 'sent';
+      closedDaysAgo: number | null;
+    }): Promise<string> {
+      const [claim] = await db
+        .insert(schema.supplierClaims)
+        .values({
+          code: `${claimTag}-${randomUUID().slice(0, 4)}`,
+          status: opts.status,
+          itemCount: 1,
+          createdBy: claimTag,
+          note: claimTag,
+          // created_at da eski olmalı: fiş hiç kapanmadıysa yüklem coalesce ile buna düşer.
+          createdAt: sql`now() - interval '800 days'` as never,
+          closedAt:
+            opts.closedDaysAgo === null
+              ? null
+              : (sql`now() - (${opts.closedDaysAgo} * interval '1 day')` as never),
+        })
+        .returning({ id: schema.supplierClaims.id });
+      const [item] = await db
+        .insert(schema.supplierClaimItems)
+        .values({
+          claimId: claim!.id,
+          licenseItemId: randomUUID(),
+          keySnapshot: KEY,
+          reason: claimTag,
+        })
+        .returning({ id: schema.supplierClaimItems.id });
+      return item!.id;
+    }
+
+    const keyOf = async (itemId: string): Promise<string | null> => {
+      const [row] = await db
+        .select({ k: schema.supplierClaimItems.keySnapshot })
+        .from(schema.supplierClaimItems)
+        .where(eq(schema.supplierClaimItems.id, itemId))
+        .limit(1);
+      return row?.k ?? null;
+    };
+
+    // (a) KAPANMIŞ + eşiğin ötesinde (varsayılan 365g) → maskelenmeli.
+    const oldClosed = await seedClaim({ status: 'closed', closedDaysAgo: 400 });
+    // (b) KAPANMIŞ ama YENİ (eşiğin içinde) → dokunulmamalı.
+    const recentClosed = await seedClaim({ status: 'closed', closedDaysAgo: 10 });
+    // (c) AÇIK fiş (gönderildi, henüz kapanmadı) → rapor hâlâ indirilebilir olmalı, DOKUNULMAZ.
+    //     created_at 800 gün eski: yalnız durum sayesinde korunduğu kanıtlanır.
+    const stillOpen = await seedClaim({ status: 'sent', closedDaysAgo: null });
+    // (d) İPTAL edilmiş + eski → 'canceled' de terminal durumdur, maskelenmeli.
+    const oldCanceled = await seedClaim({ status: 'canceled', closedDaysAgo: 500 });
+
+    const report = await retention.runRetention();
+    expect(report.claimKeysMasked).toBeGreaterThanOrEqual(2);
+
+    expect(await keyOf(oldClosed)).toBe(MASK);
+    expect(await keyOf(oldCanceled)).toBe(MASK);
+    // Bu ikisi DEĞİŞMEMELİ — aksi halde açık bir uyuşmazlıkta kanıt metni kaybolurdu.
+    expect(await keyOf(recentClosed)).toBe(KEY);
+    expect(await keyOf(stillOpen)).toBe(KEY);
+
+    // İdempotans: ikinci koşu aynı satırları TEKRAR maskelemeye çalışmamalı (sonsuz yazma).
+    const second = await retention.runRetention();
+    expect(second.claimKeysMasked).toBe(0);
+
+    // Temizlik: bu dosyanın kendi satırları (cleanupByTag fiş tablolarını kapsamıyor).
+    await db.execute(
+      sql`DELETE FROM supplier_claims WHERE created_by = ${claimTag}`,
+    );
   });
 });

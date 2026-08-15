@@ -170,7 +170,15 @@ export class ReportsService {
       -- dailyRate/daysRemaining DEĞERLERİ aynıdır (30g+ eski atamalar velocity'ye zaten 0 katkı verirdi).
       -- SATIR KÜMESİ daralır: son 30 günde HİÇ satışı olmayan ürün artık listelenmez (bu bir "satış hızı/
       -- tükenme" raporu — durağan ürün velocity'de anlamsız; düşük-stok/dashboard ayrı takip eder).
+      -- İPTAL EDİLEN SATIR SATIŞ SAYILMAZ — reorder.salesCte ile AYNI yüklem.
+      -- (DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA, template erken kapanır.)
+      -- Ayrışma gerçekti: iade yollarının aday kümesi ['active','suspended'] olduğu için
+      -- süresi dolmuş (expired) bir atama tam iadeden SONRA da hayatta kalır ve
+      -- STANDING_STATUSES içinde yer aldığı için burada satış sayılıyordu; reorder ise
+      -- saymıyordu. Sonuç: süreli hesap + tam iade senaryosunda /reports "satış hızı" ile
+      -- /reports/reorder aynı ürün için farklı sold30d gösterip çelişen tükenme tahmini üretiyordu.
       WHERE a.created_at >= now() - interval '30 days'
+        AND ol.canceled = false
       GROUP BY p.id, p.sku
       ORDER BY sold30d DESC, p.sku ASC;
     `);

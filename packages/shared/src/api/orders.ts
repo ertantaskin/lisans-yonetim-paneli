@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { OrderLineStatus, OrderStatus, ProductKind } from '../domain/enums';
+import { truncateUtf16Safe } from '../domain/text';
 
 /**
  * /v1/orders sözleşmesi (§4). Eklenti sipariş bildirir; panel atomik atama yapıp
@@ -21,11 +22,13 @@ export const CreateOrderLine = z.object({
   /** Mağaza ürün adı (opsiyonel — eski eklenti göndermez). Panel eşleştirme doğrulaması +
    *  "eşlenmemiş gelen ürünler" ekranı için saklar; teslimat mantığını ETKİLEMEZ.
    *  KRİTİK: kritik-olmayan bu alan siparişi ASLA reddetmemeli → max() ile 400 atmak yerine
-   *  255'e KIRP (astral/emoji ad UTF-16 birim ≠ WP mb_substr kod-noktası; denetim LOW); hatalı
-   *  tip → null'a düş (.catch), sipariş yine teslim edilir. */
+   *  255'e KIRP (astral/emoji ad UTF-16 birim ≠ WP mb_substr kod-noktası); hatalı tip → null'a
+   *  düş (.catch), sipariş yine teslim edilir. Kırpma `truncateUtf16Safe` ile yapılır: düz
+   *  `slice` kesim noktası bir surrogate çiftinin ortasına denk gelirse yalnız-surrogate bırakır
+   *  ve ad veritabanına `…�` olarak SESSİZCE bozuk yazılır (dev'de ölçüldü). */
   remoteName: z
     .string()
-    .transform((s) => s.slice(0, 255))
+    .transform((s) => truncateUtf16Safe(s, 255))
     .nullish()
     .catch(null),
   // Üst sınır (DoS + int4 taşması savunması): qty tek kalemde makul bir tavana bağlanır.

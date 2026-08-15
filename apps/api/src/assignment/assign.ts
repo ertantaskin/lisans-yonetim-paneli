@@ -146,22 +146,29 @@ export async function releaseAllocations(
     totals.set(a.licenseItemId, (totals.get(a.licenseItemId) ?? 0) + a.units);
   }
 
-  const values = sql.join(
-    [...totals].map(([id, units]) => sql`(${id}::uuid, ${units}::int)`),
-    sql`, `,
-  );
-
-  await db.execute(sql`
-    UPDATE license_items li SET
-      use_count = GREATEST(0, li.use_count - v.units),
-      status = 'available',
-      assigned_at = CASE
-        WHEN li.max_uses <= 1 OR GREATEST(0, li.use_count - v.units) = 0 THEN NULL
-        ELSE li.assigned_at
-      END
-    FROM (VALUES ${values}) AS v(id, units)
-    WHERE li.id = v.id;
-  `);
+  // CHUNK: PostgreSQL Bind mesajı parametre sayısını int16'da taşır (65535). Satır başına 2
+  // parametre → ~32.767 satırda `MAX_PARAMETERS_EXCEEDED`. Tek ifadeye geçiş bu tavanı YENİ
+  // getirdi (eski döngüde yoktu), bu yüzden bilerek sınırlanır; 5.000 × 2 = 10.000 parametre.
+  // Aynı desen `assignment-insert.ts` ve katalog senkronunda da uygulanıyor.
+  const entries = [...totals];
+  const CHUNK = 5000;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const values = sql.join(
+      entries.slice(i, i + CHUNK).map(([id, units]) => sql`(${id}::uuid, ${units}::int)`),
+      sql`, `,
+    );
+    await db.execute(sql`
+      UPDATE license_items li SET
+        use_count = GREATEST(0, li.use_count - v.units),
+        status = 'available',
+        assigned_at = CASE
+          WHEN li.max_uses <= 1 OR GREATEST(0, li.use_count - v.units) = 0 THEN NULL
+          ELSE li.assigned_at
+        END
+      FROM (VALUES ${values}) AS v(id, units)
+      WHERE li.id = v.id;
+    `);
+  }
 }
 
 /** Tek bir MAK/çok-kullanımlık anahtardan alınan kapasite. */

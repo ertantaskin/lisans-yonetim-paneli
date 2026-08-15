@@ -9,7 +9,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { assignments, orderLines, orders, products, type Site } from '../db/schema';
@@ -716,7 +716,7 @@ export class ReplacementsService {
   async listMessages(
     requestId: string,
     opts: { includeInternal: boolean; siteId?: string },
-  ): Promise<{ messages: ReplacementMessageRow[] }> {
+  ): Promise<{ messages: ReplacementMessageRow[]; truncated: boolean }> {
     await this.getScopedOrThrow(requestId, opts.siteId);
 
     // Site-facing (mağaza/müşteri) OKUMA yolu da hız sınırlı olmalı: yazma ucu sınırlıydı ama
@@ -757,10 +757,25 @@ export class ReplacementsService {
       })
       .from(replacementMessages)
       .where(where)
-      .orderBy(asc(replacementMessages.createdAt), asc(replacementMessages.id))
-      .limit(MESSAGE_PAGE_LIMIT);
+      /*
+       * SIRA TERS, SONRA ÇEVRİLİR — kırpma EN ESKİYİ atmalı, en yeniyi DEĞİL.
+       *
+       * Eskiden `ASC ... LIMIT 500` idi: 500'ü aşan bir yazışmada operatöre ve müşteriye en
+       * ESKİ 500 mesaj dönüyor, müşterinin SON yazdıkları sessizce düşüyordu — üstelik ekran
+       * bunu söylemiyordu (yanıtta kırpma sinyali yoktu). Bir destek ekranında görülmesi en
+       * kritik satır sonuncusudur. Aynı dosyadaki talep LİSTESİ için kırpma dürüstlüğü zaten
+       * uygulanmıştı (tavan+1 + `truncated` + ekranda uyarı bandı); yazışmaya uygulanmamıştı.
+       */
+      .orderBy(desc(replacementMessages.createdAt), desc(replacementMessages.id))
+      .limit(MESSAGE_PAGE_LIMIT + 1);
+
+    // Tavan+1 deseni: fazladan satır geldiyse liste kırpılmıştır (tam sınırda yanlış pozitif yok).
+    const truncated = rows.length > MESSAGE_PAGE_LIMIT;
+    if (truncated) rows.length = MESSAGE_PAGE_LIMIT;
+    rows.reverse(); // en yeni son satırda kalsın (ekran kronolojik okur)
 
     return {
+      truncated,
       messages: rows.map((r) => {
         const authorType = toAuthorType(r.authorType);
         // Müşteri görünümü (includeInternal=false): admin/sistem satırlarında yazar adı nötr

@@ -8,17 +8,12 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminGuard } from '../auth/admin.guard';
 import { RateLimitService } from '../common/rate-limit.service';
 import { AiSupportService } from './ai-support.service';
+import { AI_RL_MAX, AI_RL_WINDOW_SEC, aiRateKey } from './ai-rate-key';
 
-/**
- * Redis sabit-pencere hız sınırı (IP başına) — triyaj ucu paylaşılan ADMIN_TOKEN arkasında
- * olsa da AI çağrısı maliyetli/DoS'a açık olduğundan hafif bir ek kalkan. RateLimitService
- * dağıtık + restart-dayanıklı sayaç tutar; kotayı aşınca 429 atar.
- */
-const AI_RL_WINDOW_SEC = 60;
-const AI_RL_MAX = 20; // dakikada 20 istek/IP
 
 /**
  * Admin: AI destek triyajı (§15). Destek kuyruğundaki bir talebi AI kategorize eder +
@@ -34,8 +29,8 @@ export class AiSupportController {
   ) {}
 
   @Post(':id/suggest')
-  async suggest(@Param('id', new ParseUUIDPipe()) id: string, @Ip() ip: string) {
-    if (!(await this.rateLimit.hit(`ai:support:${ip}`, AI_RL_MAX, AI_RL_WINDOW_SEC))) {
+  async suggest(@Param('id', new ParseUUIDPipe()) id: string, @Ip() ip: string, @AdminActor() actor: string) {
+    if (!(await this.rateLimit.hit(aiRateKey('support', actor, ip), AI_RL_MAX, AI_RL_WINDOW_SEC))) {
       throw new HttpException(
         'Çok fazla AI isteği. Kısa süre sonra tekrar deneyin.',
         HttpStatus.TOO_MANY_REQUESTS,

@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { z } from 'zod';
 import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminGuard } from '../auth/admin.guard';
@@ -124,7 +133,7 @@ export class DeploymentsController {
    */
   @Patch(':id/finish')
   @UseGuards(OwnerGuard)
-  async finish(@Param('id') id: string, @Body(new ZodBody(FinishSchema)) body: FinishInput) {
+  async finish(@Param('id', new ParseUUIDPipe()) id: string, @Body(new ZodBody(FinishSchema)) body: FinishInput) {
     const row = await this.deployments.finish(id, body.status, {
       gitSha: body.gitSha,
       log: body.log,

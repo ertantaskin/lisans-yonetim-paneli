@@ -21,10 +21,22 @@
  * NE DENETLER:
  *   1) Her `.github/workflows/*.yml|*.yaml` GEÇERLİ YAML mı,
  *   2) En üstte `on:` ve `jobs:` var mı (Actions'ın kabul etmesi için zorunlu),
- *   3) Her iş en az bir `steps` taşıyor mu (boş iş sessizce hiçbir şey yapmaz),
- *   4) Hiçbir `run:` adımı BOŞ değil.
+ *   3) `on:` gerçekten OTOMATİK bir tetikleyici içeriyor mu (yalnız `workflow_dispatch` ise
+ *      kapılar PR'da HİÇ koşmaz — "CI sessizce çalışmıyor" sonucunun bir başka biçimi),
+ *   4) Her iş `runs-on` (veya `uses:`) taşıyor mu — taşımayan işi Actions REDDEDER,
+ *   5) Her iş en az bir `steps` taşıyor mu (boş iş sessizce hiçbir şey yapmaz),
+ *   6) Her adım `run:` VEYA `uses:` taşıyor mu ve `run:` boş değil mi,
+ *   7) YAML anchor/alias (`&x` / `*x` / `<<: *x`) kullanılmış mı — **js-yaml bunları sorunsuz
+ *      çözer ama GitHub Actions DESTEKLEMEZ** ve dosyayı reddeder. Yani kapı "geçerli YAML"
+ *      der, Actions çalıştırmaz: tam olarak bu betiğin var olma sebebi olan sessiz arıza.
+ *      (Bu yazım alışkanlığı projede mevcut — `docker-compose.yml` `&default-logging` kullanıyor.)
+ *
  * Kapsam denetimi de var: hiç iş akışı dosyası bulunamazsa DÜŞER — betiğin kendisi yanlış
  * yapılandırılıp sessizce "0 dosya kontrol ettim, temiz" demesin.
+ *
+ * NOT: bu liste "geçerli YAML" ile "Actions'ın kabul ettiği workflow" arasındaki farkın
+ * TAMAMINI kapatmaz (tam şema doğrulaması ayrı bir iştir); yalnız sonucu SESSİZ ÖLÜ CI olan
+ * yapısal hataları kapsar. Yeni bir sessiz-ölüm biçimi görülürse buraya eklenmelidir.
  */
 const fs = require('fs');
 const path = require('path');
@@ -78,12 +90,44 @@ for (const file of files) {
     continue;
   }
 
+  // YAML anchor/alias: js-yaml çözer, GitHub Actions REDDEDER. Kalıplar bilerek DAR tutuldu
+  // (yalnız YAML'in anchor olarak yorumlayacağı konumlar) — `run:` gövdesindeki `&&` gibi
+  // kabuk yazımları yanlış pozitif üretmesin diye.
+  const anchorLine = raw
+    .split('\n')
+    .findIndex(
+      (l) =>
+        /^\s*[\w."'-]+:\s*&[A-Za-z0-9_-]+\s*$/.test(l) ||
+        /^\s*-\s*\*[A-Za-z0-9_-]+\s*$/.test(l) ||
+        /^\s*<<:\s*\*[A-Za-z0-9_-]+\s*$/.test(l),
+    );
+  if (anchorLine >= 0) {
+    fail(
+      `${rel} YAML anchor/alias kullanıyor (satır ${anchorLine + 1}).\n` +
+        `  Bu dosya yerel olarak GEÇERLİ ayrıştırılır ama GitHub Actions anchor DESTEKLEMEZ ve\n` +
+        `  iş akışını reddeder → hiçbir kapı koşmaz. Değeri açıkça tekrarlayın.`,
+    );
+  }
+
   if (!doc || typeof doc !== 'object') {
     fail(`${rel} boş ya da eşleme (mapping) değil.`);
     continue;
   }
-  if (!ON_KEYS.some((k) => k in doc)) {
+  const onKey = ON_KEYS.find((k) => k in doc);
+  if (onKey === undefined) {
     fail(`${rel} içinde tetikleyici (\`on:\`) yok — iş akışı hiç tetiklenmez.`);
+  } else {
+    // Yalnız elle tetiklenen bir iş akışı, PR'da hiçbir şeyi korumaz. `push`/`pull_request`/
+    // `schedule` gibi OTOMATİK bir tetikleyici aranır; `on` string, dizi veya eşleme olabilir.
+    const on = doc[onKey];
+    const triggers =
+      typeof on === 'string' ? [on] : Array.isArray(on) ? on : on && typeof on === 'object' ? Object.keys(on) : [];
+    if (triggers.length > 0 && triggers.every((t) => t === 'workflow_dispatch')) {
+      fail(
+        `${rel} YALNIZ \`workflow_dispatch\` ile tetikleniyor — push/PR'da HİÇ koşmaz.\n` +
+          `  Kapılar yalnız biri elle çalıştırdığında devreye girer; sessizce korumasız kalırsınız.`,
+      );
+    }
   }
   if (!doc.jobs || typeof doc.jobs !== 'object') {
     fail(`${rel} içinde \`jobs:\` yok.`);
@@ -96,20 +140,30 @@ for (const file of files) {
       fail(`${rel} → iş "${jobName}" geçersiz.`);
       continue;
     }
-    // `uses:` ile başka bir iş akışını çağıran iş (reusable workflow) `steps` taşımaz.
+    // `uses:` ile başka bir iş akışını çağıran iş (reusable workflow) `steps`/`runs-on` taşımaz.
     if (typeof job.uses === 'string') continue;
+    // `runs-on` YOKSA Actions işi reddeder → iş akışı hiç koşmaz.
+    if (!job['runs-on']) {
+      fail(`${rel} → iş "${jobName}" \`runs-on\` taşımıyor — Actions bu işi REDDEDER.`);
+    }
     if (!Array.isArray(job.steps) || job.steps.length === 0) {
       fail(`${rel} → iş "${jobName}" hiç adım taşımıyor (sessizce hiçbir şey yapmaz).`);
       continue;
     }
     for (const [i, step] of job.steps.entries()) {
       steps++;
+      const where = `${rel} → "${jobName}" adım ${i + 1} (${step?.name ?? 'adsız'})`;
       if (!step || typeof step !== 'object') {
         fail(`${rel} → "${jobName}" adım ${i + 1} geçersiz.`);
         continue;
       }
+      // Bir adım ya komut çalıştırır (`run`) ya bir eylem çağırır (`uses`); ikisi de yoksa
+      // Actions iş akışını reddeder.
+      if (!('run' in step) && !('uses' in step)) {
+        fail(`${where} ne \`run:\` ne \`uses:\` taşıyor — Actions iş akışını REDDEDER.`);
+      }
       if ('run' in step && String(step.run ?? '').trim() === '') {
-        fail(`${rel} → "${jobName}" adım ${i + 1} (${step.name ?? 'adsız'}) BOŞ \`run:\` taşıyor.`);
+        fail(`${where} BOŞ \`run:\` taşıyor.`);
       }
     }
   }

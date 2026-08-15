@@ -2496,3 +2496,58 @@ raporlanmadan önce çürütme denemesinden geçti; ardından 5 ayrık-dosya iş
   PHP-lint **13/13** + eklenti davranış testleri **108/108** (VPS throwaway `php:8.2-cli-alpine`) ·
   `bash -n` temiz · **VPS izole test DB: entegrasyon 402/402 + yarış 3/3** (çifte satış 0 — toplu INSERT ve
   küme-tabanlı geri alma değişikliklerinden SONRA).
+
+**DAĞITIM SONRASI 2. TUR: KENDİ DÜZELTMELERİMİ ÇÜRÜTME + KALAN ALANLAR (migration YOK):**
+Kullanıcı "dağıttıktan sonra tekrar testlere başla, eksikleri/bugları kontrol et ve fixle, sırayla adım adım"
+dedi. Üç adım: (1) dağıtım sonrası canlı duman testi + asıl düzeltmenin GERÇEK panel akışında doğrulanması,
+(2) kendi değişikliklerimi ÇÜRÜTMEYE çalışan iki ajan, (3) 1. turda derin taranmayan altı alan.
+
+- **ADIM 1 — canlı kanıt.** Dev panelde 37 rota temiz. Rehber kusuru GERÇEK FORMDAN doğrulandı: TEST-KEY
+  ürününe panelden rehber atandı → DB'de yazıldı; "Rehber gönderme"ye çekildi → gerçekten kalktı; diğer
+  ürünler etkilenmedi (düzeltme öncesi ilk adım sessizce hiçbir şey yapmıyordu). Yeni yetki kapıları canlı
+  denendi: owner-olmayan `POST /admin/sites` **403**, owner **201**; `GET /admin/users` aynı.
+- **ADIM 2 — ÇÜRÜTME (çekirdek invaryantlar kırılamadı, üç dayanıklılık bulgusu):**
+  **[YENİ ARIZA MODU — kendi açtığım]** toplu INSERT'e geçiş eskiden var OLMAYAN bir tavan getirdi:
+  PostgreSQL Bind parametre sayısını int16'da taşır (65535), satır başına 7 kolonla **~9.362 tahsisten
+  sonra `MAX_PARAMETERS_EXCEEDED`** → TÜM sipariş 500 ile geri alınır (eski döngüde böyle bir sınır yoktu).
+  Bu kod tabanı aynı tuzağı katalog senkronunda ZATEN 500'lük dilimlerle çözüyordu. Chunk'landı; iki
+  çağırandaki kopya tek `orders/assignment-insert.ts`'e toplandı. `releaseAllocations` (2 param/satır →
+  ~32.767) da chunk'landı. **[ÖLÜ GUARD]** yazdığım "atama kaydı okunamadı" throw'u belgelediği arızayı
+  (dizide mükerrer kalem) YAKALAMIYORDU — Map araması başarılı olur, id sessizce kaybolurdu; guard gerçek
+  invaryanta bağlandı (*her tahsis için bir kayıt okundu mu*). **[TEST BOŞLUĞU]** `releaseAllocations`'ın
+  MAK yolu HİÇ koşmuyordu: `makScenario` politika parametresini kabul ediyor ama dört çağrısı da varsayılan
+  `partial-auto` veriyordu → `GREATEST(0, use_count − units)` aritmetiği, `assigned_at` korunumu ve iki
+  anahtar için toplu geri verim test edilmemişti; ayrıca tüm MAK testlerinde birimler EŞİT olduğu için bir
+  eşleşme hatası görünmezdi. İki test eklendi (a4 all-or-nothing MAK, a5 eşitsiz dağılım).
+- **ADIM 2 — KAPILARIN KÖR NOKTALARI:** **kendi yeni kapım eksikti** — "geçerli YAML" ≠ "Actions'ın kabul
+  ettiği workflow": `runs-on`'suz iş, `run:`/`uses:` taşımayan adım, **YAML anchor** (js-yaml çözer, Actions
+  REDDEDER — bu yazım projede `docker-compose.yml`'de kullanılıyor) ve yalnız `workflow_dispatch` ile
+  tetiklenme eklendi (ikisi kontrol denemesiyle KIRMIZI). **`check-nest-wiring` `controllers:` dizisini HİÇ
+  taramıyordu** — controller bağımlılığı da API'yi boot ettirmez, yani kapının var olma sebebi kör
+  noktasındaydı; kapsam **69 → 130** (kontrol denemesi isabetli mesajla yakaladı). `check-env-passthrough`
+  şablon-dizesi ve destructuring biçimlerini artık UYARIYOR (eskiden sessizce atlıyordu) — ve yeni env
+  eklerken kapı işini yaptı, `RETENTION_CLAIM_KEY_MASK_DAYS` compose'a girmeden beni durdurdu.
+- **ADIM 2 — kendi katalog düzeltmemin açtığı yol:** `.slice(0, N)` kesim noktası bir surrogate ÇİFTİNİN
+  ortasına denk gelirse yalnız-surrogate bırakıyor, Node onu U+FFFD'ye çeviriyor ve ad DB'ye `…�` olarak
+  SESSİZCE bozuk yazılıyordu (dev'de gerçek istekle ölçüldü: 520 birimlik ad kabul edildi ama son karakter
+  bozuldu). Paylaşılan `truncateUtf16Safe` (shared/domain/text.ts) yazıldı, katalog + sipariş `remoteName`
+  ikisi de ona bağlandı; testin İÇİNDE kontrol denemesi var (eski `slice` çıktısının bozuk olduğu aynı
+  testte kanıtlanıyor).
+- **ADIM 3 — kalan alanlar (1 orta + 6 düşük):** **[ORTA] DR alarmı YALAN söylüyordu** — `backupSummary`
+  `backup` ve `backup-drill` satırlarını ORTAK `limit(30)` penceresinde okuyordu; gecelik yedek + aylık
+  tatbikat kurulumunda ~29 günden eski tatbikat pencereden düşüyor, panel/alarm "HİÇ başarılı tatbikat
+  kaydı yok" diyordu (eşik 35 gün). Hedef başına AYRI pencere. **Destek yazışması en YENİ mesajları
+  sessizce düşürüyordu** (`ASC ... LIMIT 500`) — bir destek ekranında en kritik satır sonuncusudur; sıra
+  ters çevrilip kırpma `truncated` ile ekrana çıkarıldı. **İki "satış" tanımı ayrışmıştı** (`/reports`
+  iptal satırı sayıyor, `/reports/reorder` saymıyordu → aynı ürün için çelişen tükenme tahmini; süresi
+  dolmuş atama tam iadeden sonra hayatta kaldığı için senaryo gerçek). **Tedarikçi fişindeki DÜZ METİN
+  anahtar** hiç budanmıyordu (şifreli `payload_enc` ile asimetrik, yedeklerde de birikiyordu) → kapanmış
+  fişlerde 1 yıl sonra maskelenir, satır ve fiş izi KORUNUR (`RETENTION_CLAIM_KEY_MASK_DAYS`). **AI hız
+  sınırı** IP başınaydı ama panel çağrıları Next üzerinden proxy'lendiği için TEK GLOBAL kovaya çöküyordu
+  (bir operatör hepsini kilitliyordu); günlük özet ucunda HİÇ sınır yoktu (her yenileme ücretli çağrı) →
+  üç uç tek kaynağa (`ai-rate-key.ts`) bağlandı. **ParseUUIDPipe** eksikleri (bozuk id → 500 yerine 400).
+  **`readonly-sql` metin kapısı** `SELECT DISTINCT ON (id) *` biçimini kaçırıyordu (sömürülebilir değildi —
+  dönen kolon süzgeci yakalıyordu — ama katmanlardan biri eksikti).
+- **KENDİ HATAM (bu projede 8. kez):** `sql` şablonunun İÇİNDE ters tırnak kullandım; üstelik hemen
+  yanındaki `reorder.service.ts` yorumu tam bunu uyarıyor. typecheck yakaladı, uyarı o bloğa da yazıldı.
+- **Doğrulama (2. tur):** typecheck 4/4 + **dört kapı** (use-server 26/88 · nest-wiring 42 modül/**130** sınıf +13 kuyruk · env **50** · workflows 2/4/46) · birim **shared 64 + api 152 + admin 147** · build 3/3 · **VPS izole test DB: entegrasyon 405/405 + yarış 3/3** · PHP-lint 13/13 + eklenti davranış 108/108 · dev 37 rota 200. **Migration YOK** (0000-0045 sabit).

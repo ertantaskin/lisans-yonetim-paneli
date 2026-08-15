@@ -33,6 +33,7 @@ import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { releaseAllocations } from '../assignment/assign';
+import { insertAssignments } from './assignment-insert';
 import { allocate } from '../assignment/allocate';
 import { recomputeOrderStatus } from './order-status';
 import { lineStatusFor } from './fill-target';
@@ -550,42 +551,29 @@ export class OrdersService {
           // (stok import, supplier_claim_items) ve `consumeMultiUseCapacity` için AYNI maliyet
           // ölçülüp düzeltilmişti — tek-kullanımlık dal o düzeltmenin dışında kalmıştı.
           //
-          // Eşleme SIRAYA DEĞİL `licenseItemId`'ye dayanır: RETURNING'in giriş sırasını koruduğu
-          // yazılı bir garanti değildir. Bir `allocations` dizisinde aynı kalem iki kez geçmez
-          // (tek-kullanımda her kalem ayrı satır, multi'de kapasite anahtar başına tek allocation).
-          if (allocations.length > 0) {
-            const inserted = await tx
-              .insert(assignments)
-              .values(
-                allocations.map((alloc) => ({
-                  orderId: order.id,
-                  lineId: orderLine.id,
-                  licenseItemId: alloc.licenseItemId,
-                  units: alloc.units,
-                  validUntil,
-                  status: 'active' as const,
-                  deliveredAt: new Date(),
-                })),
-              )
-              .returning({ id: assignments.id, licenseItemId: assignments.licenseItemId });
-            const idByItem = new Map(inserted.map((r) => [r.licenseItemId, r.id]));
-            for (const alloc of allocations) {
-              const assignmentId = idByItem.get(alloc.licenseItemId);
-              // Olamaz; olursa SESSİZ KALMAZ. `assignmentId: undefined` bir yanıta sızarsa
-              // mağaza o atamayı bir daha adresleyemez (reveal/replace/suspend hepsi id ister)
-              // ve tx zaten commit edilmiş olurdu. Fırlatmak tüm siparişi geri alır.
-              if (!assignmentId) {
-                throw new Error(
-                  `Atama kaydı okunamadı (licenseItemId=${alloc.licenseItemId}) — sipariş geri alındı.`,
-                );
-              }
-              assignmentResults.push({
-                assignmentId,
-                remoteLineId: line.remoteLineId,
-                units: alloc.units,
-                validUntil: validUntil ? validUntil.toISOString() : null,
-              });
-            }
+          // Chunk'lama, eşleme kuralı ve tutarlılık invaryantı TEK YERDE: `assignment-insert.ts`
+          // (completeLine ile paylaşılır — iki kopya tutmak bu projede sapma üretir).
+          const deliveredAt = new Date();
+          const idByItem = await insertAssignments(
+            tx,
+            allocations.map((alloc) => ({
+              orderId: order.id,
+              lineId: orderLine.id,
+              licenseItemId: alloc.licenseItemId,
+              units: alloc.units,
+              validUntil,
+              deliveredAt,
+            })),
+          );
+          for (const alloc of allocations) {
+            assignmentResults.push({
+              // `!` güvenli: `insertAssignments` her tahsis için bir kayıt okunduğunu
+              // doğruluyor, aksi halde fırlatıyor (sipariş tamamen geri alınır).
+              assignmentId: idByItem.get(alloc.licenseItemId)!,
+              remoteLineId: line.remoteLineId,
+              units: alloc.units,
+              validUntil: validUntil ? validUntil.toISOString() : null,
+            });
           }
 
           const lineStatus =
@@ -960,8 +948,12 @@ export class OrdersService {
     // düşürüyordu → HARCANMIŞ aktivasyonlar tekrar satılabilir hâle geliyordu (sessiz aşırı-satış).
     // Teslimattan SONRA adedin düşmesi MAK için iadeyle fiziksel olarak aynıdır — hangi yoldan
     // geldiğini ayırt edemeyiz, bu yüzden §2'nin ihtiyatlı kuralı iki yolda da uygulanır.
-    // (Satırın yeniden doldurulması etkilenmez: taze anahtar havuzdan gelir, eski MAK anahtarına
-    // kapasite iade etmek gerekmez.)
+    // Satırın yeniden doldurulması taze anahtarla yapılır (eski MAK anahtarına kapasite iade
+    // etmek gerekmez) — AMA bu ancak HAVUZDA STOK VARSA mümkündür. Kabul edilen yan etki:
+    // ürünün tek anahtarı varsa ve o tükendiyse, `qty 5→3` sonrası `3→5` artışı DOLDURULAMAZ ve
+    // satır `partial 3/5` kalır (operatör stok girer, tamamlama motoru devralır). Bu §2'nin
+    // bilinçli ihtiyatlı yönüdür: harcanmış aktivasyonu yeniden satmaktansa eksik teslim edip
+    // insan müdahalesi beklemek tercih edilir.
     // SIRA ÖNEMLİ — hangi anahtarın öleceğini bu belirler:
     //  1) ÖNCE askıdakiler: `suspended` atama zaten devre dışı bırakılmış (operatör bilerek
     //     kapatmış). Fazlalığı ondan düşmek, müşterinin KULLANDIĞI canlı bir anahtarı

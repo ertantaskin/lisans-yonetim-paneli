@@ -56,6 +56,8 @@ export function SupportThread({
   const [messages, setMessages] = React.useState<ThreadMessage[]>(preloaded ?? []);
   const [loading, setLoading] = React.useState(!preloaded);
   const [loadError, setLoadError] = React.useState<string | null>(null);
+  /** Yazışma tavana dayandı mı (en eski mesajlar düşürüldü) — görünür uyarı basılır. */
+  const [truncated, setTruncated] = React.useState(false);
   const [internal, setInternal] = React.useState(false);
   const [state, setState] = React.useState<ThreadState>(initialThreadState);
   const [pending, startTransition] = React.useTransition();
@@ -72,6 +74,10 @@ export function SupportThread({
         }
         if (Array.isArray(r.messages)) {
           setMessages(r.messages);
+          // Kırpma dürüstlüğü: uzun yazışmada EN ESKİ mesajlar düşürülür. Sessiz kalırsa
+          // operatör tam geçmişi gördüğünü sanır (bu panelde sessiz LIMIT daha önce
+          // "o kayıt yok" yanılgısı üretmişti).
+          setTruncated(r.truncated === true);
           return;
         }
         // ok=true ama gövde beklenmedik biçimde: ÇÖKME yerine dürüst uyarı (sessizce
@@ -127,6 +133,14 @@ export function SupportThread({
       {loadError && (
         <p className="flex items-center gap-1.5 text-xs text-destructive">
           <TriangleAlert className="size-3.5" aria-hidden /> {loadError}
+        </p>
+      )}
+
+      {truncated && (
+        <p className="flex items-center gap-1.5 text-xs text-warning">
+          <TriangleAlert className="size-3.5" aria-hidden />
+          Yazışma çok uzun — yalnız <strong>en son {messages.length} mesaj</strong> gösteriliyor,
+          daha eskileri bu listede yok.
         </p>
       )}
 

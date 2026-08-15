@@ -48,7 +48,13 @@ API_BASE="${DEPLOY_RUNNER_API:-https://api.167-233-108-12.sslip.io}"
 # Tek örnek güvencesi — kilit BETİĞİN KENDİSİNE ait (kurulum talimatından bağımsız çalışır).
 # Dosya adı bilinçli olarak dokümandaki eski dış-flock adından FARKLI (yukarıdaki nota bak).
 exec 9>/tmp/wpteslimat-deploy-runner.self.lock
-if ! flock -n 9; then exit 0; fi
+if ! flock -n 9; then
+  # LOGLA, sessizce çıkma. Uzun süren bir dağıtım boyunca atlanan her dakikalık koşumun izi
+  # kalmalı; aksi halde "cron çalışıyor mu, yoksa takılı bir kilit mi var?" sorusu logdan
+  # yanıtlanamaz. Kardeş `backup-runner.sh` bunu zaten yapıyordu — asimetri kapatıldı.
+  echo "$(date '+%F %T') deploy-runner: başka bir koşum sürüyor (kilit meşgul), atlandı."
+  exit 0
+fi
 
 command -v jq >/dev/null 2>&1 || { echo "deploy-runner: jq gerekli (apt install jq)"; exit 1; }
 
