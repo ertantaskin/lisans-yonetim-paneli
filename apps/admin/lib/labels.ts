@@ -466,6 +466,11 @@ const EVENT_TYPE: Record<string, string> = {
   // GERÇEK anahtar `mail_resent` (admin-orders.service `resendDelivery`). Sözlükte yalnız
   // `resent` vardı → zaman çizelgesinde ham `mail_resent` görünüyordu (yanlış anahtar).
   mail_resent: 'Mail yeniden gönderildi',
+  // TESLİM EDİLMİŞ hesabın kimlik bilgileri yerinde yenilendi (stock.rotateAccountCredentials —
+  // owner-only uç). Sözlüğün "API'nin ürettiği tam küme 13 değerdir" notu bu uç EKLENMEDEN
+  // ÖNCE yazılmıştı; olay üretilmeye başlayınca sözlük güncellenmediği için zaman çizelgesinde
+  // ham `account_credentials_rotated` görünüyordu (aynı sınıf: `mail_resent` yanlış anahtarı).
+  account_credentials_rotated: 'Hesap bilgileri yenilendi',
   // ── ÖLÜ ANAHTARLAR (API bu tiplerde olay YAZMIYOR) ────────────────────────
   // `assignment_created` / `replaced` / `suspended` / `unsuspended`: bu eylemler `audit_log`'a
   // ve atama durumuna yazılır, `fulfillment_events`'e DEĞİL.
@@ -588,6 +593,13 @@ const NOTIFICATION_TYPE: Record<string, string> = {
    */
   backup_stale: 'Yedek bayat',
   drill_stale: 'Geri yükleme tatbikatı bayat',
+  /**
+   * Üretimde mail hedefi yakalayıcıya (mailpit/localhost) bakıyor → teslimat mailleri GERÇEK
+   * müşteriye ULAŞMIYOR (MailConfigGuardService, `critical`). Etiketi eksikti ve bu alarm
+   * prod'da CANLI: ölçüldüğünde 26 kayıt vardı (en yenisi aynı gün). Yani panelin en kritik
+   * uyarılarından biri operatöre ham `mail_config` olarak görünüyordu.
+   */
+  mail_config: 'Mail yapılandırması hatalı',
 };
 export const notificationTypeLabel = (t: string) => lookup(NOTIFICATION_TYPE, t);
 

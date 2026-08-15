@@ -14,7 +14,46 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
-### Denetimde ertelenen tüm maddelerin kapatılması (migration 0043, eklenti 1.0.7)
+### Denetim: zaman çizelgesi sırası + görünmeyen etiketler (migration 0044)
+
+Proje baştan sona yeniden denetlendi (doğrulama temeli: typecheck 4/4, birim 148+135+35,
+entegrasyon 394/394, yarış 3/3, şema sapması yok, `pnpm audit --prod` temiz). Çekirdek
+para yolu (atama/iade/değişim/kota), RBAC kapıları ve düz-metin maskeleme kapsamlı biçimde
+denetlendi ve **temiz çıktı**; aşağıdakiler bulunan gerçek kusurlardır.
+
+**Sipariş zaman çizelgesi yanlış sırada gösterebiliyordu.** Bir siparişin olayları tek
+transaction'da yazılır (`order_received` → `fulfilled`/`pending_stock`) ve PostgreSQL'de
+`now()` transaction başlangıcını döndürdüğü için damgalar **birebir aynı** olur. Sıralama
+yalnız `created_at` ile yapıldığından bu olaylar keyfi sırada dönüyordu: sipariş detayında
+"Geri alındı" satırı "Sipariş tamamlandı"nın üstünde görünebiliyor ve sıra sayfa yenilendikçe
+değişebiliyordu — denetim izi niteliğindeki bir ekranda olayların nedensel sırasını yanlış
+anlatan bir durum. Ölçüldü: dev verisinde aynı damgayı paylaşan **7.200 olay grubu**
+(`fulfilled + line_completed + revoked` üçlüleri dahil). `fulfillment_events.seq` eklendi
+(migration 0044, `license_items.seq`/0030 ile aynı desen ve aynı rewrite uyarısı; uygulanırken
+prod 5, dev 14.418 satırdı — ölçüldü) ve sıralama `created_at, seq` oldu.
+
+**Kritik mail alarmı operatöre ham kod olarak görünüyordu.** `mail_config` bildirimi
+(üretimde mail hedefi yakalayıcıya bakıyor → teslimat mailleri gerçek müşteriye ulaşmıyor)
+etiket sözlüğünde yoktu. Bu alarm prod'da **canlıydı**: ölçüldüğünde 26 kayıt vardı, en yenisi
+aynı gün. Aynı sınıftan ikinci boşluk: yeni `account_credentials_rotated` olayı da sözlüğe
+eklenmemişti, yani zaman çizelgesinde ham `account_credentials_rotated` çıkıyordu. Her iki
+sözlük API'nin ürettiği değerlerin TAMAMINA karşı yeniden denetlendi; kalan sözlükler
+(audit_action, güvenlik olayı tipleri) tam çıktı.
+
+**Ürün detayındaki stok hareketleri listesi kararsızdı.** Toplu "geçersiz kıl/hasarlı" akışı
+kalem başına bir satır yazar ve hepsi tek transaction'a düşer → damgalar aynı olur; tie-break
+olmadığı için 50'lik pencereye o bloktan hangi satırların gireceği keyfiydi ve liste her
+yenilemede değişebiliyordu (`created_at DESC, id DESC`).
+
+**Rota duman testi iki sayfayı hiç taramıyordu.** `sites/new` (site bağlama sihirbazı) ve
+`templates/new` listede yoktu — ikisi de sunucu action'ı olan, yani `next build` temiz geçerken
+çalışma anında kırılabilen sayfalar; betiğin tüm değeri kapsamında olduğu için eklendi
+(kapsamı elle doğrulamanın komutu da betiğe yazıldı).
+
+Yeni regresyon testi `order-timeline-order.test.ts` **mutasyonla kanıtlandı**: düzeltme geri
+alındığında kırmızıya döner. (İlk sürümü dönmüyordu — tie-break olmadan da Postgres küçük
+tabloda satırları pratikte ekleme sırasında döndürdüğü için test hiçbir şeyi korumuyordu;
+`seq` fiziksel sıranın tersine yazılarak ayırt edici hâle getirildi.)
 
 Bir önceki denetimin "bilinçli olarak bırakıldı" diye raporlanan kalemleri tamamlandı.
 

@@ -1,0 +1,26 @@
+-- Sipariş zaman çizelgesine EKLEME SIRASI (tie-break) — `license_items.seq` (0030) deseni.
+--
+-- NEDEN: bir siparişin olayları TEK transaction'da yazılıyor (createOrder: order_received →
+-- fulfilled/partially_fulfilled/pending_stock) ve `now()` transaction başını döndürdüğü için
+-- damgalar BİREBİR AYNI oluyordu. Sıralama yalnız `created_at` ile yapıldığından bu olaylar
+-- KEYFİ sırada dönüyor, sipariş detayında "Geri alındı" satırı "Sipariş tamamlandı"nın üstünde
+-- görünebiliyor ve sıra her yenilemede değişebiliyordu. ÖLÇÜLDÜ (dev): aynı damgayı paylaşan
+-- 7.200 olay grubu, `fulfilled + line_completed + revoked` üçlüleri dahil.
+--
+-- UYARI (0030'un aynısı): `ADD COLUMN ... bigserial NOT NULL` DEFAULT'u volatile (nextval)
+-- olduğu için PG11+ metadata-only hızlı yolunu KULLANAMAZ → TAM TABLO YENİDEN YAZIMI +
+-- ACCESS EXCLUSIVE kilit. Migration api boot'unu bloklar (compose: migrate && main) ve
+-- deploy.sh sağlık için 60 sn bekler → aşılırsa OTOMATİK ROLLBACK. Bu migration uygulanırken
+-- tablo KÜÇÜKTÜ (prod 5, dev 14.418 satır / 3 MB → milisaniyeler); ÖLÇÜLDÜ. Tablo milyonlara
+-- çıktıktan sonra benzer bir kolon eklenecekse rewrite'sız desen kullanılmalı: nullable bigint
+-- ekle → CREATE SEQUENCE → parti parti backfill → SET DEFAULT nextval → NOT VALID CHECK +
+-- VALIDATE → SET NOT NULL.
+--
+-- GEÇMİŞ SATIRLAR: seq değerleri heap FİZİKSEL sırasıyla dolar. `fulfillment_events` yalnız
+-- INSERT alır (kod tabanında UPDATE eden hiçbir yol yok — tarandı; yalnız retention DELETE'i
+-- var) → pratikte ekleme sırasına eşittir; KESİN garanti bu migration sonrası satırlar için.
+--
+-- INDEX GEREKMEZ: mevcut `fulfillment_events_order_idx (order_id, created_at)` sorguyu zaten
+-- daraltıyor; sipariş başına olay sayısı küçük olduğu için kalan (created_at, seq) sıralaması
+-- önemsiz bir sort. Kolonu index'e eklemek yalnız aynı prefiksi ikinci kez yazmak olurdu.
+ALTER TABLE "fulfillment_events" ADD COLUMN "seq" bigserial NOT NULL;

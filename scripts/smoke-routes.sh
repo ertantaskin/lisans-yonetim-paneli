@@ -19,11 +19,17 @@ BASE="${1:-http://127.0.0.1:3006}"
 
 # NOT: yeni bir sayfa (app/<rota>/page.tsx) eklendiğinde BURAYA da eklenmeli — betiğin tüm
 # değeri kapsamında. `categories` ilk turda unutulmuştu (kategori ekranı eklendiği hâlde hiç
-# taranmıyordu); `login` bilinçli dışarıda (kimlik doğrulama akışı, hata sınırı testi değil).
+# taranmıyordu); `sites/new` (onboarding sihirbazı) ve `templates/new` de aynı şekilde
+# listeye hiç girmemişti — ikisi de sunucu action'ı olan, yani çalışma anında kırılabilen
+# sayfalar. `login` bilinçli dışarıda (kimlik doğrulama akışı, hata sınırı testi değil);
+# `/` de dışarıda (middleware yönlendirmesi, kendi sayfası yok).
+#
+# KAPSAM DENETİMİ (elle): aşağıdaki liste app/ ağacıyla karşılaştırılabilir —
+#   find apps/admin/app -name page.tsx | sed 's|.*app/||; s|/page.tsx$||' | grep -v '\[' | sort
 ROUTES=(
   dashboard pending review orders stock stock/import categories mappings quarantine quarantine/claims quarantine/records sites
-  suppliers purchase-orders batches support customers reports reports/costs reports/sla reports/reorder ai notifications
-  ops security audit admins admins/security templates releases deployments settings guide products
+  sites/new suppliers purchase-orders batches support customers reports reports/costs reports/sla reports/reorder ai notifications
+  ops security audit admins admins/security templates templates/new releases deployments settings guide products
 )
 
 fail=0

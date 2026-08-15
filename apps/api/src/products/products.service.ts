@@ -746,7 +746,15 @@ export class ProductsService {
       SELECT id, action, qty, reason, actor, license_item_id, created_at
       FROM stock_adjustments
       WHERE product_id = ${id}
-      ORDER BY created_at DESC
+      -- TIE-BREAK (proje kuralı: LIMIT'li her ORDER BY'ın tie-break'i olmalı). TOPLU
+      -- "geçersiz kıl/hasarlı" akışı KALEM BAŞINA bir satır yazar ve hepsi TEK transaction'da
+      -- gider; now() transaction başını döndürdüğü için damgalar aynı olur. Tie-break olmadan
+      -- 50'lik pencereye o bloktan HANGİ satırların gireceği keyfiydi ve liste her yenilemede
+      -- değişebiliyordu. id DESC en azından KARARLI bir sıra verir (aynı desen:
+      -- purchase_orders_created_idx). Nedensel sıra gerekmiyor: aynı damgadaki satırlar
+      -- operatörün TEK bir işlemidir.
+      -- (Bu blok bir SQL şablon dizesinin içindedir; yorumlarda ters tırnak KULLANMA.)
+      ORDER BY created_at DESC, id DESC
       LIMIT 50;
     `);
     return list.map((r) => ({

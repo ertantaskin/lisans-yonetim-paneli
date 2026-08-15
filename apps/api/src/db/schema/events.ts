@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { bigserial, index, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { orders } from './orders';
 
 /**
@@ -19,6 +19,27 @@ export const fulfillmentEvents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .default(sql`now()`),
+
+    /**
+     * EKLEME SIRASI — monoton artan (sequence). Zaman çizelgesinde `created_at`'in tie-break'i.
+     *
+     * NEDEN GEREKLİ (ÖLÇÜLDÜ): bir siparişin olayları TEK transaction'da yazılır (`createOrder`
+     * önce `order_received`, sonra `fulfilled`/`partially_fulfilled`/`pending_stock` ekler) ve
+     * `now()` transaction başlangıcını döndürdüğü için damgalar BİREBİR AYNIDIR. Dev verisinde
+     * aynı damgayı paylaşan 7.200 olay grubu sayıldı — `fulfilled + line_completed + revoked`
+     * üçlüleri dahil. Sıralama yalnız `created_at` ile yapıldığı sürece bu olaylar KEYFİ sırada
+     * dönüyordu: sipariş detayında "Geri alındı" satırı "Sipariş tamamlandı"nın ÜSTÜNDE
+     * görünebiliyor ve sıra sayfa yenilendikçe değişebiliyordu. Denetim izi niteliğindeki bir
+     * ekranda bu, olayların nedensel sırasını yanlış anlatır.
+     *
+     * `id` (uuid v4) tie-break olarak YETMEZ: kararlı olur ama sıra yine rastgeledir —
+     * `license_items.seq` için aynı gerekçeyle alınan karar (migration 0030) burada tekrarlanır.
+     *
+     * GEÇMİŞ SATIRLAR: değerler heap FİZİKSEL sırasıyla dolar. `fulfillment_events` yalnız
+     * INSERT alır (hiçbir kod yolu UPDATE etmez) → pratikte ekleme sırasına eşittir; yine de
+     * KESİN garanti bu migration SONRASI yazılan satırlar içindir.
+     */
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
   },
   (t) => [
     index('fulfillment_events_order_idx').on(t.orderId, t.createdAt),

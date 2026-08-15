@@ -719,7 +719,12 @@ export class AdminOrdersService {
         .select()
         .from(fulfillmentEvents)
         .where(eq(fulfillmentEvents.orderId, orderId))
-        .orderBy(fulfillmentEvents.createdAt),
+        // TIE-BREAK ŞART (`licenseItems.seq` ile aynı gerekçe): bir siparişin olayları TEK
+        // transaction'da yazılır ve `now()` transaction başını döndürdüğü için damgalar AYNI
+        // olur (dev'de ölçüldü: aynı damgayı paylaşan 7.200 grup). Yalnız `created_at` ile
+        // sıralandığında "Geri alındı" satırı "Sipariş tamamlandı"nın üstüne çıkabiliyor ve
+        // sıra her yenilemede değişebiliyordu. `seq` nedensel ekleme sırasını taşır.
+        .orderBy(fulfillmentEvents.createdAt, fulfillmentEvents.seq),
 
       this.db
         .select()
