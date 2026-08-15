@@ -2130,3 +2130,80 @@ doğruluğu · test-kapsamı) + 6 düzeltme işçisi + gerçek WooCommerce E2E.
   "parola değişti" için doğru araç yok (değişim BAŞKA hesap verir, eskisi müşterinin elinde çalışmaya
   devam eder) · `payload_suffix_hash` hesap ürününde kanonik JSON'un son 5 hanesi → tam-anahtar/son-hane
   araması account'ta HER ZAMAN boş döner.
+
+**KALAN EKSİKLERİN KAPATILMASI (commit 578f003, CANLI prod+dev, migration 0043, eklenti v1.0.7):**
+Kullanıcı "geri kalan tüm eksikleri tamamla, güncellemeleri yayınla" dedi → önceki denetimde
+"bilinçli bırakıldı / raporlandı" diye ertelenen maddelerin TAMAMI kapatıldı. 3 paralel işçi
+(tükenmiş-stok görünürlüğü / MAK çıkmaz sokağı+units / maliyet penceresi) + merkezî çekirdek iş.
+- **[YENİ UÇ] Teslim edilmiş HESABIN kimlik bilgileri yerinde güncellenebiliyor** — `POST
+  /v1/admin/license-items/:id/rotate-credentials` (**owner-only**). Boşluk gerçekti: sağlayıcı
+  parolayı döndürdüğünde `updateLicenseItemPayload` teslim edilmişi (HAKLI olarak) 409'lar,
+  "Değiştir" ise BAŞKA bir hesap verir → eski hesap müşterinin elinde ÇALIŞMAYA DEVAM eder
+  (bilgileri zaten kopyalamıştır) ve müşterinin o hesapta biriktirdiği veri KAYBOLUR. Yani
+  anahtar ürününde doğru olan çözüm hesap ürününde YANLIŞ. Yeni akış AYNI kalem + AYNI atama +
+  yeni bilgiler: `kind='account'` şartı, CANLI atama şartı (teslim edilmemişte normal yol),
+  sebep zorunlu, `looksMasked()` kapısı, dedupe korunur, hesapta `payload_suffix_hash=NULL`,
+  `fulfillment_events` + audit. Bildirim KARARI operatörde (§15): yanıt `orderIds` döner, UI
+  "teslimat mailini yeniden gönderin" der — servis mail GÖNDERMEZ. 5 entegrasyon testi.
+- **[MAK çıkmaz sokağı]** Üç değişim yolu da MAK'ı reddediyor ve **RED DOĞRU** (geri alınan
+  kapasite AYNI paylaşımlı anahtara döner → yeni atama yine o kusurlu anahtarı seçer). Kusur
+  reddin kendisi değil, operatöre yapabileceğinin SÖYLENMEMESİYDİ: sipariş detayı + destek
+  ekranı düğmeyi GATE'SİZ sunuyor, tıklayınca 400 veriyordu (envanter tablosu doğru gate'liyordu
+  → proje kuralı "tıklanıp hata veren düğme hiç sunulmayandan kötüdür" kendi kodunda ihlal
+  ediliyordu). İki ekran da sebebiyle kapalı + gerçek reçete; `replacements.list` yanıtına
+  `usageMode` eklendi (destek ekranı bunu okur). "İptal" onayındaki yanıltıcı *"kusurlu key"*
+  örneği KALDIRILDI — o uç iade semantiğinde koşar, müşterinin hakkı YANAR. `MULTI_REPLACE_BLOCKED`
+  tek kaynak `lib/labels`'e taşındı. **TUZAK (yine görüldü):** `export { X } from '…'` adı YEREL
+  olarak BAĞLAMAZ → `import` + ayrı `export` gerekti (typecheck yakaladı).
+- **[Tükenmiş kapasite görünmezdi]** `depleted` kalemler hiçbir stok ekranında listelenemiyordu:
+  ürün detayında kova YOK, envanter facet'inde seçenek YOK, `detailStock().expired` alanı ÖLÜ
+  (hiçbir kod yolu `license_items.status='expired'` yazmaz — süre bitişi `assignments.status`'ü
+  değiştirir) → ekran DAİMA "Süresi geçmiş: 0" gösteriyordu. Üçü de düzeltildi; ölü alan
+  envanterin `?status=expired` süzgeciyle BİREBİR aynı yükleme bağlandı (şeritteki sayıya bakan
+  operatör aynı adı taşıyan süzgeci açınca AYNI listeyi görsün). MAK'ta kovaların TOPLANAMAYACAĞI
+  ekranda + kodda not edildi.
+- **[Maliyet raporu]** penceresiz tam tablo taramasıydı → `?from&to`, varsayılan **son 12 ay**,
+  uygulanan dönem ekranda YAZILI (sessiz kırpma yok, tek tıkla "tüm zamanlar"). Varsayılanı "tüm
+  zamanlar" bırakmak bulguyu KAPATMAZDI (menüden açan operatör yine sınırsız tarama tetiklerdi).
+  Stok değerlemesi bilerek pencerelenmedi: dönem AKIŞI değil ANLIK pozisyon — daraltmak "stok
+  değerimiz düştü" yalanı üretirdi. **migration 0043:** `assignments_delivered_at_idx` (kısmi —
+  `delivered_at` indekssizdi, SLA servisi tam bu yüzden `created_at` kullanıyor) ·
+  `purchase_orders_spent_at_idx` (**İFADE** indeksi: harcama TESLİMDE gerçekleşir →
+  `coalesce(received_at, created_at)`; mevcut `_created_idx` bunu karşılamaz) ·
+  `stock_adjustments_created_idx` (kısmi; yüklem servisle BİREBİR — ayrışırsa planlayıcı kısmi
+  indeksi kullanamaz). Yeni birim testi (`costs.window.test.ts`) ÜRETİLEN SQL'i denetliyor
+  (bind'ler ISO dize mi, `::timestamptz` cast'i var mı) ve **gerçek bir hatayı yakaladı**
+  (bozuk tarihin "sınırsız"a düşmesi).
+- **[Hesap araması YALAN SÖYLÜYORDU]** `payload_suffix_hash` hesap ürününde KANONİK JSON'un
+  kuyruğunu hash'liyordu (`ne"}` gibi) → operatörün aradığı parola/kullanıcı-adı sonu ASLA
+  eşleşmiyor; üstelik kuyruğun 2 karakteri (`"}`) SABİT olduğu için etkin entropi 5→3 düşüyordu.
+  Hesapta artık YAZILMIYOR (NULL) + arama ipucu gerçeği söylüyor.
+- **[WP v1.0.7]** Sipariş ekranı özeti MAK'ta KALEM sayıyordu → 3 aktivasyonluk tek anahtar
+  **"1 lisans"** görünüyor, operatör eksik teslimat sanıp bedava **"+1 Bonus"** verebiliyordu.
+  Artık `2 lisans (toplam 5 kullanım hakkı)`; `useCount/maxUses` çipi **"Anahtar geneli"** diye
+  etiketlendi (o sayaç anahtarın TÜM siparişlerdeki toplamı, bu siparişin değil) + siparişe düşen
+  birim ayrıca gösteriliyor.
+- **[OPS — SESSİZ ARIZA, kendi runbook'umuz kırıyordu]** `scripts/backup-runner.sh` git'te
+  **100644 (çalıştırılabilir DEĞİL)** idi ve `docs/RUNBOOK-DR.md` onu DOĞRUDAN crontab'a koymayı
+  söylüyor → operatör runbook'u HARFİYEN uygulasa bile cron "Permission denied" ile sessizce hiç
+  koşmayacaktı; üstelik bu arızayı raporlayacak olan da o runner'ın kendisiydi. Exec bit
+  düzeltildi (`smoke-routes.sh` ile birlikte; `scripts/` altında 100644 kalan tek dosya artık
+  `node` ile çağrılan `check-use-server.js`). VPS'te dakikalık + gecelik + aylık-tatbikat
+  cron'ları kuruldu; ilk yedek alındı (1,1 MB dump) ve panelde `success` göründüğü doğrulandı.
+  **Dış kopya (offsite) kancası HÂLÂ KURULMADI** — hedef/kimlik operatöre ait.
+- **Doğrulama:** typecheck 4/4 (src+test) · check-use-server 25/87 · shared 35/35 · api birim
+  **148/148** · admin birim **135/135** · build 3/3 · VPS izole test DB **entegrasyon 394/394**
+  (383 → +11) **+ yarış 3/3** · PHP-lint 12/12 · dev: 0043'ün 3 indeksi canlı, `smoke-routes.sh`
+  **30 rota 200 (hata sınırına düşen yok)**, boot hatası 0 · **dev canlı E2E:** rotasyon 201 →
+  aynı kalem/aynı atama, yeni parola müşterinin `deliveries` yanıtında GÖRÜNÜYOR; maskeli değer
+  **400** ile reddedildi · prod deploy (rollback'li) → `/v1/health` **200 v1.1.0**, 0043 canlı,
+  api hata logu yalnız bilinen mail-relay alarmı · **eklenti v1.0.7 yayınlandı** (HTTP 201).
+- **NOT (dağıtım sırası):** eklenti yayını ilk denemede **401** verdi — API o anda deploy sonrası
+  yeniden başlıyordu (Caddy logunda `connection refused` izi var). Token doğruydu; birkaç saniye
+  sonra tekrar denendi ve 201 döndü. Dağıtım hemen ardından `publish-plugin.sh` koşulacaksa
+  sağlığın oturmasını bekle.
+- **KALAN (yapısal kapsam-DIŞI, kodlanabilir eksik YOK):** fiyat senkronu / kâr-marj (satış fiyatı
+  panelde YOK — §2/§6/§10) · marketplace dış-API adaptörü · Faz-3 WP migrasyonu · abonelik/EFT/3DS.
+  **Operatöre kalan (kod değil):** ADMIN_TOKEN rotasyonu (log geçmişinde düz metin) · prod SMTP
+  hâlâ `mailpit` (mailler gerçek müşteriye ULAŞMIYOR; panel bunu her boot'ta kritik alarmla söyler) ·
+  yedeğin **offsite kancası** (`BACKUP_OFFSITE_CMD`).

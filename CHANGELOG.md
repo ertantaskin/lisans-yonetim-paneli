@@ -14,6 +14,56 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Denetimde ertelenen tüm maddelerin kapatılması (migration 0043, eklenti 1.0.7)
+
+Bir önceki denetimin "bilinçli olarak bırakıldı" diye raporlanan kalemleri tamamlandı.
+
+**Hesap ürünlerinde eksik olan araç eklendi.** Sağlayıcı bir hesabın parolasını değiştirdiğinde
+panelde doğru bir işlem yoktu: kalem düzenleme teslim edilmiş kaydı (haklı olarak) reddediyor,
+"Değiştir" ise müşteriye **başka bir hesap** veriyordu — eski hesap müşterinin elinde çalışmaya
+devam ediyor ve müşterinin o hesapta biriktirdiği veri kayboluyordu. Yani anahtar ürününde doğru
+olan çözüm hesap ürününde yanlıştı. Yeni akış aynı kalemi ve aynı atamayı koruyup yalnız kimlik
+bilgilerini yeniler: owner yetkisi ister, sebep zorunludur, maskeli değer reddedilir, siparişin
+zaman çizelgesine görünür bir iz düşer. Müşteri yeni bilgileri otomatik görmez — panel bunu
+açıkça söyler ve teslimat mailini yeniden göndermeye yönlendirir.
+
+**Çok kullanımlı (MAK) lisansta çıkmaz sokak kapandı.** Üç değişim yolu da MAK'ı reddediyordu ve
+**red doğruydu** (geri alınan kapasite aynı paylaşımlı anahtara döner, yeni atama yine o kusurlu
+anahtarı seçerdi). Eksik olan, operatöre yapabileceğini söylemekti: sipariş detayı ve destek
+ekranı düğmeyi hiçbir uyarı olmadan sunuyor, tıklayınca hata veriyordu. Artık iki ekranda da
+sebebiyle kapalı ve gerçek reçete yazılı (mağaza ekranından "+1 Bonus", kusurlu anahtarı Kusurlu
+Stok akışıyla tedarikçiye bildirme). "İptal" onayındaki yanıltıcı *"kusurlu key"* örneği de
+kaldırıldı — o uç iade semantiğinde çalışır ve müşterinin hakkını yakar.
+
+**Tükenmiş kapasite artık görünüyor.** Kapasitesi biten MAK anahtarları hiçbir stok ekranında
+listelenemiyordu: ürün detayında kova yoktu, envanter süzgecinde seçenek yoktu ve "süresi geçmiş"
+alanı hiçbir kod yolu onu yazmadığı için **daima sıfır** gösteriyordu. Üçü de düzeltildi; MAK'ta
+kovaların toplanamayacağı (kısmen satılmış anahtar hem stokta hem müşterilerde sayılır) ekranda
+ve kodda ayrıca not edildi.
+
+**Maliyet raporu dönemlendi.** Rapor her açılışta `assignments` ve `stock_adjustments`
+zincirlerini penceresiz tarıyordu. Artık `?from&to` alıyor, varsayılanı son 12 ay ve uygulanan
+dönem ekranda yazılı (sessiz kırpma yok, tek tıkla "tüm zamanlar"). Stok değerlemesi bilerek
+pencerelenmedi — o bir dönem akışı değil anlık pozisyondur, daraltmak "stok değerimiz düştü"
+yalanı üretirdi. **migration 0043** üç indeks ekler (teslim tarihi · zayi tarihi · harcama tarihi
+ifadesi).
+
+**Hesap ürününde anahtar araması yalan söylüyordu.** "Son 5 hane" araması hesap kayıtlarında
+kanonik JSON'un kuyruğunu hash'liyordu, yani operatörün aradığı parola/kullanıcı adı sonu **asla**
+eşleşmiyordu; üstelik kuyruğun iki karakteri sabit olduğu için etkin entropi de düşüyordu. Hesap
+kayıtlarında bu hash artık yazılmıyor ve arama ipucu gerçeği söylüyor.
+
+**Eklenti 1.0.7:** sipariş ekranındaki lisans özeti çok kullanımlı anahtarda kalem sayıyordu — üç
+aktivasyonluk tek anahtar "1 lisans" görünüyor, operatör eksik teslimat sanıp bedava bonus
+verebiliyordu. Artık birim de yazıyor ve anahtarın genel kullanım sayacı ("bu siparişin değil,
+anahtarın tümü") açıkça etiketli.
+
+**İşletim:** `backup-runner.sh` deposunda **çalıştırılabilir değildi** (dosya izni), oysa runbook
+onu doğrudan crontab'a koymayı söylüyor — operatör runbook'u harfiyen uygulasa bile yedek cron'u
+sessizce hiç koşmayacaktı. İzin düzeltildi, sunucuda gecelik yedek + aylık tatbikat cron'ları
+kuruldu ve ilk yedek alınıp panelde göründüğü doğrulandı. **Dış kopya (offsite) kancası hâlâ
+kurulmadı** — hedef/kimlik bilgisi operatöre aittir.
+
 ### Panel + eklenti tam denetimi ve gerçek mağaza senaryosu testi (migration 0042, eklenti 1.0.6)
 
 Panel ve WP eklentisi beş bağımsız lensle (WP eklentisi · güvenlik · performans · ürün tipi
