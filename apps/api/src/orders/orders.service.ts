@@ -122,7 +122,7 @@ export class OrdersService {
     // → ardışık await yerine TEK Promise.all ile paralel çalıştır. Bu uç WP my-account/metabox
     // render'ında 5sn timeout ile SENKRON çağrılıyor; round-trip'i 4→1 sıraya indirmek render
     // bloklamasını düşürür. Sorgu şekilleri ve dönüş nesnesi AYNEN korunur (yalnız zamanlama değişir).
-    const [rows, mailStatus, aggRows, flagRows] = await Promise.all([
+    const [rows, mailStatus, aggRows, flagRows, guideRows] = await Promise.all([
       // (1) Aktif atama satırları — payload SQL seviyesinde okunur, canceled/expiry savunma filtreli.
       this.db
         .select({
@@ -135,19 +135,22 @@ export class OrdersService {
           productKind: products.kind,
           payloadSchema: products.payloadSchema,
           onExpiry: products.onExpiry,
-          // §7 kurulum rehberi. LEFT JOIN ile ALINIR (ayrı sorgu DEĞİL): bu uç mağaza
-          // sayfasını 5 sn zaman aşımıyla SENKRON render ediyor; round-trip sayısı bilerek
-          // düşük tutuluyor (yukarıdaki Promise.all'ın gerekçesiyle aynı). Gövde satır
-          // başına tekrarlanır ama yanıtta TEKİLLEŞTİRİLİR (aşağıya bkz.).
-          guideId: productGuides.id,
-          guideTitle: productGuides.title,
-          guideBody: productGuides.body,
+          /*
+           * §7 kurulum rehberi — YALNIZ KİMLİK. Gövde bilerek BU sorguda taşınmaz.
+           *
+           * İlk sürüm rehberin gövdesini de bu LEFT JOIN'e koyuyordu; sonuç satır başına
+           * TEKRARLANIYORDU. 50 anahtarlı bir siparişte 4.000 karakterlik metin 50 kez
+           * (≈200 KB) PG'den uygulamaya taşınıyordu — üstelik bu uç yalnız sayfa render'ında
+           * değil, mağazanın CANLI YOKLAMASINDA da (8-60 sn'de bir, payload'sız durum özeti
+           * için) çağrılıyor. Gövde artık aşağıdaki (5) numaralı BAĞIMSIZ sorgudan tekil
+           * olarak gelir: ek round-trip YOK (aynı Promise.all), taşınan veri sabit.
+           */
+          guideId: products.guideId,
         })
         .from(assignments)
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
         .innerJoin(products, eq(orderLines.productId, products.id))
-        .leftJoin(productGuides, eq(products.guideId, productGuides.id))
         .where(
           and(
             eq(assignments.orderId, order.id),
@@ -206,6 +209,28 @@ export class OrdersService {
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
         .innerJoin(products, eq(orderLines.productId, products.id))
         .where(eq(assignments.orderId, order.id)),
+      /*
+       * (5) §7 kurulum rehberleri — siparişin ÜRÜNLERİNDEN türetilir, atamalardan DEĞİL.
+       *
+       * `rows`a bağlı OLMADIĞI için aynı Promise.all'da paralel koşar (ek round-trip yok) ve
+       * her rehber gövdesi TEK KEZ taşınır. `distinct` şart: aynı rehbere bağlı birden çok
+       * satır varsa (çok kalemli sipariş) tekrar üretirdi.
+       *
+       * Kapsam BİLEREK sipariş satırlarıdır: teslim edilmemiş (pending) bir satırın rehberi de
+       * gelir. Zararsızdır — yanıttaki kalemler `guideId` ile bağlanır, bağlanmayan rehber
+       * eklentide hiç render edilmez; buna karşılık kısmi teslimatta sonradan gelen anahtar
+       * için ikinci bir istek gerekmez.
+       */
+      this.db
+        .selectDistinct({
+          id: productGuides.id,
+          title: productGuides.title,
+          body: productGuides.body,
+        })
+        .from(orderLines)
+        .innerJoin(products, eq(orderLines.productId, products.id))
+        .innerJoin(productGuides, eq(products.guideId, productGuides.id))
+        .where(and(eq(orderLines.orderId, order.id), eq(orderLines.canceled, false))),
     ]);
     const [agg] = aggRows;
     const [flags] = flagRows;
@@ -237,26 +262,20 @@ export class OrdersService {
     });
 
     /*
-     * §7 kurulum/etkinleştirme rehberleri — TEKRARSIZ liste.
-     *
-     * Satır sorgusu rehber gövdesini her atama için tekrar getirir (LEFT JOIN); yanıt
-     * bunları rehber kimliğine göre teke indirir. Aynı rehbere bağlı 10 anahtarlı bir
-     * siparişte 4.000 karakterlik metin 10 kez değil BİR kez gider.
+     * §7 kurulum/etkinleştirme rehberleri.
      *
      * Render (mini-biçimleme → güvenli HTML) PANELDE, tek uygulamayla yapılır: eklenti
      * ikinci bir ayrıştırıcı taşımaz (iki uygulama er geç ayrışır ve aynı metin iki
-     * yüzeyde farklı görünür — bu projede tekrarlayan bir hata sınıfı). Sıra deterministik:
-     * satırların geliş sırası (license_items.seq) korunur.
+     * yüzeyde farklı görünür — bu projede tekrarlayan bir hata sınıfı).
+     *
+     * SIRA: `selectDistinct` sıra GARANTİ ETMEZ (Postgres hash-aggregate kullanabilir) →
+     * başlığa göre sıralanır. Sırasız bırakılsaydı aynı sipariş her yenilemede rehberleri
+     * farklı sırada gösterebilirdi (bu panelde "LIMIT'li her ORDER BY'ın tie-break'i olmalı"
+     * dersinin aynısı; burada LIMIT yok ama kararsızlık aynı şekilde görünür).
      */
-    const guides: RenderedGuide[] = [];
-    const seenGuides = new Set<string>();
-    for (const r of rows) {
-      if (!r.guideId || seenGuides.has(r.guideId)) continue;
-      seenGuides.add(r.guideId);
-      guides.push(
-        renderGuide({ id: r.guideId, title: r.guideTitle ?? '', body: r.guideBody ?? '' }),
-      );
-    }
+    const guides: RenderedGuide[] = guideRows
+      .map((g) => renderGuide({ id: g.id, title: g.title, body: g.body }))
+      .sort((a, b) => a.title.localeCompare(b.title, 'tr'));
 
     // F4: `held` (heldForReview) alanı — WP eklentisi İnceleme Kuyruğu durumunu (my-account bildirimi/
     // metabox rozeti) bu bayraktan okur. Eklemeli; mevcut alanlar (status/mailStatus/deliveries) değişmez.

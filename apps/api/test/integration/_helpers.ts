@@ -348,6 +348,11 @@ export async function cleanupByTag(db: Db, tag: string): Promise<void> {
   // 5) Ürünler + siteler.
   await db.execute(sql`DELETE FROM products WHERE sku LIKE ${like}`);
   await db.execute(sql`DELETE FROM sites WHERE domain LIKE ${like}`);
+  // 6) Kurulum rehberleri (§7). Ürünlerden SONRA silinir: `products.guide_id` FK'si
+  //    ON DELETE SET NULL olduğu için sıra zorunlu değil, ama ürün silinmeden rehberi
+  //    silmek gereksizce her satırı UPDATE ettirir. Başlık benzersizliği TÜRKÇE-DUYARLI
+  //    unique index'e bağlı → artık kalan bir kayıt sonraki koşuda 409 üretirdi.
+  await db.execute(sql`DELETE FROM product_guides WHERE title LIKE ${like}`);
 }
 
 // ---------------------------------------------------------------------------
