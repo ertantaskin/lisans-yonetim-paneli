@@ -2207,3 +2207,62 @@ Kullanıcı "geri kalan tüm eksikleri tamamla, güncellemeleri yayınla" dedi �
   **Operatöre kalan (kod değil):** ADMIN_TOKEN rotasyonu (log geçmişinde düz metin) · prod SMTP
   hâlâ `mailpit` (mailler gerçek müşteriye ULAŞMIYOR; panel bunu her boot'ta kritik alarmla söyler) ·
   yedeğin **offsite kancası** (`BACKUP_OFFSITE_CMD`).
+
+**DENETİM: ZAMAN ÇİZELGESİ SIRASI + GÖRÜNMEYEN ETİKETLER (commit 5e593f6, CANLI prod+dev, migration 0044):**
+Kullanıcı "güncel hâli adım adım inceleyip eksikleri tespit et; güvenlik/performans/kullanım/bug'ları
+eksiksiz düzelt" dedi. **Önce doğrulama temeli ÖLÇÜLDÜ** (neyin gerçekten bozuk olduğunu bilmeden aramamak
+için): typecheck 4/4 · birim 148+135+35 · **entegrasyon 394/394 + yarış 3/3** · şema sapması yok ·
+`pnpm audit --prod` temiz · WP php-lint 13/13 + 108 davranış doğrulaması · 34 rota 200 · prod /health 200
+v1.1.0 · eklenti sürüm invaryantı (kod 1.0.7 = yayınlanan 1.0.7). Çekirdek para yolu (atama/iade/değişim/
+kota), 14 owner-only ucun RBAC kapsamı, düz-metin maskeleme, advisory-lock ad alanları, retention kapsamı,
+admin↔API rota kablolaması ve `audit_action`/güvenlik-olayı sözlükleri denetlendi ve **TEMİZ ÇIKTI**.
+- **[ORTA] Sipariş zaman çizelgesi yanlış sırada gösterebiliyordu.** Bir siparişin olayları TEK
+  transaction'da yazılır (`createOrder`: order_received → fulfilled/pending_stock) ve `now()` transaction
+  BAŞINI döndürdüğü için damgalar BİREBİR aynıdır → yalnız `created_at` ile sıralandığında olaylar keyfi
+  sırada dönüyor, **"Geri alındı" satırı "Sipariş tamamlandı"nın ÜSTÜNE çıkabiliyor** ve sıra her
+  yenilemede değişebiliyordu (denetim izi niteliğindeki ekranda nedensel sırayı yanlış anlatır).
+  **ÖLÇÜLDÜ** (tahmin değil): dev verisinde aynı damgayı paylaşan **7.200 olay grubu** —
+  `fulfilled + line_completed + revoked` üçlüleri dahil. **migration 0044** `fulfillment_events.seq`
+  (bigserial; `license_items.seq`/0030 deseni + AYNI rewrite uyarısı — uygulanırken prod 5, dev 14.418
+  satırdı, ÖLÇÜLDÜ) + sıralama `created_at, seq`. Tek okuyucu `detail()` (grep'lendi). Tablo yalnız
+  INSERT alır (UPDATE eden kod yolu YOK — tarandı) → geçmiş satırlarda seq pratikte ekleme sırasıdır.
+  **Yeni index EKLENMEDİ:** mevcut `(order_id, created_at)` sorguyu daraltıyor, sipariş başına olay az.
+- **[ORTA] Kritik mail alarmı operatöre HAM KOD olarak görünüyordu.** `mail_config` bildirimi (üretimde
+  mail hedefi mailpit/localhost → teslimat mailleri gerçek müşteriye ULAŞMIYOR; `MailConfigGuardService`,
+  `critical`) `NOTIFICATION_TYPE` sözlüğünde YOKTU ve alarm prod'da **CANLI**: ölçüldüğünde **26 kayıt**,
+  en yenisi aynı gün. Aynı sınıftan ikinci boşluk: yeni `account_credentials_rotated` olayı da `EVENT_TYPE`
+  sözlüğüne eklenmemişti (sözlüğün "API'nin ürettiği tam küme 13 değerdir" notu o uç EKLENMEDEN ÖNCE
+  yazılmıştı). **DERS:** yeni bir olay/bildirim TİPİ üreten kod eklerken sunum sözlüğünü de güncelle;
+  sözlüklerdeki "denetlendi" notu bir TARİHE aittir, sonraki uçları kapsamaz — API'nin ürettiği değer
+  kümesini grep'le yeniden çıkar.
+- **[DÜŞÜK]** Ürün detayı stok hareketleri listesi kararsızdı: toplu "geçersiz kıl/hasarlı" KALEM BAŞINA
+  satır yazar ve hepsi tek transaction'a düşer → aynı damga; tie-break olmadığı için `LIMIT 50` penceresine
+  hangi satırların gireceği keyfiydi (`created_at DESC, id DESC` — `/audit`'in mevcut deseni).
+- **[DÜŞÜK]** `smoke-routes.sh` **`sites/new`** (site bağlama sihirbazı) ve **`templates/new`** sayfalarını
+  hiç taramıyordu — ikisi de sunucu action'ı olan, `next build` temiz geçerken çalışma anında kırılabilen
+  sayfalar (betiğin tüm değeri kapsamında; `categories` bir kez zaten unutulmuştu). Kapsamı elle doğrulama
+  komutu da betiğe yazıldı. `/` (middleware yönlendirmesi) + `login` bilinçli dışarıda.
+- **KENDİ TESTİMİ ÇÜRÜTTÜM (yeni ders, [[denetim-regresyon-dersleri]] #11):** yazdığım regresyon testi
+  fix GERİ ALINDIĞINDA DA geçiyordu — tie-break olmadan da Postgres küçük tabloda satırları fiziksel
+  (= ekleme) sırasında döndürür, yani test hiçbir şeyi korumuyordu. Ayırt edici kurulum: **`seq`'i fiziksel
+  sıranın TERSİNE açıkça yaz** → iki sıra ayrışır, yalnız ORDER BY'ı gerçekten `seq` içeren sorgu doğru
+  cevabı verir. **Kural:** sıra/limit/tie-break düzeltmesinde testi yazdıktan sonra fix'i geçici geri al ve
+  KIRMIZI olduğunu GÖR. (Bu turda da `sql` şablonu İÇİNDE backtick tuzağına düştüm — projede 6. kez.)
+- **ÇÜRÜTÜLEN (kontrol edildi, kusur DEĞİL):** `readonly-sql`'deki `ANY(${userOids}::oid[])` — orada
+  `this.sql` **postgres.js** istemcisidir ve JS dizisini doğru bind eder (bozuk olan yalnız **drizzle**
+  `sql` şablonundaki hâlidir; ikisini karıştırma).
+- **DÜZELTİLMEYEN (bilinçli, raporlandı):** dev-only bağımlılık açıkları (vitest 2.1.9 kritik advisory +
+  vite/esbuild) — prod ağacı temiz, prod imajı budanmış; düzeltmesi vitest 2→3 MAJOR yükseltmesi ve 395
+  entegrasyon testini riske atar, denetim içinde kullanıcı kararı olmadan yapılmaz. Ayrıca **bir kerelik
+  flake**: bir koşuda `dynamic-quota-hold` + `replace-assignment` düştü; tek tek ve sonraki **3 tam koşuda**
+  geçtiler, değişikliklerden kaynaklanmıyor, sebebi KANITLANAMADI (uydurulmadı) — izlenmeli.
+- **Doğrulama (fix sonrası):** typecheck 4/4 + check-use-server 25/87 · birim 148+135+35 · admin production
+  build · VPS izole test DB **entegrasyon 395/395 + yarış 3/3** · şema sapması yok (`db:generate` "No schema
+  changes") · 36 rota duman testi temiz · `bash -n` 9/9 · prod `deploy.sh api admin` (rollback'li, sağlık
+  kapısı geçti) → `/v1/health` **200 v1.1.0**, migration tracking **44→45**, `seq` bigint NOT NULL + mevcut
+  satırlar dolu, api **0 ERROR**, yeni etiketler admin imajında doğrulandı; dev yığını da güncellendi
+  (detached HEAD → `main`). **Denetim çalışma alanı (`/opt/lisans-audit`, 938 MB) temizlendi.**
+- **OPERATÖRE KALAN (kod değil — ikisi de CANLI doğrulandı):** prod `SMTP_HOST` **TANIMSIZ** → mailler
+  mailpit'e gidiyor, gerçek müşteriye ULAŞMIYOR (`mail_config` alarmının sebebi; artık okunur etiketle
+  görünüyor) · `BACKUP_OFFSITE_CMD` **TANIMSIZ** → yedekler alınıyor (cron kurulu: dakikalık runner +
+  03:15 gecelik + aylık tatbikat; son dump 1,1 MB) ama **yalnız o sunucuda** · ADMIN_TOKEN rotasyonu.
