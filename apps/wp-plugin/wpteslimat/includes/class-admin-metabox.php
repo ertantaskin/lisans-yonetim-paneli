@@ -54,10 +54,30 @@ class Wpteslimat_Admin_Metabox {
         add_meta_box('wpteslimat_deliveries', 'Lisans — Sipariş Özeti', [$this, 'render_side'], $screen, 'side', 'high');
     }
 
-    /** Panel mask formatıyla hizalı: sabit gövde + son 4 hane. */
-    private static function mask($value) {
-        $value = (string) $value;
-        return strlen($value) <= 4 ? '••••••' : '••••••' . substr($value, -4);
+    /**
+     * Ekrana basılacak serbest metni güvenle kısaltır.
+     *
+     * Ham `substr()` BAYT keser; çok baytlı (UTF-8) bir karakterin ortasından bölerse `esc_html()`
+     * geçersiz diziyi BOŞ string'e çevirir → operatör bomboş bir çip görür (değişim sebebi kaybolur).
+     * mbstring varsa karakter bazında kesilir; yoksa bayt kesiminin bozuk kuyruğu WP'nin kendi
+     * `wp_check_invalid_utf8(..., true)` süzgeciyle atılır (class-updater.php `truncate_url()`
+     * ile AYNI desen — tek çözüm, iki uygulama değil).
+     *
+     * NOT: burada MASKELEME YAPILMAZ. Maske biçiminin TEK kaynağı paneldir (`maskedPayload` /
+     * `maskedFields` hazır gelir); eklentide ikinci bir maske tanımı tutmak bu projede sapma
+     * üretmişti (hesap ürününde biçim ayrışması).
+     */
+    private static function truncate_text($s, $limit) {
+        $s = (string) $s;
+        $limit = (int) $limit;
+        if ($limit <= 0) return '';
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($s, 'UTF-8') <= $limit) return $s;
+            return mb_substr($s, 0, $limit, 'UTF-8');
+        }
+        if (strlen($s) <= $limit) return $s;
+        $cut = substr($s, 0, $limit);
+        return function_exists('wp_check_invalid_utf8') ? wp_check_invalid_utf8($cut, true) : $cut;
     }
 
     /** Yalnız administrator (manage_options) loglu reveal (§7 shop_manager açamaz). */
@@ -146,12 +166,29 @@ class Wpteslimat_Admin_Metabox {
      * (`=== $item_id`) süzülüyordu; bonus satırının kimliği hiçbir Woo kalemiyle birebir
      * eşleşmediği için BONUS bir lisans değiştirildiğinde eski anahtar kartta "İptal" görünüyor
      * ama değişim geçmişine HİÇ düşmüyordu (kullanıcı hata bildirimi). Ortak eşleştirme bunu kapatır.
+     *
+     * TEK KAYNAK ($origin): panel (`siteAdminView`) her atama/geçmiş satırında `originRemoteLineId`
+     * DÖNDÜRÜR — sentetik bonus satırının ait olduğu mağaza kalemini panel zaten çözmüştür
+     * (`resolveOriginRemoteLineId`). Eklenti ince istemcidir: aynı kuralı YENİDEN TÜRETMEZ,
+     * panelin çözdüğünü kullanır. Aşağıdaki önek ayrıştırması YALNIZ alan hiç gelmediğinde
+     * (ESKİ panel sürümü / dağıtım sapması) devreye giren geriye dönük fallback'tir.
      */
-    private static function line_matches($remote_line_id, $item_id) {
-        $rl = (string) $remote_line_id;
+    private static function line_matches($remote_line_id, $item_id, $origin = null) {
         $iid = (string) $item_id;
         if ($iid === '') return false;
+
+        $origin = is_scalar($origin) ? (string) $origin : '';
+        if ($origin !== '') return $origin === $iid;
+
+        // FALLBACK (eski panel sürümü): öneki yerel ayrıştır. Eski `bonus:<uuid>` biçiminde kalem
+        // kimliği gömülü DEĞİLDİR → hiçbir kaleme bağlanmaz (yan kutuda "bağlanmayan" listelenir).
+        $rl = (string) $remote_line_id;
         return $rl === $iid || strpos($rl, 'bonus:' . $iid . ':') === 0;
+    }
+
+    /** Panel satırından (atama/geçmiş) yetkili orijin kalem kimliği; alan yoksa null → fallback. */
+    private static function origin_of($row) {
+        return (is_array($row) && isset($row['originRemoteLineId'])) ? $row['originRemoteLineId'] : null;
     }
 
     /** Bu atamalar bu Woo kalemine mi ait? (normal satır + o kalemin bonus satırları) */
@@ -160,7 +197,11 @@ class Wpteslimat_Admin_Metabox {
         $items = (isset($view['assignments']) && is_array($view['assignments'])) ? $view['assignments'] : [];
         foreach ($items as $a) {
             if (!is_array($a)) continue;
-            if (self::line_matches(isset($a['remoteLineId']) ? $a['remoteLineId'] : '', $item_id)) {
+            if (self::line_matches(
+                isset($a['remoteLineId']) ? $a['remoteLineId'] : '',
+                $item_id,
+                self::origin_of($a)
+            )) {
                 $out[] = $a;
             }
         }
@@ -176,7 +217,11 @@ class Wpteslimat_Admin_Metabox {
         $rows = (isset($view['history']) && is_array($view['history'])) ? $view['history'] : [];
         foreach ($rows as $h) {
             if (!is_array($h)) continue;
-            if (self::line_matches(isset($h['remoteLineId']) ? $h['remoteLineId'] : '', $item_id)) {
+            if (self::line_matches(
+                isset($h['remoteLineId']) ? $h['remoteLineId'] : '',
+                $item_id,
+                self::origin_of($h)
+            )) {
                 $out[] = $h;
             }
         }
@@ -317,7 +362,11 @@ class Wpteslimat_Admin_Metabox {
             : (is_array($lookup) && self::is_replaced($a, $lookup));
         $is_active = ($status === 'active');
         $is_suspended = ($status === 'suspended');
-        $is_bonus = isset($a['remoteLineId']) && strpos((string) $a['remoteLineId'], 'bonus:') === 0;
+        // Bonus işareti PANELİN yetkili `isBonus` alanından okunur (siteAdminView döndürür);
+        // önek ayrıştırması yalnız alan hiç gelmediğinde (eski panel sürümü) fallback'tir.
+        $is_bonus = array_key_exists('isBonus', $a)
+            ? !empty($a['isBonus'])
+            : (isset($a['remoteLineId']) && strpos((string) $a['remoteLineId'], 'bonus:') === 0);
         $is_account = isset($a['kind']) ? ($a['kind'] === 'account') : (!empty($a['maskedFields']));
 
         echo '<li class="wpteslimat-asg-row wpt-key" data-assignment="' . esc_attr($aid) . '">';
@@ -346,7 +395,7 @@ class Wpteslimat_Admin_Metabox {
                 ? trim((string) $a['replaceReason'])
                 : '';
             if ($rreason !== '') {
-                $short = function_exists('mb_substr') ? mb_substr($rreason, 0, 60) : substr($rreason, 0, 60);
+                $short = self::truncate_text($rreason, 60);
                 if ($short !== $rreason) $short .= '…';
                 echo '<span class="wpt-meta wpt-meta--reason" title="' . esc_attr($rreason) . '">'
                     . esc_html($short) . '</span>';
@@ -562,9 +611,14 @@ class Wpteslimat_Admin_Metabox {
         // biçimli `bonus:<uuid>` satırı — içinde kalem id'si yok) — burada göster ki kaybolmasın.
         // Geçmişleri de aynı ölçütle burada listelenir; aksi halde hiçbir kartta görünmezlerdi.
         $item_ids = array_map('strval', array_keys($order->get_items('line_item')));
-        $matches_any = static function ($remote_line_id) use ($item_ids) {
+        // Kart render'ıyla AYNI eşleştirme (line_matches) — panelin `originRemoteLineId`'si varsa o
+        // kullanılır. İki yüzey ayrışırsa aynı atama hem kartta hem "bağlanmayan"da (ya da hiçbirinde)
+        // görünürdü.
+        $matches_any = static function ($row) use ($item_ids) {
+            $remote_line_id = isset($row['remoteLineId']) ? $row['remoteLineId'] : '';
+            $origin = self::origin_of($row);
             foreach ($item_ids as $iid) {
-                if (self::line_matches($remote_line_id, $iid)) return true;
+                if (self::line_matches($remote_line_id, $iid, $origin)) return true;
             }
             return false;
         };
@@ -573,13 +627,13 @@ class Wpteslimat_Admin_Metabox {
         $asgs = (isset($view['assignments']) && is_array($view['assignments'])) ? $view['assignments'] : [];
         foreach ($asgs as $a) {
             if (!is_array($a)) continue;
-            if (!$matches_any(isset($a['remoteLineId']) ? $a['remoteLineId'] : '')) $orphans[] = $a;
+            if (!$matches_any($a)) $orphans[] = $a;
         }
         $orphan_hist = [];
         $hist_rows = (isset($view['history']) && is_array($view['history'])) ? $view['history'] : [];
         foreach ($hist_rows as $h) {
             if (!is_array($h)) continue;
-            if (!$matches_any(isset($h['remoteLineId']) ? $h['remoteLineId'] : '')) $orphan_hist[] = $h;
+            if (!$matches_any($h)) $orphan_hist[] = $h;
         }
 
         if (!empty($orphans) || !empty($orphan_hist)) {
@@ -770,8 +824,12 @@ class Wpteslimat_Admin_Metabox {
      * koyar ("cURL error 28: Operation timed out"); gövde önce okunduğu için kod-0 dalı ERİŞİLEMEZ
      * kalıyor ve operatöre Türkçe açıklama yerine bu teknik metin gidiyordu. Panelin kendi
      * açıklaması yalnız GERÇEK HTTP hata yanıtında (>=400) anlamlıdır — orada en doğrusu odur.
+     *
+     * PUBLIC (tek kaynak): ürün-eşleme kutusu (class-product-mapping) da AYNI panel yanıt şeklini
+     * alır ve kendi kopyasını taşıdığında ayrışıyordu — `message` DİZİ geldiğinde (Nest doğrulama
+     * hatası) `alert()`'e ham dizi verip parçalı/anlamsız metin basıyordu. Kural TEK yerde durur.
      */
-    private static function error_message($code, $body) {
+    public static function error_message($code, $body) {
         $code = (int) $code;
         $body = is_array($body) ? $body : [];
 
@@ -782,6 +840,28 @@ class Wpteslimat_Admin_Metabox {
 
         // [2] Panelin kendi açıklaması (Nest `message` dizi de olabilir) — yalnız HTTP hata yanıtında.
         if ($code >= 400) {
+            // Zod gövde doğrulaması `{error:'validation_error', issues:[{path,message}]}` döner —
+            // `error` alanı burada HAM ENUM'dur, operatöre gösterilmemeli; okunur bilgi `issues`
+            // içindedir (hangi alan neden reddedildi). Alan adı zaten teknikdir ama "geçersiz istek"
+            // demekten çok daha eyleme dönüktür.
+            if (self::field($body, 'error') === 'validation_error') {
+                $parts = [];
+                if (isset($body['issues']) && is_array($body['issues'])) {
+                    foreach ($body['issues'] as $i) {
+                        if (!is_array($i)) continue;
+                        $p = self::field($i, 'path');
+                        $m = self::field($i, 'message');
+                        if ($m === '') continue;
+                        $parts[] = ($p !== '') ? ($p . ': ' . $m) : $m;
+                    }
+                }
+                if (!empty($parts)) {
+                    /* translators: %s = panelin reddettiği alan(lar) ve sebebi */
+                    return sprintf(__('Panel isteği doğrulayamadı — %s', 'wpteslimat'), implode(' · ', $parts));
+                }
+                return __('Panel isteği doğrulayamadı (gönderilen bilgiler geçersiz).', 'wpteslimat');
+            }
+
             $msg = isset($body['message']) ? $body['message'] : (isset($body['error']) ? $body['error'] : '');
             if (is_array($msg)) $msg = implode(' ', array_map('strval', $msg));
             $msg = is_scalar($msg) ? trim((string) $msg) : '';
@@ -803,6 +883,12 @@ class Wpteslimat_Admin_Metabox {
                 return __('Panelde beklenmeyen bir hata oluştu. Lütfen daha sonra tekrar deneyin.', 'wpteslimat');
         }
         return __('İşlem tamamlanamadı. Lütfen tekrar deneyin.', 'wpteslimat');
+    }
+
+    /** Panel yanıtından skaler bir alanı güvenle okur (dizi/nesne → ''). */
+    private static function field($arr, $key) {
+        if (!is_array($arr) || !isset($arr[$key]) || !is_scalar($arr[$key])) return '';
+        return trim((string) $arr[$key]);
     }
 
     private static function sanitize_aid($raw) {

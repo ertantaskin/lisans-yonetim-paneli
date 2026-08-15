@@ -35,6 +35,23 @@ export class ProductGuidesService {
    * dursun — yazılıp ürüne bağlanmamış rehber müşteriye HİÇ ulaşmaz ve bu sessiz bir
    * kayıptır), sonra başlığa göre. Eşitlikte id → deterministik (aynı veri hep aynı sırada).
    */
+  /**
+   * Yalnız VARLIK denetimi (ürün oluştur/güncelle sıcak yolu).
+   *
+   * Eskiden bu denetim `list()` çağırıyordu: rehber başına 4.000 karaktere kadar GÖVDE +
+   * ürün adlarını üreten LATERAL agregasyon çekilip, sonuç yalnız "bu id var mı?" sorusuna
+   * indirgeniyordu. Ürün kaydetmenin her tıklamasında ödenen gereksiz maliyetti.
+   * Çağıran `guideId`'yi Zod `.uuid()` ile doğrular → doğrudan sorgu 22P02 riski taşımaz.
+   */
+  async exists(id: string): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: productGuides.id })
+      .from(productGuides)
+      .where(eq(productGuides.id, id))
+      .limit(1);
+    return rows.length > 0;
+  }
+
   async list(): Promise<ProductGuideRow[]> {
     const rows = await rawRows<{
       id: string;

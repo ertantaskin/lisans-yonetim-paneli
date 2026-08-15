@@ -53,6 +53,11 @@ interface DailyMetrics {
   openReplacements: number;
   securityEvents24h: number;
   failedOutbox: number;
+  /**
+   * Gönderilemeyen teslimat maili. Opsiyonel: admin ve api AYRI imajlardır, biri önce
+   * dağıtılabilir → eski API'de alan gelmez ve kart çizilmez (sıfır göstermek YANLIŞ olurdu).
+   */
+  failedEmails?: number;
   availableStock: number;
 }
 interface DailySummary {
@@ -298,6 +303,10 @@ const METRIC_TILES: Array<{
   { key: 'openReplacements', label: 'Açık talep', icon: LifeBuoy, tone: 'warning' },
   { key: 'securityEvents24h', label: 'Güvenlik (24s)', icon: ShieldAlert, tone: 'warning' },
   { key: 'failedOutbox', label: 'Başarısız webhook', icon: MailWarning, tone: 'danger' },
+  // Teslimat maili ayrı sayaç: webhook başarılıyken mailler ölebilir (SMTP kimliği/kotası).
+  // Tek "başarısız kayıt" sayacı bu ikisini birleştirseydi arızanın hangi kanalda olduğu
+  // kaybolurdu; günlük kritik alarm da ikisini AYRI yazıyor.
+  { key: 'failedEmails', label: 'Gönderilemeyen mail', icon: MailWarning, tone: 'danger' },
   { key: 'availableStock', label: 'Atanabilir stok', icon: Boxes, tone: 'neutral' },
 ];
 
@@ -354,7 +363,9 @@ function DailySummarySection() {
         ) : data ? (
           <>
             <StatStrip
-              items={METRIC_TILES.map((t) => ({
+              // Eski API imajında gelmeyen metriğin kartı ÇİZİLMEZ — 0 göstermek "mail sorunu
+              // yok" demek olurdu ve bu, sayacın var olma sebebiyle çelişirdi.
+              items={METRIC_TILES.filter((t) => data.metrics[t.key] != null).map((t) => ({
                 icon: t.icon,
                 label: t.label,
                 value: data.metrics[t.key],

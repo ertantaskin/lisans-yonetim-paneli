@@ -18,7 +18,9 @@ import {
   PackagePlus,
   Link2,
   Pencil,
+  TriangleAlert,
 } from 'lucide-react';
+import { Alert, AlertDescription } from '../../../components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatStrip } from '../../../components/ui/stat-tile';
 import { Badge, SupplyStatusBadge } from '../../../components/ui/badge';
@@ -113,7 +115,31 @@ export default async function ProductDetailPage({
     );
   }
 
-  const { product, stock, batches, purchaseOrders, velocity, adjustments } = data;
+  const {
+    product,
+    stock,
+    batches,
+    purchaseOrders,
+    velocity,
+    adjustments,
+    batchesTruncated,
+    purchaseOrdersTruncated,
+  } = data;
+
+  /**
+   * Kırpma uyarısı — bu iki liste STOK GİRİŞİ BAŞINA birer satır alır ve API 200 ile
+   * tavanlar. Sessiz kırpma bu panelde daha önce "o kayıt yok" yanılgısı ürettiği için
+   * tavana dayanıldığında operatöre AÇIKÇA söylenir ve tam listenin nerede olduğu gösterilir.
+   */
+  const truncatedNote = (what: string, href: string) => (
+    <Alert variant="warning" className="m-4 mb-0">
+      <TriangleAlert />
+      <AlertDescription>
+        En yeni <strong>200 {what}</strong> gösteriliyor — daha eskileri bu listede yok. Tam liste
+        için <Link href={href} className="underline">{what} ekranına</Link> gidin.
+      </AlertDescription>
+    </Alert>
+  );
 
   // Formlarda seçilebilir GERÇEK kategoriler ("Kategorisiz" sanal kovadır, seçenek değil).
   // /stock ekranındaki türetmenin birebir aynısı — iki ekran aynı seçenek listesini gösterir.
@@ -345,6 +371,7 @@ export default async function ProductDetailPage({
                 alma emri teslim alındığında oluşur; geri çekme (recall) bu partiler üzerinden yapılır.
               </CardDescription>
             </CardHeader>
+            {batchesTruncated ? truncatedNote('parti', '/batches') : null}
             <CardContent className={batches.length === 0 ? '' : 'overflow-x-auto p-0'}>
               {batches.length === 0 ? (
                 <EmptyState
@@ -425,6 +452,7 @@ export default async function ProductDetailPage({
                 zaten teslim alınmış olarak kendisi açar.
               </CardDescription>
             </CardHeader>
+            {purchaseOrdersTruncated ? truncatedNote('satın alma emri', '/purchase-orders') : null}
             <CardContent className={purchaseOrders.length === 0 ? '' : 'overflow-x-auto p-0'}>
               {purchaseOrders.length === 0 ? (
                 <EmptyState

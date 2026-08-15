@@ -212,11 +212,14 @@ export class ProductsController {
     }
   }
 
-  /** Kategori ile AYNI gerekçe: var olmayan rehber id'si opak 500 değil, anlamlı 404 vermeli. */
+  /**
+   * Kategori ile AYNI gerekçe: var olmayan rehber id'si opak 500 değil, anlamlı 404 vermeli.
+   * `list()` DEĞİL `exists()` — liste tüm rehber gövdelerini (4.000 karakter × N) ve ürün-adı
+   * agregasyonunu çeker; burada sorulan tek şey id'nin var olup olmadığıdır.
+   */
   private async assertGuideExists(guideId?: string | null) {
     if (!guideId) return;
-    const all = await this.guides.list();
-    if (!all.some((g) => g.id === guideId)) {
+    if (!(await this.guides.exists(guideId))) {
       throw new NotFoundException('Kurulum rehberi bulunamadı');
     }
   }

@@ -1140,9 +1140,12 @@ export class AdminOrdersService {
     markLineCanceled = true,
     exec: Database = this.db,
     // §2 (denetim C2): MAK/çok-kullanımlı kapasitenin geri alımda havuza dönüp dönmeyeceği.
-    // GERÇEK İADE yollarında (revokeOrderForSite tam iade, syncRefunds kısmi iade) `false` geçilir →
-    // 'iadede hak otomatik dönmez' (aktivasyon Microsoft'ta harcandı; sessiz aşırı-satış önlenir).
-    // MEŞRU yeniden-atama yolları (değişim/adet-düşür/recall, varsayılan `true`) kapasiteyi geri verir.
+    // HAK KAYBI yollarında `false` geçilir → 'iadede hak otomatik dönmez' (aktivasyon sağlayıcıda
+    // harcandı; sessiz aşırı-satış önlenir): revokeOrderForSite tam iade · syncRefunds kısmi iade ·
+    // **revokeExcess adet-düşür** (mağaza re-push'u NET adet taşır, yani bir iade bu yola da düşer —
+    // teslimattan sonra adedin azalması MAK için iadeyle fiziksel olarak aynıdır, ayırt edilemez).
+    // MEŞRU YENİDEN-ATAMA yolları (değişim/recall — müşteriye ANINDA taze anahtar verilir,
+    // varsayılan `true`) kapasiteyi geri verir.
     // Tek-kullanımlık üründe etkisiz (o zaten karantinaya gider).
     returnMultiCapacity = true,
   ) {
@@ -1298,7 +1301,8 @@ export class AdminOrdersService {
     reason: string,
     actor: string,
     exec: Database = this.db,
-    // §2 (denetim C2): İADE'de MAK kapasitesi havuza DÖNMEZ (false). Adet-düşür/re-assign'de döner (true).
+    // §2 (denetim C2): İADE ve ADET-DÜŞÜR'de MAK kapasitesi havuza DÖNMEZ (false) — ikisi de hak
+    // kaybıdır. Yalnız MEŞRU YENİDEN-ATAMA'da (değişim/recall) döner (true).
     returnMultiCapacity = true,
   ) {
     // `partial` BU DALDA DA döner: aksi hâlde dönüş tipi iki farklı şekilli bir union olur ve
@@ -1704,7 +1708,15 @@ export class AdminOrdersService {
                 inArray(assignments.status, ['active', 'suspended']),
               ),
             )
-            .orderBy(desc(assignments.createdAt));
+            // Sıra `revokeExcess` ile BİREBİR aynı olmalı (iki yol da kısmi iadeyi uzlaştırır;
+            // ayrışırsa aynı iade hangi yoldan geldiğine göre FARKLI anahtarı öldürür):
+            // önce askıdakiler (zaten devre dışı → canlı anahtarı koru), sonra en yeni,
+            // sonra `id` — tek transaction'da yazılan atamaların damgaları eşittir, tie-break şart.
+            .orderBy(
+              sql`(${assignments.status} = 'suspended') desc`,
+              desc(assignments.createdAt),
+              desc(assignments.id),
+            );
           let revoked = 0;
           for (const a of active) {
             if (revoked >= excess) break;

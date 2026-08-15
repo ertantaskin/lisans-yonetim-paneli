@@ -7,6 +7,10 @@ import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/aler
 import { useConfirm } from '../../../components/ui/confirm';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 
+/** Owner-olmayan operatöre gösterilecek gerekçe (§8 RBAC) — /sites/new sayfa kapısıyla aynı sebep. */
+const OWNER_ONLY_REASON =
+  'Bağlan kodu üretmek yalnız Sahip (owner) rolündeki yöneticiler içindir — mağazanın kimlik bilgilerini yeniler.';
+
 /**
  * "Yeni Bağlan Kodu Üret" (§14) — site detayında KALICI kurtarma/yeniden bağlama yolu.
  *
@@ -17,8 +21,23 @@ import { useAnnouncer } from '../../../components/a11y/announcer';
  * Uç idempotent güvenlidir: her çağrı kimlik bilgilerini yeniden üretir (rekey) ve önceki
  * tüketilmemiş kodları geçersiz kılar → aynı anda tek aktif kod. Bu YIKICI bir işlem olduğu için
  * (eski kod ve mevcut eklenti kimliği geçersizleşir) önce onay istenir.
+ *
+ * RBAC (§8): `/sites/new` sihirbazıyla AYNI güce sahiptir — üretilen kod, GUARD'SIZ public
+ * `/v1/connect/claim` ucundan `{apiKey, hmacSecret}` olarak teslim edilir; kodu eline geçiren
+ * o mağazanın HMAC kimliğiyle site-facing `reveal` imzalayıp DÜZ METİN lisans okuyabilir.
+ * Bu yüzden sihirbaz sayfası owner-only'dir ve burada da düğme owner değilse KAPALI sunulur
+ * (aksi hâlde operatör yıkıcı onayı geçip ancak sonra "yetkiniz yok" alıyordu).
  */
-export function IssueConnectCode({ siteId, domain }: { siteId: string; domain: string }) {
+export function IssueConnectCode({
+  siteId,
+  domain,
+  canOwner = true,
+}: {
+  siteId: string;
+  domain: string;
+  /** Oturum owner mı — SUNUCUDAN serileştirilebilir boolean olarak gelir (fonksiyon prop'u YOK). */
+  canOwner?: boolean;
+}) {
   const [pending, start] = React.useTransition();
   const [code, setCode] = React.useState<{ code: string; expiresAt: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -67,12 +86,23 @@ export function IssueConnectCode({ siteId, domain }: { siteId: string; domain: s
     <div className="space-y-3">
       {dialog}
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={() => void issue()} disabled={pending}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void issue()}
+          disabled={pending || !canOwner}
+          title={canOwner ? undefined : OWNER_ONLY_REASON}
+          aria-label={canOwner ? undefined : `Yeni Bağlan Kodu Üret — ${OWNER_ONLY_REASON}`}
+        >
           <KeyRound />
           {pending ? 'Üretiliyor…' : 'Yeni Bağlan Kodu Üret'}
         </Button>
+        {/* Gerekçe GÖRÜNÜR: devre dışı düğmenin tooltip'i her tarayıcıda/klavyede açılmaz. */}
         <p className="text-xs text-muted-foreground">
-          Eklenti yeniden kurulduğunda ya da kodun süresi dolduğunda (15 dk) kullanın.
+          {canOwner
+            ? 'Eklenti yeniden kurulduğunda ya da kodun süresi dolduğunda (15 dk) kullanın.'
+            : OWNER_ONLY_REASON}
         </p>
       </div>
 

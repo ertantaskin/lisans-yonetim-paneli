@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { ApiError } from '../../../lib/api';
+import { isOwner } from '../../../lib/session';
 import { siteTypeLabel } from '../../../lib/labels';
 import { fmtDateTime, formatDate, relativeTime } from '../../../lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
@@ -98,6 +99,14 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
   } catch {
     siteCustomers = [];
   }
+  /*
+   * RBAC GÖRÜNÜRLÜĞÜ (§8): "Askıya Al/Aktifleştir" ve "Yeni Bağlan Kodu Üret" sunucu
+   * aksiyonlarında `isOwner()` ile korunuyor; owner-olmayan operatör YIKICI onay modalini
+   * geçtikten SONRA "yetkiniz yok" alıyordu. Karar SUNUCUDA verilip istemciye
+   * SERİLEŞTİRİLEBİLİR boolean olarak geçilir (fonksiyon prop'u çalışma anında patlar).
+   */
+  const canOwner = await isOwner();
+
   // Kota tanımlıysa ve bugünkü sipariş kotaya ulaştıysa uyarı tonu.
   const quotaTone =
     site.salesDailyQuota != null && todayOrderCount >= site.salesDailyQuota ? 'warning' : 'neutral';
@@ -138,7 +147,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               </div>
             </div>
           </div>
-          <SiteStatusToggle siteId={site.id} status={site.status} />
+          <SiteStatusToggle siteId={site.id} status={site.status} canOwner={canOwner} />
         </div>
       </div>
 
@@ -245,10 +254,13 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
           {!pluginVersion && pluginInfoAvailable && (
             <p className="text-xs text-muted-foreground">
               Bu site panele hiç imzalı istek göndermedi — eklenti kurulmamış ya da bağlan kodu
-              hiç kullanılmamış olabilir. Aşağıdan yeni bir bağlan kodu üretip mağazaya girin.
+              hiç kullanılmamış olabilir.{' '}
+              {canOwner
+                ? 'Aşağıdan yeni bir bağlan kodu üretip mağazaya girin.'
+                : 'Yeni bağlan kodu üretmek için Sahip (owner) rolündeki bir yöneticiye başvurun.'}
             </p>
           )}
-          <IssueConnectCode siteId={site.id} domain={site.domain} />
+          <IssueConnectCode siteId={site.id} domain={site.domain} canOwner={canOwner} />
         </CardContent>
       </Card>
 

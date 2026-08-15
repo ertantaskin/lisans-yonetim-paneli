@@ -547,8 +547,13 @@ export default function GuidePage() {
             <R href="/mappings">Ürün Eşleştirme</R> ekranına geçip bağlarsınız).
           </li>
           <li>
+            {/* DÜZELTİLDİ: "her görüntüleme denetime yazılır" YANLIŞ vaatti. A1 kararı gereği
+                `reveal` kaydı YALNIZ gerçekten düz metin döndüğünde (owner) yazılır; maskeli
+                görüntüleme iz bırakmaz. Denetim izine güvenip "kim baktı" sorusunu yanıtlamaya
+                çalışan operatör eksik veriyle karar verirdi. */}
             Sipariş detayında lisans doğrudan görünür (&quot;owner&quot; rolünde açık, diğer yöneticilerde
-            maskeli) ve her görüntüleme <strong>denetim günlüğüne</strong> yazılır. Satır aksiyonları:{' '}
+            maskeli). <strong>Denetim günlüğüne</strong> yalnız düz metin gösterilen görüntülemeler
+            (yani owner&apos;ınkiler) yazılır — maskeli görüntüleme iz bırakmaz. Satır aksiyonları:{' '}
             <strong>Değiştir</strong>, <strong>Askıya Al</strong>, <strong>İptal</strong>; sipariş
             genelinde <strong>Maili Yeniden Gönder</strong>.
           </li>
@@ -698,7 +703,7 @@ export default function GuidePage() {
             <em>tamamı</em> teslim alındığında dolar — kısmi teslim almalarda boş kalır; her
             sevkiyatın kendi tarihi aynı sayfadaki parti listesinde durur.
           </li>
-          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi kalem hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> kalemler geçersiz kılınır. <strong>Müşterilerdekiler KORUNUR</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yenisiyle değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır (askıya alınmış atamalar buna dahil değildir, onlar elle işlenir).</li>
+          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi kalem hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> kalemler geçersiz kılınır. <strong>Müşterilerdekiler KORUNUR</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yenisiyle değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır. Aday kümesi iki durumu <em>dışlar</em>: <strong>askıya alınmış atamalar</strong> (askıyı bilerek koydunuz, değişim onu sessizce geri açardı) ve <strong>çok kullanımlı (MAK) ürünler</strong> (geri alınan kapasite aynı paylaşımlı anahtara döneceği için yeni atama yine kusurlu anahtarı seçerdi). İkisi de elle işlenir — bu yüzden &quot;Toplu Değiştir&quot; sayacı, partideki müşteri sayısından küçük olabilir.</li>
         </Bullets>
 
         <p className="font-medium text-foreground">Kusurlu stok → tedarikçiye değişim fişi:</p>

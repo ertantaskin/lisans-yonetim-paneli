@@ -67,17 +67,29 @@ export class LowStockService implements OnModuleInit {
     // dışlanır; alarm sayımına girerse eşik "aşılmış" görünür ve DÜŞÜK STOK UYARISI HİÇ/GEÇ
     // üretilir (operatör stok var sanır, siparişler pending'e düşer). Yüklem, atama yolunun tek
     // kaynağıdır (assignment/assign.ts) — kopyalanmaz.
+    // PERF (kritik): status + süre süzgeci BİLEREK JOIN koşulundadır, agregat FILTER'ında DEĞİL.
+    // `license_items_available_idx` KISMİ bir index'tir (WHERE status='available'); süzgeç yalnız
+    // FILTER'da kalırsa planlayıcı tabloyu daraltamaz ve TÜM license_items'ı taramak zorunda kalır.
+    // `license_items` retention kapsamında DEĞİL (revoked/quarantined/voided/depleted satırlar
+    // kalıcı birikir) → büyük kurulumda bu süpürme `statement_timeout`'a (30 sn) takılabilir ve
+    // o zaman DÜŞÜK STOK ALARMI HİÇ ÜRETİLMEZ (30 dk'lık cron, tek bağlantı; sessiz arıza).
+    // Kardeş sorgu `dashboard.service.lowStockCount` bunu gerekçesiyle ÇOKTAN çözmüştü; alarm
+    // üreten yol geride kalmıştı — iki tanım artık aynı.
+    //
+    // ANLAM DEĞİŞMEZ: LEFT JOIN olduğu için eşleşen 'available' satırı OLMAYAN ürün de listede
+    // kalır (li.* NULL → sum NULL → coalesce 0 ≤ eşik → düşük stok sayılır, eskisi gibi).
     const rows = await rawRows<LowStockRow>(this.db, sql`
       SELECT
         p.id AS product_id,
         p.sku AS sku,
         p.name AS name,
         p.low_stock_threshold AS threshold,
-        COALESCE(SUM(li.max_uses - li.use_count)
-          FILTER (WHERE li.status = 'available' AND ${notExpiredCond('li')}), 0)::int
-          AS available
+        COALESCE(SUM(li.max_uses - li.use_count), 0)::int AS available
       FROM products p
-      LEFT JOIN license_items li ON li.product_id = p.id
+      LEFT JOIN license_items li
+        ON li.product_id = p.id
+       AND li.status = 'available'
+       AND ${notExpiredCond('li')}
       WHERE p.low_stock_threshold IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM notifications n
@@ -88,9 +100,7 @@ export class LowStockService implements OnModuleInit {
       GROUP BY p.id
       -- HAVING süzgeci SELECT'teki ifadenin BİREBİR aynısı olmalı (aksi halde bildirimde yazan
       -- "kalan stok" ile eşik karşılaştırması farklı kümeden gelirdi).
-      HAVING COALESCE(SUM(li.max_uses - li.use_count)
-        FILTER (WHERE li.status = 'available' AND ${notExpiredCond('li')}), 0)
-        <= p.low_stock_threshold;
+      HAVING COALESCE(SUM(li.max_uses - li.use_count), 0) <= p.low_stock_threshold;
     `);
 
     let created = 0;

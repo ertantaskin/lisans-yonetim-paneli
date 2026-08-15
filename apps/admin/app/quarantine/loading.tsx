@@ -1,0 +1,25 @@
+import { Skeleton } from '../../components/ui/skeleton';
+
+/**
+ * Kusurlu Stok route yükleme iskeleti (sunucu veri çekimi sırasında).
+ * NOT: alt rotalar (`claims`, `records`) kendi daha özel iskeletlerini taşır — bu dosya
+ * yalnız kök ekranı (üç sekmeli iş istasyonu) karşılar.
+ */
+export default function Loading() {
+  return (
+    <div className="space-y-6" aria-busy="true" aria-label="Yükleniyor">
+      <div className="space-y-2">
+        <Skeleton className="h-7 w-44" />
+        <Skeleton className="h-4 w-[32rem] max-w-full" />
+      </div>
+      <div className="grid gap-3 [&>*]:min-w-0 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-24 w-full rounded-xl" />
+        ))}
+      </div>
+      {/* Sekme şeridi + aktif sekmenin gövdesi. */}
+      <Skeleton className="h-9 w-72" />
+      <Skeleton className="h-80 w-full rounded-lg" />
+    </div>
+  );
+}

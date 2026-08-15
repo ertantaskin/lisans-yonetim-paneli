@@ -165,21 +165,31 @@ export class FulfillmentService {
         ? new Date(Date.now() + product.validityDays * 86_400_000)
         : null;
       // Oluşan atama id'leri sonuca taşınır → soyağacı "en yeni aktif atama" TAHMİNİNE muhtaç kalmaz.
+      // PERF: TEK çok-satırlı INSERT (createOrder ile aynı gerekçe — birim başına ayrı
+      // gidiş-dönüş, transaction içinde ve kilitler tutulurken). Sıra `allocations`
+      // dizisinden gelir; RETURNING'in giriş sırasını koruduğuna GÜVENİLMEZ, eşleme
+      // `licenseItemId` üzerinden yapılır (bir dizide aynı kalem iki kez geçmez).
       const createdAssignmentIds: string[] = [];
-      for (const alloc of allocations) {
-        const [ins] = await tx
+      if (allocations.length > 0) {
+        const inserted = await tx
           .insert(assignments)
-          .values({
-            orderId: line.orderId,
-            lineId: line.id,
-            licenseItemId: alloc.licenseItemId,
-            units: alloc.units,
-            validUntil,
-            status: 'active',
-            deliveredAt: new Date(),
-          })
-          .returning({ id: assignments.id });
-        if (ins) createdAssignmentIds.push(ins.id);
+          .values(
+            allocations.map((alloc) => ({
+              orderId: line.orderId,
+              lineId: line.id,
+              licenseItemId: alloc.licenseItemId,
+              units: alloc.units,
+              validUntil,
+              status: 'active' as const,
+              deliveredAt: new Date(),
+            })),
+          )
+          .returning({ id: assignments.id, licenseItemId: assignments.licenseItemId });
+        const idByItem = new Map(inserted.map((r) => [r.licenseItemId, r.id]));
+        for (const alloc of allocations) {
+          const id = idByItem.get(alloc.licenseItemId);
+          if (id) createdAssignmentIds.push(id);
+        }
       }
 
       const fulfilledAfter = line.fulfilledQty + added;
@@ -193,7 +203,12 @@ export class FulfillmentService {
         await tx.insert(fulfillmentEvents).values({
           orderId: line.orderId,
           type: 'line_completed',
-          message: `Satır ${line.remoteLineId}: +${added} atandı (${fulfilledAfter}/${line.qty})`,
+          // İlerleme HEDEFE göre yazılır (`qty − canceled_units`), ham `qty`'ye göre DEĞİL.
+          // Aksi halde panelden 1 birimi iptal edilmiş qty=3'lük bir satırda zaman çizelgesi
+          // KALICI "2/3" derken, aynı verinin diğer TÜM yüzeyleri (müşteri teslimatı, mağaza
+          // durum yoklaması, "neden bekliyor" tanısı, SLA raporu) "2/2" der — operatör eksik
+          // teslimat sanır. Hedefin tek tanımı `fill-target.ts`.
+          message: `Satır ${line.remoteLineId}: +${added} atandı (${fulfilledAfter}/${fillTarget(line)})`,
         });
       }
 

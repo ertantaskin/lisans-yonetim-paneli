@@ -2391,3 +2391,108 @@ admin↔API rota kablolaması ve `audit_action`/güvenlik-olayı sözlükleri de
   mailpit'e gidiyor, gerçek müşteriye ULAŞMIYOR (`mail_config` alarmının sebebi; artık okunur etiketle
   görünüyor) · `BACKUP_OFFSITE_CMD` **TANIMSIZ** → yedekler alınıyor (cron kurulu: dakikalık runner +
   03:15 gecelik + aylık tatbikat; son dump 1,1 MB) ama **yalnız o sunucuda** · ADMIN_TOKEN rotasyonu.
+
+**PROJE GENELİ 6-LENSLİ DENETİM → CI'IN 19 GÜNDÜR ÖLÜ OLDUĞU BULUNDU (migration YOK, eklenti v1.1.1):**
+Kullanıcı "projeyi tekrar tekrar güncel olarak baştan sona agentların ve işçilerin ile beraber incele, tüm
+eksikleri/sorunları/bugları fixle, performans ve güvenlik problemlerini gider" dedi. Önce **doğrulama temeli
+ÖLÇÜLDÜ** (neyin gerçekten bozuk olduğunu bilmeden aramamak için): typecheck 4/4 · üç kapı temiz · birim
+57+152+135 · build 3/3 · `pnpm audit --prod` temiz · migration `when` sırası 46 girdi/0 ihlal · şema sapması
+yok · betik exec bitleri · eklenti sürüm invaryantı · duman testi rota kapsamı tam. Hepsi temizdi → aranan
+şey "zaten bozuk olan" değil **henüz görünmeyendi**. Altı bağımsız lens (en yeni kod/rehberler · güvenlik+RBAC ·
+performans+DB · çekirdek para yolu · ops/kuyruk/env/betikler · admin UI + WP) paralel tarandı, her bulgu
+raporlanmadan önce çürütme denemesinden geçti; ardından 5 ayrık-dosya işçi + merkezî çekirdek iş.
+
+- **[EN AĞIR] `.github/workflows/ci.yml` GEÇERLİ YAML DEĞİLDİ.** Adım adı `- name: 'use server' export
+  denetimi` biçimindeydi; YAML'de tek tırnakla BAŞLAYAN bir skalerden sonra düz metin gelemez →
+  `bad indentation of a mapping entry (38:28)`. GitHub Actions böyle bir dosyayı REDDEDER, yani **iş akışının
+  tamamı hiç koşmuyordu**: use-server, Nest DI, env passthrough, typecheck, birim testleri, WP php-lint,
+  migration drift, `bash -n`. Kırılma **2026-07-28 / `ee59e14`** commit'inde girmiş — tam da "sessiz kırılmayı
+  önleyecek" kapıyı CI'a ekleyen commit'te; **19 gün** sürdü. `js-yaml` ile ölçülerek kanıtlandı (HEAD
+  ayrıştırılamadı, düzeltilmiş kopya ayrıştırıldı). Yeni kapı **`scripts/check-workflows.js`** (YAML
+  geçerliliği + `on:`/`jobs:` + adımsız iş + boş `run:` + kapsam denetimi) **YEREL `pnpm typecheck`
+  zincirinde** — dosya ayrıştırılamıyorsa o dosyadaki hiçbir adım koşamaz, yani kapı kendini denetleyemez;
+  CI'daki kopyası ikincil güvencedir. Kontrol denemesi: hatalı satır geri konunca kapı KIRMIZI.
+  `js-yaml` kök devDependency olarak eklendi (pnpm override zaten 4.3.1'e sabitliyordu).
+- **[YÜKSEK] Kurulum rehberi panelden ETKİNLEŞTİRİLEMİYORDU.** Form `<select name="guideId">` basıyor,
+  `buildProductBody` onu FormData'dan HİÇ okumuyordu (iki satır yukarıda `categoryId` okunuyor). Operatör
+  rehberi seçer → yeşil sonuç → `products.guide_id` NULL kalır → rehber müşteri sayfasında, mailde ve
+  `.txt`'de HİÇ görünmez (sessiz: hata yok, form kaydettikten sonra seçimi doğru gösterir). Özelliğin dev
+  doğrulaması bağı doğrudan API'den kurduğu için kaçmıştı. **KÖK SEBEP TEST EDİLEBİLİRLİK:** fonksiyon
+  `'use server'` dosyasındaydı, oradan yardımcı export etmek yasak → testi OLAMIYORDU. `apps/admin/lib/
+  product-form-body.ts`'e taşındı; `PRODUCT_FORM_FIELDS` kapsam testi ("formdaki HER alan gövdeye ulaşır")
+  dahil 12 test. Kontrol denemesi: düzeltme geri alınınca 5 test KIRMIZI.
+- **[YÜKSEK/güvenlik] `POST /v1/admin/sites` owner kapısı YOKTU** (Next'te de `isOwner()` yoktu) — uç taze
+  `apiKey`+`hmacSecret` döndürür; owner-olmayan admin kendine site açıp katalogdan bir ürüne eşleme kurup
+  sipariş oluşturarak `GET /orders/:id/deliveries` ile gerçek lisansı DÜZ METİN okuyabiliyordu (A1/A3
+  kararını tamamen atlar, `reveal` audit'i de yazılmaz). Kardeş uçların ikisi (`rotate-secret`/`connect-code`)
+  tam bu gerekçeyle owner-only idi. `OwnerGuard` eklendi + hiçbir sayfada render EDİLMEYEN
+  `create-site-form.tsx` ve `createSiteAction` KALDIRILDI (form ölüydü ama aksiyon aynı `'use server'`
+  modülünden export edildiği için hâlâ çağrılabilir bir uçtu). `GET /v1/admin/users` de owner kapısına
+  alındı; pino redact listesine `password`/`fields`/`value` eklendi.
+- **[ORTA/§2 ihlali — sessiz aşırı-satış] `revokeExcess` MAK kapasitesini havuza GERİ VERİYORDU**,
+  `syncRefunds` vermiyordu — aynı fiziksel olay, zıt semantik; üstelik İKİ entegrasyon testi bu çelişkiyi
+  ayrı ayrı kilitliyordu. Mağaza re-push'u NET adet (brüt − iade) taşır → bir WooCommerce iadesi `/refund`
+  yerine bu yoldan uzlaşabilir (`/refund` işi kalıcı başarısızsa ya da admin aynı istekte kalem düzenlediyse)
+  → HARCANMIŞ aktivasyonlar havuza dönüp BAŞKA müşteriye satılabiliyordu. Teslimattan sonra adet düşüşü MAK
+  için iadeyle fiziksel olarak AYNIDIR ve hangi yoldan geldiği ayırt edilemez → §2'nin ihtiyatlı kuralı iki
+  yolda da uygulanıyor; `revoke-excess-partial` testinin beklentisi 3→5 düzeltildi. **Geri alınacak atamanın
+  seçimi deterministik yapıldı:** önce `suspended` (zaten devre dışı → müşterinin kullandığı canlı anahtarı
+  öldürme), sonra en yeni, sonra `id` — tek transaction'da yazılan atamaların `created_at` damgaları BİREBİR
+  aynıdır, tie-break şarttı.
+- **[perf] Atama motorunda birim başına ayrı INSERT** (tek-kullanımlıkta `allocate()` kalem başına bir tahsis
+  döndürür → qty=500 = 500 seri round-trip; hepsi tx içinde, satır kilitleri tutulurken, havuzun bir
+  bağlantısı rezerveyken, kota açık sitede advisory-lock altında) → TEK çok-satırlı INSERT; eşleme SIRAYA
+  değil `licenseItemId`'ye dayanır (RETURNING'in giriş sırasını koruduğu yazılı garanti DEĞİL) + eksik satırda
+  AÇIK hata (sessiz `undefined` assignmentId yanıta sızmasın). Aynı sınıf `releaseAllocations`'ta ve tam da
+  STOK YETMEDİĞİNDE (all-or-nothing geri alımı) tetikleniyordu → tek `UPDATE … FROM (VALUES …)`; aynı kalem
+  iki kez geçerse ÖNCE toplanır (bir satır yalnız BİR KEZ güncellenir, toplamadan yazmak sessizce eksik geri
+  verirdi). **Düşük-stok süpürmesi kısmi indeksi kullanamıyordu** (süzgeç JOIN yerine agregat FILTER'ında —
+  kardeş `dashboard.lowStockCount` bunu gerekçesiyle ÇOKTAN çözmüştü, ALARM ÜRETEN yol geride kalmıştı;
+  `license_items` retention kapsamında olmadığı için büyük kurulumda `statement_timeout`'a takılıp düşük-stok
+  alarmını HİÇ üretmeyebilirdi). Tedarikçi fişi detayı tek fiş için bile tüm `supplier_claim_items`'ı
+  agregeliyordu (gruplu alt sorguya yüklem itilemez) → LATERAL. Ürün detayı parti/PO listeleri LIMIT'sizdi
+  (bu iki tablo stok girişi başına birer satır alır) → tavan 200 + GÖRÜNÜR kırpma uyarısı. Ürün kaydetmenin
+  sıcak yolundaki rehber varlık denetimi tüm rehber gövdelerini çekiyordu → `exists()`.
+- **[ORTA/gözlem] Teslimat maili arızasının ALARMI YOKTU:** günlük kritik alarm yalnız `outbox_events`'e
+  bakıyordu, `email_log`'a bakmıyordu. SMTP kimliği/kotası bozulunca siparişler teslim edilmeye devam eder,
+  panel "fulfilled" der, geri-kanal webhook başarılı olur, mailler sessizce ölür ve sabah digest'i "Sorunlu
+  webhook: 0" derdi → `failedEmails` metriği (yüklem `ops.service` ile BİREBİR aynı) + alarmda AYRI satır +
+  `/ai` panelinde kart. **Dış kopya alarmında şiddet yükselmesi kendi dedupe'una takılıyordu**
+  (`skipped`/warning ile `failed`/critical AYNI tipi paylaşıyordu → operatörün "dış kopya alınıyor" sandığı
+  EN TEHLİKELİ durum, daha zararsızı tarafından 24 saate kadar bastırılıyordu) → tipler ayrıldı + `labels.ts`.
+- **[kapılar] `check-env-passthrough`** `getOrThrow(` ve sabit-ara-değişken biçimlerini GÖRMÜYORDU; kör
+  noktasındakiler `MAIL_FROM`/`SMTP_PORT`/`REDIS_URL`/`ADMIN_TOKEN`/`AUTOCOMPLETE_INLINE_CAP` idi ve zod
+  bunlara VARSAYILAN verdiği için compose'dan düşseler CI yeşil kalıp `.env` sessizce yok sayılırdı
+  (kapsam 44→**49**). **`check-nest-wiring`** `@InjectQueue`'yu hiç denetlemiyordu — kayıtsız kuyruk API'yi
+  HİÇ boot ettirmez, yani kapının var oluş sebebi olan sınıf kör noktasındaydı (+13 kuyruk bağımlılığı).
+  **`deploy-runner.sh`** claim hatasında tek satır log basmadan çıkıyordu (ADMIN_TOKEN rotasyonundan sonra
+  panelden basılan dağıtım isteği hiç claim edilmez, teşhis izi kalmazdı); **`backup-runner.sh`** aynı
+  ALT-KABUK tuzağını taşıyordu (`claim="$(api …)"` komut ikamesi alt kabukta koşar → `API_HTTP` ana kabuğa
+  DÖNMEZ, teşhis satırı her zaman bayat `0` basar, 401 ile ağ hatası ayırt edilemez). **Exec-bit kapısı
+  yoktu** (`bash -n` 100644 bir dosyada da GEÇER; runbook'lar betikleri doğrudan crontab'a koyuyor ve bu bir
+  kez yaşanmıştı). Dördü de KONTROL DENEMESİYLE kırmızı görülerek doğrulandı.
+- **[UI] Owner-only aksiyonlar gate'siz sunuluyordu** (secret yenile · site askıya al · bağlan kodu üret ·
+  KVKK anonimleştir): operatör "GERİ ALINAMAZ" kırmızı onayını geçtikten SONRA "yetkiniz yok" alıyordu →
+  karar SUNUCUDA (`isOwner()`), istemciye serileştirilebilir boolean olarak geçiyor (fonksiyon prop'u YOK).
+  Şablon tablosu kod tabanındaki SON `includesString` kalıntısıydı ("TESLİMATI" araması "Lisans Teslimatı"nı
+  bulmuyordu — Türkçe İ). Ctrl+K paleti `unmapped` durumunu ham İngilizce basıyordu (aynı sipariş `/orders`
+  listesinde "Eşlenmemiş" diyordu). Ölü `revealAction` kaldırıldı — çağrılırsa hiç yaşanmamış bir "lisans
+  görüntülendi" olayını denetim izine yazıyordu. 9 rotaya eksik `loading.tsx`/`error.tsx` eklendi;
+  `/guide`'daki iki yanlış vaat düzeltildi.
+- **[WP v1.1.1] Katalog kırpma birimi uyuşmazlığı** — eklenti kod NOKTASI, panel UTF-16 kod BİRİMİ sayıyordu
+  → emoji/astral karakter taşıyan TEK bir ürün adı `products` dizisinin TAMAMINI 400'letiyor, snapshot hiç
+  yazılmıyor, operatör `/mappings`'te boş katalog görüyor, tek iz mağazadaki `error_log` oluyordu (sessiz).
+  Panel artık REDDETMİYOR, KIRPIYOR (`remoteName` ile aynı desen); eklenti de aynı birimde ölçüyor.
+  + eşleme kutusundaki bozuk hata mesajı · çok baytlı kırpmanın mesajı BOŞALTMASI · ölü ikinci `mask()` ·
+  bonus önekinin iki yerde ayrı ayrıştırılması (panelin `originRemoteLineId`/`isBonus` alanları YETKİLİ).
+- **KENDİ TESTİMİ ÇÜRÜTTÜM (yeni ders):** işçinin yazdığı dış-kopya dedupe testi ilk koşumda düştü. Sebep
+  ÜRÜN DEĞİL DÜZENEKTİ: `notifications` stub'ı yalnız diziye push ediyordu, `alert()` dedupe'u ise GERÇEK
+  DB'ye sorar → tabloya satır hiç girmediği için "aynı tipin KENDİ dedupe'u korunuyor" iddiası bu düzenekte
+  SAĞLANAMAZDI. Stub artık satırı tabloya da yazıyor. **Kural: dedupe/idempotency sınayan bir test, ürünün
+  YAZMA yolunu da taklit etmelidir; yoksa test, ürünün yapmadığı bir şeyi ölçer.**
+- **Doğrulama:** typecheck 4/4 (src+test) · **dört kapı** temiz (use-server 26/88 · nest-wiring 42 modül/69
+  sınıf **+13 kuyruk** · env 49 · **workflows 2/4/46**) · birim **shared 57 + api 152 + admin 147** (+12 yeni)
+  · build 3/3 · `pnpm audit --prod` temiz · şema sapması yok, migration EKLENMEDİ (0000-0045 sabit) ·
+  PHP-lint **13/13** + eklenti davranış testleri **108/108** (VPS throwaway `php:8.2-cli-alpine`) ·
+  `bash -n` temiz · **VPS izole test DB: entegrasyon 402/402 + yarış 3/3** (çifte satış 0 — toplu INSERT ve
+  küme-tabanlı geri alma değişikliklerinden SONRA).

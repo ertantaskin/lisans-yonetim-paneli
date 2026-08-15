@@ -132,13 +132,27 @@ const baseColumns: ColumnDef<SiteListRow>[] = [
 /** Rotasyon başarısında bir kez gösterilecek secret bilgisi. */
 type RotatedNotice = { domain: string; hmacSecret: string };
 
+/**
+ * Owner-olmayan operatöre gösterilecek gerekçe (§8 RBAC).
+ *
+ * NEDEN GÖRÜNÜR BİR GEREKÇE: iki aksiyon da sunucuda `isOwner()` ile korunuyor ve API'de
+ * `OwnerGuard` var (veri güvende) — ama düğme AÇIK sunuluyordu. Operatör onay modalini geçip
+ * ("Yenile" / "Askıya al") ancak SONRA "yetkiniz yok" alıyordu. Proje kuralı: tıklanıp hata
+ * veren düğme, hiç sunulmayandan kötüdür (bkz. inventory/license-item-actions.tsx).
+ */
+const OWNER_ONLY_REASON =
+  'Bu işlem yalnız Sahip (owner) rolündeki yöneticiler içindir — mağazanın kimlik bilgilerini ve sipariş kabulünü etkiler.';
+
 /** Site satır aksiyonları — şu an: HMAC secret yenile (confirm + loglu). */
 function SiteRowActions({
   site,
+  canOwner,
   onRotated,
   onError,
 }: {
   site: SiteListRow;
+  /** Oturum owner mı (sunucudan SERİLEŞTİRİLEBİLİR boolean olarak gelir — fonksiyon prop'u YOK). */
+  canOwner: boolean;
   onRotated: (notice: RotatedNotice) => void;
   onError: (message: string) => void;
 }) {
@@ -201,21 +215,46 @@ function SiteRowActions({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => void rotate()} disabled={pending}>
+        <DropdownMenuItem
+          onSelect={() => void rotate()}
+          disabled={pending || !canOwner}
+          title={canOwner ? undefined : OWNER_ONLY_REASON}
+        >
           <KeyRound />
           {pending ? 'Yenileniyor…' : 'Secret Yenile'}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => void toggleStatus()} disabled={pending}>
+        <DropdownMenuItem
+          onSelect={() => void toggleStatus()}
+          disabled={pending || !canOwner}
+          title={canOwner ? undefined : OWNER_ONLY_REASON}
+        >
           {suspended ? <CircleCheck /> : <Ban />}
           {suspended ? 'Aktifleştir' : 'Askıya Al'}
         </DropdownMenuItem>
+        {/* Gerekçe GÖRÜNÜR olmalı: devre dışı menü öğesinin tooltip'i her tarayıcıda/klavyede
+            açılmaz — operatör düğmenin neden kapalı olduğunu tahmin etmek zorunda kalmasın
+            (dead-letter-table.tsx'teki aynı desen). */}
+        {!canOwner && (
+          <p className="max-w-56 px-2 py-1.5 text-xs text-muted-foreground">{OWNER_ONLY_REASON}</p>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
     </>
   );
 }
 
-export function SitesTable({ sites }: { sites: SiteListRow[] }) {
+export function SitesTable({
+  sites,
+  canOwner = true,
+}: {
+  sites: SiteListRow[];
+  /**
+   * Oturum owner mı (§8). Varsayılan `true` — auth KAPALI kurulumda panel zaten herkese
+   * açıktır ve `isOwner()` de true döner; ayrıca prop'u geçmeyi unutan bir çağıran
+   * aksiyonları sessizce kilitlemez (asıl kapı sunucudaki isOwner() + API OwnerGuard).
+   */
+  canOwner?: boolean;
+}) {
   const [rotated, setRotated] = React.useState<RotatedNotice | null>(null);
   const [rotateError, setRotateError] = React.useState<string | null>(null);
 
@@ -236,14 +275,19 @@ export function SitesTable({ sites }: { sites: SiteListRow[] }) {
         header: () => <span className="sr-only">Aksiyonlar</span>,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <SiteRowActions site={row.original} onRotated={handleRotated} onError={handleError} />
+            <SiteRowActions
+              site={row.original}
+              canOwner={canOwner}
+              onRotated={handleRotated}
+              onError={handleError}
+            />
           </div>
         ),
         enableSorting: false,
         enableHiding: false,
       },
     ],
-    [handleRotated, handleError],
+    [handleRotated, handleError, canOwner],
   );
 
   const facets: FacetConfig[] = React.useMemo(() => {

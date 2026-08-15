@@ -11,9 +11,12 @@
 //   · admin REQUIRE_AUTH / TZ / APP_VERSION ve api HMAC_IP_FAIL_LIMIT / RETENTION_* / RECONCILE_*.
 // İkisi de ancak elle denetimde bulundu; hiçbir test/derleme adımı bunu göremezdi.
 //
-// NE DENETLER: `apps/api/src` ve `apps/admin` altındaki her `process.env.X` okuması için
+// NE DENETLER: `apps/api/src` ve `apps/admin` altındaki her çalışma-anı env okuması için
 //   (1) X, docker-compose.yml'deki ilgili servisin `environment:` bloğunda var mı,
 //   (2) X, `.env.example`de belgeli mi (operatör hangi ayarın var olduğunu oradan öğreniyor).
+// Taranan okuma biçimleri `envReads()` başlığında; `process.env.X` DIŞINDA `config.get('X')`,
+// `config.getOrThrow('X')`, env yardımcıları ve `const X_ENV='ADI'` sabit dolaylaması dahildir.
+// Statik olarak çözülemeyen okumalar SESSİZCE atlanmaz, uyarı olarak listelenir.
 //
 // KAPSAM DIŞI: derleme/araç değişkenleri (aşağıdaki BUILD_ONLY listesi) ve çalışma anında
 // Node/Next'in kendi doldurduğu değişkenler.
@@ -82,42 +85,95 @@ function collect(dir, acc = []) {
 /**
  * Ortam değişkeni okumalarını toplar (değişken → ilk görüldüğü dosya).
  *
- * ÜÇ OKUMA DESENİ de taranır — ilk sürüm yalnız birincisine bakıyordu ve api'deki 28
+ * DÖRT OKUMA DESENİ taranır — ilk sürüm yalnız birincisine bakıyordu ve api'deki 28
  * değişkenin 14'ünü GÖRMÜYORDU. Üstelik görünmeyenler tam da geçmişte UNUTULAN değişkenlerdi
  * (HMAC_IP_FAIL_LIMIT, SMTP_*, TELEGRAM_*) → denetleyici "temiz" der, boşluk yerinde kalırdı.
  * "Az denetleyen denetleyici" bu projede belgelenmiş bir hata sınıfıdır (bkz. passWithNoTests
- * yüzünden sıfır test koşan dosya).
+ * yüzünden sıfır test koşan dosya) — ve yanlış güven verdiği için denetleyici YOKLUĞUNDAN BETERDİR.
  *   1) process.env.X / process.env['X']
- *   2) ConfigService: .get('X') / .get<T>('X')
+ *   2) ConfigService: .get('X') / .get<T>('X') / .getOrThrow('X') / .getOrThrow<T>('X')
  *   3) env/ayar yardımcıları: adı env|config|days|setting içeren fonksiyona İLK argüman olarak
  *      geçirilen büyük-harf sabit — `envInt('X', 5)`, `this.days('RETENTION_X', 180)`,
  *      `this.optionalDays('RETENTION_X')`.
+ *   4) SABİT ARA DEĞİŞKEN: `const X_ENV = 'ENV_ADI'` + `config.get(X_ENV)` → 'ENV_ADI'e çözülür.
+ *
+ * (2)'de `getOrThrow` DESTEĞİ SONRADAN EKLENDİ (denetim bulgusu): eski regex `get` sonrası
+ * doğrudan `(` beklediği için `.getOrThrow(` HİÇ eşleşmiyordu. YALNIZ bu yolla okunan dört
+ * değişken vardı: MAIL_FROM, SMTP_PORT, REDIS_URL, ADMIN_TOKEN. Hepsi bugün compose'da geçiyor
+ * (canlı arıza YOK) — ama zod şeması MAIL_FROM ve SMTP_PORT'a VARSAYILAN verdiği için biri
+ * compose'dan düşerse hiçbir hata çıkmaz: mailler sessizce `teslimat@localhost`'tan gider.
+ * Yani kapının korumak için VAR OLDUĞU senaryo tam da kapının kör noktasındaydı.
+ *
+ * (4) da aynı denetimin bulgusu: `stock.service.ts` env adını literal yazmıyor, onu
+ * `autocomplete.queue.ts`teki `AUTOCOMPLETE_INLINE_CAP_ENV` sabitinden alıyordu → tarayıcı
+ * göremiyordu. Sabitler ÖNCE toplanır (dosyalar arası), sonra `get(SABİT)` kullanımı çözülür.
  *
  * (3)'ün ÇAĞIRAN ADINA bakması bilinçli: "her büyük-harf ilk argüman" kuralı denendi ve
  * DELETE/POST/HMAC/MAK/INCR/PG_CLIENT/BACKUP_BYTES gibi env OLMAYAN sabitleri de topladı —
  * yanlış pozitif veren bir kapı, CI'ı ilgisiz sebeplerle kırıp güvenilirliğini yitirir.
- * BİLİNEN SINIR: adı bu kalıba uymayan YENİ bir env yardımcısı eklenirse taranmaz; böyle bir
- * yardımcı eklerken adına 'env' koyun ya da buraya ekleyin.
+ * Aynı sebeple (4)'te İDENTİFİER argümanı yalnız ConfigService benzeri bir alıcıda
+ * (`this.config.` / `config.` / `configService.`) aranır: `map.get(key)` / `cookies.get(X)` /
+ * `redis.get(idKey)` gibi yüzlerce ilgisiz `.get(` çağrısı denetime girmesin.
+ *
+ * ÇÖZÜLEMEYEN dinamik okumalar (`this.config.get(name)` — ad bir PARAMETRE) SESSİZCE ATLANMAZ:
+ * `warnings` dizisinde raporlanır. Sessiz atlama, kapının kör noktasını görünmez kılar.
+ *
+ * BİLİNEN SINIR: adı (3)'ün kalıbına uymayan YENİ bir env yardımcısı (ör. `isSet('X')`) yalnız
+ * o değişken BAŞKA bir yerde de okunuyorsa görülür; böyle bir yardımcı eklerken adına 'env'
+ * koyun ya da buraya ekleyin.
+ *
+ * @returns {{ reads: Map<string,string>, warnings: string[] }}
  */
 function envReads(files) {
   const out = new Map();
+  const warnings = [];
   const NAME = /^[A-Z][A-Z0-9_]{2,}$/;
   const add = (name, f) => {
     if (NAME.test(name) && !out.has(name)) out.set(name, norm(path.relative(REPO_ROOT, f)));
   };
+
+  // ── Geçiş 1: `const X = 'ENV_ADI'` sabitleri (dosyalar arası; sabit bir dosyada tanımlanıp
+  // başka dosyada kullanılıyor — AUTOCOMPLETE_INLINE_CAP_ENV tam olarak böyle). Yalnız DEĞERİ
+  // env adı biçiminde olan sabitler alınır: 'webhook'/'tq' gibi kuyruk/anahtar sabitleri elenir.
+  const texts = new Map();
+  const constEnv = new Map();
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8');
+    texts.set(f, text);
+    for (const m of text.matchAll(
+      /(?:^|\n)\s*(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*['"]([A-Za-z0-9_]+)['"]/g,
+    )) {
+      if (NAME.test(m[2])) constEnv.set(m[1], m[2]);
+    }
+  }
+
+  // ── Geçiş 2: okumalar.
+  for (const f of files) {
+    const text = texts.get(f);
+    const where = norm(path.relative(REPO_ROOT, f));
     for (const m of text.matchAll(/process\.env(?:\.([A-Z0-9_]+)|\[['"]([A-Z0-9_]+)['"]\])/g)) {
       add(m[1] || m[2], f);
     }
-    for (const m of text.matchAll(/\.get(?:<[^>]*>)?\(\s*['"]([A-Z0-9_]+)['"]/g)) add(m[1], f);
+    // (2) literal argüman — alıcıdan bağımsız (büyük-harf literal `.get('X')` pratikte hep env).
+    for (const m of text.matchAll(/\.get(?:OrThrow)?(?:<[^>]*>)?\(\s*['"]([A-Z0-9_]+)['"]/g)) {
+      add(m[1], f);
+    }
+    // (4) identifier argüman — YALNIZ ConfigService benzeri alıcıda (yanlış pozitif kalkanı).
+    for (const m of text.matchAll(
+      /(?:this\.)?\b\w*[Cc]onfig\w*\.get(?:OrThrow)?(?:<[^>]*>)?\(\s*([A-Za-z_$][\w$]*)\s*[,)]/g,
+    )) {
+      const resolved = constEnv.get(m[1]);
+      if (resolved) add(resolved, f);
+      else warnings.push(`${where} — config.get(${m[1]}): ad sabit değil (dinamik), çözülemedi.`);
+    }
+    // (3) env/ayar yardımcıları.
     for (const m of text.matchAll(
       /\b(\w*(?:env|config|days|setting)\w*)\(\s*['"]([A-Z0-9_]+)['"]/gi,
     )) {
       add(m[2], f);
     }
   }
-  return out;
+  return { reads: out, warnings };
 }
 
 /** docker-compose.yml içinden bir servisin bloğunu ayıklar (girintiye dayalı, bağımlılıksız). */
@@ -149,6 +205,7 @@ function main() {
   ];
 
   const problems = [];
+  const warnings = [];
   let checked = 0;
 
   for (const t of targets) {
@@ -158,7 +215,9 @@ function main() {
       process.exit(1);
     }
     const files = t.dirs.flatMap((d) => collect(path.join(REPO_ROOT, d)));
-    for (const [name, where] of envReads(files)) {
+    const { reads, warnings: w } = envReads(files);
+    for (const line of w) warnings.push(line);
+    for (const [name, where] of reads) {
       if (BUILD_ONLY.has(name)) continue;
       checked++;
       // `environment:` bloğunda anahtar olarak geçmeli (`X: ${X:-}` ya da `X: sabit`).
@@ -174,6 +233,18 @@ function main() {
         );
       }
     }
+  }
+
+  // ÇÖZÜLEMEYEN okumalar SESSİZCE atlanmaz — kapının kör noktası GÖRÜNÜR olmalı. Bunlar CI'ı
+  // kırmaz (ad çalışma anında belli olur, statik olarak bilinemez) ama listelenir: bir yardımcı
+  // env adını parametre olarak alıyorsa asıl okuma ÇAĞIRANDA literal olmalıdır — orası taranır.
+  if (warnings.length > 0) {
+    const uniq = [...new Set(warnings)];
+    console.warn(`\n! check-env-passthrough: ${uniq.length} çözülemeyen (dinamik) env okuması:`);
+    for (const w of uniq) console.warn(`    ${w}`);
+    console.warn(
+      `  Bunlar yardımcı sarmalayıcılardır; env ADI çağırandan literal geçmelidir (o çağrılar taranır).\n`,
+    );
   }
 
   if (problems.length > 0) {

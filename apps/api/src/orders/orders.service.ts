@@ -541,25 +541,51 @@ export class OrdersService {
             ? new Date(Date.now() + product.validityDays * 86_400_000)
             : null;
 
-          for (const alloc of allocations) {
-            const [asg] = await tx
+          // PERF: TEK çok-satırlı INSERT. Eskiden atanan HER BİRİM için ayrı INSERT…RETURNING
+          // atılıyordu (tek-kullanımlık üründe allocate() kalem başına bir Allocation döndürür):
+          // qty=500'lük bir satır 500 seri gidiş-dönüş demekti — hepsi transaction İÇİNDE, satır
+          // kilitleri tutulurken ve havuzun (max 10) bir bağlantısı rezerveyken; kota açık sitede
+          // ayrıca `pg_advisory_xact_lock(site)` altında, yani aynı mağazanın diğer siparişleri de
+          // o süre boyunca serileşiyordu. Toplu yazım bu kod tabanının zaten kullandığı desendir
+          // (stok import, supplier_claim_items) ve `consumeMultiUseCapacity` için AYNI maliyet
+          // ölçülüp düzeltilmişti — tek-kullanımlık dal o düzeltmenin dışında kalmıştı.
+          //
+          // Eşleme SIRAYA DEĞİL `licenseItemId`'ye dayanır: RETURNING'in giriş sırasını koruduğu
+          // yazılı bir garanti değildir. Bir `allocations` dizisinde aynı kalem iki kez geçmez
+          // (tek-kullanımda her kalem ayrı satır, multi'de kapasite anahtar başına tek allocation).
+          if (allocations.length > 0) {
+            const inserted = await tx
               .insert(assignments)
-              .values({
-                orderId: order.id,
-                lineId: orderLine.id,
-                licenseItemId: alloc.licenseItemId,
+              .values(
+                allocations.map((alloc) => ({
+                  orderId: order.id,
+                  lineId: orderLine.id,
+                  licenseItemId: alloc.licenseItemId,
+                  units: alloc.units,
+                  validUntil,
+                  status: 'active' as const,
+                  deliveredAt: new Date(),
+                })),
+              )
+              .returning({ id: assignments.id, licenseItemId: assignments.licenseItemId });
+            const idByItem = new Map(inserted.map((r) => [r.licenseItemId, r.id]));
+            for (const alloc of allocations) {
+              const assignmentId = idByItem.get(alloc.licenseItemId);
+              // Olamaz; olursa SESSİZ KALMAZ. `assignmentId: undefined` bir yanıta sızarsa
+              // mağaza o atamayı bir daha adresleyemez (reveal/replace/suspend hepsi id ister)
+              // ve tx zaten commit edilmiş olurdu. Fırlatmak tüm siparişi geri alır.
+              if (!assignmentId) {
+                throw new Error(
+                  `Atama kaydı okunamadı (licenseItemId=${alloc.licenseItemId}) — sipariş geri alındı.`,
+                );
+              }
+              assignmentResults.push({
+                assignmentId,
+                remoteLineId: line.remoteLineId,
                 units: alloc.units,
-                validUntil,
-                status: 'active',
-                deliveredAt: new Date(),
-              })
-              .returning();
-            assignmentResults.push({
-              assignmentId: asg!.id,
-              remoteLineId: line.remoteLineId,
-              units: alloc.units,
-              validUntil: validUntil ? validUntil.toISOString() : null,
-            });
+                validUntil: validUntil ? validUntil.toISOString() : null,
+              });
+            }
           }
 
           const lineStatus =
@@ -921,13 +947,39 @@ export class OrdersService {
     // dahildir ve CANLI hak taşır (sonradan "Geri aç" ile aktifleşir). Adet-düşür yolu yalnız
     // active geri alsaydı, fazlalık yalnız suspended'dayken hiç geri alınamaz → satır over-fulfilled
     // kalır ve suspended atama sağ kalır → geri açılınca adedi düşürülen siparişte bedava lisans.
-    // revokeAssignment/revokePartialUnits ikisi de suspended'ı işler (H1 düzeltmesiyle); markLineCanceled
-    // =false + returnMultiCapacity=true (adet-düşür = iade DEĞİL, kapasite döner, satır re-fill'e açık).
+    // revokeAssignment/revokePartialUnits ikisi de suspended'ı işler (H1 düzeltmesiyle).
+    //
+    // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (adet yeniden artarsa doldurulabilir).
+    //
+    // returnMultiCapacity=**false** (DÜZELTİLDİ — §2 ihlaliydi): burası "adet-düşür = iade DEĞİL"
+    // gerekçesiyle kapasiteyi havuza GERİ VERİYORDU, oysa MAĞAZA İADESİ bu yola da düşüyor:
+    // WP `collect_lines` push'a NET adet (brüt − iade) yazar, yani bir iade `/refund` işi yerine
+    // (ör. o iş 3 denemede kalıcı başarısız olduysa, ya da admin aynı istekte kalem düzenlediyse)
+    // `resync` → `POST /v1/orders` → `reconcileOrder` azalış dalı → BURASI olarak uzlaşabilir.
+    // O durumda `syncRefunds` `use_count`'u KORURKEN (§2: "iadede MAK hakkı havuza dönmez") bu yol
+    // düşürüyordu → HARCANMIŞ aktivasyonlar tekrar satılabilir hâle geliyordu (sessiz aşırı-satış).
+    // Teslimattan SONRA adedin düşmesi MAK için iadeyle fiziksel olarak aynıdır — hangi yoldan
+    // geldiğini ayırt edemeyiz, bu yüzden §2'nin ihtiyatlı kuralı iki yolda da uygulanır.
+    // (Satırın yeniden doldurulması etkilenmez: taze anahtar havuzdan gelir, eski MAK anahtarına
+    // kapasite iade etmek gerekmez.)
+    // SIRA ÖNEMLİ — hangi anahtarın öleceğini bu belirler:
+    //  1) ÖNCE askıdakiler: `suspended` atama zaten devre dışı bırakılmış (operatör bilerek
+    //     kapatmış). Fazlalığı ondan düşmek, müşterinin KULLANDIĞI canlı bir anahtarı
+    //     öldürmekten her zaman daha az zararlıdır. Eskiden sıra yalnız tarihe bakıyordu →
+    //     kısmi iadede canlı anahtar ölüp askıdaki sağ kalabiliyordu.
+    //  2) sonra en YENİ atama (eski teslimatlar korunur),
+    //  3) son olarak `id` — tie-break ŞART: bir siparişin atamaları TEK transaction'da
+    //     yazıldığı için `created_at` damgaları BİREBİR aynıdır; tie-break'siz sıralamada
+    //     hangi anahtarın geri alınacağı keyfi olur ve iki koşuda değişebilir.
     const active = await exec
       .select({ id: assignments.id, units: assignments.units })
       .from(assignments)
       .where(and(eq(assignments.lineId, lineId), inArray(assignments.status, ['active', 'suspended'])))
-      .orderBy(desc(assignments.createdAt));
+      .orderBy(
+        sql`(${assignments.status} = 'suspended') desc`,
+        desc(assignments.createdAt),
+        desc(assignments.id),
+      );
 
     const actor = `site:${site.domain ?? site.id}`;
     const reason = 'Sipariş adedi düşürüldü (re-push)';
@@ -938,13 +990,13 @@ export class OrdersService {
       if (a.units <= need) {
         // Bu atamanın TAMAMI fazlalığa sığıyor → tam revoke (tek→karantina, multi→kapasite geri).
         // markLineCanceled=false: adedi düşürülen satır AKTİF kalır (ileride adet artarsa doldurulabilir).
-        const res = await this.adminOrders.revokeAssignment(a.id, reason, actor, false, exec);
+        const res = await this.adminOrders.revokeAssignment(a.id, reason, actor, false, exec, false);
         // Yalnız GERÇEK revoke sayılır — idempotent {already:true} no-op fazladan atama geri aldırmaz.
         if (!('already' in res)) revoked += a.units;
       } else {
         // #19 birim-granüler: atama fazladan büyük (multi/MAK) → yalnız `need` birimi geri al, imha etme.
-        // Kapasite tam `need` kadar döner; tek-kullanımda a.units=1 ⇒ need≥1 ⇒ bu dala hiç girilmez.
-        const res = await this.adminOrders.revokePartialUnits(a.id, need, reason, actor, exec);
+        // Tek-kullanımda a.units=1 ⇒ need≥1 ⇒ bu dala hiç girilmez.
+        const res = await this.adminOrders.revokePartialUnits(a.id, need, reason, actor, exec, false);
         revoked += res.revoked; // gerçekten geri alınan birim (atama aktif değilse 0)
       }
     }

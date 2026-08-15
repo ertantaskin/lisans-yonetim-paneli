@@ -22,6 +22,18 @@ import {
   type Product,
 } from '../db/schema';
 
+/**
+ * Ürün detayındaki parti/satın-alma-emri listelerinin tavanı.
+ *
+ * Bu iki tablo STOK GİRİŞİ BAŞINA birer satır alır (auto-PO + parti) → günlük içe aktarma
+ * yapılan bir üründe yıllar içinde binlerce satıra çıkar ve eskiden ikisi de LIMIT'siz
+ * çekilip tarayıcıya gönderiliyordu. Global listeler (`/purchase-orders`, `/batches`) bu
+ * riski `LIST_LIMIT + 1` + `truncated` deseniyle zaten kapatmıştı; ürün-özel görünüm
+ * atlanmıştı. Kırpma SESSİZ OLMAZ — `truncated` ile ekrana çıkar (bu panelde sessiz LIMIT
+ * "o kayıt yok" yanılgısı ürettiği için kural budur).
+ */
+const DETAIL_LIST_LIMIT = 200;
+
 /** Ürün detay sayfası (§13) — salt-okunur agregasyon, mevcut tablolardan türetilir. */
 export interface ProductDetail {
   product: Product;
@@ -75,6 +87,8 @@ export interface ProductDetail {
     supplierId: string | null;
     supplierName: string | null;
   }>;
+  /** Liste tavana dayandı mı (DETAIL_LIST_LIMIT) — ekran bunu görünür uyarıyla söyler. */
+  batchesTruncated: boolean;
   purchaseOrders: Array<{
     id: string;
     status: string;
@@ -88,6 +102,8 @@ export interface ProductDetail {
     supplierId: string;
     supplierName: string;
   }>;
+  /** Liste tavana dayandı mı (DETAIL_LIST_LIMIT). */
+  purchaseOrdersTruncated: boolean;
   velocity: {
     sold7d: number;
     sold30d: number;
@@ -530,8 +546,12 @@ export class ProductsService {
     return {
       product,
       stock,
-      batches,
-      purchaseOrders,
+      batches: batches.items,
+      // Kırpma DÜRÜSTÇE raporlanır — ekran "hepsi bu" demez (sessiz LIMIT bu panelde
+      // daha önce "o kayıt yok" yanılgısı üretmişti).
+      batchesTruncated: batches.truncated,
+      purchaseOrders: purchaseOrders.items,
+      purchaseOrdersTruncated: purchaseOrders.truncated,
       velocity: {
         sold7d: velocity.sold7d,
         sold30d: velocity.sold30d,
@@ -657,7 +677,9 @@ export class ProductsService {
    * Tedarikçi adı + teslim tarihi JOIN ile gelir: stok import ekranındaki parti seçici ham
    * UUID yerine "etiket · tarih · durum" gösterebilsin (operatörün elinde UUID yok).
    */
-  private async detailBatches(id: string): Promise<ProductDetail['batches']> {
+  private async detailBatches(
+    id: string,
+  ): Promise<{ items: ProductDetail['batches']; truncated: boolean }> {
     const list = await rawRows<{
       id: string;
       label: string;
@@ -672,24 +694,32 @@ export class ProductsService {
       FROM batches b
       LEFT JOIN suppliers s ON s.id = b.supplier_id
       WHERE b.product_id = ${id}
-      ORDER BY b.received_at DESC, b.created_at DESC;
+      -- id tie-break ŞART: aynı gün teslim alınan partilerin damgaları eşit olabilir; LIMIT'li
+      -- bir sıralamada tie-break yoksa pencereye HANGİ satırların gireceği keyfi olur.
+      ORDER BY b.received_at DESC, b.created_at DESC, b.id DESC
+      LIMIT ${DETAIL_LIST_LIMIT + 1};
     `);
-    return list.map((r) => ({
-      id: r.id,
-      label: r.label,
-      status: r.status,
-      qtyReceived: Number(r.qty_received),
-      receivedAt: r.received_at,
-      supplierId: r.supplier_id,
-      supplierName: r.supplier_name,
-    }));
+    return {
+      items: list.slice(0, DETAIL_LIST_LIMIT).map((r) => ({
+        id: r.id,
+        label: r.label,
+        status: r.status,
+        qtyReceived: Number(r.qty_received),
+        receivedAt: r.received_at,
+        supplierId: r.supplier_id,
+        supplierName: r.supplier_name,
+      })),
+      truncated: list.length > DETAIL_LIST_LIMIT,
+    };
   }
 
   /**
    * Bu ürüne verilmiş satın alma emirleri (§12), en yeni önce.
    * supplier_id NOT NULL + RESTRICT FK → INNER JOIN güvenli (emirsiz tedarikçi satırı olamaz).
    */
-  private async detailPurchaseOrders(id: string): Promise<ProductDetail['purchaseOrders']> {
+  private async detailPurchaseOrders(
+    id: string,
+  ): Promise<{ items: ProductDetail['purchaseOrders']; truncated: boolean }> {
     const list = await rawRows<{
       id: string;
       status: string;
@@ -704,17 +734,22 @@ export class ProductsService {
       FROM purchase_orders po
       JOIN suppliers s ON s.id = po.supplier_id
       WHERE po.product_id = ${id}
-      ORDER BY po.created_at DESC;
+      -- id tie-break: aynı stok girişinde açılan emirlerin damgaları eşit olabilir.
+      ORDER BY po.created_at DESC, po.id DESC
+      LIMIT ${DETAIL_LIST_LIMIT + 1};
     `);
-    return list.map((r) => ({
-      id: r.id,
-      status: r.status,
-      qtyOrdered: Number(r.qty_ordered),
-      qtyReceived: Number(r.qty_received),
-      eta: r.eta,
-      supplierId: r.supplier_id,
-      supplierName: r.supplier_name,
-    }));
+    return {
+      items: list.slice(0, DETAIL_LIST_LIMIT).map((r) => ({
+        id: r.id,
+        status: r.status,
+        qtyOrdered: Number(r.qty_ordered),
+        qtyReceived: Number(r.qty_received),
+        eta: r.eta,
+        supplierId: r.supplier_id,
+        supplierName: r.supplier_name,
+      })),
+      truncated: list.length > DETAIL_LIST_LIMIT,
+    };
   }
 
   /**

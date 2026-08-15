@@ -161,6 +161,11 @@ const ORDER_STATUS: Record<string, string> = {
   pending: 'Bekliyor',
   partial: 'Kısmi teslim',
   fulfilled: 'Teslim edildi',
+  // `order_status` PG enum'unun 5 değerinden biri ve GERÇEKTEN üretiliyor (orders.service —
+  // mağaza ürünü panele eşlenmemişse). Sözlükte YOKTU: Ctrl+K paleti (tek tüketici) ham
+  // İngilizce `unmapped` basıyor, aynı sipariş /orders listesinde rozet sözlüğü üzerinden
+  // "Eşlenmemiş" yazıyordu — yukarıdaki `fulfilled` çelişkisinin birebir tekrarı.
+  unmapped: 'Eşlenmemiş',
   held_for_review: 'İncelemede',
   revoked: 'Geri alındı',
   canceled: 'İptal',
@@ -593,8 +598,17 @@ const NOTIFICATION_TYPE: Record<string, string> = {
    */
   backup_stale: 'Yedek bayat',
   drill_stale: 'Geri yükleme tatbikatı bayat',
-  // Dış kopya kurulu değil / başarısız — yedek yalnız sunucunun kendisinde duruyor.
+  /**
+   * Dış kopya — yedek yalnız sunucunun kendisinde duruyor. İKİ AYRI TİP: dedupe yalnız tipe
+   * baktığı için ortak tip kullanıldığında, önce yazılan "kurulu değil" uyarısı sonraki
+   * "başarısız" KRİTİK alarmını 24 saate kadar bastırıyordu. Operatörün yapacağı iş de
+   * farklıdır (kancayı KUR vs kancanın çıktısını DÜZELT).
+   *
+   * NOT: `backup_offsite` tipi ayrımdan ÖNCE yazılmış kayıtlarda her iki durumu da temsil
+   * edebilir — bu yüzden etiketi bilerek geniş bırakıldı.
+   */
   backup_offsite: 'Dış kopya sorunu',
+  backup_offsite_failed: 'Dış kopya başarısız',
   /**
    * Üretimde mail hedefi yakalayıcıya (mailpit/localhost) bakıyor → teslimat mailleri GERÇEK
    * müşteriye ULAŞMIYOR (MailConfigGuardService, `critical`). Etiketi eksikti ve bu alarm

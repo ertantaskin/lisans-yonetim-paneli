@@ -19,6 +19,16 @@ export interface DailyMetrics {
   /** Başarısız (veya askıda kalıp denemesi tükenmiş) webhook outbox olayı sayısı. */
   failedOutbox: number;
   /**
+   * Başarısız/bounce (veya 15dk+ kuyrukta asılı kalmış) TESLİMAT MAİLİ sayısı.
+   *
+   * NEDEN AYRI METRİK: outbox ve mail AYRI arıza sınıflarıdır. SMTP relay kimliği süresi
+   * dolduğunda siparişler teslim edilir, panel 'fulfilled' der, webhook başarılı gider —
+   * yalnız müşteriye giden mailler 5 denemede ölür ve `email_log.status='failed'` birikir.
+   * Digest yalnız outbox'a baktığı için "Sorunlu webhook: 0" diyordu ve maildan HİÇ söz
+   * etmiyordu → arıza ancak müşteri şikâyetiyle fark ediliyordu.
+   */
+  failedEmails: number;
+  /**
    * Atanabilir kalan KAPASİTE (Σ max_uses−use_count, status='available' + stok ömrü
    * DOLMAMIŞ). MULTI/MAK ürünlerde satır sayısı DEĞİL — products.service/channel-catalog
    * ile aynı semantik.
@@ -67,7 +77,8 @@ export class AiSummaryService {
         system:
           'Sen bir lisans dağıtım panelinin operasyon asistanısın. Sana günlük ' +
           'metrikleri JSON olarak verilir. Bu sayıları yorumlayan, dikkat çekici ' +
-          'sapmaları (yüksek başarısız webhook, biriken açık talep, düşük stok, ' +
+          'sapmaları (yüksek başarısız webhook, gönderilemeyen teslimat maili, ' +
+          'biriken açık talep, düşük stok, ' +
           'olağandışı güvenlik olayı yoğunluğu vb.) vurgulayan KISA bir Türkçe ' +
           'paragraf yaz (en fazla 3-4 cümle). Sayı uydurma, yalnız verilenleri yorumla. ' +
           'Her şey normalse bunu sakince belirt. Madde işareti kullanma, düz metin yaz.',
@@ -84,9 +95,12 @@ export class AiSummaryService {
   }
 
   /**
-   * Beş operasyon sayacını tek salt-okunur sorguda toplar (skaler alt sorgular).
+   * Altı operasyon sayacını tek salt-okunur sorguda toplar (skaler alt sorgular).
    * failedOutbox: status='failed' VEYA 15dk+ askıda kalmış pending (deneme tükenmiş)
    * — ops dead-letter tanımıyla aynı "sorunlu outbox" semantiği (§16).
+   * failedEmails: AYNI dead-letter tanımının mail yarısı (ops.service deadLetter sorgusu):
+   * failed/bounced VEYA 15dk+ queued/sending. İki yüzey ayrışırsa /ops listesi ile digest
+   * sayısı çelişir (bu projede tekrarlayan hata sınıfı) → yüklem BİREBİR aynı tutulur.
    */
   private async collectMetrics(): Promise<DailyMetrics> {
     const rows = await rawRows<{
@@ -94,6 +108,7 @@ export class AiSummaryService {
       open_replacements: number;
       security_events_24h: number;
       failed_outbox: number;
+      failed_emails: number;
       available_stock: number;
     }>(this.db, sql`
       SELECT
@@ -106,6 +121,10 @@ export class AiSummaryService {
         (SELECT count(*) FROM outbox_events
            WHERE status = 'failed'
               OR (status = 'pending' AND created_at < now() - interval '15 minutes'))::int AS failed_outbox,
+        (SELECT count(*) FROM email_log
+           WHERE status IN ('failed', 'bounced')
+              OR (status IN ('queued', 'sending')
+                  AND created_at < now() - interval '15 minutes'))::int AS failed_emails,
         -- notExpiredCond(): stok ömrü dolmuş kalem atanamaz (assign.ts) → günlük özet/AI
         -- yorumu "var olmayan stok" görüp yanlış "stok yeterli" değerlendirmesi yapmasın;
         -- sayı dashboard/rapor/düşük-stok ile AYNI olsun. Tablo takma adsız → alias yok.
@@ -118,6 +137,7 @@ export class AiSummaryService {
       openReplacements: Number(r?.open_replacements ?? 0),
       securityEvents24h: Number(r?.security_events_24h ?? 0),
       failedOutbox: Number(r?.failed_outbox ?? 0),
+      failedEmails: Number(r?.failed_emails ?? 0),
       availableStock: Number(r?.available_stock ?? 0),
     };
   }

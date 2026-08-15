@@ -101,6 +101,21 @@ function prettyTransport() {
             // Hem eleman-bazlı wildcard hem de tüm dizi (yeni alan eklenirse de kapalı kalsın).
             'req.body.items[*].payload',
             'req.body.items',
+            /*
+             * ASİMETRİ KAPATILDI: liste yalnız LİSANS payload'ını kapsıyordu; aynı gövdelerde
+             * akan diğer sırlar açıkta kalıyordu. Bugün gövde loglanmadığı için pratikte
+             * no-op'tur (gövde serializer'ı yok) — ama gövde logu bir gün açılırsa (teşhis
+             * için debug seviyesinde) lisans maskeli kalırken PAROLALAR düz metin akardı;
+             * redaksiyon listesinin değeri tam olarak o gün ortaya çıkar.
+             *
+             *  • password → admin girişi, admin oluşturma, parola sıfırlama, TOTP kapatma
+             *    (admin-users.controller); operatör kimliğinin tamamı.
+             *  • fields / value → license-items PATCH + rotate-credentials
+             *    (stock.controller): hesap ürününün DÜZ parolası buradan geçer.
+             */
+            'req.body.password',
+            'req.body.fields',
+            'req.body.value',
           ],
           remove: true,
         },

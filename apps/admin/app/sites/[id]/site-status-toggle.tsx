@@ -7,11 +7,32 @@ import { useConfirm } from '../../../components/ui/confirm';
 import { useAnnouncer } from '../../../components/a11y/announcer';
 
 /**
+ * Owner-olmayan operatöre gösterilecek gerekçe (§8 RBAC) — sites-table.tsx ile aynı metin.
+ * Aksiyon sunucuda `isOwner()` ile korunuyordu ama düğme AÇIK sunuluyordu: operatör "Askıya al"
+ * onayını geçip ancak SONRA "yetkiniz yok" alıyordu.
+ */
+const OWNER_ONLY_REASON =
+  'Bu işlem yalnız Sahip (owner) rolündeki yöneticiler içindir — mağazanın sipariş kabulünü durdurur.';
+
+/**
  * Site yaşam döngüsü aksiyonu (§8): askıya al / aktifleştir. 'suspended' → HMAC auth
  * reddedilir (yeni sipariş push'u durur). setSiteStatusAction → PATCH (audit'e düşer).
  * Confirm ister; hata inline gösterilir. revalidatePath sunucuda durumu tazeler.
  */
-export function SiteStatusToggle({ siteId, status }: { siteId: string; status: string }) {
+export function SiteStatusToggle({
+  siteId,
+  status,
+  canOwner = true,
+}: {
+  siteId: string;
+  status: string;
+  /**
+   * Oturum owner mı — SUNUCUDAN gelen serileştirilebilir boolean (fonksiyon prop'u YOK).
+   * Varsayılan `true`: auth kapalı kurulumda `isOwner()` zaten true döner ve prop'u geçmeyi
+   * unutan bir çağıran aksiyonu sessizce kilitlemez (asıl kapı sunucuda + API OwnerGuard).
+   */
+  canOwner?: boolean;
+}) {
   const [pending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const announce = useAnnouncer();
@@ -57,11 +78,17 @@ export function SiteStatusToggle({ siteId, status }: { siteId: string; status: s
         variant={suspended ? 'default' : 'outline'}
         size="sm"
         onClick={() => void toggle()}
-        disabled={pending}
+        disabled={pending || !canOwner}
+        title={canOwner ? undefined : OWNER_ONLY_REASON}
+        aria-label={canOwner ? undefined : `${suspended ? 'Aktifleştir' : 'Askıya Al'} — ${OWNER_ONLY_REASON}`}
       >
         {suspended ? <CircleCheck /> : <Ban />}
         {pending ? 'İşleniyor…' : suspended ? 'Aktifleştir' : 'Askıya Al'}
       </Button>
+      {/* Gerekçe GÖRÜNÜR: devre dışı düğmenin tooltip'i her tarayıcıda/klavyede açılmaz. */}
+      {!canOwner && (
+        <p className="max-w-56 text-right text-xs text-muted-foreground">{OWNER_ONLY_REASON}</p>
+      )}
       {error && (
         <p className="flex items-center gap-1 text-xs text-destructive">
           <TriangleAlert className="size-3.5" /> {error}

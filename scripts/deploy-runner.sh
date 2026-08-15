@@ -24,6 +24,19 @@
 # (Kilit dosyası ayrıca dış sarmalayıcının kullandığı addan AYRI tutuldu: eski crontab satırı
 # hâlâ duruyorsa bile self-deadlock oluşmaz, tek-örnek güvencesi yine sağlanır.)
 #
+# ── SESSİZ ARIZA KARŞITI TASARIM (backup-runner.sh ile aynı desen) ──────────────────────────
+# Bu betiğin en tehlikeli arıza biçimi ÇÖKMEK değil, HİÇBİR ŞEY YAPMAMAKTIR. Eskiden claim
+# çağrısı `curl -fsS ... || echo '{}'` ile sarılıydı: 401 / 5xx / ağ hatası ile "bekleyen iş
+# yok" AYIRT EDİLEMİYOR ve betik tek satır log bile basmadan `exit 0` ediyordu. ADMIN_TOKEN
+# rotasyonundan sonra .env güncellenmezse panelden basılan "Prod'a dağıt" isteği HİÇ claim
+# edilmez, sonsuza dek 'pending'de bekler ve teşhis izi kalmaz. Artık her çağrıda HTTP kodu
+# okunur; "iş yok" (2xx + boş gövde) SESSİZ, her hata GÖRÜNÜR ve sıfırdan farklı çıkış kodludur.
+#
+# ÇIKIŞ KODU: 0 = yapacak iş yoktu / iş koşuldu ve sonucu panele yazıldı.
+#             1 = API'ye ULAŞILAMADI, yetki reddedildi ya da sonuç panele yazılamadı
+#                 (cron maili/log ile görünür). Dağıtımın kendi PASS/FAIL sonucu panele yazılır
+#                 ve çıkış kodunu belirlemez; buradaki 1 "runner'ın kendisi çalışamadı" demektir.
+#
 # Gerektirir: jq, curl, git, docker (deploy.sh için), base64 (publish-plugin.sh için).
 # ADMIN_TOKEN repo kökündeki .env'den okunur.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,24 +59,63 @@ if [ -z "$ADMIN_TOKEN" ] && [ -f .env ]; then
 fi
 [ -z "$ADMIN_TOKEN" ] && { echo "deploy-runner: ADMIN_TOKEN bulunamadı (.env)"; exit 1; }
 
-api(){  # api METHOD PATH [json-body]
-  local method="$1" path="$2" body="${3:-}"
+log()  { printf '[%s] deploy-runner: %s\n' "$(date '+%F %T')" "$*"; }
+elog() { printf '[%s] deploy-runner: %s\n' "$(date '+%F %T')" "$*" >&2; }
+
+# ── API yardımcısı — GÖVDE + HTTP KODU (backup-runner.sh ile BİREBİR aynı desen) ────────────
+# `curl -f` BİLEREK kullanılmaz: eskiden çağrı `-fsS ... || echo '{}'` biçimindeydi ve bu,
+# "yapacak iş yok" (2xx + boş gövde) ile "API'ye ULAŞILAMADI / 401 / 5xx" durumlarını AYNI
+# şeye indirgiyordu → betik TEK SATIR LOG BİLE BASMADAN `exit 0` ediyordu. SESSİZ ARIZA:
+# ADMIN_TOKEN rotasyonundan sonra .env güncellenmezse panelden basılan "Prod'a dağıt" isteği
+# HİÇ claim edilmez, istek sonsuza dek 'pending'de bekler ve cron logunda hiçbir teşhis izi
+# kalmaz. Artık HTTP kodu okunur ve hata TÜRÜNE göre ayrı raporlanır. Ağ/DNS hatasında kod 000.
+API_HTTP=0
+api(){  # api METHOD PATH [json-body]  → gövdeyi stdout'a basar, kodu $API_HTTP'ye yazar
+  local method="$1" path="$2" body="${3:-}" resp=""
   if [ -n "$body" ]; then
-    curl -fsS --max-time 20 -X "$method" \
+    resp="$(curl -sS --max-time 20 -X "$method" \
       -H "X-Admin-Token: $ADMIN_TOKEN" -H "Content-Type: application/json" \
-      -d "$body" "$API_BASE$path"
+      -d "$body" -w $'\n%{http_code}' "$API_BASE$path" 2>/dev/null)"
   else
-    curl -fsS --max-time 20 -X "$method" -H "X-Admin-Token: $ADMIN_TOKEN" "$API_BASE$path"
+    resp="$(curl -sS --max-time 20 -X "$method" \
+      -H "X-Admin-Token: $ADMIN_TOKEN" -w $'\n%{http_code}' "$API_BASE$path" 2>/dev/null)"
   fi
+  if [ -z "$resp" ]; then API_HTTP="000"; return 1; fi
+  API_HTTP="${resp##*$'\n'}"
+  printf '%s' "${resp%$'\n'*}"
+  case "$API_HTTP" in 2??) return 0 ;; *) return 1 ;; esac
 }
 
-# 1) Bekleyen isteği ATOMİK al (pending→running). Yoksa {} döner → çık.
+# 1) Bekleyen isteği ATOMİK al (pending→running).
 # `targets` filtresi ŞART: aynı kuyruğu `backup-runner.sh` de yokluyor (yedek/tatbikat
 # hedefleri). Filtre olmasaydı bu runner bir 'backup' isteğini kapıp `deploy.sh backup`
 # çalıştırmaya kalkardı; claim geri alınamadığı için istek boşa harcanır ve yedek hiç
 # alınmazdı. Alan API'de OPSİYONEL → eski panel sürümüyle de uyumlu (tüm hedefler).
-claim="$(api POST /v1/admin/deployments/claim '{"targets":["api","admin","api admin","plugin"]}' || echo '{}')"
+#
+# DİKKAT (ÖLÇÜLDÜ): `claim="$(api …)"` biçimi KULLANILMAZ. Komut ikamesi bir ALT KABUKTA koşar →
+# `api()` içinde set edilen `API_HTTP` ana kabuğa DÖNMEZ ve hata mesajı her zaman başlangıç
+# değerini basar; 401/403 dalı da hiç çalışmazdı (yani ADMIN_TOKEN rotasyonu — bu düzeltmenin
+# ASIL senaryosu — yanlış teşhis edilirdi). Çıkış KODU alt kabuktan doğru döner, HTTP kodu dönmez.
+# Bu yüzden çağrı gövdesi dosyaya yönlendirilir: `api` ANA KABUKTA koşar, iki bilgi de korunur.
+CLAIM_OUT="/tmp/wpteslimat-deploy-runner.claim.$$"
+api POST /v1/admin/deployments/claim '{"targets":["api","admin","api admin","plugin"]}' > "$CLAIM_OUT"
+claim_rc=$?
+claim="$(cat "$CLAIM_OUT" 2>/dev/null)"
+rm -f "$CLAIM_OUT"
+if [ "$claim_rc" -ne 0 ]; then
+  # "İş yok" DEĞİL: claim'in kendisi başarısız oldu. Bekleyen dağıtım olup olmadığı BİLİNMİYOR.
+  elog "claim BAŞARISIZ (HTTP $API_HTTP) — bekleyen dağıtım isteği olup olmadığı BİLİNMİYOR."
+  case "$API_HTTP" in
+    401|403) elog "YETKİSİZ: ADMIN_TOKEN yanlış/eskimiş olabilir (rotasyondan sonra .env güncellendi mi?)." ;;
+    000)     elog "API'ye ULAŞILAMADI ($API_BASE) — servis ayakta mı, ağ/DNS sorunu var mı?" ;;
+    *)       elog "Beklenmeyen yanıt — API logunu kontrol edin ($API_BASE/v1/health)." ;;
+  esac
+  exit 1
+fi
+
 id="$(printf '%s' "$claim" | jq -r '.id // empty' 2>/dev/null)"
+# 2xx + boş gövde = gerçekten yapacak iş yok. NORMAL durum → sessiz çıkış (dakikada bir koşuyor,
+# log kirletmemeli). Sessizlik yalnız BURADA meşrudur: yukarıda hata olmadığı KANITLANDI.
 [ -z "$id" ] && exit 0
 
 target="$(printf '%s' "$claim" | jq -r '.target // "api admin"' 2>/dev/null)"
@@ -75,7 +127,7 @@ note="$(printf '%s' "$claim" | jq -r '.note // empty' 2>/dev/null)"
 runner_script="deploy.sh"
 if [ "$target" = "plugin" ]; then
   runner_script="publish-plugin.sh"
-  echo "[$(date '+%F %T')] deploy-runner: claim $id → publish-plugin.sh (eklenti yayını)"
+  log "claim $id → publish-plugin.sh (eklenti yayını)"
   if [ ! -x ./scripts/publish-plugin.sh ]; then
     # Panel bu hedefi sunuyor ama betik prod checkout'unda yok/çalıştırılabilir değil →
     # sessiz takılma yerine anlamlı hata (repo güncel mi, exec biti korunmuş mu?).
@@ -85,7 +137,7 @@ if [ "$target" = "plugin" ]; then
     out="$(./scripts/publish-plugin.sh "$note" 2>&1)"; code=$?
   fi
 else
-  echo "[$(date '+%F %T')] deploy-runner: claim $id → deploy.sh $target"
+  log "claim $id → deploy.sh $target"
   out="$(./scripts/deploy.sh $target 2>&1)"; code=$?
 fi
 # Kalan ANSI escape kodlarını soy (iki betik de TTY'siz renk basmaz — çift savunma).
@@ -98,6 +150,7 @@ if [ "$code" -ne 0 ]; then
   status="failed"
   err="$(printf '%s' "$out" | grep -E '✗|BAŞARISIZ|FAIL' | tail -1)"
   [ -z "$err" ] && err="$runner_script çıkış kodu $code"
+  elog "iş BAŞARISIZ (id=$id, target=$target): $err"
 fi
 
 # 3) Sonucu panele geri yaz (jq ile JSON-safe; ağ takılırsa 3 kez dene). log/error jq İÇİNDE
@@ -107,13 +160,22 @@ fi
 body="$(jq -n --arg s "$status" --arg sha "$sha" --arg log "$out" --arg e "$err" \
   '{status:$s, gitSha:$sha, log:($log | if length > 20000 then .[-20000:] else . end)}
    + (if $e=="" then {} else {error:($e | if length > 4000 then .[-4000:] else . end)} end)')"
+reported=0
 for attempt in 1 2 3; do
   if api PATCH "/v1/admin/deployments/$id/finish" "$body" >/dev/null; then
-    echo "[$(date '+%F %T')] deploy-runner: $id → $status (bildirildi)"
-    break
+    log "$id → $status (bildirildi)"
+    reported=1; break
   fi
-  echo "[$(date '+%F %T')] deploy-runner: finish PATCH denemesi $attempt başarısız, tekrar…"
+  elog "finish PATCH denemesi $attempt başarısız (HTTP $API_HTTP), tekrar…"
   sleep 5
 done
+if [ "$reported" != 1 ]; then
+  # Sonuç panele YAZILAMADI: iş 'running' kalır ve server-side zombi temizliğiyle 'failed'
+  # olarak kapanır. Dağıtım GERÇEKTE başarılı olmuş olabilir; panel bunu bilemez → operatörün
+  # /v1/health ile elle doğrulaması gerekir. Sessiz çıkış BURADA da yasak.
+  elog "SONUÇ PANELE YAZILAMADI (id=$id, status=$status, HTTP $API_HTTP). Panelde iş 'running'"
+  elog "görünecek ve zaman aşımıyla 'failed' kapanacak — canlı sürümü elle doğrulayın."
+  exit 1
+fi
 
 exit 0

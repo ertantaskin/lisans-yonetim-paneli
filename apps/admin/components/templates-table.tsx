@@ -6,6 +6,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { MoreHorizontal, Pencil, Trash2, TriangleAlert } from 'lucide-react';
 import type { TemplateRow } from '../app/templates/queries';
 import { deleteTemplateAction } from '../app/templates/actions';
+import { includesTr } from '../lib/utils';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
@@ -95,7 +96,11 @@ const baseColumns: ColumnDef<TemplateRow>[] = [
         {row.original.subject}
       </Link>
     ),
-    filterFn: 'includesString',
+    // TanStack'in yerleşik 'includesString' süzgeci ham `toLowerCase()` kullanır ve Türkçe'de
+    // BOZUKTUR: "İ".toLowerCase() = "i" + U+0307 → "TESLİMATI" yazan operatör "Lisans Teslimatı"
+    // şablonunu BULAMIYOR, hata da almıyordu (sessiz boş sonuç) ve şablonu silinmiş sanıp
+    // ikinci bir kopya oluşturuyordu. Panel genelinde standart olan `includesTr` kullanılır.
+    filterFn: (row, _id, value) => includesTr(row.original.subject, value),
   },
   {
     id: 'scope',

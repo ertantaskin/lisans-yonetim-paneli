@@ -13,15 +13,22 @@ import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 import type { FacetConfig } from './data-table/data-table-toolbar';
 
-// ── Kaynak türü → rozet (outbox=webhook, email=mail) ─────────────────────────
+// ── Kaynak türü → rozet (outbox=webhook, email=e-posta) ──────────────────────
+//
+// GEÇİCİ YEREL SÖZLÜK: etiketler burada elle yazılıyor. Panelin kuralı rozet metninin CÜMLE
+// DÜZENİNDE olması (küçük harfli "webhook"/"mail" aynı satırdaki diğer rozetlerle çelişiyordu)
+// ve etiket sözlüklerinin TEK KAYNAKTAN (`lib/labels.ts`) gelmesi. Bu iki değer henüz oraya
+// taşınmadı — bu turda `labels.ts` başka bir işçide olduğu için dokunulmadı.
+// YAPILACAK: `deadLetterKindLabel` olarak `lib/labels.ts`'e taşı; aşağıdaki facet seçenekleri
+// ("Webhook"/"Mail") de aynı kaynaktan okusun, yoksa aynı ekranda iki sözlük ayrışır.
 function KindBadge({ kind }: { kind: DeadLetterRow['kind'] }) {
   return kind === 'outbox' ? (
     <Badge variant="outline">
-      <Webhook /> webhook
+      <Webhook /> Webhook
     </Badge>
   ) : (
     <Badge variant="outline">
-      <Mail /> mail
+      <Mail /> E-posta
     </Badge>
   );
 }
@@ -96,8 +103,10 @@ const facets: FacetConfig[] = [
     columnId: 'kind',
     title: 'Kaynak',
     options: [
+      // Rozet metinleriyle BİREBİR aynı olmalı (facet "Mail" derken rozet "E-posta" diyordu →
+      // operatör süzdüğü şeyle listede gördüğünü eşleştiremiyordu).
       { label: 'Webhook', value: 'outbox', icon: Webhook },
-      { label: 'Mail', value: 'email', icon: Mail },
+      { label: 'E-posta', value: 'email', icon: Mail },
     ],
   },
   {

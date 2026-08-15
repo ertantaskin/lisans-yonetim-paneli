@@ -288,15 +288,25 @@ class Wpteslimat_Product_Mapping {
         return (string) $rpid;
     }
 
-    /** Panel yanıtını istemciye ilet (2xx → success, aksi → error + panel mesajı). */
+    /**
+     * Panel yanıtını istemciye ilet (2xx → success, aksi → error + okunur mesaj).
+     *
+     * Hata metni sipariş kutusundaki TEK kaynaktan (`Wpteslimat_Admin_Metabox::error_message`)
+     * üretilir. Buradaki eski kopya `$body['message']`'i HAM iletiyordu; oysa Nest doğrulama
+     * hatasında bu alan DİZİ döner (["productId must be a UUID", …]) ve dizi `alert()`'e verilince
+     * operatör parçalı/anlamsız metin görüyordu. Ayrıca ağ hatasında (code=0) panel istemcisi
+     * gövdeye WP_Error'ın ham İngilizce metnini koyar — ortak fonksiyon bunu da Türkçeye çevirir.
+     */
     private function relay($res) {
         $code = isset($res['code']) ? (int) $res['code'] : 0;
         $body = (isset($res['body']) && is_array($res['body'])) ? $res['body'] : [];
         if ($code >= 200 && $code < 300) {
             wp_send_json_success($body);
         }
-        $msg = isset($body['message']) ? $body['message'] : ('Panel hatası (' . $code . ')');
-        wp_send_json_error(['message' => $msg, 'code' => $code], 200);
+        wp_send_json_error([
+            'message' => Wpteslimat_Admin_Metabox::error_message($code, $body),
+            'code'    => $code,
+        ], 200);
     }
 
     public function ajax_save() {

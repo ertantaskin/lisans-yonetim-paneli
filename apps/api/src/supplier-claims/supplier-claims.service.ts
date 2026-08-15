@@ -343,14 +343,20 @@ export class SupplierClaimsService {
              coalesce(i.rejected_c, 0)::int AS rejected_c
       FROM supplier_claims sc
       LEFT JOIN suppliers s ON s.id = sc.supplier_id
-      LEFT JOIN (
-        SELECT claim_id,
+      -- LATERAL (gruplu alt-sorgu DEĞİL): dış yüklem (detayda sc.id = $1) gruplu bir alt-sorguya
+      -- İTİLEMEZ, dolayısıyla eski biçim TEK fişin detayı açılırken bile supplier_claim_items'ı
+      -- baştan agregeliyordu (tablo kusurlu kalem başına bir satır alır ve retention kapsamında
+      -- DEĞİLDİR → sürekli büyür). LATERAL biçiminde koşul içeri iner ve
+      -- supplier_claim_items_claim_idx kullanılabilir. Aynı dosyadaki accountSecretLabels ve
+      -- product-guides.service zaten bu deseni kullanıyor.
+      LEFT JOIN LATERAL (
+        SELECT
           count(*) FILTER (WHERE outcome = 'pending')  AS pending_c,
           count(*) FILTER (WHERE outcome = 'replaced') AS replaced_c,
           count(*) FILTER (WHERE outcome = 'credited') AS credited_c,
           count(*) FILTER (WHERE outcome = 'rejected') AS rejected_c
-        FROM supplier_claim_items GROUP BY claim_id
-      ) i ON i.claim_id = sc.id
+        FROM supplier_claim_items sci WHERE sci.claim_id = sc.id
+      ) i ON TRUE
       WHERE ${sql.join(conds, sql` AND `)}
       ORDER BY sc.created_at DESC, sc.id DESC
       LIMIT 500;

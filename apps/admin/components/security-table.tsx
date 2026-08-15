@@ -218,11 +218,22 @@ function ScanButton({ onError, onDone }: { onError: (m: string) => void; onDone:
   );
 }
 
-/** KVKK anonimleştirme formu — TEK YÖNLÜ, confirm + audit uyarısı. */
+/**
+ * KVKK anonimleştirme formu — TEK YÖNLÜ, confirm + audit uyarısı.
+ *
+ * RBAC (§8/§9): aksiyon sunucuda `isOwner()` ile korunuyor ama form HERKESE açıktı — bu, bu
+ * paneldeki en kötü "tıklanıp hata veren düğme" senaryosuydu: owner-olmayan operatör
+ * e-postayı yazıyor, kırmızı "TEK YÖNLÜ… GERİ ALINAMAZ" onayını geçiyor ve ANCAK SONRA
+ * "yetkiniz yok" alıyordu (geri alınamaz bir işlemi onayladığını sanarak). Owner değilse
+ * form hiç RENDER EDİLMEZ; yerine ne yapılacağını söyleyen bir not durur (/sites/new deseni).
+ */
 function AnonymizeForm({
+  canOwner,
   onError,
   onDone,
 }: {
+  /** Oturum owner mı — SUNUCUDAN serileştirilebilir boolean olarak gelir (fonksiyon prop'u YOK). */
+  canOwner: boolean;
   onError: (m: string) => void;
   onDone: (orders: number, replacements: number) => void;
 }) {
@@ -257,6 +268,25 @@ function AnonymizeForm({
       }
     });
   };
+
+  // Hook'lar KOŞULSUZ çağrıldıktan SONRA dallan (React kuralı): owner değilse form yerine
+  // gerekçe. Bölüm tamamen gizlenmez — yeteneğin var olduğunu ama kimin kullanabileceğini
+  // bilmek operatörün doğru kişiye yönlenmesini sağlar.
+  if (!canOwner) {
+    return (
+      <Card className="p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <UserX className="size-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold text-foreground">KVKK anonimleştirme</h2>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Bu işlem TEK YÖNLÜdür ve geri alınamaz; yalnız Sahip (owner) rolündeki yöneticiler
+          çalıştırabilir. Bir müşterinin kişisel verisinin silinmesi gerekiyorsa Sahip rolündeki
+          yöneticiye başvurun.
+        </p>
+      </Card>
+    );
+  }
 
   return (
     // Card primitifi (elle kopyalanan sınıf dizisi shadow-xs'i düşürüyordu; tema değişince
@@ -331,11 +361,18 @@ export function SecurityTable({
   events,
   truncated = false,
   limit,
+  canOwner = true,
 }: {
   events: SecurityEventRow[];
   /** API üst sınırına dayanıldı → daha eski olaylar bu listede YOK (sessiz kırpma olmasın). */
   truncated?: boolean;
   limit?: number;
+  /**
+   * Oturum owner mı (§8) — KVKK anonimleştirme formunun sunulup sunulmayacağını belirler.
+   * Varsayılan `true`: auth KAPALI kurulumda `isOwner()` zaten true döner (asıl kapı sunucu
+   * aksiyonundaki isOwner() + API OwnerGuard'dır; bu yalnız görünürlük kararı).
+   */
+  canOwner?: boolean;
 }) {
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
@@ -409,7 +446,7 @@ export function SecurityTable({
         emptyLabel="Güvenlik olayı yok."
       />
 
-      <AnonymizeForm onError={handleError} onDone={handleAnonDone} />
+      <AnonymizeForm canOwner={canOwner} onError={handleError} onDone={handleAnonDone} />
     </div>
   );
 }

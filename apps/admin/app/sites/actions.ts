@@ -12,50 +12,19 @@ import { getActor, isOwner } from '../../lib/session';
  */
 const INVALID_SITE_ID = 'Geçersiz site kimliği — liste yenilenip tekrar denenmeli.';
 
-export interface CreateSiteState {
-  ok: boolean;
-  error?: string;
-  site?: { id: string; domain: string; apiKey: string; hmacSecret: string };
-}
-
-/** Site oluştur — apiKey + hmacSecret YALNIZ bir kez döner, kullanıcıya gösterilir. */
-export async function createSiteAction(
-  _prev: CreateSiteState,
-  formData: FormData,
-): Promise<CreateSiteState> {
-  const domain = String(formData.get('domain') || '').trim();
-  if (!domain) return { ok: false, error: 'Domain zorunlu' };
-  try {
-    const senderEmail = String(formData.get('senderEmail') || '').trim();
-    // Günlük satış kotası (ops.) — boş bırakılırsa limitsiz (null). Negatif/0 reddedilir.
-    const quotaRaw = String(formData.get('salesDailyQuota') || '').trim();
-    let salesDailyQuota: number | null = null;
-    if (quotaRaw) {
-      const n = Number(quotaRaw);
-      if (!Number.isInteger(n) || n < 1) {
-        return { ok: false, error: 'Günlük satış kotası pozitif tam sayı olmalı' };
-      }
-      salesDailyQuota = n;
-    }
-    // Sandbox (test modu) — checkbox işaretliyse mailler gerçek müşteriye GİTMEZ.
-    const sandbox = formData.get('sandbox') != null;
-    const actor = await getActor();
-    const site = await apiPost<CreateSiteState['site']>(
-      '/v1/admin/sites',
-      {
-        domain,
-        ...(senderEmail ? { senderEmail } : {}),
-        ...(salesDailyQuota != null ? { salesDailyQuota } : {}),
-        ...(sandbox ? { sandbox: true } : {}),
-      },
-      actor,
-    );
-    revalidatePath('/sites');
-    return { ok: true, site };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Hata' };
-  }
-}
+/*
+ * KALDIRILDI — `createSiteAction` + `CreateSiteState` (ve tek çağıranı `components/create-site-form.tsx`).
+ *
+ * NEDEN (güvenlik yüzeyi, ölü kod DEĞİL): form hiçbir sayfada render EDİLMİYORDU, ama aksiyon
+ * `'use server'` modülünden export edildiği ve bu modül `sites-table.tsx` tarafından import
+ * edildiği için Next ÇAĞRILABİLİR bir sunucu-aksiyon uç noktası üretiyordu. Bu dosyadaki diğer
+ * uçlar (`rotate-secret`, `setSiteStatus`) `isOwner()` ile korunurken bu uçta kapı YOKTU →
+ * owner-olmayan bir oturum, Next'in kendi ADMIN_TOKEN'ıyla site kaydı açtırabilirdi.
+ *
+ * KANONİK AKIŞ: `/sites/new` sihirbazı (`app/sites/new/actions.ts` → `createSiteAndIssueCode`),
+ * o ZATEN owner-gated (sayfa kapısı + aksiyonda isOwner() + API OwnerGuard). Çift site-oluşturma
+ * akışı bilinçli olarak tek akışta birleştirilmişti; bu artık o kararın kod tarafındaki kalıntısıydı.
+ */
 
 export interface UpdateSiteState {
   ok: boolean;

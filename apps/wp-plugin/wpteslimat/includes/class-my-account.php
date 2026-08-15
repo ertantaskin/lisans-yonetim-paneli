@@ -372,12 +372,19 @@ class Wpteslimat_My_Account {
     }
 
     /**
-     * Rehber HTML'i için izin verilen etiketler — panelin ürettiği kümeyle BİREBİR aynı
-     * (packages/shared → renderGuideHtml: h4/p/ol/ul/li/strong/em/a/br/code).
+     * Rehber HTML'i için izin verilen etiketler — panelin ürettiği kümenin ÜST KÜMESİ.
      *
-     * Panel metni zaten kaçırıp yalnız bu etiketleri üretiyor; bu liste İKİNCİ savunma
-     * hattıdır. Panele yeni bir etiket eklenirse burası da güncellenmeli, aksi halde
-     * etiket sessizce silinir (kses tanımadığını atar).
+     * Panel (packages/shared → renderGuideHtml) bugün yalnız şunları üretir:
+     * h4 / p / br / strong / ol[start] / ul / li / a[href,target,rel].
+     * Buradaki liste ayrıca `code` ve `em` içerir — panelde karşılığı YOKTUR (biçimleme
+     * grameri `**kalın**` üretir, italik/kod yoktur). Güvenlik etkisi yok (ikisi de zararsız
+     * satır-içi etiket) ama liste "BİREBİR aynı" DEĞİLDİR; bu yorum eskiden öyle diyordu ve
+     * yanlış güvence veriyordu.
+     *
+     * Panel metni zaten kaçırıp yalnız kendi etiketlerini üretiyor; bu liste İKİNCİ savunma
+     * hattıdır (üst küme olması o hattı zayıflatmaz — kses yine yalnız bu kümeyi geçirir).
+     * Panele YENİ bir etiket eklenirse burası da güncellenmeli, aksi halde etiket sessizce
+     * silinir (kses tanımadığını atar). Liste GENİŞLETİLMEZ — yalnız panelin ürettiği kadar.
      */
     private static function guide_allowed_html() {
         return [
@@ -701,13 +708,25 @@ class Wpteslimat_My_Account {
     }
 
     /**
-     * Panel satır kimliğini (remoteLineId) Woo sipariş kalemine çözer. İki biçim eşleşir — sipariş
-     * kutusundaki `line_matches()` ile AYNI kural (iki yüzey farklı gruplama yapmasın):
+     * Panel satır kimliğini (remoteLineId) Woo sipariş kalemine çözer.
+     *
+     * TEK KAYNAK ($origin): panel bonus satırının ait olduğu mağaza kalemini ZATEN çözer
+     * (`resolveOriginRemoteLineId` → yanıtta `originRemoteLineId`) ve sipariş kutusu bu alanı
+     * kullanır. Bu yüzey de alan GELDİĞİNDE onu kullanır — kural iki yerde ayrı ayrı
+     * ayrıştırılmasın (aynı kuralın iki uygulaması bu projede defalarca sapma üretti).
+     *
+     * FALLBACK (aşağıdaki önek ayrıştırması) BUGÜN HÂLÂ ASIL YOLDUR: `/deliveries` ucu (bu ekranın
+     * beslendiği uç) `originRemoteLineId` DÖNDÜRMEZ — alanı yalnız site-scoped `admin-view`
+     * (sipariş kutusu) döndürür. Uç ileride alanı eklerse burası kendiliğinden yetkili değere
+     * geçer; eklenmezse davranış AYNEN korunur. Eşleşen biçimler:
      *   - "<item_id>"              → normal sipariş kalemi
      *   - "bonus:<item_id>:<uuid>" → o kaleme eklenen sentetik bonus satırı (panel bonusAssign)
      * Çözülemezse '' → çağıran BAŞLIKSIZ (eski) davranışa düşer; asla fatal olmaz.
      */
-    private static function resolve_item_id($remote_line_id, $item_names) {
+    private static function resolve_item_id($remote_line_id, $item_names, $origin = null) {
+        $origin = is_scalar($origin) ? (string) $origin : '';
+        if ($origin !== '') return isset($item_names[$origin]) ? $origin : '';
+
         $rl = (string) $remote_line_id;
         if ($rl === '') return '';
         if (isset($item_names[$rl])) return $rl;
@@ -730,7 +749,10 @@ class Wpteslimat_My_Account {
         $groups = [];
         foreach ($deliveries as $i => $d) {
             $line_id = (isset($d['remoteLineId']) && is_scalar($d['remoteLineId'])) ? (string) $d['remoteLineId'] : '';
-            $item_id = self::resolve_item_id($line_id, $item_names);
+            // Panel yetkili orijin kalemini döndürdüyse onu kullan (bkz. resolve_item_id notu);
+            // döndürmezse yerel önek ayrıştırmasına düşülür.
+            $origin = isset($d['originRemoteLineId']) ? $d['originRemoteLineId'] : null;
+            $item_id = self::resolve_item_id($line_id, $item_names, $origin);
             $key = $item_id !== '' ? 'i:' . $item_id : 'x:' . $line_id;
             if (!isset($groups[$key])) {
                 $groups[$key] = [

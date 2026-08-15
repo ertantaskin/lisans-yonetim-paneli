@@ -237,8 +237,17 @@ fi
 # ── 1) Bekleyen YEDEK isteğini ATOMİK al (pending→running) ───────────────────────────────
 # targets filtresi ŞART: dağıtım isteklerine dokunmayız (bkz. başlık).
 # HTTP kodu okunur: "yapacak iş yok" (2xx + boş gövde) ile "API'ye ulaşılamadı" ARTIK AYRI.
-claim="$(api POST /v1/admin/deployments/claim '{"targets":["backup","backup-drill"]}')"
+# DİKKAT (ÖLÇÜLDÜ, deploy-runner.sh ile aynı tuzak): `claim="$(api …)"` biçimi KULLANILMAZ.
+# Komut ikamesi bir ALT KABUKTA koşar → `api()` içinde set edilen `API_HTTP` ana kabuğa DÖNMEZ
+# ve aşağıdaki teşhis satırı HER ZAMAN bayat `0` basar. Çıkış kodu doğru döndüğü için alarm ve
+# exit davranışı sağlamdı, ama arızanın SEBEBİ (401 = ADMIN_TOKEN eskimiş ↔ 000 = API'ye
+# ulaşılamıyor) log'da ayırt edilemiyordu — yani düzeltmenin asıl senaryosu yanlış teşhis
+# edilecekti. Çıktı dosyaya yönlendirilir, `api` ANA kabukta koşar.
+CLAIM_OUT="/tmp/wpteslimat-backup-runner.claim.$$"
+trap 'rm -f "$CLAIM_OUT"' EXIT
+api POST /v1/admin/deployments/claim '{"targets":["backup","backup-drill"]}' > "$CLAIM_OUT"
 claim_rc=$?
+claim="$(cat "$CLAIM_OUT" 2>/dev/null || true)"
 if [ "$claim_rc" -ne 0 ]; then
   elog "claim BAŞARISIZ (HTTP $API_HTTP) — bekleyen iş olup olmadığı BİLİNMİYOR."
   api_fail_note "claim"

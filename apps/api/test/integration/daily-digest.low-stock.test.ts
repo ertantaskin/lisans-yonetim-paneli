@@ -174,6 +174,9 @@ describe('DailyDigestService — sabit/env eşik alarmları (§16)', () => {
     openReplacements: 1,
     securityEvents24h: 0,
     failedOutbox: 0,
+    // Teslimat maili arızası AYRI sayaçtır (SMTP ölürken outbox sağlıklı görünebilir) ve
+    // webhook ile AYNI eşiği paylaşır → tabanda 0 kalmalı, yoksa her test alarm üretirdi.
+    failedEmails: 0,
     availableStock: 1000,
   };
 
@@ -219,6 +222,30 @@ describe('DailyDigestService — sabit/env eşik alarmları (§16)', () => {
 
     // 4 < 5 → sınırın altı sessiz.
     expect(await runWith({ failedOutbox: 4 })).toHaveLength(0);
+  });
+
+  /**
+   * REGRESYON — mail arızası ALARMSIZ kalıyordu.
+   *
+   * SMTP relay kimliği süresi dolduğunda siparişler teslim edilir, panel 'fulfilled' der ve
+   * webhook'lar başarıyla gider; yalnız teslimat mailleri 5 denemede ölür. Alarm koşulu
+   * yalnız outbox'a baktığı için sabah özeti "Sorunlu webhook: 0" deyip maildan HİÇ söz
+   * etmiyordu → arıza müşteri şikâyetine kadar fark edilmiyordu.
+   */
+  it('failedEmails eşiği aşılınca (outbox TEMİZ olsa bile) kritik alarm üretilir', async () => {
+    const alerts = await runWith({ failedOutbox: 0, failedEmails: 5 });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ type: 'digest_alert', severity: 'critical' });
+    // Mesaj iki sayacı AYRI söyler: operatörün bakacağı yer farklı (/ops vs SMTP ayarı).
+    expect(String(alerts[0]!.message)).toContain('Sorunlu mail: 5');
+    expect(String(alerts[0]!.message)).toContain('Sorunlu webhook: 0');
+    expect((alerts[0]!.meta as Record<string, unknown>).failedEmails).toBe(5);
+
+    // Sınırın altı sessiz (webhook eşiğiyle aynı yön).
+    expect(await runWith({ failedEmails: 4 })).toHaveLength(0);
+
+    // İkisi birden dolu olsa da TEK alarm (aynı arıza sınıfı, iki sayaç).
+    expect(await runWith({ failedOutbox: 9, failedEmails: 9 })).toHaveLength(1);
   });
 
   it('availableStock eşiğe İNİNCE (<=) alarm üretilir; üstünde üretilmez', async () => {

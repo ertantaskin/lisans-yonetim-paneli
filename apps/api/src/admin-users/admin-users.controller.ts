@@ -196,6 +196,14 @@ export class AdminUsersController {
     private readonly totp: AdminTotpService,
   ) {}
 
+  /**
+   * OWNER-ONLY — aynı controller'daki create/patch/password/delete/totp-reset zaten owner-only;
+   * `list` tek istisnaydı. Sır dönmez (e-posta, kullanıcı adı, rol, disabled, lastLoginAt) ve
+   * tek çağıranı `/admins` sayfası ZATEN owner-gated → bugün sömürülebilir değil. Yine de
+   * operatör kadrosunun tam listesi (kim owner, kim pasif, kim ne zaman girdi) hedef seçmeye
+   * yarar; guard tutarlılığı savunma-derinliğidir (bir Next kapısının unutulması yükselmesin).
+   */
+  @UseGuards(OwnerGuard)
   @Get()
   list() {
     return this.users.list();

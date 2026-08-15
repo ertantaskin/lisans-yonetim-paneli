@@ -130,18 +130,38 @@ export async function releaseAllocations(
   db: Executor,
   allocations: Array<{ licenseItemId: string; units: number }>,
 ): Promise<void> {
+  if (allocations.length === 0) return;
+
+  // PERF: TEK ifade. Eskiden kalem başına ayrı UPDATE atılıyordu ve bu yol tam da STOK
+  // YETMEDİĞİNDE (all-or-nothing geri alımı) tetiklenir: qty=5.000'lik bir satırda önce
+  // 5.000 satır tek ifadeyle 'assigned' yapılıp ardından 5.000 AYRI UPDATE ile geri veriliyordu
+  // — transaction açık, kilitler tutuluyor ve süre `idle_in_transaction_session_timeout` (60 sn)
+  // ile Fastify `requestTimeout` (30 sn) mertebesine yaklaşıyordu.
+  //
+  // Aynı kalem birden çok allocation'da geçerse ÖNCE toplanır: `UPDATE … FROM (VALUES …)`
+  // bir satırı yalnız BİR KEZ günceller, yani toplamadan yazmak sessizce eksik geri verirdi.
+  // GREATEST(0, …) monoton olduğu için toplama, ardışık düşümle birebir aynı sonucu verir.
+  const totals = new Map<string, number>();
   for (const a of allocations) {
-    await db.execute(sql`
-      UPDATE license_items SET
-        use_count = GREATEST(0, use_count - ${a.units}),
-        status = 'available',
-        assigned_at = CASE
-          WHEN max_uses <= 1 OR GREATEST(0, use_count - ${a.units}) = 0 THEN NULL
-          ELSE assigned_at
-        END
-      WHERE id = ${a.licenseItemId};
-    `);
+    totals.set(a.licenseItemId, (totals.get(a.licenseItemId) ?? 0) + a.units);
   }
+
+  const values = sql.join(
+    [...totals].map(([id, units]) => sql`(${id}::uuid, ${units}::int)`),
+    sql`, `,
+  );
+
+  await db.execute(sql`
+    UPDATE license_items li SET
+      use_count = GREATEST(0, li.use_count - v.units),
+      status = 'available',
+      assigned_at = CASE
+        WHEN li.max_uses <= 1 OR GREATEST(0, li.use_count - v.units) = 0 THEN NULL
+        ELSE li.assigned_at
+      END
+    FROM (VALUES ${values}) AS v(id, units)
+    WHERE li.id = v.id;
+  `);
 }
 
 /** Tek bir MAK/çok-kullanımlık anahtardan alınan kapasite. */

@@ -95,7 +95,10 @@ export class DailyDigestService implements OnModuleInit {
       `Bugünkü sipariş: ${m.todayOrders}`,
       `Açık talep: ${m.openReplacements}`,
       `Güvenlik olayı (24s): ${m.securityEvents24h}`,
+      // Mail AYRI satır: outbox sağlıklıyken mail yolu ölmüş olabilir (SMTP kimliği süresi
+      // dolduğunda tam olarak bu olur) — tek satırda toplansaydı arıza yine görünmezdi.
       `Sorunlu webhook: ${m.failedOutbox}`,
+      `Sorunlu mail: ${m.failedEmails}`,
       `Atanabilir stok: ${m.availableStock}`,
     ];
     // AI açık ve paragraf üretildiyse anomali yorumunu ekle (kapalı/hata → atlanır).
@@ -124,13 +127,35 @@ export class DailyDigestService implements OnModuleInit {
 
     let alerts = 0;
 
-    if (m.failedOutbox >= failedOutboxThreshold) {
+    /*
+     * Teslimat kanalı alarmı — webhook VE mail.
+     *
+     * Eskiden yalnız outbox sayılıyordu: SMTP relay kimliği süresi dolduğunda siparişler
+     * teslim edilir, panel 'fulfilled' der, webhook'lar başarıyla gider ama teslimat
+     * mailleri 5 denemede ölür. Sabah özeti "Sorunlu webhook: 0" deyip maildan hiç söz
+     * etmediği için arıza ancak müşteri şikâyetiyle fark ediliyordu.
+     *
+     * Eşik PAYLAŞILIR (DIGEST_FAILED_OUTBOX_THRESHOLD): iki sayaç da "sorunlu teslimat
+     * kaydı" mertebesindedir ve ikinci bir env eklemek onu docker-compose + .env.example
+     * geçiş zincirine de eklemeyi gerektirirdi (env'i yalnız .env'e yazmak bu projede
+     * defalarca SESSİZCE etkisiz kaldı). Mesaj iki sayıyı AYRI söyler — operatörün
+     * bakacağı yer farklıdır (/ops dead-letter sekmeleri vs SMTP yapılandırması).
+     */
+    if (m.failedOutbox >= failedOutboxThreshold || m.failedEmails >= failedOutboxThreshold) {
       await this.notifications.create({
         type: 'digest_alert',
         severity: 'critical',
-        title: 'Sorunlu webhook birikmesi',
-        message: `Bekleyen/başarısız outbox olayı ${m.failedOutbox} (eşik ${failedOutboxThreshold}). Dead-letter kuyruğunu inceleyin.`,
-        meta: { metric: 'failedOutbox', value: m.failedOutbox, threshold: failedOutboxThreshold },
+        title: 'Sorunlu teslimat kaydı birikmesi (webhook/mail)',
+        message:
+          `Sorunlu webhook: ${m.failedOutbox} · Sorunlu mail: ${m.failedEmails} ` +
+          `(eşik ${failedOutboxThreshold}). Dead-letter kuyruğunu (/ops) inceleyin; ` +
+          'mail tarafı doluysa SMTP yapılandırmasını da kontrol edin.',
+        meta: {
+          metric: 'failedOutbox',
+          value: m.failedOutbox,
+          failedEmails: m.failedEmails,
+          threshold: failedOutboxThreshold,
+        },
       });
       alerts += 1;
     }

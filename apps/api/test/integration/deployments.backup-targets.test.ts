@@ -13,7 +13,11 @@ import {
 } from '../../src/deployments/deployments.service';
 import { DeploymentsController } from '../../src/deployments/deployments.controller';
 import { OwnerGuard } from '../../src/auth/owner.guard';
-import { BackupAlarmService, OFFSITE_ALERT_TYPE } from '../../src/deployments/backup-alarm.service';
+import {
+  BackupAlarmService,
+  OFFSITE_ALERT_TYPE,
+  OFFSITE_FAILED_ALERT_TYPE,
+} from '../../src/deployments/backup-alarm.service';
 
 /**
  * ENTEGRASYON — 'backup' / 'backup-drill' hedefleri (§16 DR). Gerçek PG.
@@ -394,9 +398,29 @@ describe('DeploymentsService — yedek hedefleri (integration)', () => {
    */
   it('dış kopya: kanca yoksa warning, kanca başarısızsa critical; başarılıysa alarm YOK', async () => {
     const seen: Array<{ type: string; severity: string }> = [];
+    /*
+     * Stub yalnız gözlemlemekle KALMAZ, satırı GERÇEKTEN `notifications` tablosuna da yazar.
+     *
+     * NEDEN (kırılgan test dersi): `BackupAlarmService.alert` dedupe'u GERÇEK DB'ye sorar
+     * (SELECT EXISTS … FROM notifications WHERE type = …). Stub yalnız diziye push etseydi
+     * tabloya hiç satır girmez, dedupe hiçbir zaman bastıramaz ve "aynı tipin KENDİ dedupe'u
+     * korunuyor" iddiası bu düzenekte SAĞLANAMAZDI — nitekim ilk koşumda tam o assert düştü.
+     * Ürün doğruydu, düzenek eksikti: dedupe'u sınayan bir testin yazma yolunu da taklit
+     * etmesi gerekir, yoksa test ürünün yapmadığı bir şeyi ölçer.
+     */
     const notifications = {
-      create: async (n: { type: string; severity: string }) => {
+      create: async (n: {
+        type: string;
+        severity: string;
+        title: string;
+        message: string;
+        meta?: unknown;
+      }) => {
         seen.push({ type: n.type, severity: n.severity });
+        await db.execute(sql`
+          INSERT INTO notifications (type, severity, title, message, meta)
+          VALUES (${n.type}, ${n.severity}, ${n.title}, ${n.message}, ${JSON.stringify(n.meta ?? {})}::jsonb)
+        `);
       },
     };
     // Kuyruk yalnız onModuleInit'te kullanılır (burada çağrılmaz) → güvenli stub.
@@ -408,10 +432,18 @@ describe('DeploymentsService — yedek hedefleri (integration)', () => {
       notifications as never,
     );
 
-    /** Tek bir başarılı yedek kaydı bırakır (verilen offsite işaretiyle) ve alarmı koşturur. */
-    async function runWith(offsite: string): Promise<void> {
+    /**
+     * Tek bir başarılı yedek kaydı bırakır (verilen offsite işaretiyle) ve alarmı koşturur.
+     * @param keepNotifications true ise ÖNCEKİ turun bildirimleri SİLİNMEZ — dedupe penceresi
+     *   yürürlükte kalır (şiddet yükselmesi senaryosu, (d) şıkkı).
+     */
+    async function runWith(offsite: string, keepNotifications = false): Promise<void> {
       seen.length = 0;
-      await db.execute(sql`DELETE FROM notifications WHERE type = ${OFFSITE_ALERT_TYPE}`);
+      if (!keepNotifications) {
+        await db.execute(sql`
+          DELETE FROM notifications WHERE type IN (${OFFSITE_ALERT_TYPE}, ${OFFSITE_FAILED_ALERT_TYPE})
+        `);
+      }
       await db.execute(sql`DELETE FROM deployments WHERE target IN ('backup','backup-drill')`);
       await seedFinished({
         target: 'backup',
@@ -430,16 +462,38 @@ describe('DeploymentsService — yedek hedefleri (integration)', () => {
     ]);
 
     // (b) Kanca KURULU ama BAŞARISIZ → 'critical': operatör dış kopyanın alındığını SANIYOR.
-    //     Yanlış güven, hiç güvenmemekten tehlikelidir.
+    //     Yanlış güven, hiç güvenmemekten tehlikelidir. AYRI tip taşır (bkz. (d)).
     await runWith('failed');
-    expect(seen.filter((n) => n.type === OFFSITE_ALERT_TYPE)).toEqual([
-      { type: OFFSITE_ALERT_TYPE, severity: 'critical' },
+    expect(seen.filter((n) => n.type === OFFSITE_FAILED_ALERT_TYPE)).toEqual([
+      { type: OFFSITE_FAILED_ALERT_TYPE, severity: 'critical' },
     ]);
 
     // (c) Dış kopya BAŞARILI → dış-kopya alarmı YOK (yanlış pozitif üretmez).
     await runWith('ok');
-    expect(seen.filter((n) => n.type === OFFSITE_ALERT_TYPE)).toEqual([]);
+    expect(
+      seen.filter((n) => n.type === OFFSITE_ALERT_TYPE || n.type === OFFSITE_FAILED_ALERT_TYPE),
+    ).toEqual([]);
 
-    await db.execute(sql`DELETE FROM notifications WHERE type = ${OFFSITE_ALERT_TYPE}`);
+    /*
+     * (d) REGRESYON — ŞİDDET YÜKSELMESİ DEDUPE'A TAKILMAMALI.
+     *
+     * Gerçek senaryo: önce "kanca kurulu değil" uyarısı yazılır; operatör kancayı kurar ama
+     * kanca BOZUKtur → durum critical'a yükselir. İki durum ORTAK tip kullanırken dedupe
+     * "son 24 saatte bu tip var" deyip KRİTİK alarmı üretmiyordu; yani en tehlikeli durumun
+     * bildirimi, daha zararsız olanı tarafından 24 saate kadar bastırılıyordu.
+     */
+    await runWith('skipped');
+    expect(seen.filter((n) => n.type === OFFSITE_ALERT_TYPE)).toHaveLength(1);
+    await runWith('failed', true); // uyarı kaydı DURUYOR (dedupe penceresi açık)
+    expect(seen.filter((n) => n.type === OFFSITE_FAILED_ALERT_TYPE)).toEqual([
+      { type: OFFSITE_FAILED_ALERT_TYPE, severity: 'critical' },
+    ]);
+    // Aynı tipin KENDİ dedupe'u ise korunur (tekrar koşumda ikinci kritik üretilmez).
+    await runWith('failed', true);
+    expect(seen.filter((n) => n.type === OFFSITE_FAILED_ALERT_TYPE)).toEqual([]);
+
+    await db.execute(sql`
+      DELETE FROM notifications WHERE type IN (${OFFSITE_ALERT_TYPE}, ${OFFSITE_FAILED_ALERT_TYPE})
+    `);
   });
 });

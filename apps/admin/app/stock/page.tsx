@@ -129,11 +129,20 @@ export default async function StockPage({
   return (
     <div className="space-y-5">
       <PageHeader icon={Boxes} title="Stok & Ürünler" description={description}>
-        {/* Kayıtlı görünümler (§14): bu ekranın süzgeçleri (`?category=`, `?q=`) ve TABLO İÇİ
-            arama/facet/sıralama (`tq`/`tf.*`/`tsort` — ProductsTable `syncUrl`) ADRESTE
-            yaşadığı için menü gerçekten çalışır; `unsyncedFilters` GEÇİLMEZ (yazılmayan
-            süzgeç yok). Görünümler KİŞİSELDİR (actor bazlı). */}
-        <SavedViewsMenu page="stock" />
+        {/* Kayıtlı görünümler (§14): bu ekranın süzgeçleri (`?category=`, `?q=`) ve ÜRÜN
+            TABLOSUNUN arama/facet/sıralaması (`tq`/`tf.*`/`tsort` — ProductsTable `syncUrl`)
+            ADRESTE yaşar. Görünümler KİŞİSELDİR (actor bazlı).
+
+            AMA "yazılmayan süzgeç yok" İDDİASI YANLIŞTI (denetim bulgusu): aynı sayfadaki
+            "Son Eklenen Lisanslar" bölümü `LicenseItemsTable`dır ve onun arama/durum/holder/
+            sıralama/sayfa-boyu durumu KENDİ istemci state'inde yaşar — adrese YAZILMAZ.
+            Operatör lisans listesini süzüp görünümü kaydettiğinde bu süzgeçler SESSİZCE
+            kayboluyor, geri yüklediğinde farklı bir liste geliyordu ("yaptım sanıp yapmamak").
+            /mappings ve /quarantine/records ile aynı mekanizmayla artık açıkça söylenir. */}
+        <SavedViewsMenu
+          page="stock"
+          unsyncedFilters="“Son Eklenen Lisanslar” listesindeki arama, durum/sahip süzgeçleri ve sıralama"
+        />
         <Button asChild variant="outline">
           <Link href="/categories">
             <FolderTree className="size-4" /> Kategoriler

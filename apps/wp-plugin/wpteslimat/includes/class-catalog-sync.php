@@ -645,7 +645,7 @@ class Wpteslimat_Catalog_Sync {
         return $rows;
     }
 
-    /** Tek katalog satırı üretir; ad 500, sku 120 karaktere kırpılır; boş sku → null. */
+    /** Tek katalog satırı üretir; ad 500, sku 120 UTF-16 birimine kırpılır (panel sınırı); boş sku → null. */
     private function row($product_id, $variation_id, $name, $sku, $kind) {
         $name = (string) $name;
         $sku  = ($sku === null) ? '' : (string) $sku;
@@ -658,9 +658,45 @@ class Wpteslimat_Catalog_Sync {
         ];
     }
 
-    /** Çok-baytlı güvenli kırpma (mb_substr varsa). */
+    /**
+     * Panel sınırıyla AYNI BİRİMDE kırpma — UTF-16 KOD BİRİMİ.
+     *
+     * NEDEN: panel doğrulaması (Zod `.max()/.slice()`) JavaScript dizesi üzerinde çalışır ve UTF-16
+     * KOD BİRİMİ sayar; `mb_substr` ise KOD NOKTASI sayar. BMP dışı (astral) bir karakter — emoji,
+     * bazı CJK uzantıları — UTF-16'da İKİ birimdir. Yani emoji taşıyan 251 karakterlik bir ürün adı
+     * eklentide "251" iken panelde 502 görünür. Panel bu alanı artık kırpıyor (reddetmiyor), ama
+     * KIRPMANIN NEREDE olacağını iki tarafın aynı birimde ölçmesi gerekir; aksi halde mağazanın
+     * gönderdiği ad ile panelin sakladığı ad sessizce ayrışır ve katalog hash'i (OPT_HASH) her
+     * senkronda "değişti" der → gereksiz TAM katalog DELETE+INSERT.
+     *
+     * Kırpma her zaman KARAKTER SINIRINDA yapılır (yarım karakter üretilmez). mbstring yoksa (çok
+     * nadir) ham bayt kesimi çok baytlı karakteri ortadan bölebilir → `wp_check_invalid_utf8()` ile
+     * geçersiz kuyruk atılır (class-updater.php `truncate_url()` ile aynı desen).
+     */
     private static function truncate($s, $max) {
-        return function_exists('mb_substr') ? mb_substr($s, 0, $max) : substr($s, 0, $max);
+        $s   = (string) $s;
+        $max = (int) $max;
+        if ($max <= 0 || $s === '') return '';
+
+        if (!function_exists('mb_substr') || !function_exists('mb_strlen')) {
+            if (strlen($s) <= $max) return $s; // bayt sayısı sınırın altındaysa birim sayısı da altındadır
+            $cut = substr($s, 0, $max);
+            return function_exists('wp_check_invalid_utf8') ? wp_check_invalid_utf8($cut, true) : $cut;
+        }
+
+        $chars = mb_strlen($s, 'UTF-8');
+        // Hızlı yol (olağan durum): astral karakter yoksa kod noktası = UTF-16 kod birimi.
+        if ($chars <= $max && !preg_match('/[\x{10000}-\x{10FFFF}]/u', $s)) return $s;
+
+        $units = 0;
+        for ($i = 0; $i < $chars; $i++) {
+            $ch = mb_substr($s, $i, 1, 'UTF-8');
+            // UTF-8'de 4 baytlık dizi = kod noktası >= U+10000 = UTF-16'da surrogate ÇİFTİ (2 birim).
+            $cost = (strlen($ch) === 4) ? 2 : 1;
+            if ($units + $cost > $max) return mb_substr($s, 0, $i, 'UTF-8');
+            $units += $cost;
+        }
+        return $s;
     }
 
     /**

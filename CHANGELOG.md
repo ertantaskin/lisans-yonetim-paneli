@@ -14,6 +14,122 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Proje geneli 6-lensli denetim: CI'ın 19 gündür ölü olduğu bulundu (migration YOK, eklenti 1.1.1)
+
+Altı bağımsız lens (en yeni kod · güvenlik/RBAC · performans/DB · çekirdek para yolu ·
+ops/kuyruk/env/betikler · admin arayüzü + WP eklentisi) paralel tarandı; her bulgu
+raporlanmadan önce çürütme denemesinden geçti. Doğrulama temeli ölçülerek başlandı
+(typecheck, kapılar, birim testleri, build, bağımlılık denetimi, migration damga sırası,
+şema sapması — hepsi temizdi), yani aranan şey "zaten bozuk olan" değil **henüz görünmeyendi**.
+
+**En ağır bulgu: `.github/workflows/ci.yml` GEÇERLİ YAML DEĞİLDİ.** `- name: 'use server'
+export denetimi` satırında tek tırnakla BAŞLAYAN bir skalerden sonra düz metin geliyordu →
+`bad indentation of a mapping entry (38:28)`. GitHub Actions böyle bir dosyayı reddeder, yani
+**iş akışının tamamı hiç koşmuyordu**: 'use server' denetimi, Nest DI kablolaması, env
+passthrough, typecheck, birim testleri, WP php-lint, migration drift, `bash -n`. Hepsi yeşil
+sanılıyordu; hiçbiri çalışmıyordu. Kırılma `2026-07-28` / `ee59e14` commit'inde girmiş — yani
+tam da "sessiz kırılmayı önleyecek" kapıyı CI'a ekleyen commit'te; 19 gün sürdü. Bu projenin
+tekrarlayan dersi bir kez daha doğrulandı: **sessizce hiç çalışmayan bir kapı, kapı
+olmamasından beterdir.** Satır düzeltildi ve tekrarını engellemek için yeni bir kapı eklendi
+(`scripts/check-workflows.js`): iş akışı dosyalarının gerçekten ayrıştırılabildiğini, `on:`/`jobs:`
+taşıdığını, her işin en az bir adımı ve hiçbir adımın boş `run:` içermediğini denetler. Kapı
+**yerel `pnpm typecheck` zincirinde** — dosya ayrıştırılamıyorsa o dosyadaki hiçbir adım
+koşmaz, dolayısıyla kendini denetleyemez; CI'daki kopyası ikincil güvencedir. Kontrol
+denemesiyle doğrulandı (hatalı satır geri konunca kapı kırmızıya düştü).
+
+**Kurulum rehberi özelliği panelden ETKİNLEŞTİRİLEMİYORDU.** Ürün formu `<select name="guideId">`
+alanını basıyordu ama sunucu aksiyonundaki gövde kurucusu (`buildProductBody`) onu FormData'dan
+hiç okumuyordu — iki satır yukarıda `categoryId` okunuyor, rehberde o çift yok. Operatör rehberi
+seçip kaydediyor, ekran yeşil sonuç veriyor, hata çıkmıyor, form kaydettikten sonra seçimi doğru
+gösteriyor; ama `guideId` gövdede hiç gitmediği için API `.partial()` şeması alanı "değişmedi"
+sayıyor ve `products.guide_id` NULL kalıyordu → rehber müşteri sayfasında, teslimat e-postasında
+ve `.txt`'de HİÇ görünmüyordu. Özelliğin dev doğrulaması bağı doğrudan API'den kurduğu için bu
+kaçmıştı. Kök sebep test edilebilirlikti: fonksiyon bir `'use server'` dosyasında yaşıyordu ve
+oradan yardımcı export etmek yasak (Next kuralı, `check-use-server.js` zorlar) → **testi
+olamıyordu**. `apps/admin/lib/product-form-body.ts`'e taşındı ve formdaki her alanın gövdeye
+ULAŞTIĞI 12 testle kilitlendi; kontrol denemesinde düzeltme geri alınınca 5 test kırmızıya düştü.
+
+**Güvenlik.** `POST /v1/admin/sites` taze `apiKey` + `hmacSecret` üretip çağırana döndürüyor ama
+`OwnerGuard` taşımıyordu; Next tarafındaki `createSiteAction` da `isOwner()` kapısı taşımıyordu.
+Kardeş uçların ikisi (`rotate-secret`, `connect-code`) tam bu gerekçeyle owner-only idi. Kapısız
+hâlde owner-olmayan bir admin kendine site açıp panelin kataloğundan bir ürüne eşleme kurup
+sipariş oluşturarak `GET /v1/orders/:id/deliveries` üzerinden gerçek bir lisansı **düz metin**
+okuyabiliyordu — A1/A3 kararını ("düz metin yalnız owner", reveal audit'li) tamamen atlayarak.
+API'ye guard eklendi; ayrıca hiçbir sayfada render EDİLMEYEN `create-site-form.tsx` ve onun
+`createSiteAction`'ı tamamen kaldırıldı (form ölüydü ama aksiyon, aynı `'use server'` modülünden
+export edildiği için hâlâ çağrılabilir bir uç noktasıydı — kanonik akış `/sites/new` sihirbazı).
+`GET /v1/admin/users` de owner kapısına alındı (tutarlılık). pino redact listesine `password` /
+`fields` / `value` gövde yolları eklendi.
+
+**Çekirdek para yolu — §2 ihlali (sessiz aşırı-satış).** `revokeExcess` (adet-düşür) MAK/çok
+kullanımlı kapasiteyi havuza GERİ VERİYORDU, `syncRefunds` (iade) ise vermiyordu — aynı fiziksel
+olay, zıt semantik; üstelik iki entegrasyon testi bu çelişkiyi ayrı ayrı kilitliyordu. Mağaza
+re-push'u NET adet (brüt − iade) taşıdığı için bir WooCommerce iadesi `/refund` yerine bu yoldan
+uzlaşabiliyor (ör. `/refund` işi kalıcı başarısız olduysa ya da admin aynı istekte kalem
+düzenlediyse) ve o durumda HARCANMIŞ aktivasyonlar havuza dönüp **başka bir müşteriye
+satılabiliyordu**. Teslimattan sonra adedin düşmesi MAK için iadeyle fiziksel olarak aynıdır ve
+hangi yoldan geldiği ayırt edilemez → §2'nin ihtiyatlı kuralı iki yolda da uygulanıyor. Ayrıca
+geri alınacak atamanın seçimi deterministik yapıldı: **önce askıdakiler** (zaten devre dışı →
+müşterinin kullandığı canlı anahtarı öldürme), sonra en yeni, sonra `id`. Tie-break şarttı:
+bir siparişin atamaları tek transaction'da yazıldığı için `created_at` damgaları birebir aynıdır.
+
+**Performans.** Atama motorunda birim başına ayrı `INSERT` vardı: tek-kullanımlık üründe
+`allocate()` kalem başına bir tahsis döndürdüğü için qty=500'lük bir satır 500 seri gidiş-dönüş
+demekti — hepsi transaction içinde, satır kilitleri tutulurken, havuzun (max 10) bir bağlantısı
+rezerveyken ve kota açık sitede `pg_advisory_xact_lock(site)` altında (aynı mağazanın diğer
+siparişleri de o süre boyunca serileşiyordu). Tek çok-satırlı `INSERT`e indirildi; eşleme
+sıraya değil `licenseItemId`'ye dayanıyor (RETURNING'in giriş sırasını koruduğu yazılı bir
+garanti değildir). Aynı sınıf `releaseAllocations`'ta da vardı ve tam da **stok yetmediğinde**
+(all-or-nothing geri alımı) tetikleniyordu → tek `UPDATE … FROM (VALUES …)` ifadesine indirildi.
+Düşük-stok süpürmesi kısmi indeksi kullanamıyordu (süzgeç JOIN yerine agregat `FILTER`'ındaydı);
+kardeş sorgu bunu gerekçesiyle çoktan çözmüştü, alarm üreten yol geride kalmıştı — büyük
+kurulumda `statement_timeout`'a takılıp **düşük stok alarmını hiç üretmeyebilirdi**. Tedarikçi
+fişi detayı tek fiş için bile tüm `supplier_claim_items`'ı agregeliyordu (gruplu alt sorguya
+yüklem itilemez) → `LATERAL`. Ürün detayındaki parti ve satın-alma-emri listeleri LIMIT'sizdi
+(bu iki tablo stok girişi başına birer satır alır) → tavan + görünür kırpma uyarısı. Ürün
+kaydetmenin sıcak yolundaki rehber varlık denetimi tüm rehber gövdelerini çekiyordu → `exists()`.
+
+**Gözlemlenebilirlik.** Teslimat maili arızasının alarmı YOKTU: günlük kritik alarm yalnız
+`outbox_events`'e bakıyordu, `email_log`'a bakmıyordu. SMTP kimliği/kotası bozulunca siparişler
+teslim edilmeye devam eder, panel "fulfilled" der, geri-kanal webhook başarılı olur, mailler
+sessizce ölürdü ve sabah digest'i "Sorunlu webhook: 0" derdi. Artık iki kanal ayrı sayılıyor ve
+alarmda ayrı yazılıyor. Dış kopya alarmında şiddet yükselmesi kendi dedupe'una takılıyordu
+(`skipped` warning ile `failed` critical aynı tipi paylaşıyordu → operatörün dış kopyanın
+alındığını sandığı en tehlikeli durum, daha zararsızı tarafından 24 saate kadar bastırılıyordu)
+→ tipler ayrıldı, etiketi `labels.ts`'e eklendi.
+
+**Kapılar ve betikler.** `check-env-passthrough` iki okuma biçimini görmüyordu (`getOrThrow(` ve
+sabit ara değişken) — kör noktasındaki değişkenler `MAIL_FROM`, `SMTP_PORT`, `REDIS_URL`,
+`ADMIN_TOKEN`, `AUTOCOMPLETE_INLINE_CAP` idi ve zod bunlara varsayılan verdiği için compose'dan
+düşseler CI yeşil kalıp `.env` sessizce yok sayılırdı (kapsam 44 → 49). `check-nest-wiring`
+`@InjectQueue`'yu hiç denetlemiyordu — kayıtsız kuyruk API'yi HİÇ boot ettirmez, yani kapının
+var oluş sebebi olan sınıf kör noktasındaydı (+13 kuyruk bağımlılığı). `deploy-runner.sh` claim
+hatasında tek satır log basmadan çıkıyordu (ADMIN_TOKEN rotasyonundan sonra panelden basılan
+dağıtım isteği hiç claim edilmez, teşhis izi kalmazdı); `backup-runner.sh` aynı alt-kabuk
+tuzağını taşıyordu (`claim="$(api …)"` komut ikamesi alt kabukta koştuğu için HTTP kodu ana
+kabuğa dönmüyor, teşhis satırı her zaman bayat `0` basıyordu → 401 ile ağ hatası ayırt
+edilemiyordu). Kabuk betiklerinin exec biti için kapı yoktu (`bash -n` 100644 bir dosyada da
+geçer; runbook'lar bu betikleri doğrudan crontab'a koyuyor ve bu bir kez yaşanmıştı). Dördü de
+kontrol denemesiyle kırmızı görülerek doğrulandı.
+
+**Arayüz.** Owner-only aksiyonlar (secret yenile · site askıya al · bağlan kodu üret · KVKK
+anonimleştir) gate'siz sunuluyordu: operatör "GERİ ALINAMAZ" kırmızı onayını geçtikten SONRA
+"yetkiniz yok" alıyordu → karar sunucuda (`isOwner()`) verilip istemciye serileştirilebilir
+boolean olarak geçiyor. Şablon tablosu kod tabanındaki son `includesString` kalıntısıydı →
+"TESLİMATI" araması "Lisans Teslimatı"nı bulmuyordu (Türkçe İ). Ctrl+K paleti `unmapped`
+durumunu ham İngilizce basıyordu (aynı sipariş `/orders` listesinde "Eşlenmemiş" diyordu).
+Ölü `revealAction` kaldırıldı — çağrılırsa hiç yaşanmamış bir "lisans görüntülendi" olayını
+denetim izine yazıyordu. 9 rotaya eksik `loading.tsx`/`error.tsx` eklendi. `/guide`'daki iki
+yanlış vaat düzeltildi.
+
+**WP eklentisi (1.1.1).** Katalog senkronunda kırpma birimi uyuşmazlığı vardı: eklenti kod
+noktası, panel UTF-16 kod birimi sayıyordu → emoji/astral karakter taşıyan TEK bir ürün adı
+`products` dizisinin tamamını 400'letiyor, snapshot hiç yazılmıyor, operatör `/mappings`'te
+boş katalog görüyor ve tek iz mağazadaki `error_log` oluyordu (sessiz). Panel artık reddetmek
+yerine kırpıyor (`remoteName` ile aynı desen), eklenti de aynı birimde ölçüyor. Ayrıca eşleme
+kutusundaki bozuk hata mesajı, çok baytlı kırpmanın mesajı boşaltması, ölü ikinci maske tanımı
+ve bonus önekinin iki yerde ayrı ayrıştırılması düzeltildi.
+
 ### Kurulum / etkinleştirme rehberleri + teslimat arayüzü yenilemesi (migration 0045, eklenti 1.1.0)
 
 Lisans anahtarını teslim etmek yetmiyordu: müşteri "Office 365'e nasıl giriş yaparım",

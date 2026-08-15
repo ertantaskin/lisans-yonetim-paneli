@@ -174,55 +174,85 @@ export class MailProcessor extends WorkerHost {
 
       const [site] = await this.db.select().from(sites).where(eq(sites.id, order.siteId)).limit(1);
 
-      const rows = await this.db
-        .select({
-          units: assignments.units,
-          // Geçerlilik bitişi (süreli hesap ürünü, §11). Süzgeçte KULLANILIYORDU ama
-          // SEÇİLMİYORDU → şablona `{{valid_until}}` yazan operatör sessizce boş string
-          // alıyordu; müşteri geçerlilik tarihini My Account'ta görüyor, MAİLDE göremiyordu.
-          validUntil: assignments.validUntil,
-          payloadEnc: licenseItems.payloadEnc,
-          licenseItemId: licenseItems.id,
-          productName: products.name,
-          productId: orderLines.productId,
-          productKind: products.kind,
-          payloadSchema: products.payloadSchema,
-          // §7 kurulum rehberi — anahtarla BİRLİKTE gitmeli. Müşteri "Office 365'e nasıl
-          // giriş yaparım" cevabını mailde bulamazsa destek talebi açıyor.
-          guideId: productGuides.id,
-          guideTitle: productGuides.title,
-          guideBody: productGuides.body,
-        })
-        .from(assignments)
-        .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
-        .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-        .leftJoin(products, eq(orderLines.productId, products.id))
-        .leftJoin(productGuides, eq(products.guideId, productGuides.id))
-        .where(
-          and(
-            eq(assignments.orderId, orderId),
-            eq(assignments.status, 'active'),
-            // #7 denetim (yarış savunması) — getDeliveries ile SİMETRİK: iptal/iade edilmiş
-            // satırın (canceled) ataması ASLA maile girmez. getDeliveries bu yüklemi AÇIK bir
-            // savunma olarak taşıyordu, mail `orderLines`'ı join ettiği hâlde KOYMUYORDU →
-            // stray aktif atama kalırsa My Account anahtarı gizlerken "Tekrar Mail" AYNI
-            // anahtarı DÜZ METİN e-postayla gönderiyordu (okuma yolu yazma yolundan iyi korunuyordu).
-            eq(orderLines.canceled, false),
-            // Savunma amaçlı süre filtresi (getDeliveries ile birebir aynı invaryant):
-            // expiry job gecikse bile onExpiry='hide' ürünün süresi geçmiş payload'ı
-            // mail gövdesine KONULMAZ (düz metin parola sızmaz). 'keep' ürün süre
-            // sonrası da teslim edilir.
-            or(
-              isNull(assignments.validUntil),
-              gt(assignments.validUntil, sql`now()`),
-              eq(products.onExpiry, 'keep'),
-            ),
-          ),
-        )
-        // SIRA: mail gövdesindeki anahtarlar da stoğa giriş sırasında (getDeliveries ile
-        // AYNI yön). ORDER BY yoktu → müşteriye giden mailde sıra rastgeleydi ve panelde
-        // görünen sırayla tutmuyordu.
-        .orderBy(licenseItems.seq);
+      /*
+       * Maile girecek atamaların KAPSAMI — TEK KAYNAK.
+       *
+       * Aynı yüklem hem anahtar satırlarını hem rehber sorgusunu süzer; iki yerde ayrı ayrı
+       * yazılsaydı biri güncellenip diğeri unutulduğunda mail, teslim edilmeyen (ya da
+       * süresi geçmiş) bir ürünün rehberini taşırdı.
+       */
+      const deliveredScope = and(
+        eq(assignments.orderId, orderId),
+        eq(assignments.status, 'active'),
+        // #7 denetim (yarış savunması) — getDeliveries ile SİMETRİK: iptal/iade edilmiş
+        // satırın (canceled) ataması ASLA maile girmez. getDeliveries bu yüklemi AÇIK bir
+        // savunma olarak taşıyordu, mail `orderLines`'ı join ettiği hâlde KOYMUYORDU →
+        // stray aktif atama kalırsa My Account anahtarı gizlerken "Tekrar Mail" AYNI
+        // anahtarı DÜZ METİN e-postayla gönderiyordu (okuma yolu yazma yolundan iyi korunuyordu).
+        eq(orderLines.canceled, false),
+        // Savunma amaçlı süre filtresi (getDeliveries ile birebir aynı invaryant):
+        // expiry job gecikse bile onExpiry='hide' ürünün süresi geçmiş payload'ı
+        // mail gövdesine KONULMAZ (düz metin parola sızmaz). 'keep' ürün süre
+        // sonrası da teslim edilir.
+        or(
+          isNull(assignments.validUntil),
+          gt(assignments.validUntil, sql`now()`),
+          eq(products.onExpiry, 'keep'),
+        ),
+      );
+
+      /*
+       * §7 kurulum rehberleri AYRI sorguda (rows'a bağlı DEĞİL → aynı Promise.all'da paralel,
+       * ek round-trip yok). getDeliveries'te de bu desen kullanılır ve gerekçesi aynıdır:
+       * rehber gövdesi atama satırlarının LEFT JOIN'inde taşınırsa SATIR BAŞINA tekrarlanır
+       * (50 anahtarlı siparişte 4.000 karakterlik metin 50 kez DB'den taşınır). `distinct`
+       * şart: aynı rehbere bağlı birden çok satır (çok kalemli sipariş) tekrar üretirdi.
+       */
+      const [rows, guideRows] = await Promise.all([
+        this.db
+          .select({
+            units: assignments.units,
+            // Geçerlilik bitişi (süreli hesap ürünü, §11). Süzgeçte KULLANILIYORDU ama
+            // SEÇİLMİYORDU → şablona `{{valid_until}}` yazan operatör sessizce boş string
+            // alıyordu; müşteri geçerlilik tarihini My Account'ta görüyor, MAİLDE göremiyordu.
+            validUntil: assignments.validUntil,
+            payloadEnc: licenseItems.payloadEnc,
+            licenseItemId: licenseItems.id,
+            productName: products.name,
+            productId: orderLines.productId,
+            productKind: products.kind,
+            payloadSchema: products.payloadSchema,
+          })
+          .from(assignments)
+          .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
+          .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+          .leftJoin(products, eq(orderLines.productId, products.id))
+          .where(deliveredScope)
+          // SIRA: mail gövdesindeki anahtarlar da stoğa giriş sırasında (getDeliveries ile
+          // AYNI yön). ORDER BY yoktu → müşteriye giden mailde sıra rastgeleydi ve panelde
+          // görünen sırayla tutmuyordu.
+          .orderBy(licenseItems.seq),
+        /*
+         * §7 kurulum rehberi — anahtarla BİRLİKTE gitmeli. Müşteri "Office 365'e nasıl
+         * giriş yaparım" cevabını mailde bulamazsa destek talebi açıyor.
+         *
+         * Kapsam yukarıdaki `deliveredScope` ile AYNI: yalnız bu maile GİREN ürünlerin
+         * rehberi gider (henüz teslim edilmemiş kalemin rehberi mailde yer almaz — kısmi
+         * teslimat bu panelde birinci sınıf akıştır). `products` INNER: rehber bir ürüne
+         * bağlıdır, ürünsüz satırın rehberi de olamaz.
+         */
+        this.db
+          .selectDistinct({
+            id: productGuides.id,
+            title: productGuides.title,
+            body: productGuides.body,
+          })
+          .from(assignments)
+          .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
+          .innerJoin(products, eq(orderLines.productId, products.id))
+          .innerJoin(productGuides, eq(products.guideId, productGuides.id))
+          .where(deliveredScope),
+      ]);
 
       // Aktif atama yoksa (ör. tümü revoke edildikten sonra resend) BOŞ mail gönderme.
       if (rows.length === 0) {
@@ -258,21 +288,22 @@ export class MailProcessor extends WorkerHost {
         .join('\n');
 
       /*
-       * §7 kurulum/etkinleştirme rehberleri — TEKRARSIZ (aynı rehber birden çok kaleme
-       * bağlıysa bir kez). Sıra satırların sırasıdır (licenseItems.seq) → mail, müşteri
-       * sayfası ve .txt aynı sırayı gösterir.
+       * §7 kurulum/etkinleştirme rehberleri — TEKRARSIZ (`selectDistinct` sağlar; uygulama
+       * tarafındaki elle tekilleştirme artık gereksiz).
+       *
+       * SIRA BAŞLIĞA GÖRE — getDeliveries KANONİKTİR ve o da böyle sıralar. Burada sıra
+       * satırların sırasından (licenseItems.seq) türetiliyordu: çok rehberli siparişte mail
+       * ile müşteri sayfası FARKLI sıra gösteriyordu (aynı bilgi iki yüzeyde ayrışıyordu —
+       * bu projede tekrarlayan hata sınıfı). Ayrıca `selectDistinct` sıra GARANTİ ETMEZ
+       * (Postgres hash-aggregate kullanabilir) → açık sıralama zaten şarttır.
        *
        * Adet/boyut tavanları `buildGuideMailBlock` içinde ve TEK kaynaktan gelir
        * (packages/shared): sayılar e-posta istemcisinin kırpma eşiğinden geriye doğru
        * hesaplanmıştır ve sınıra takılan rehber SESSİZCE düşürülmez.
        */
-      const guideList: ProductGuide[] = [];
-      const seenGuides = new Set<string>();
-      for (const r of rows) {
-        if (!r.guideId || seenGuides.has(r.guideId)) continue;
-        seenGuides.add(r.guideId);
-        guideList.push({ id: r.guideId, title: r.guideTitle ?? '', body: r.guideBody ?? '' });
-      }
+      const guideList: ProductGuide[] = guideRows
+        .map((g) => ({ id: g.id, title: g.title, body: g.body }))
+        .sort((a, b) => a.title.localeCompare(b.title, 'tr'));
       const guideBlock = buildGuideMailBlock(guideList);
 
       // Şablon: ilk satırın ürününe göre (site override > ürün > varsayılan, §6).

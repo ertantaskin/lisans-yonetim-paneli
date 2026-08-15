@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/button';
 import { PageHeader } from '../../components/ui/page-header';
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert';
 import { fmtDateTime, relativeTime } from '../../lib/utils';
+import { isOwner } from '../../lib/session';
 import { SitesTable, type SiteListRow } from '../../components/sites-table';
 
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,14 @@ export default async function SitesPage() {
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
+
+  /*
+   * RBAC GÖRÜNÜRLÜĞÜ (§8): "Secret Yenile" ve "Askıya Al" sunucu aksiyonlarında `isOwner()` ile
+   * korunuyor; owner-olmayan operatör onayı geçtikten SONRA "yetkiniz yok" alıyordu. Karar
+   * SUNUCUDA verilip istemciye SERİLEŞTİRİLEBİLİR bir boolean olarak geçilir (fonksiyon prop'u
+   * çalışma anında hata sınırına düşürür) — /sites/new sayfa kapısının satır-içi karşılığı.
+   */
+  const canOwner = await isOwner();
 
   // SESSİZ mağazalar: en uzun süredir susan başta (operatörün ilk bakacağı satır).
   const silent = sites
@@ -131,7 +140,7 @@ export default async function SitesPage() {
             </Alert>
           )}
 
-          <SitesTable sites={sites} />
+          <SitesTable sites={sites} canOwner={canOwner} />
         </div>
       )}
     </div>

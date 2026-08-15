@@ -35,7 +35,20 @@ const OFFSITE_SKIPPED_DEDUPE_HOURS = 7 * 24;
 /** Bildirim tipleri — /notifications süzgeci ve dedupe anahtarı. */
 export const BACKUP_STALE_TYPE = 'backup_stale';
 export const DRILL_STALE_TYPE = 'drill_stale';
+/**
+ * Dış kopya alarmı İKİ AYRI TİP — çünkü dedupe YALNIZ tipe ve zamana bakar.
+ *
+ * ARIZA (tek tip kullanılırken): önce 'skipped' warning'i yazılır; operatör kancayı kurar
+ * ama kanca BOZUKtur → durum 'failed'e (critical) yükselir; dedupe "son 24 saatte
+ * backup_offsite var" deyip KRİTİK alarmı ÜRETMEZ. En tehlikeli durumun bildirimi, daha
+ * zararsız olanı tarafından bastırılıyordu — üstelik tam da operatörün dış kopyanın
+ * alındığını SANDIĞI anda. Tipleri ayırmak iki pencereyi de bağımsızlaştırır.
+ *
+ * İkisinin de `apps/admin/lib/labels.ts` sözlüğünde KARŞILIĞI VARDIR; eksik olsaydı
+ * operatör bildirim listesinde ham `backup_offsite_failed` görürdü.
+ */
 export const OFFSITE_ALERT_TYPE = 'backup_offsite';
+export const OFFSITE_FAILED_ALERT_TYPE = 'backup_offsite_failed';
 
 /**
  * YEDEK TAZELİK ALARMI (§16 DR) — "yedek yolu sessizce ölebilir" bulgusunun kapatılması.
@@ -146,6 +159,8 @@ export class BackupAlarmService implements OnModuleInit {
      *    uzun dedupe (haftada bir hatırlatma; alarm yorgunluğu yaratmaz).
      *  • 'failed'  → kanca KURULU ama çalışmıyor: operatör dış kopyanın ALINDIĞINI SANIYOR.
      *    Yanlış güven, hiç güvenmemekten tehlikelidir → `critical`, kısa dedupe.
+     * İki durum AYRI `type` taşır: dedupe yalnız tipe baktığı için ortak tipte, önce yazılan
+     * warning sonraki critical'ı 24 saate kadar BASTIRIYORDU (şiddet yükselmesi kayboluyordu).
      *
      * Yalnız BAŞARILI son yedeğe bakılır: yedek zaten alınamıyorsa asıl sorun backupStale'dir
      * ve o alarm ayrıca çalışır (aynı arızayı iki başlıkla bildirmeyiz).
@@ -153,7 +168,7 @@ export class BackupAlarmService implements OnModuleInit {
     const offsite = s.lastBackupSuccess?.offsite ?? null;
     if (offsite === 'failed') {
       created += await this.alert(
-        OFFSITE_ALERT_TYPE,
+        OFFSITE_FAILED_ALERT_TYPE,
         BACKUP_ALERT_DEDUPE_HOURS,
         'critical',
         'Dış kopya BAŞARISIZ (yedek yalnız bu sunucuda)',

@@ -1,7 +1,7 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiGet, apiPost, isUuid, type RevealResult } from '../../../lib/api';
-import { getActor, isOwner } from '../../../lib/session';
+import { apiGet, apiPost, isUuid } from '../../../lib/api';
+import { getActor } from '../../../lib/session';
 
 /**
  * SEC-1 — YOL ENJEKSİYONU (bu dosya bulgunun ÖRNEĞİYDİ):
@@ -17,7 +17,7 @@ import { getActor, isOwner } from '../../../lib/session';
  * kayıt kimlikleri uuid). `lib/api` içindeki merkezî `assertSafePath` kapısı ikinci savunma
  * hattıdır — biri atlanırsa diğeri isteği yaptırmaz.
  *
- * Aksiyonlar FIRLATMAZ: mevcut `{ ok, error }` / `RevealState` sözleşmesi korunur.
+ * Aksiyonlar FIRLATMAZ: mevcut `{ ok, error }` (`MutationState`) sözleşmesi korunur.
  */
 const INVALID_ID = 'Geçersiz kayıt kimliği — sayfa yenilenip tekrar denenmeli.';
 
@@ -49,35 +49,16 @@ interface ResolveResponse {
   details: Array<{ outcome: string; message: string }>;
 }
 
-export interface RevealState {
-  assignmentId?: string;
-  result?: RevealResult;
-  error?: string;
-}
-
-/**
- * Loglu reveal (§17): atamanın tam payload'ını/alanlarını getirir (audit'e düşer).
- * §3 RBAC: tam düz metin sır → YALNIZ owner. AssignmentLicenseCell useActionState ile
- * bağlar; FormData imzası korunur.
+/*
+ * KALDIRILDI — `revealAction` + `RevealState`.
+ *
+ * NEDEN: sipariş detayı artık rol-farkında olarak SUNUCUDA render ediliyor (owner düz metin
+ * görür, owner-olmayan maskeli) — ekranda "Göster" düğmesi YOK ve aksiyonun kod tabanında
+ * hiçbir çağıranı kalmamıştı. Ama `'use server'` modülünden export edildiği için Next
+ * ÇAĞRILABİLİR bir uç üretmeye devam ediyordu ve her çağrı bir `reveal` audit satırı yazıyordu
+ * → denetim izine, hiç yaşanmamış bir "lisans görüntülendi" olayı düşebiliyordu.
+ * Yetki kapısı (isOwner) doğruydu; sorun ucun VARLIĞIYDI.
  */
-export async function revealAction(_prev: RevealState, formData: FormData): Promise<RevealState> {
-  const assignmentId = String(formData.get('assignmentId'));
-  if (!(await isOwner())) {
-    return { assignmentId, error: 'Düz metni göstermek için yalnız owner yetkili.' };
-  }
-  if (!isUuid(assignmentId)) return { assignmentId, error: INVALID_ID };
-  try {
-    const actor = await getActor();
-    const result = await apiPost<RevealResult>(
-      `/v1/admin/assignments/${assignmentId}/reveal`,
-      undefined,
-      actor,
-    );
-    return { assignmentId, result };
-  } catch (e) {
-    return { assignmentId, error: e instanceof Error ? e.message : 'Reveal başarısız' };
-  }
-}
 
 /**
  * Mutasyon aksiyonlarının ortak dönüş tipi. Server action ASLA fırlatmaz (fırlatırsa

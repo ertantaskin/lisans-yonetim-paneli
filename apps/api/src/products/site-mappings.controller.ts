@@ -22,15 +22,32 @@ const DeleteMappingBody = z.object({
 });
 type DeleteMappingBody = z.infer<typeof DeleteMappingBody>;
 
-/** §3 katalog senkron gövdesi (site-scoped) — WP mağaza ürün listesinin tam snapshot'ı. SIR YOK. */
+/**
+ * §3 katalog senkron gövdesi (site-scoped) — WP mağaza ürün listesinin tam snapshot'ı. SIR YOK.
+ *
+ * KRİTİK (sessiz veri kaybı, `CreateOrderLine.remoteName` ile AYNI SINIF): ad/sku SUNUM alanıdır ve
+ * TEK bir uzun değer YÜZÜNDEN TÜM snapshot reddedilmemelidir. Eklenti `mb_substr` ile KOD NOKTASI
+ * sayarak kırpar, Zod `.max()` ise UTF-16 KOD BİRİMİ sayar → emoji/astral karakter taşıyan bir ürün
+ * adı eklentide "500" iken burada 501+ görünür, `products` dizisinin TAMAMI 400 alır ve katalog
+ * HİÇ yazılmaz (operatör /mappings'te boş katalog görür; tek iz mağazadaki error_log — sessiz).
+ * Çözüm aynı desendir: reddetme, `.transform()` ile KIRP. `name` yalnız BOŞ olamaz (`min(1)`);
+ * `sku` kritik değil → hatalı tipte `.catch(null)` ile düşürülür.
+ */
 const SyncCatalogBody = z.object({
   products: z
     .array(
       z.object({
         remoteProductId: z.string().min(1).max(64),
         remoteVariationId: z.string().max(64).nullish(),
-        name: z.string().min(1).max(500),
-        sku: z.string().max(120).nullish(),
+        name: z
+          .string()
+          .min(1)
+          .transform((s) => s.slice(0, 500)),
+        sku: z
+          .string()
+          .transform((s) => s.slice(0, 120))
+          .nullish()
+          .catch(null),
         kind: z.string().max(40).nullish(),
       }),
     )

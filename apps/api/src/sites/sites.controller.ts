@@ -58,6 +58,19 @@ type UpdateSiteBody = z.infer<typeof UpdateSiteBody>;
 export class SitesController {
   constructor(private readonly sites: SitesService) {}
 
+  /**
+   * OWNER-ONLY — `rotate-secret` ile AYNI gerekçe (aşağıdaki nota bak): bu uç TAZE
+   * `apiKey` + `hmacSecret` üretip ÇAĞIRANA döndürür. O kimlikle site-facing uçlar
+   * imzalanabilir; `GET /v1/orders/:id/deliveries` ise payload'ı ÇÖZÜLMÜŞ (maskesiz)
+   * döndürür. Yani kapısız bırakıldığında owner-olmayan bir admin kendine site açıp,
+   * panelin kataloğundan istediği ürüne eşleme kurup, sipariş oluşturup gerçek bir
+   * lisansı düz metin okuyabiliyordu — A1/A3 kararını ("düz metin YALNIZ owner",
+   * reveal audit'li) tamamen atlayarak ve stoktan gerçek anahtar yakarak.
+   * Üçlünün diğer ikisi (`rotate-secret`, `connect-code`) zaten owner-only idi;
+   * `create` tek açık kapıydı. Meşru çağıran sihirbaz (`createSiteAndIssueCode`)
+   * Next tarafında ZATEN owner-gated → bu guard onu kırmaz.
+   */
+  @UseGuards(OwnerGuard)
   @Post()
   create(@Body(new ZodBody(CreateSiteBody)) body: CreateSiteBody) {
     // apiKey + hmacSecret YALNIZ burada bir kez döner — güvenli sakla.

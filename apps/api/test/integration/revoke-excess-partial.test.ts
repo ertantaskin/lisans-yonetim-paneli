@@ -216,7 +216,7 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     await end();
   });
 
-  it('re-push qty 5→3 (multi) → atama units=3 AKTİF, use_count=3, satır fulfilledQty=3, canceled=false', async () => {
+  it('re-push qty 5→3 (multi) → atama units=3 AKTİF, use_count 5te KALIR (§2), satır fulfilledQty=3, canceled=false', async () => {
     const { product, licenseItemId, remoteProductId } = await setupMultiProduct(500);
     const siteObj = siteObjOf(site);
     const remoteOrderId = `ord-${randomUUID().slice(0, 8)}`;
@@ -246,8 +246,15 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     expect(asg.status).toBe('active');
     expect(asg.units).toBe(3);
 
-    // Kapasite tam 2 döndü (5→3), 5 değil.
-    expect((await licenseItemRow(licenseItemId)).useCount).toBe(3);
+    // §2 — MAK kapasitesi havuza DÖNMEZ: `use_count` 5'te KALIR.
+    //
+    // Bu beklenti eskiden 3'tü ve `sync-refunds.test.ts`'teki kardeşiyle (aynı veri şekli, aynı
+    // fiziksel olay, `use_count=5` bekliyor) DOĞRUDAN ÇELİŞİYORDU. Sebep: adet-düşür yolu
+    // "iade değil" sayılıp kapasiteyi geri veriyordu — oysa mağaza re-push'u NET adet taşır,
+    // yani bir WooCommerce iadesi `/refund` yerine bu yoldan uzlaşabilir. Harcanmış aktivasyon
+    // havuza dönerse BAŞKA bir müşteriye satılır (sessiz aşırı-satış). İki yol artık aynı kuralı
+    // uyguluyor; birim hakkı (`units` 5→3) yine düşer, yalnız KAPASİTE geri verilmez.
+    expect((await licenseItemRow(licenseItemId)).useCount).toBe(5);
 
     // Satır: fulfilledQty=3, qty=3, canceled DEĞİL (adet düşür = iade değil).
     const [ol] = await db
@@ -399,7 +406,7 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     // MEŞRU YENİDEN-ATAMA yolu (returnMultiCapacity=true, varsayılan): kapasite havuza döner (3 → 0).
     const reassign = await seedMultiAssignment(3, 500);
     await admin.revokeAssignment(reassign.assignmentId, 'degisim', ACTOR, false, undefined, true);
-    expect((await licenseItemRow(reassign.licenseItemId)).useCount).toBe(0); // döndü (değişim/adet-düşür)
+    expect((await licenseItemRow(reassign.licenseItemId)).useCount).toBe(0); // döndü (değişim/recall)
   });
 
   it('MAK kısmi İADE (revokePartialUnits, returnMultiCapacity=false) → kapasite dönmez, atama units düşer', async () => {

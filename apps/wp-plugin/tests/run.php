@@ -226,12 +226,22 @@ is_false('önek karışması yok (bonus:12:… ↔ kalem 1)', $lm('bonus:12:abc'
 is_false('boş kalem kimliği hiçbir şeye eşleşmez', $lm('123', ''));
 is_false('eski biçim bonus:<uuid> (kalem id yok) bağlanmaz', $lm('bonus:9f2c', '123'));
 
-group('Wpteslimat_Admin_Metabox::mask — panel maske biçimiyle hizalı');
-$mask = static function ($v) { return call_static('Wpteslimat_Admin_Metabox', 'mask', [$v]); };
-assert_same('son 4 hane görünür', '••••••1234', $mask('ABCD-EFGH-IJKL-1234'));
-assert_same('kısa değer tamamen maskelenir', '••••••', $mask('abc'));
-assert_same('boş değer', '••••••', $mask(''));
-assert_same('tam 4 karakter sızmaz', '••••••', $mask('1234'));
+// NOT: `Wpteslimat_Admin_Metabox::mask()` KALDIRILDI (ölü kod) — maske biçiminin TEK kaynağı
+// paneldir (`maskedPayload`/`maskedFields` hazır gelir), eklenti hiçbir yerde maskelemez. Metodu
+// test eden 4 assert de onunla birlikte kaldırıldı: yalnız ölü kodu doğruluyordu ve `call_static`
+// (ReflectionMethod) var olmayan metotta FATAL üretirdi.
+
+group('Wpteslimat_Admin_Metabox::truncate_text — çok baytlı kırpma metni BOŞALTMAMALI');
+$tt = static function ($s, $n) { return call_static('Wpteslimat_Admin_Metabox', 'truncate_text', [$s, $n]); };
+assert_same('sınır altındaki metne dokunulmaz', 'kısa', $tt('kısa', 60));
+assert_same('sıfır/negatif sınır boş döner', '', $tt('abc', 0));
+// ASIL İNVARYANT: çıktı HER ZAMAN geçerli UTF-8 olmalı. Ham substr() çok baytlı bir karakteri
+// ortadan bölerse esc_html() sonucu BOŞ string'e çevirir ve operatör bomboş bir çip görür.
+// Beklenen uzunluk mbstring'e göre değişir (karakter vs bayt kesimi) → uzunluk değil GEÇERLİLİK
+// doğrulanır; koşucu bilerek mbstring'siz de çalışabilmelidir.
+$tt_cut = $tt('şşşşş', 3);
+is_true('kırpılmış metin geçerli UTF-8', preg_match('//u', $tt_cut) === 1);
+is_true('kırpılmış metin boşalmaz', $tt_cut !== '');
 
 group('Wpteslimat_Admin_Metabox — "değiştirildi" geriye dönük fallback');
 $hist = [

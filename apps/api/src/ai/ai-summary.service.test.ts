@@ -18,6 +18,9 @@ const METRIC_ROW = {
   open_replacements: 1,
   security_events_24h: 2,
   failed_outbox: 4,
+  // Mail arızası AYRI sayaç: SMTP ölürken outbox sağlıklı görünebilir (sipariş teslim
+  // edilir, webhook gider, yalnız teslimat maili ölür) — projeksiyon bunu düşürmemeli.
+  failed_emails: 6,
   available_stock: 7,
 };
 
@@ -49,6 +52,7 @@ const EXPECTED_METRICS = {
   openReplacements: 1,
   securityEvents24h: 2,
   failedOutbox: 4,
+  failedEmails: 6,
   availableStock: 7,
 };
 

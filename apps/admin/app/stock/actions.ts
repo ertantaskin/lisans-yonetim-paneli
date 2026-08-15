@@ -13,6 +13,9 @@ import { getActor } from '../../lib/session';
  */
 import { MAX_IMPORT_ITEMS } from './import/limits';
 import { liraToCents, type ImportItemInput } from './import/parse';
+// Ürün formu → API gövdesi. `'use server'` dosyasında yaşayamaz (export yasağı → test edilemez);
+// gerekçesi ve `guideId`'nin sessizce düşme hikâyesi o dosyanın başında yazılı.
+import { buildProductBody } from '../../lib/product-form-body';
 
 /**
  * Reddedilen satır. `index` API'nin gönderilen `items[]` dizisindeki SIRASI, `line` ise
@@ -145,83 +148,6 @@ function buildNewBatchBody(formData: FormData): { body?: Record<string, unknown>
       ...(notes ? { notes } : {}),
     },
   };
-}
-
-/**
- * Ürün formundaki alanları API body'sine dönüştürür (create + update ortak).
- *
- * `isUpdate=false` (create): boş kalan opsiyonel alanlar body'ye HİÇ eklenmez → DB default null.
- * `isUpdate=true`  (update): opsiyonel alanlar HER ZAMAN gönderilir — değer varsa değer, boşsa
- *   açık `null` → API alanı temizler ("Boş = kapalı" sözü düzenlemede de tutulur; aksi halde eski
- *   değer inatla kalırdı). Nullable alanlar: validityDays/warrantyDays/lowStockThreshold/keyFormat/releaseAt.
- */
-function buildProductBody(formData: FormData, isUpdate = false): Record<string, unknown> {
-  const kind = String(formData.get('kind') || 'key');
-  const usageMode = String(formData.get('usageMode') || 'single');
-  const num = (k: string): number | undefined => {
-    const v = String(formData.get(k) || '').trim();
-    return v ? Number(v) : undefined;
-  };
-
-  const body: Record<string, unknown> = {
-    sku: String(formData.get('sku') || '').trim(),
-    name: String(formData.get('name') || '').trim(),
-    kind,
-    usageMode,
-    fulfillmentPolicy: String(formData.get('fulfillmentPolicy') || 'partial-auto'),
-    onExpiry: String(formData.get('onExpiry') || 'hide'),
-    // checkbox: işaretliyse 'on', değilse yok → boolean'a normalize et.
-    stockless: formData.get('stockless') != null,
-  };
-  if (usageMode === 'multi') body.maxUses = num('maxUses');
-
-  // Kategori (§17): boş seçenek = "Kategorisiz". CREATE'te alanı hiç göndermeyiz (DB default
-  // null), UPDATE'te açık `null` göndeririz — aksi halde bir ürünü kategoriden ÇIKARMAK
-  // mümkün olmazdı (eski değer inatla kalırdı; opsiyonel alanlarda bu panelin kuralı budur).
-  const categoryId = String(formData.get('categoryId') || '').trim();
-  if (isUpdate) body.categoryId = categoryId || null;
-  else if (categoryId) body.categoryId = categoryId;
-
-  const validityDays = num('validityDays');
-  const warrantyDays = num('warrantyDays');
-  const lowStockThreshold = num('lowStockThreshold');
-  // releaseAt: <input type="datetime-local"> → ISO'ya çevir (API .datetime() ister).
-  const releaseAtRaw = String(formData.get('releaseAt') || '').trim();
-  let releaseAtIso: string | undefined;
-  if (releaseAtRaw) {
-    const d = new Date(releaseAtRaw);
-    if (!Number.isNaN(d.getTime())) releaseAtIso = d.toISOString();
-  }
-  const keyFormat = String(formData.get('keyFormat') || '').trim();
-
-  if (isUpdate) {
-    // Update: boş = açık null (temizle); değer varsa gönder. lowStock 0 geçerli değerdir.
-    body.validityDays = validityDays ?? null;
-    body.warrantyDays = warrantyDays ?? null;
-    body.lowStockThreshold = lowStockThreshold ?? null;
-    body.releaseAt = releaseAtIso ?? null;
-    body.keyFormat = keyFormat || null;
-  } else {
-    // Create: boş = atla (DB default null). Davranış create'te değişmedi.
-    if (validityDays) body.validityDays = validityDays;
-    if (warrantyDays !== undefined) body.warrantyDays = warrantyDays;
-    // lowStockThreshold: boş = uyarı KAPALI (body'ye ekleme); 0 dahil geçerli değerdir.
-    if (lowStockThreshold !== undefined) body.lowStockThreshold = lowStockThreshold;
-    if (releaseAtIso) body.releaseAt = releaseAtIso;
-    if (keyFormat) body.keyFormat = keyFormat;
-  }
-  // account: payloadSchema client'ta JSON'a serialize edilmiş — parse edip iletiriz.
-  if (kind === 'account') {
-    const raw = String(formData.get('payloadSchema') || '');
-    if (raw) {
-      try {
-        body.payloadSchema = JSON.parse(raw);
-      } catch {
-        /* boş bırak — API refine reddeder, kullanıcı düzeltir */
-      }
-    }
-  }
-  return body;
 }
 
 export interface FormState {

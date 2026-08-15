@@ -66,6 +66,12 @@ export interface ProductDetail {
     supplierId?: string | null;
     supplierName?: string | null;
   }>;
+  /**
+   * Listeler tavana dayandı mı (API'de 200). Opsiyonel: admin ve api AYRI imajlardır, biri
+   * önce dağıtılabilir → eski API'de alan hiç gelmez ve ekran uyarı basmaz (doğru davranış).
+   */
+  batchesTruncated?: boolean;
+  purchaseOrdersTruncated?: boolean;
   velocity: {
     sold7d: number;
     sold30d: number;

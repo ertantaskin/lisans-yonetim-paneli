@@ -35,8 +35,20 @@ jobs:
       # ÇALIŞMA ANINDA patlar — `next build` YAKALAMAZ — ve o sayfadaki HER server action
       # bozulur (bu hata iki kez üretime çıktı, bkz. commit 9b81c9b). Tip tabanlı tarayıcı
       # build'den ÖNCE koşar: hızlı ve net başarısızlık verir.
-      - name: 'use server' export denetimi
+      # NOT: adım adı ÇİFT tırnakla sarılı — YAML'de `'` ile BAŞLAYAN bir skalerden sonra düz
+      # metin gelemez ("bad indentation of a mapping entry"). Tırnaksız hâli DOSYANIN TAMAMINI
+      # ayrıştırılamaz yapıyordu: o durumda bu iş akışındaki HİÇBİR kapı koşmaz (kapıların
+      # sessizce hiç çalışmaması, kapı olmamasından beterdir — yanlış güven verir).
+      - name: "'use server' export denetimi"
         run: pnpm check:use-server
+
+      # İş akışı dosyalarının kendisi GEÇERLİ YAML mı. Bu adım burada İKİNCİL güvencedir:
+      # dosya ayrıştırılamıyorsa hiçbir adım koşmaz, dolayısıyla kapı kendini denetleyemez —
+      # ASIL koruma yerel `pnpm typecheck` zincirindedir (her commit öncesi koşulur).
+      # Neden gerekti: yukarıdaki adımın adı bir kez tırnaksız yazıldı, ci.yml 19 gün boyunca
+      # ayrıştırılamadı ve bu iş akışındaki HİÇBİR kapı koşmadı (hepsi yeşil sanıldı).
+      - name: İş akışı YAML denetimi
+        run: pnpm check:workflows
 
       # Nest DI kablolaması: bir sağlayıcının constructor bağımlılığı, modülünden görünmüyorsa
       # API ÇALIŞMA ANINDA hiç boot etmez (`tsc`/`next build` yakalamaz — ikisi de tip düzeyinde
@@ -87,6 +99,37 @@ jobs:
           else
             echo "shellcheck yok — yalnız bash -n koşuldu"
           fi
+
+      # KABUK BETİĞİ EXEC BİTİ (denetim bulgusu): `bash -n` bir dosya 100644 (çalıştırılamaz)
+      # olsa da GEÇER — sözdizimi kontrolü çalıştırma iznine bakmaz. Oysa `docs/RUNBOOK-DR.md`
+      # ve `docs/RUNBOOK-RELEASE.md` bu betikleri DOĞRUDAN crontab'a koyuyor: exec biti düşerse
+      # cron "Permission denied" ile SESSİZCE hiç koşmaz ve arızayı raporlayacak olan da tam o
+      # betiğin kendisidir (yedek runner'ı). Bu YAŞANDI: `backup-runner.sh` git'te 100644 idi,
+      # runbook harfiyen uygulansa bile gecelik yedek hiç alınmayacaktı; elle düzeltildi.
+      # Git INDEX'teki mod denetlenir (VPS'e `git pull` ile inen mod budur; çalışma kopyasının
+      # dosya sistemi izni değil). `.js` betikleri KAPSAM DIŞI: `node <dosya>` ile çağrılıyorlar,
+      # exec bitine ihtiyaç duymazlar.
+      - name: Kabuk betiği exec biti denetimi
+        run: |
+          set -euo pipefail
+          BAD=0; COUNT=0
+          while IFS=$'\t' read -r meta file; do
+            COUNT=$((COUNT + 1))
+            MODE="${meta%% *}"
+            if [ "$MODE" != "100755" ]; then
+              echo "::error file=$file::$file git'te $MODE — ÇALIŞTIRILAMAZ. Cron bu betiği 'Permission denied' ile sessizce hiç koşturmaz. Düzeltme: git update-index --chmod=+x $file"
+              BAD=$((BAD + 1))
+            fi
+          done < <(git ls-files -s -- 'scripts/*.sh')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "scripts/ altında .sh bulunamadı — denetim anlamsız, kapı hatalı yapılandırılmış."
+            exit 1
+          fi
+          if [ "$BAD" -gt 0 ]; then
+            echo "$BAD betiğin exec biti düşmüş (bkz. docs/RUNBOOK-DR.md §4.3)."
+            exit 1
+          fi
+          echo "exec biti temiz — $COUNT betiğin hepsi 100755"
 
       # WP EKLENTİSİ PHP SÖZDİZİMİ (denetim bulgusu): eklenti MÜŞTERİ SİTELERİNE dağıtılıyor
       # ama CI onu hiç kontrol etmiyordu — bozuk bir PHP dosyası tüm mağazayı beyaz ekran

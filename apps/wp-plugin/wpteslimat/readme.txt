@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.1.0
+Stable tag: 1.1.1
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,19 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.1.1 =
+* KATALOG SENKRONU: ürün adı/SKU kırpması artık panelin ölçtüğü BİRİMLE (UTF-16 kod birimi) aynı.
+  Eskiden `mb_substr` kod NOKTASI sayıyordu; emoji/astral karakter taşıyan tek bir ürün adı
+  panelin sınırını aşıyor ve TÜM katalog snapshot'ı reddediliyordu — panelde katalog boş
+  görünüyor, mağazada tek iz sessiz bir error_log satırı oluyordu.
+* Ürün "Panel Eşlemesi" kutusu hata mesajları sipariş kutusuyla AYNI çeviriden geçiyor: panel
+  doğrulama hatasında dizi dönen mesaj artık parçalı/anlamsız değil, tek okunur cümle; ağ
+  hatasında ham İngilizce cURL metni yerine Türkçe açıklama.
+* Sipariş ekranındaki değişim sebebi çipi çok baytlı (Türkçe) karakterde bölününce BOŞ
+  görünebiliyordu — kırpma artık karakter sınırında yapılıyor.
+* Bonus lisansların hangi ürüne ait olduğu panelin döndürdüğü yetkili alandan okunuyor; satır
+  kimliğini eklentide yeniden ayrıştırma yalnız eski panel sürümleri için fallback olarak kaldı.
 
 = 1.1.0 =
 * KURULUM / ETKİNLEŞTİRME REHBERİ: panelde ürüne bağlanan talimat metni artık müşterinin
