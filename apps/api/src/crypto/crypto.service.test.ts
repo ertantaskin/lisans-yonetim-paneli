@@ -79,5 +79,38 @@ describe('CryptoService (AES-256-GCM envelope)', () => {
     it('licenseItemAad ve siteSecretAad ayrık namespace üretir', () => {
       expect(CryptoService.licenseItemAad('x')).not.toBe(CryptoService.siteSecretAad('x'));
     });
+
+    /*
+     * DENETİM BULGUSU — AAD kayıt-id'sini bağlıyordu ama KOLONU bağlamıyordu.
+     *
+     * `site_connect_tokens.{api_key_enc,hmac_secret_enc}` eskiden `sites.hmac_secret_enc` ile
+     * AYNI AAD'yi (`site_secret:<siteId>`) kullanıyordu. Sonuç: DB'ye YAZMA erişimi olan ama
+     * MASTER_KEY'i OLMAYAN biri, sitenin şifreli secret'ını kendi eklediği bir connect-token
+     * satırına kopyalayıp kimliksiz PUBLIC `/v1/connect/claim` çağırabiliyor ve paneli o blob'u
+     * çözüp DÜZ METİN döndürmeye ikna edebiliyordu (çözme oracle'ı).
+     *
+     * Bu test tam o taşımayı dener ve ÇÖZÜLEMEDİĞİNİ kilitler.
+     */
+    it('site secret blobu connect-token AAD ile ÇÖZÜLEMEZ (çözme oracle sınıfı kapalı)', () => {
+      const siteId = 'site-1';
+      const tokenId = 'token-1';
+      const stolen = svc.encrypt('gercek-hmac-secret', CryptoService.siteSecretAad(siteId));
+
+      // Saldırganın senaryosu: blob'u connect_token satırına taşı, claim'e çözdürt.
+      expect(() => svc.decrypt(stolen, CryptoService.connectTokenAad(tokenId))).toThrow();
+
+      // Ters yön de kapalı: token blob'u site secret gibi okunamaz.
+      const tokenBlob = svc.encrypt('taze-hmac-secret', CryptoService.connectTokenAad(tokenId));
+      expect(() => svc.decrypt(tokenBlob, CryptoService.siteSecretAad(siteId))).toThrow();
+
+      // Aynı token id ile doğru çözülür (meşru yol bozulmadı).
+      expect(svc.decrypt(tokenBlob, CryptoService.connectTokenAad(tokenId))).toBe(
+        'taze-hmac-secret',
+      );
+
+      // Ad alanları üçü de ayrık.
+      expect(CryptoService.connectTokenAad('x')).not.toBe(CryptoService.siteSecretAad('x'));
+      expect(CryptoService.connectTokenAad('x')).not.toBe(CryptoService.licenseItemAad('x'));
+    });
   });
 });

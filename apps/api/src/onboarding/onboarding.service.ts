@@ -1,4 +1,4 @@
-import { createHash, randomInt } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
@@ -45,8 +45,11 @@ export class OnboardingService {
    */
   async issueConnectCode(siteId: string): Promise<{ code: string; expiresAt: Date }> {
     const code = this.generateCode();
-    const aad = CryptoService.siteSecretAad(siteId);
     const expiresAt = new Date(Date.now() + CONNECT_CODE_TTL_MS);
+    // Token id UYGULAMADA üretilir: AAD onu bağlar (bkz. connectTokenAad) ve blob'ları
+    // şifrelemeden ÖNCE id'nin bilinmesi gerekir. `license_items`/`sites` ile aynı desen.
+    const tokenId = randomUUID();
+    const aad = CryptoService.connectTokenAad(tokenId);
 
     // rekey + eski kod temizliği + yeni kod ekleme TEK transaction'da (§14 sertleştirme):
     // rekey site creds'ini yeniler; token INSERT'i herhangi bir nedenle başarısız olursa rekey
@@ -61,7 +64,18 @@ export class OnboardingService {
         .delete(siteConnectTokens)
         .where(and(eq(siteConnectTokens.siteId, siteId), isNull(siteConnectTokens.consumedAt)));
 
+      // Tüketilmiş/süresi geçmiş ESKİ satırlarda blob KALMASIN (denetim bulgusu): rekey
+      // yapıldığı için o creds artık ölü olsa da, hiç claim edilmemiş bir satır retention
+      // penceresi (varsayılan 7 gün) boyunca O AN GEÇERLİ kimlik bilgilerini şifreli
+      // tutuyordu. Silme yukarıdaki DELETE ile yalnız tüketilmemişleri kapsıyor; kalanların
+      // blob'ları burada NULL'lanır (satır denetim izi olarak durur).
+      await tx
+        .update(siteConnectTokens)
+        .set({ apiKeyEnc: null, hmacSecretEnc: null })
+        .where(and(eq(siteConnectTokens.siteId, siteId), isNotNull(siteConnectTokens.apiKeyEnc)));
+
       await tx.insert(siteConnectTokens).values({
+        id: tokenId,
         siteId,
         codeHash: hashCode(code),
         apiKeyEnc: this.crypto.encrypt(creds.apiKey, aad),
@@ -117,10 +131,27 @@ export class OnboardingService {
     const site = await this.sites.getById(token.siteId); // domain için (fırlatabilir)
 
     const creds = await this.db.transaction(async (tx) => {
-      const aad = CryptoService.siteSecretAad(token.siteId);
       // Creds'i çöz (blob'lar hâlâ dolu) — null'lamadan ÖNCE.
-      const apiKey = this.crypto.decrypt(token.apiKeyEnc!, aad);
-      const hmacSecret = this.crypto.decrypt(token.hmacSecretEnc!, aad);
+      //
+      // AAD artık TOKEN SATIRINA bağlı (`connect_token:<id>`); eski satırlar site AAD'siyle
+      // şifrelenmiştir → tek seferlik geri düşüş. Sıra ÖNEMLİ: önce YENİ ad alanı denenir, aksi
+      // halde eski (zayıf) ad alanı hâlâ kabul ediliyor olurdu ve düzeltme etkisiz kalırdı.
+      const decryptCreds = (): { apiKey: string; hmacSecret: string } => {
+        const tokenAad = CryptoService.connectTokenAad(token.id);
+        try {
+          return {
+            apiKey: this.crypto.decrypt(token.apiKeyEnc!, tokenAad),
+            hmacSecret: this.crypto.decrypt(token.hmacSecretEnc!, tokenAad),
+          };
+        } catch {
+          const legacyAad = CryptoService.siteSecretAad(token.siteId);
+          return {
+            apiKey: this.crypto.decrypt(token.apiKeyEnc!, legacyAad),
+            hmacSecret: this.crypto.decrypt(token.hmacSecretEnc!, legacyAad),
+          };
+        }
+      };
+      const { apiKey, hmacSecret } = decryptCreds();
 
       // Atomik tek-kullanım: consumedAt hâlâ null iken tüket; yarışta 0 satır → reddet.
       const consumed = await tx

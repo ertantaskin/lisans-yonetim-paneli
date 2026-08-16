@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.1.1
+Stable tag: 1.1.2
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,11 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.1.2 =
+* Silinen sipariş kalemi artık panele bildiriliyor (tam senkron): teslim edilmiş lisanslar müşteride canlı kalmıyor.
+* Tüm kalemleri silinen siparişte sessiz dönüş yerine görünür sipariş notu.
+* Tekrar-deneme zinciri tükendikten sonra YENİ bir iş tetiklendiğinde sayaç ve kalıcı hata izi sıfırlanır (ikinci bir iade artık sessiz kalmıyor).
 
 = 1.1.1 =
 * KATALOG SENKRONU: ürün adı/SKU kırpması artık panelin ölçtüğü BİRİMLE (UTF-16 kod birimi) aynı.

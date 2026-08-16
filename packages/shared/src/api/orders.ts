@@ -46,6 +46,22 @@ export const CreateOrderRequest = z.object({
   // Üst sınır: tek siparişte satır sayısı tavana bağlı (hedefli DoS savunması — createOrder
   // her satırı tek transaction'da işler; sınırsız satır kritik teslimat yolunu tıkayabilirdi).
   lines: z.array(CreateOrderLine).min(1).max(200),
+  /**
+   * TAM SENKRON işareti (§2 — yalnız mağaza "bu siparişin ŞU ANKİ TÜM kalemleri" diyorsa).
+   *
+   * NEDEN VAR: mağazada bir sipariş KALEMİ tamamen SİLİNDİĞİNDE panel bunu hiç duymuyordu.
+   * `collect_lines` yalnız HÂLÂ VAR OLAN kalemleri üretir; `reconcileOrder` da yalnız GELEN
+   * satırlar üzerinde döner → silinen satır `fulfilled` ve atamaları `active` kalıyordu:
+   * müşteri artık satın almadığı lisansları kullanmaya devam ediyor, stok kalıcı tüketilmiş
+   * sayılıyordu (§2 ihlali). Aynı işlemin KISMİ hâli (adet 3→1) zaten doğru çalışıyordu
+   * (`revokeExcess`), yani 3→0 dalı eksikti.
+   *
+   * NEDEN AÇIK BAYRAK: "gelmeyen satır = silinmiş" varsayımı yalnız gönderen taraf TÜM
+   * kalemleri gönderdiğini GARANTİ ederse doğrudur. Kısmi bir push'ta bu varsayım müşterinin
+   * canlı anahtarlarını topluca geri aldırırdı. Bu yüzden davranış opt-in: alan YOKSA eski
+   * (güvenli) davranış aynen sürer; yalnız eklentinin `resync_items` yolu true gönderir.
+   */
+  fullSync: z.boolean().optional(),
 });
 export type CreateOrderRequest = z.infer<typeof CreateOrderRequest>;
 

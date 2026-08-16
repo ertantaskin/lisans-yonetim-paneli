@@ -88,7 +88,7 @@ export class SupplyOpsController {
 
   @Post('batches/:id/recall')
   recall(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(RecallBody)) body: RecallBody,
     @AdminActor() actor: string,
   ) {
@@ -101,7 +101,7 @@ export class SupplyOpsController {
    */
   @Post('batches/:id/bulk-replace')
   bulkReplace(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(BulkReplaceBody)) body: BulkReplaceBody,
     @AdminActor() actor: string,
   ) {

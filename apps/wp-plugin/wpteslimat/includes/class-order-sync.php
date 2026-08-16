@@ -203,6 +203,30 @@ class Wpteslimat_Order_Sync {
         if (!Wpteslimat_Settings::is_configured()) return;
         if (Wpteslimat_Settings::is_clone()) return;
 
+        /*
+         * YENİ İŞ = YENİ ŞANS (denetim bulgusu — kalıcı sessizlik).
+         *
+         * `_wpteslimat_fail_<op>` yalnız 2xx ile temizleniyordu. Bir tekrar-deneme zinciri
+         * tükendikten sonra AYNI iş için sonraki TÜM başarısızlıklar kalıcı olarak SESSİZ
+         * kalıyordu: not yazılmıyor (note_once bayrağı 'yes'), yeni zincir planlanmıyor.
+         * Somut sonuç (§2): haftalar sonra yapılan İKİNCİ bir kısmi iade panele iletilemezse
+         * sipariş ekranında HİÇBİR iz kalmıyor ve müşterinin iade ettiği anahtarlar canlı
+         * kalıyordu. Yeni bir iş tetiklendiğinde (yeni iş olayı = yeni ticari gerçek) sayaç
+         * ve kalıcı hata izi sıfırlanır → o iş kendi zincirini ve kendi notunu alır.
+         */
+        $op = str_replace('wpteslimat_async_', '', $hook);
+        $order = wc_get_order($order_id);
+        if ($order) {
+            $changed = false;
+            foreach (['_wpteslimat_retry_' . $op, '_wpteslimat_fail_' . $op] as $meta) {
+                if ($order->get_meta($meta) !== '') {
+                    $order->delete_meta_data($meta);
+                    $changed = true;
+                }
+            }
+            if ($changed) $order->save();
+        }
+
         // (§7 "kim yaptı") İşi TETİKLEYEN mağaza yöneticisi İŞİN KENDİSİNE bağlanır (Action
         // Scheduler argümanı). NEDEN kalıcı sipariş meta'sı DEĞİL (denetim bulgusu): meta bir kez
         // yazılıp hiç temizlenmiyordu; aynı sipariş sonradan ödeme geçidi webhook'u / cron gibi
@@ -865,12 +889,27 @@ class Wpteslimat_Order_Sync {
         if ($order->get_meta('_wpteslimat_pushed') !== 'yes') return;
 
         $lines = $this->collect_lines($order);
-        if (empty($lines)) return;
+        if (empty($lines)) {
+            // SESSİZ DÖNME YOK (denetim bulgusu): siparişin TÜM kalemleri silinmişse panel bunu
+            // asla duymaz ve teslim edilmiş lisanslar müşteride canlı kalır. Bu durum tek bir
+            // POST ile ifade edilemez (sözleşme en az bir satır ister) → operatöre GÖRÜNÜR not.
+            $order->add_order_note(__(
+                'Teslimat: siparişte hiç ürün kalemi kalmadı — panel bu durumu otomatik uzlaştıramaz. '
+                . 'Teslim edilmiş lisanslar hâlâ müşteride geçerlidir; iptal etmek için siparişi '
+                . 'İptal/İade edin ya da panelden elle geri alın.',
+                'wpteslimat'
+            ));
+            return;
+        }
 
         $body = [
             'remoteOrderId' => (string) $order_id,
             'customerEmail' => $order->get_billing_email(),
             'lines'         => $lines,
+            // TAM SENKRON: gövde siparişin ŞU ANKİ TÜM kalemlerini taşır → panel, gelmeyen bir
+            // satırı SİLİNMİŞ sayıp teslim edilmiş lisansları geri alabilir. Bayrak YALNIZ bu
+            // yolda gönderilir (push kısmi olabilir).
+            'fullSync'      => true,
         ];
 
         // try/finally: panel çağrısı ya da save() bir Throwable atarsa re-entrancy bayrağı AÇIK

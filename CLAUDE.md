@@ -2551,3 +2551,74 @@ dedi. Üç adım: (1) dağıtım sonrası canlı duman testi + asıl düzeltmeni
 - **KENDİ HATAM (bu projede 8. kez):** `sql` şablonunun İÇİNDE ters tırnak kullandım; üstelik hemen
   yanındaki `reorder.service.ts` yorumu tam bunu uyarıyor. typecheck yakaladı, uyarı o bloğa da yazıldı.
 - **Doğrulama (2. tur):** typecheck 4/4 + **dört kapı** (use-server 26/88 · nest-wiring 42 modül/**130** sınıf +13 kuyruk · env **50** · workflows 2/4/46) · birim **shared 64 + api 152 + admin 147** · build 3/3 · **VPS izole test DB: entegrasyon 405/405 + yarış 3/3** · PHP-lint 13/13 + eklenti davranış 108/108 · dev 37 rota 200. **Migration YOK** (0000-0045 sabit).
+
+**3. TUR: HENÜZ DERİN DENETLENMEMİŞ DÖRT ALAN (migration YOK, eklenti v1.1.2):** Kullanıcı "kalan
+eksikleri tespit edip agentlarını/işçilerini çalıştırıp kontrol et, sorunları düzelt" dedi. Bu oturumda
+yüzeysel geçilmiş dört alan tarandı: **kripto+HMAC kimlik yolu · stok girişi+tedarik zinciri · şema/veri
+modeli bütünlüğü · WP sipariş senkronu+iade uzlaştırması**. Her bulgu çürütme denemesinden geçti.
+
+- **[ORTA/güvenlik] AAD AD ALANI ÇAKIŞMASI → PUBLIC uç çözme oracle'ına dönüyordu.**
+  `site_secret:<siteId>` AAD'si ÜÇ kolonda paylaşılıyordu (`sites.hmac_secret_enc` +
+  `site_connect_tokens.api_key_enc/hmac_secret_enc`). AAD kayıt-id'sini bağlıyor ama KOLONU/TABLOYU
+  bağlamıyordu. Sonuç: DB'ye YAZMA erişimi olan ama MASTER_KEY'i OLMAYAN biri, sitenin şifreli
+  secret'ını kendi eklediği bir connect-token satırına kopyalayıp kimliksiz `POST /v1/connect/claim`
+  ile paneli o blob'u çözüp **DÜZ METİN döndürmeye** ikna edebiliyordu → sonrasında site-facing her ucu
+  (reveal dahil) imzalayabilirdi. Kodun kendi güvencesi ("ciphertext satır-taşıma imkânsız") bu sınıfı
+  kapsamıyordu. Yeni `connectTokenAad(tokenId)`; token id uygulamada üretilir; eski satırlar için tek
+  seferlik geri düşüş (kod ömrü 15 dk). **Taşımanın ÇÖZÜLEMEDİĞİ birim testiyle kilitlendi** (iki yön).
+  + hiç claim edilmemiş kodlar retention penceresi boyunca O AN GEÇERLİ creds'i şifreli tutuyordu →
+  yeni kod üretilirken TÜM eski satırların blob'ları NULL'lanır. + auth-fail mesajları (`Geçersiz API
+  anahtarı` ↔ `Geçersiz imza`) secret bilinmeden api_key'in KAYITLI + sitenin AKTİF + rotasyon
+  grace'inin AÇIK olduğunu tek istekte doğruluyordu (sızmış anahtar listesini eleme oracle'ı) → tek
+  mesaj, ayrım `logger.debug`'da.
+- **[YÜKSEK] Stok girişi ~5.957 satırda opak 500.** Sistemin EN BÜYÜK toplu INSERT'i chunk'sızdı;
+  satır başına 11 bind parametresi × int16 sınırı (65534). DTO ise 10.000 satıra İZİN VERİYOR ve gövde
+  sınırına sığıyor. En kötüsü: onay modalini besleyen KURU ÇALIŞTIRMA ayrı (satır başına 1 parametreli)
+  yol kullandığı için TEMİZ geçip "8.000 kayıt girilecek" diyor, gerçek gönderim
+  `MAX_PARAMETERS_EXCEEDED` ile düşüyordu (veri güvenli — tam rollback — ama giriş HİÇ yapılamıyor ve
+  sebebi panelden anlaşılmıyor). Aynı tuzak kod tabanında ÜÇ yerde çoktan çözülmüştü, en büyüğü
+  atlanmıştı. Kardeşi: geri çekmede zayi kaydı yazımı (6 param/satır → >10.922 kalemde parti `recalled`
+  bile olamıyordu). İkisi de chunk'landı.
+- **[ORTA] Parti sayacı ile geri çekmenin VOID ETTİĞİ küme ayrışmıştı** ("satılmış 6 birim" hatasının
+  aynı sınıfı): sayaç `status='available'`, eylem `status IN ('available','depleted')`. Kapasitesi
+  tamamen satılmış (depleted) MAK anahtarları taşıyan partide ekran "Stokta 0" derken onay modali
+  "0 anahtar geçersiz kılınacak" diyor, geri çekme o anahtarları void edip Kusurlu Stok havuzuna
+  düşürüyordu — operatör GERİ ALINAMAZ kararını yanlış sayıyla veriyordu. Sayaç eylemle hizalandı.
+- **[ORTA/§2 — WP] Sipariş KALEMİNİN SİLİNMESİ panele hiç ulaşmıyordu.** `collect_lines` yalnız HÂLÂ
+  VAR OLAN kalemleri üretir, `reconcileOrder` da yalnız GELEN satırlar üzerinde dönüyordu → silinen
+  satır `fulfilled`, atamaları `active` kalıyor; müşteri artık satın almadığı lisansları kullanmaya
+  devam ediyor, stok kalıcı tüketilmiş sayılıyordu. Aynı işlemin KISMİ hâli (adet 3→1) ZATEN doğruydu
+  (`revokeExcess`) — eksik olan 3→0 dalıydı. Çözüm **opt-in `fullSync` bayrağı**: bayrak YOKSA eski
+  (güvenli) davranış aynen sürer, çünkü "gelmeyen satır = silinmiş" varsayımı KISMİ bir push'ta
+  müşterinin canlı anahtarlarını topluca yakardı; yalnız eklentinin `resync_items` yolu true gönderir.
+  Semantik İADE'dir (satır terminal, MAK kapasitesi havuza DÖNMEZ) + görünür `order_edited` olayı.
+  İki yönlü regresyon testi (bayraksız push satıra DOKUNMAZ / bayraklı push geri alır).
+- **[ORTA — WP] Tükenmiş retry zincirinden sonra aynı işin TÜM başarısızlıkları KALICI SESSİZ.**
+  `_wpteslimat_fail_<op>` yalnız 2xx ile temizleniyordu → haftalar sonra yapılan İKİNCİ bir kısmi iade
+  panele iletilemezse not YAZILMIYOR, zincir PLANLANMIYOR; müşterinin iade ettiği anahtarlar canlı
+  kalıyor ve tek iz 30 günde budanan kuyruk logu oluyordu. Artık YENİ bir iş tetiklendiğinde sayaç +
+  kalıcı hata izi sıfırlanır (yeni iş = yeni ticari gerçek = kendi zinciri ve kendi notu). + tüm
+  kalemleri silinen siparişte sessiz `return` yerine görünür sipariş notu.
+- **[DÜŞÜK ×6]** `correct`/`recall` + `licenseItemIds` kombinasyonu ilk id hariç hepsini SESSİZCE
+  yutup `requested:0` diyordu → 400 ile reddedilir · `recall`/`bulk-replace` uçlarında `ParseUUIDPipe`
+  (bozuk id 500 yerine 400) · stok girişi `payload` üst sınırsızdı (kardeş yazma yolu 4.000 uyguluyordu)
+  · `resolveBundleQty` tie-break'i eksikti (kardeş üç sorguda vardı; mükerrer NULL-varyasyon eşlemesinde
+  teslimatla iade FARKLI satırı seçebilirdi) · `hostMatchesSite` şema/port denetlemiyordu (raporlandı).
+- **ŞEMA DENETİMİ — büyük ölçüde TEMİZ** (bu alan hiç denetlenmemişti): migration `when` sırası
+  MONOTON, 31 tablonun tamamı ve ~62 indeks migration'larda mevcut, 0045 snapshot güncel, TÜM zaman
+  kolonları `timestamptz`, dokuz kısmi indeksin yüklemi sorgularla BİREBİR, CASCADE zincirleri bugün
+  ulaşılamaz (üretimde sipariş/site silme yolu YOK). Kalanlar bilgi düzeyinde: sıfır CHECK constraint
+  (invaryantlar yalnız uygulamada), `orders.updated_at` ana durum yazarlarınca güncellenmiyor,
+  `license_items.batch_id` FK'siz ve gerekçesiz, birkaç ölü enum değeri.
+- **TEST HARNESS GÖZLEMİ (yeni):** entegrasyon paketi AYNI veritabanında TEKRAR TEKRAR koşmaya karşı
+  idempotent DEĞİL — üst üste koşumlarda hata sayısı 1→3→8'e çıktı, dosya tek başına 9/9 geçti, TAZE
+  DB'de tamamı 406/406 geçti. Yani "koşumlar arası taze DB" bir gereklilik; aksi halde biriken veri
+  kod regresyonu gibi görünür. (Bu tur bunu ölçerek ayırt etti, tahminle geçiştirmedi.)
+- **KENDİ HATALARIM:** (1) `sql` şablonunun İÇİNDE ters tırnak — bu projede **9. kez**; typecheck
+  yakaladı, uyarı o bloğa da yazıldı. (2) Yazdığım `fullSync` testi YANLIŞ bir modeli kodluyordu
+  (`qty − canceled_units = 0` bekliyordu); gerçekte `canceled_units` yalnız satırda CANLI KARDEŞ atama
+  kaldığında artar, son atama geri alındığında satır `canceled` bayrağıyla terminal olur (mevcut iade
+  yollarının deseni). Test gerçeğe uyduruldu — ürün doğruydu.
+- **Doğrulama:** typecheck 4/4 + dört kapı (use-server 26/88 · nest-wiring 42/130+13 · env 50 ·
+  workflows 2/4/46) · birim **shared 64 + api 153 + admin 147** · build 3/3 · **TAZE VPS izole test DB:
+  entegrasyon 406/406 + yarış 3/3** · PHP-lint 13/13 + eklenti davranış 108/108. Migration EKLENMEDİ.

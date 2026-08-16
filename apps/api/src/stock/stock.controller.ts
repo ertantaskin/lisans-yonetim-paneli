@@ -59,7 +59,9 @@ const ImportBody = z
       .array(
         z.object({
           // key/code/custom: düz string. account: alan→değer nesnesi (veya JSON string).
-          payload: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
+          // Üst sınır: kardeş yazma yolu (UpdateLicenseItemBody.value) .max(4000) uyguluyordu, import
+          // yolunda HİÇ sınır yoktu → tek istekle ~1 MB payload şifrelenip saklanabiliyordu.
+          payload: z.union([z.string().min(1).max(4000), z.record(z.string(), z.unknown())]),
           expiresAt: z.string().datetime().optional(),
         }),
       )

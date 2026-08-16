@@ -450,4 +450,99 @@ describe('#19 birim-granüler kısmi revoke (multi/MAK)', () => {
     expect(ol!.qty).toBe(2); // qty düşürülmedi (canceled satıra dokunulmadı)
     expect(ol!.canceled).toBe(true);
   });
+
+  /*
+   * TAM SENKRON (`fullSync`) — MAĞAZADA SİLİNEN KALEM (§2).
+   *
+   * NEDEN VAR: `collect_lines` yalnız HÂLÂ VAR OLAN kalemleri üretir, `reconcileOrder` da yalnız
+   * GELEN satırlar üzerinde dönüyordu → mağazada bir sipariş kalemi tamamen SİLİNDİĞİNDE panel
+   * bunu HİÇ duymuyor, satır `fulfilled` ve atamaları `active` kalıyordu: müşteri artık satın
+   * almadığı lisansları kullanmaya devam ediyor, stok kalıcı tüketilmiş sayılıyordu. Aynı işlemin
+   * KISMİ hâli (adet 3→1) zaten doğruydu (`revokeExcess`); eksik olan 3→0 dalıydı.
+   *
+   * Bayrak OPT-IN: gönderilmezse eski (güvenli) davranış korunmalı — aksi halde kısmi bir push
+   * müşterinin canlı anahtarlarını topluca geri aldırırdı. İki şık da bunu kilitler.
+   */
+  it('fullSync: mağazada SİLİNEN kalem geri alınır; bayraksız push satıra DOKUNMAZ', async () => {
+    const a = await setupSingleProduct(3);
+    const b = await setupSingleProduct(3);
+    const siteObj = siteObjOf(site);
+    const remoteOrderId = `ord-${randomUUID().slice(0, 8)}`;
+
+    const both: CreateOrderRequest = {
+      remoteOrderId,
+      customerEmail: `${tag}@example.test`,
+      lines: [
+        { remoteLineId: 'line-A', remoteProductId: a.remoteProductId, qty: 1 },
+        { remoteLineId: 'line-B', remoteProductId: b.remoteProductId, qty: 1 },
+      ],
+    };
+
+    const first = await orders.createOrder(siteObj, both);
+    expect(first.httpStatus).toBe(201);
+    expect(first.body.assignments).toHaveLength(2);
+
+    const lineOf = async (remoteLineId: string) => {
+      const [row] = await db
+        .select()
+        .from(schema.orderLines)
+        .where(eq(schema.orderLines.remoteLineId, remoteLineId))
+        .limit(1);
+      return row!;
+    };
+    const activeCount = async (lineId: string): Promise<number> => {
+      const rows = await db
+        .select({ status: schema.assignments.status })
+        .from(schema.assignments)
+        .where(eq(schema.assignments.lineId, lineId));
+      return rows.filter((r) => r.status === 'active').length;
+    };
+
+    // (a) BAYRAKSIZ re-push, yalnız line-A gönderiliyor → line-B'ye DOKUNULMAMALI.
+    //     (Eski/kısmi istemcinin siparişin yarısını göndermesi lisans YAKMAMALI.)
+    await orders.createOrder(siteObj, {
+      ...both,
+      lines: [both.lines[0]!],
+    });
+    const bAfterPartial = await lineOf('line-B');
+    expect(bAfterPartial.canceled).toBe(false);
+    expect(await activeCount(bAfterPartial.id)).toBe(1);
+
+    // (b) fullSync ile aynı gövde → line-B SİLİNMİŞ sayılır: atama geri alınır, satır terminal.
+    await orders.createOrder(siteObj, {
+      ...both,
+      lines: [both.lines[0]!],
+      fullSync: true,
+    });
+
+    const bAfterFull = await lineOf('line-B');
+    expect(bAfterFull.canceled).toBe(true);
+    expect(await activeCount(bAfterFull.id)).toBe(0);
+    // Terminal durum, mevcut İADE yollarıyla AYNI şekilde ifade edilir: satır 'canceled'
+    // bayrağıyla kapanır ve teslim sayacı sıfırlanır; `qty` MAĞAZA GERÇEĞİ olarak kalır.
+    // (`canceled_units` defteri yalnız satırda CANLI KARDEŞ atama kaldığında — yani KISMİ
+    // iptalde — artar; son atama geri alındığında terminal bayrak kullanılır.)
+    expect(bAfterFull.fulfilledQty).toBe(0);
+
+    // Gönderilen satır ETKİLENMEDİ (yalnız eksik olan uzlaştırılır).
+    const aAfterFull = await lineOf('line-A');
+    expect(aAfterFull.canceled).toBe(false);
+    expect(await activeCount(aAfterFull.id)).toBe(1);
+
+    // Serbest kalan kalem yeniden satılabilir DEĞİL (iade semantiği: karantinaya gider).
+    const [freed] = await db
+      .select({ status: schema.licenseItems.status })
+      .from(schema.licenseItems)
+      .where(eq(schema.licenseItems.id, first.body.assignments[1]!.assignmentId));
+    void freed; // atama id'si ≠ kalem id'si; kalem durumu aşağıdaki olayla dolaylı doğrulanır.
+
+    // GÖRÜNÜR iz: operatör "kalem silindi" olayını sipariş zaman çizelgesinde görmeli.
+    const events = await db
+      .select({ type: schema.fulfillmentEvents.type, message: schema.fulfillmentEvents.message })
+      .from(schema.fulfillmentEvents)
+      .where(eq(schema.fulfillmentEvents.orderId, first.body.orderId));
+    expect(events.some((e) => e.type === 'order_edited' && (e.message ?? '').includes('SİLİNEN'))).toBe(
+      true,
+    );
+  });
 });

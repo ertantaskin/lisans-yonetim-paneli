@@ -1546,7 +1546,7 @@ export class AdminOrdersService {
             eq(siteProductMappings.active, true),
           ),
         )
-        .orderBy(asc(siteProductMappings.createdAt))
+        .orderBy(asc(siteProductMappings.createdAt), asc(siteProductMappings.id))
         .limit(1);
       if (row) return row.bundleQty;
     }
@@ -1561,7 +1561,7 @@ export class AdminOrdersService {
           eq(siteProductMappings.active, true),
         ),
       )
-      .orderBy(asc(siteProductMappings.createdAt))
+      .orderBy(asc(siteProductMappings.createdAt), asc(siteProductMappings.id))
       .limit(1);
     return row?.bundleQty ?? null;
   }

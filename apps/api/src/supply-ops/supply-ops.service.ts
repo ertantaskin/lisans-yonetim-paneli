@@ -126,7 +126,9 @@ export class SupplyOpsService {
    * anahtar bile olmayabiliyordu; `canBulkReplace` de bu sayaca baktığı için değiştirilecek
    * hiçbir şey yokken "Toplu Değiştir" sunuluyordu. Artık kova, kalemin DURUMUNDAN değil
    * ATAMASINDAN türer:
-   *   - `unsoldCount`     : status='available'  → geri çekmenin void edeceği küme (DEĞİŞMEDİ).
+   *   - `unsoldCount`     : status IN ('available','depleted') → geri çekmenin VOID EDECEĞİ küme
+   *                         (recallBatch'in yüklemiyle BİREBİR; 'depleted' kapasitesi tükenmiş
+   *                         MAK anahtarıdır ve recall onu da void eder).
    *   - `customerCount`   : canlı ataması var (active|suspended) → gerçekten müşteride.
    *   - `replaceableCount`: aktif ataması var → bulkReplaceBatch'in aday kümesiyle BİREBİR
    *                         (askıya alınmış atama otomatik değiştirilmez; elle işlenir).
@@ -237,7 +239,14 @@ export class SupplyOpsService {
         SELECT
           li.batch_id,
           count(*) AS total_c,
-          count(*) FILTER (WHERE li.status = 'available') AS unsold_c,
+          -- (DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA.)
+          -- KÜME recallBatch'in VOID ETTİĞİYLE BİREBİR OLMALI: orada yüklem
+          -- status IN ('available','depleted'). Sayaç yalnız 'available' sayıyordu →
+          -- kapasitesi tamamen satılmış (depleted) MAK anahtarları taşıyan bir partide ekran
+          -- "Stokta 0" derken onay modali "0 anahtar geçersiz kılınacak" diyor, geri çekme ise
+          -- o anahtarları void edip Kusurlu Stok havuzuna düşürüyordu — operatör GERİ ALINAMAZ
+          -- kararı yanlış sayıyla veriyordu. ("satılmış 6 birim" hatasının aynı sınıfı.)
+          count(*) FILTER (WHERE li.status IN ('available', 'depleted')) AS unsold_c,
           count(*) FILTER (WHERE ag.has_live) AS customer_c,
           -- bulkReplaceBatch'in ADAY kümesiyle BİREBİR: aktif atama + available OLMAYAN kalem
           -- + tek-kullanımlık ürün. Üçü de o sorguda var (aşağıdaki candidates + 'multi' elemesi);
@@ -385,9 +394,13 @@ export class SupplyOpsService {
        * use_count < max_uses olduğundan remaining her zaman ≥ 1). Kayıt yine YAZILIR: karantina
        * ekranı iptal SEBEBİNİ `stock_adjustments`ten okur, satır atlanırsa sebep '—' görünürdü.
        */
-      if (voided.length > 0) {
+      // CHUNK: satır başına 6 bind parametresi → int16 sınırı (65534) ~10.922 satırda dolar ve
+      // TÜM geri çekme transaction'ı düşerdi (parti `recalled` bile olmazdı). Stok girişindeki
+      // aynı tuzağın kardeşi; eşik daha yüksek olduğu için gözden kaçmıştı.
+      const ADJ_INSERT_CHUNK = 2000;
+      for (let i = 0; i < voided.length; i += ADJ_INSERT_CHUNK) {
         await tx.insert(stockAdjustments).values(
-          voided.map((v) => ({
+          voided.slice(i, i + ADJ_INSERT_CHUNK).map((v) => ({
             productId: v.product_id,
             licenseItemId: v.id,
             action: 'recall' as const,
@@ -603,6 +616,21 @@ export class SupplyOpsService {
       `);
       if (prodRows.length === 0) {
         throw new NotFoundException('Ürün bulunamadı');
+      }
+
+      /*
+       * SESSİZ YUTMA KAPATILDI (denetim bulgusu): `correct`/`recall` yıkıcı DEĞİLDİR (kaleme
+       * dokunmaz, yalnız defter satırı yazar). Çağıran buna rağmen `licenseItemIds` gönderirse
+       * eski kod yalnız `ids[0]`'ı deftere yazıp kalan N−1 id'yi ATIYOR ve yanıtta
+       * `requested: 0, affected: 0, skipped: 0` diyerek bunu SÖYLEMİYORDU — bu panelin
+       * "sessiz kırpma yasak" kuralının ihlali. Bugün UI bu kombinasyonu göndermiyor ama
+       * otoriter kapı sunucuda olmalı; niyet belirsiz olduğu için tahmin etmek yerine reddet.
+       */
+      if (!destructive && ids.length > 1) {
+        throw new BadRequestException(
+          `'${input.action}' işlemi kalem seçimiyle kullanılamaz (${ids.length} kalem gönderildi). ` +
+            "Kalem bazlı işlem için 'void' veya 'damage' kullanın; defter kaydı için kalem göndermeyin.",
+        );
       }
 
       // ── Kalem-kapsamsız (yalnız defter kaydı: 'correct'/'recall') ──

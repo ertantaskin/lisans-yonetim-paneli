@@ -768,6 +768,8 @@ export class OrdersService {
     const changedLineIds: string[] = [];
     // C3: mevcut siparişe SONRADAN eklenen (eşleşmeyen) kalemler — reconcileOrder onları teslim etmez.
     const unmatchedNewLines: string[] = [];
+      /** fullSync ile silindiği anlaşılan satırlar (görünür olay için). */
+      const removedLineIds: string[] = [];
 
     await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${order.id}))`);
@@ -863,6 +865,56 @@ export class OrdersService {
             .where(eq(orderLines.id, line.id));
         }
         changedLineIds.push(line.id);
+      }
+
+      /*
+       * MAĞAZADA SİLİNEN KALEM (§2) — yalnız `fullSync` işaretli push'ta.
+       *
+       * Mağaza "bu siparişin ŞU ANKİ TÜM kalemleri" dediyse, panelde olup gelmeyen satır
+       * SİLİNMİŞ demektir. Eskiden hiçbir dal bunu ele almıyordu: satır `fulfilled`,
+       * atamaları `active` kalıyor ve müşteri artık satın almadığı lisansları kullanmaya
+       * devam ediyordu. Adet 3→1 hâli zaten doğruydu (revokeExcess); eksik olan 3→0'dı.
+       *
+       * SEMANTİK = İADE (adet-düşür değil): satır terminal (`canceled`) yapılır ve MAK/multi
+       * kapasitesi havuza DÖNMEZ — harcanmış aktivasyon yeniden satılamaz (§2). `revokeExcess`
+       * fazlalığı `line.fulfilledQty` kadar geri alır; burada hedef 0 olduğu için TÜMÜ.
+       *
+       * Bayrak YOKSA bu blok HİÇ çalışmaz → eski (güvenli) davranış korunur.
+       */
+      if (dto.fullSync === true) {
+        const sent = new Set(dto.lines.map((l) => l.remoteLineId));
+        const panelLines = await tx
+          .select()
+          .from(orderLines)
+          .where(and(eq(orderLines.orderId, order.id), eq(orderLines.canceled, false)));
+        for (const line of panelLines) {
+          if (sent.has(line.remoteLineId)) continue;
+          // Bonus satırları mağazada HİÇ yoktur (sentetik `bonus:` öneki) → silinmiş sayılmaz.
+          if (line.remoteLineId.startsWith('bonus:')) continue;
+
+          if (line.fulfilledQty > 0) {
+            await this.revokeExcess(tx, site, line.id, line.fulfilledQty);
+          }
+          // `canceled` TERMİNAL işarettir (order_line_status enum'unda 'canceled' YOK — iptal
+          // ayrı bir bayrakla taşınır, mevcut iade yollarıyla aynı desen). `qty`'ye DOKUNULMAZ:
+          // mağaza gerçeği olarak kalır ve iptal edilen birimler `canceled_units` defterine
+          // yazılır (revokeExcess bunu zaten yapar) — hedef `qty − canceled_units` ile 0 olur.
+          await tx
+            .update(orderLines)
+            .set({ canceled: true })
+            .where(eq(orderLines.id, line.id));
+          removedLineIds.push(line.remoteLineId);
+          changedLineIds.push(line.id);
+        }
+        if (removedLineIds.length > 0) {
+          await tx.insert(fulfillmentEvents).values({
+            orderId: order.id,
+            type: 'order_edited',
+            message:
+              `Mağazada SİLİNEN ${removedLineIds.length} kalem uzlaştırıldı: ${removedLineIds.join(', ')}. ` +
+              'Teslim edilmiş lisanslar geri alındı (iade semantiği — MAK kapasitesi havuza dönmez).',
+          });
+        }
       }
 
       // C3: eşleşmeyen yeni kalem varsa GÖRÜNÜR iz bırak (sessiz eksik-teslimat yerine). adet

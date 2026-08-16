@@ -138,6 +138,27 @@ export class CryptoService implements OnModuleInit {
   }
 
   /**
+   * site_connect_tokens.{api_key_enc,hmac_secret_enc} için AAD — TOKEN SATIRINA bağlanır.
+   *
+   * NEDEN AYRI AD ALANI (denetim bulgusu): bu iki kolon eskiden `site_secret:<siteId>` AAD'sini
+   * `sites.hmac_secret_enc` ile PAYLAŞIYORDU. AAD kayıt-id'sini bağlıyor ama KOLONU/TABLOYU
+   * bağlamadığı için ciphertext bir kolondan diğerine taşınabiliyordu ve bu, PUBLIC bir uç
+   * üzerinden ÇÖZME ORACLE'ı yaratıyordu:
+   *   DB'ye YAZMA erişimi olan ama MASTER_KEY'i OLMAYAN biri, `sites.hmac_secret_enc` blob'unu
+   *   kendi eklediği bir `site_connect_tokens` satırına kopyalayıp kimliksiz
+   *   `POST /v1/connect/claim` çağırır → panel blob'u AYNI AAD ile çözer ve sitenin DÜZ METİN
+   *   hmac secret'ını yanıtta döndürür → saldırgan artık site-facing her ucu (reveal dahil) imzalar.
+   * Token'ın kendi id'sine bağlanınca o blob bu satırda ÇÖZÜLEMEZ; sınıf kapanır.
+   *
+   * GERİYE DÖNÜK UYUM: eski satırlar `site_secret:<siteId>` ile şifrelenmiştir. `claim`
+   * ikisini de dener (önce yeni). Kodların ömrü 15 dakika olduğu için bu geri düşüş yolu
+   * yalnız dağıtım anındaki açık kodlar içindir ve kısa sürede fiilen ölür.
+   */
+  static connectTokenAad(tokenId: string): string {
+    return `connect_token:${tokenId}`;
+  }
+
+  /**
    * Sabit-zamanlı string karşılaştırma (imza/token doğrulama). Her iki girdi önce
    * sabit uzunluğa (SHA-256) indirgenir → uzunluk timing ile sızmaz.
    */

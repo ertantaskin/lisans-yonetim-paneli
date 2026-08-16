@@ -14,6 +14,47 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### 3. tur: kripto AAD ad alanı · stok girişi tavanı · silinen sipariş kalemi (migration YOK, eklenti 1.1.2)
+
+Bu oturumda henüz derin denetlenmemiş dört alan tarandı: kripto/HMAC kimlik yolu, stok girişi ve
+tedarik zinciri, şema bütünlüğü, WooCommerce sipariş senkronu.
+
+**Envelope AAD kolonu bağlamıyordu.** Aynı etiket üç ayrı şifreli kolonda paylaşılıyordu; AAD kaydın
+kimliğini bağlıyor ama hangi kolonda durduğunu bağlamıyordu. Sonuç: veritabanına yazma erişimi olan
+ama ana anahtara erişimi OLMAYAN biri, bir sitenin şifreli HMAC sırrını kendi eklediği bir bağlan-kodu
+satırına kopyalayıp kimlik istemeyen bağlan-kodu ucuyla paneli o veriyi çözüp düz metin döndürmeye
+ikna edebiliyordu — yani herkese açık bir uç, çözme oracle'ına dönüşüyordu. Kodun kendi güvencesi
+("şifreli metnin satır taşıması imkânsız") bu sınıfı kapsamıyordu. Bağlan kodları artık kendi ad
+alanına bağlı ve taşımanın çözülemediği testle kilitlendi; eski satırlar için tek seferlik geri düşüş
+var (kod ömrü 15 dakika). Ayrıca hiç kullanılmamış kodlar saklama penceresi boyunca o an geçerli kimlik
+bilgilerini şifreli tutuyordu, ve iki farklı kimlik hatası mesajı sır bilinmeden bir anahtarın kayıtlı
+olduğunu tek istekte doğruluyordu.
+
+**Stok girişi ~5.957 satırdan sonra opak 500 veriyordu.** Sistemin en büyük toplu yazımı dilimlenmiyordu
+(satır başına 11 bağlama parametresi, PostgreSQL sınırı 65534) — oysa sözleşme 10.000 satıra izin
+veriyor ve gövde sınırına da sığıyor. En kötü tarafı: onay ekranını besleyen kuru çalıştırma ayrı ve
+daha ucuz bir yol kullandığı için temiz geçip "8.000 kayıt girilecek" diyor, gerçek gönderim
+düşüyordu. Veri güvendeydi (tam geri alma) ama giriş hiç yapılamıyor ve sebebi panelden anlaşılmıyordu.
+Aynı tuzak kod tabanında üç yerde çoktan çözülmüştü; en büyüğü atlanmıştı. Kardeşi (geri çekmede zayi
+kaydı yazımı) da dilimlendi.
+
+**Mağazada bir sipariş kaleminin silinmesi panele hiç ulaşmıyordu** — satır teslim edilmiş, atamaları
+aktif kalıyor, müşteri artık satın almadığı lisansları kullanmaya devam ediyor ve stok kalıcı tüketilmiş
+sayılıyordu. Aynı işlemin kısmi hâli (adet 3→1) zaten doğru çalışıyordu; eksik olan 3→0 dalıydı. Opt-in
+bir tam-senkron işaretiyle çözüldü: işaret yoksa eski davranış aynen sürer, çünkü "gelmeyen satır
+silinmiştir" varsayımı kısmi bir bildirimde müşterinin canlı anahtarlarını topluca geri aldırırdı.
+
+**Geri çekme onayı yanlış sayı gösteriyordu:** parti sayacı yalnız stoktaki anahtarları sayarken geri
+çekme, kapasitesi tükenmiş anahtarları da geçersiz kılıyordu; operatör geri alınamaz kararını eksik
+bilgiyle veriyordu. Eklenti tarafında ayrıca, bir tekrar-deneme zinciri tükendikten sonra aynı işin
+sonraki tüm başarısızlıkları kalıcı olarak sessiz kalıyordu — haftalar sonra yapılan ikinci bir kısmi
+iade panele iletilemezse sipariş ekranında hiçbir iz kalmıyordu.
+
+Şema bütünlüğü denetimi (bu oturumda ilk kez) büyük ölçüde temiz çıktı: migration damga sırası monoton,
+tüm tablo ve indeksler migration'larda mevcut, anlık görüntü güncel, tüm zaman kolonları saat dilimli,
+kısmi indekslerin yüklemleri sorgularla birebir.
+
+
 ### 2. tur: kendi düzeltmelerimin çürütülmesi + kalan alanlar (migration YOK)
 
 Bir önceki partinin düzeltmeleri dağıtıldıktan sonra, onları **doğrulamak değil kırmak** için

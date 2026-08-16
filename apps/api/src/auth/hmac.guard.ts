@@ -12,7 +12,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { FastifyRequest } from 'fastify';
 import type Redis from 'ioredis';
-import { Inject } from '@nestjs/common';
+import { Inject, Logger } from '@nestjs/common';
 import {
   HMAC_HEADERS,
   HMAC_NONCE_TTL_SEC,
@@ -24,6 +24,17 @@ import { RateLimitService } from '../common/rate-limit.service';
 import { REDIS } from '../redis/redis.module';
 import { SITE_LAST_SEEN_THROTTLE_SEC, SitesService } from '../sites/sites.service';
 import type { Site } from '../db/schema';
+
+/**
+ * Site-facing auth başarısızlığında dönen TEK mesaj.
+ *
+ * Ayrı mesajlar ('Geçersiz API anahtarı' ↔ 'Geçersiz imza') secret bilinmeden bir api_key'in
+ * KAYITLI olduğunu, sitenin AKTİF olduğunu ve rotasyon grace penceresinin hâlâ AÇIK olduğunu
+ * tek istekte doğruluyordu — sızmış bir anahtar listesinden canlı olanları elemeye yarayan
+ * ücretsiz bir oracle. Ayrım LOG'da kalır (aşağıdaki debug satırları; operatör teşhis
+ * edebilir), yanıtta kalmaz.
+ */
+const AUTH_FAIL_MESSAGE = 'Kimlik doğrulama başarısız';
 
 /** Kurulu WP eklenti sürümü — İMZA KAPSAMI DIŞINDA (bkz. HmacGuard.recordPluginVersion). */
 const PLUGIN_VERSION_HEADER = 'x-wpteslimat-version';
@@ -60,6 +71,8 @@ export interface AuthedRequest extends FastifyRequest {
  */
 @Injectable()
 export class HmacGuard implements CanActivate {
+  private readonly logger = new Logger(HmacGuard.name);
+
   constructor(
     private readonly sites: SitesService,
     @Inject(REDIS) private readonly redis: Redis,
@@ -108,7 +121,11 @@ export class HmacGuard implements CanActivate {
     const auth = await this.sites.findForAuth(apiKey);
     if (!auth) {
       await this.recordAuthFailure(failKey, failLimit);
-      throw new UnauthorizedException('Geçersiz API anahtarı');
+      // MESAJ BİLEREK AYNI (denetim bulgusu): 'Geçersiz API anahtarı' ile 'Geçersiz imza'
+      // ayrımı, secret bilinmeden bir api_key'in KAYITLI + sitenin AKTİF + rotasyon grace'inin
+      // hâlâ AÇIK olduğunu tek istekte doğruluyordu (sızmış anahtar listesini eleme oracle'ı).
+      this.logger.debug('auth-fail: api_key kayıtlı değil / site pasif');
+      throw new UnauthorizedException(AUTH_FAIL_MESSAGE);
     }
 
     // 3) İmza doğrula
@@ -131,7 +148,8 @@ export class HmacGuard implements CanActivate {
     if (!valid) {
       // auth-FAIL (geçerli api_key ama yanlış imza) → IP sayacını artır (sel koruması) ve 401.
       await this.recordAuthFailure(failKey, failLimit);
-      throw new UnauthorizedException('Geçersiz imza');
+      this.logger.debug('auth-fail: imza uyuşmadı (api_key geçerli)');
+      throw new UnauthorizedException(AUTH_FAIL_MESSAGE);
     }
 
     // 4) Nonce tekilliği (imza geçerliyse harcanır → replay engeli).

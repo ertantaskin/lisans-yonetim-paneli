@@ -909,11 +909,36 @@ export class StockService {
         v.costCurrency = costSnapshot?.costCurrency ?? null;
       }
 
-      const rows = await tx
-        .insert(licenseItems)
-        .values(values)
-        .onConflictDoNothing({ target: licenseItems.payloadHash })
-        .returning({ id: licenseItems.id });
+      /*
+       * CHUNK'LI TOPLU YAZIM — sistemin EN BÜYÜK toplu insert'i, tavan koruması YOKTU.
+       *
+       * Her satır 11 kolonu açıkça taşır (id/productId/batchId/payloadEnc/payloadHash/
+       * payloadSuffixHash/maxUses/expiresAt/status/unitCostCents/costCurrency — `null` da bir
+       * bind parametresidir), PostgreSQL Bind mesajı ise parametre sayısını int16'da taşır
+       * (65534) → tavan ~5.957 satır. DTO ise 10.000 satıra İZİN VERİYOR ve gövde sınırına da
+       * sığıyor, yani DESTEKLENDİĞİ İLAN EDİLEN girdi ulaşılabilir ve kırıyordu.
+       *
+       * Kırılma biçimi özellikle kötüydü: "Onayla ve Dağıt" modalini besleyen KURU ÇALIŞTIRMA
+       * ayrı bir salt-okunur yol kullandığı için (satır başına 1 parametre) TEMİZ geçiyor ve
+       * "8.000 kayıt girilecek" diyordu; gerçek gönderim `MAX_PARAMETERS_EXCEEDED` ile opak 500
+       * veriyordu. Veri güvendeydi (tam rollback) ama giriş HİÇ yapılamıyor ve sebebi panelden
+       * anlaşılmıyordu.
+       *
+       * Aynı tuzak bu kod tabanında üç yerde ÇOKTAN çözülmüştü (atama insert'i, releaseAllocations,
+       * katalog senkronu) — en büyüğü atlanmıştı. `onConflictDoNothing` dilim başına uygulanır;
+       * anlam DEĞİŞMEZ, çünkü mükerrerlik UNIQUE(payload_hash) ile TABLO genelinde tanımlıdır
+       * (aynı istek içindeki tekrarlar da farklı dilimlerde yakalanır) ve hepsi TEK transaction.
+       */
+      const IMPORT_INSERT_CHUNK = 1000; // 1000 × 11 = 11.000 parametre (65534 sınırının altında)
+      const rows: Array<{ id: string }> = [];
+      for (let i = 0; i < values.length; i += IMPORT_INSERT_CHUNK) {
+        const part = await tx
+          .insert(licenseItems)
+          .values(values.slice(i, i + IMPORT_INSERT_CHUNK))
+          .onConflictDoNothing({ target: licenseItems.payloadHash })
+          .returning({ id: licenseItems.id });
+        rows.push(...part);
+      }
 
       // duplicates = doğrulamayı geçip DB'de mükerrer (payload_hash) çıkanlar.
       const dup = values.length - rows.length;
