@@ -14,6 +14,55 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Kalan eksikler: AAD oracle'ı · kapalı destek döngüsü · ~40 metin↔kod sapması (migration YOK, eklenti 1.1.3)
+
+Bu tur "kalan eksikler" isteğiyle koştu ve en ağır bulgu yine **önceki turdaki kendi düzeltmemdi**.
+
+**Şifreleme açığı gerçekte kapanmamıştı.** Bir önceki turda bağlan-kodlarının şifreleme etiketini
+kendi satırına bağlayıp "bu sınıf kapandı" diye yazmıştım. Kod öyle demiyordu: yeni etiket
+tutmadığında eski etiketi deneyen **koşulsuz** bir geri düşüş bırakılmıştı. Veritabanına yazma
+erişimi olan biri sitenin şifreli sırrını bir bağlan-kodu satırına kopyaladığında yeni etiket
+başarısız oluyor, geri düşüş devreye giriyor ve eski etiket verinin gerçekten şifrelendiği etiket
+olduğu için **çözülüyordu** — yani kimlik istemeyen uç hâlâ bir çözme aracıydı. "Kodlar on beş
+dakikada ölür" gerekçesi de saldırganı bağlamıyordu, geçerlilik süresini o yazıyor. Geri düşüş
+kaldırıldı; o dal artık görünür bir saldırı sinyali.
+
+**Destek yazışması müşteri tarafında hiç yoktu.** Panelde iki yönlü yazışma tamamen kuruluydu,
+mağaza eklentisi o uçları hiç çağırmıyordu. Sonuç kapalı bir döngüydü: operatör "ek bilgi iste"
+diyor, müşteriye soru maili gidiyor ve müşterinin cevap verecek hiçbir yolu olmuyordu; tek çıkış
+yeni talep açmaktı, o da günlük talep bütçesini yiyor ve eski talebi sonsuza dek açık bırakıyordu.
+Mağaza sayfasına talep referansı, yazışma ve cevap formu eklendi. Panelin uçları mağaza bazında
+yetkilendirdiği için müşteri ayrımı eklenti tarafında kuruldu — bir müşteri başka bir müşterinin
+talebine erişemez. Sistematik tarandı: kapalı döngü yalnız bu bir taneydi.
+
+**Panel operatöre yanlış bilgi veriyordu.** "Test modu açıkken siparişler gerçek teslimat üretmez"
+yazıyordu; oysa test modu yalnız e-postaları yönlendiriyor — gerçek stok tüketiliyor, gerçek lisans
+atanıyor ve müşteri çalışan anahtarı görüyor. Aynı formun birkaç satır altında doğrusu yazılıydı.
+
+Aynı sınıftan yaklaşık kırk sapma daha düzeltildi: şablon önceliği ters anlatılıyordu; paket adedi
+açıklaması stok yakacak biçimde yanlıştı; denetim ekranındaki "yönetici girişleri" filtresi hiç
+yazılmayan bir kayda bağlıydı ve daima boş dönüyordu; "gönderen e-posta" alanı kaydediliyor ama
+hiçbir maili etkilemiyordu; ön sipariş "yayın tarihinde teslim edilir" diyordu ama o tarihte hiçbir
+şey tetiklenmiyordu; sürüm yayınlamada eski bir sürüm sessizce kabul edilip "siteler
+güncelleyebilir" deniyordu; dağıtım ekranı "otomatik kapanır" derken kilit kendi kendine
+açılamıyordu; geliştirme rehberi taze bir kopyada hiç çalışmıyordu ve yayın rehberindeki geri alma
+komutu geri almayı iptal ediyordu.
+
+Bunların yanında birkaç davranış düzeltmesi: değişim yolunda sonsuz "tekrar deneyin" döngüsüne yol
+açan bir sayım eksiği, kalıcı olarak giriş yapamayan hesap üretebilen bir uzunluk boşluğu, geri
+çekme sonuç bandının askıdaki lisansları saymaması, ve aynı ürün için iki ekranın farklı tükenme
+tahmini vermesi.
+
+**Geliştirme bağımlılıklarındaki açıklar kapandı** (test altyapısı bir ana sürüm yükseltildi;
+denetim artık tüm ağaç için temiz). Bu daha önce "test paketini riske atar" diye ertelenmişti;
+paket aynı veritabanında tekrar tekrar koşabilir hâle geldiği için risk ölçülebildi ve doğrulandı.
+
+**Yönetici token'ı yenilendi** (eski değer geçmiş loglarda düz metin görünüyordu). Test paketi de
+sertleştirildi: sabit anahtarlar etiketlendi, sessiz atlama artık hata veriyor ve dosya sırası
+alfabetik sabitlendi — eskiden dosya boyutuna bağlıydı, yani bir satır eklemek koşum sırasını
+sessizce değiştiriyordu.
+
+
 ### Kararlılık turu: havuz kilitlenmesi · dağıtım probu · boot dayanıklılığı · test idempotanlığı (migration YOK)
 
 Bu tur "yeni özellik" değil, **sistemin kendini yanlış anlatmasını** bitirmeye odaklandı. Doğrulama

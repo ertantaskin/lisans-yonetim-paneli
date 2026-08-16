@@ -2758,3 +2758,98 @@ yolu (admin-orders/stock) bende. **ORTAK PAYDA: sistem bir şeyin çalıştığ�
   gerçek müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm veriyor) · `BACKUP_OFFSITE_CMD`
   TANIMSIZ → yedekler yalnız o sunucuda (alarm üretiliyor) · ADMIN_TOKEN rotasyonu (log geçmişinde
   düz metin duruyor).
+
+**KALAN EKSİKLER TURU → AAD ORACLE'I (KENDİ EKSİK DÜZELTMEM) + KAPALI DESTEK DÖNGÜSÜ + ~40 METİN↔KOD
+SAPMASI (commit 50b0f96, CANLI prod+dev, eklenti v1.1.3, migration YOK):** Kullanıcı "kalan eksikler
+neler, onları da tespit edip düzeltir misin" dedi. 5 lens (belge↔gerçek uyumu · müşteri deneyimi ·
+docstring iddiaları · admin metinleri · ölü-uç/kapalı-döngü taraması) + 5 ayrık-dosya işçi.
+
+- **[YÜKSEK/güvenlik] AAD ad-alanı oracle'ı HÂLÂ AÇIKTI — 3. turdaki KENDİ düzeltmem eksikti.**
+  `connectTokenAad(tokenId)` eklenmişti ama `onboarding.claim`'de **KOŞULSUZ** legacy geri düşüş
+  bırakılmıştı: yeni AAD patlayınca `catch` `siteSecretAad(siteId)`'yi deniyordu. Saldırı zinciri
+  kodda TAM karşılanıyordu — `site_connect_tokens.site_id` düz uuid (FK YOK) → DB'ye YAZMA erişimi
+  olan biri `sites.hmac_secret_enc` blob'unu kendi eklediği token satırına KOPYALAR, `expires_at`i
+  kendi yazar, kimlik istemeyen `POST /v1/connect/claim`i çağırır; yeni AAD tutmaz → catch → eski AAD
+  **blob'un GERÇEKTEN şifrelendiği AAD'dir** → çözülür → sitenin DÜZ METİN `hmac_secret`'i yanıtta
+  döner. Sonrasında düz metin lisans döndüren `GET /orders/:id/deliveries` dahil her site-facing uç
+  imzalanabilir — **MASTER_KEY hiç ele geçirilmeden**. `crypto.service.ts` docstring'im "sınıf
+  kapanır" diyordu; kapanmamıştı. "Kodların ömrü 15 dk, dal kısa sürede ölür" gerekçem de yalnız
+  MEŞRU satırlar için geçerliydi — saldırgan `expires_at`i kendi yazdığı için dal ASLA ölmüyordu.
+  Geri düşüş KALDIRILDI (token-AAD'ye geçiş saatler önce dağıtıldı + meşru kod ömrü 15 dk ⇒ geriye
+  dönük etki YOK); o dal artık 400 + `logger.error` ile GÖRÜNÜR bir saldırı sinyali.
+  **DERS ([[denetim-regresyon-dersleri]] #17'nin ikizi):** "eski davranışa geri düşüş" bir güvenlik
+  düzeltmesinin İÇİNDE bırakılırsa düzeltme YAPILMAMIŞ sayılır — geri düşüşü ya kaldır ya da
+  saldırganın KONTROL EDEMEYECEĞİ bir koşula (dağıtım damgası) bağla. Ve kendi düzeltmenin
+  docstring'ine "kapandı" yazmadan önce saldırı zincirini kod üzerinde SON HÂLİYLE yeniden yürü.
+- **[YÜKSEK/müşteri] Destek yazışması TAMAMEN KAPALI DÖNGÜYDÜ.** API'de iki yönlü yazışma kuruluydu
+  (`GET/POST /v1/replacements/:id/messages` — site-scoped, iç notlar süzülü, hız sınırlı) ama eklenti
+  bu uçları **HİÇ** çağırmıyor, `create()` yanıtındaki `{id}`'yi de okumuyordu. Sonuç: operatör "Ek
+  bilgi iste" diyor, müşteriye soru maili gidiyor, müşterinin **cevap verecek hiçbir yolu yok**; tek
+  çıkış yeni talep açmak → 24s/5 bütçesini yer, eski talep sonsuza dek `info_requested` kalır ve
+  `unansweredByAdmin` hiçbir zaman `true` olamaz. Eklentiye talep referansı (`_wpteslimat_replacement_ids`
+  sipariş meta) + yazışma bloğu + cevap formu eklendi. **GÜVENLİK (işçinin kendi yakaladığı):** panel
+  uçları SİTE bazında yetkilendiriyor, MÜŞTERİ bazında DEĞİL → müşteri ayrımı eklentide kuruldu
+  (`owns_request()`; yabancı id 403 ve panele HİÇ gitmez). Doğru katman: API mağazaya güvenir,
+  müşteri ayrımı mağazanın sorumluluğudur. **SİSTEMATİK TARANDI:** 14 site-facing uçtan yalnız
+  `messages` kapalı döngüydü (yararlı negatif sonuç — sorun sınırlandı).
+- **[YÜKSEK/operatör] Sandbox metni YALAN söylüyordu.** "Sandbox açıkken siparişler gerçek teslimat
+  üretmez" — oysa `sandbox` `apps/api/src` içinde YALNIZ mail yolunda okunuyor (`orders/` dizininde
+  SIFIR eşleşme): gerçek stok tüketilir, gerçek lisans atanır, müşteri çözülmüş anahtarı görür;
+  yalnız mail operatöre döner. Canlı bir mağazayı "test moduna" alıp deneme siparişi geçen operatör
+  envanteri yakardı. Aynı formun 15 satır altında DOĞRUSU yazılıydı (aynı ekranda iki çelişen metin —
+  bu projede tekrarlayan sınıf; doğru olanı kopyalamak yeterliydi).
+- **[ORTA] Aynı ürün için iki ekran FARKLI tükenme tahmini veriyordu:** `products.detailVelocity`
+  elle yazılmış statü listesi kullanıyor ve `ol.canceled` filtresi TAŞIMIYORDU (`reports.velocity` +
+  `reorder.salesCte` taşıyordu) → iade yollarının aday kümesi `('active','suspended')` olduğu için
+  tam iadeden SONRA hayatta kalan `expired` atama ürün detayında satış sayılıyordu. `STANDING_STATUSES`
+  + `canceled=false` ile hizalandı ("aynı kavramın iki yüklemi" sınıfı).
+- **[~40 METİN↔KOD SAPMASI]** şablon önceliği TERS yazılıydı (gerçek: ürün+site > ürün > site > genel;
+  site'ye özel şablon yazan operatör sessizce eziliyordu) · `bundleQty` açıklaması stok yakacak
+  biçimde yanlıştı (adetle ÇARPILIYOR) · `/audit` "yönetici girişleri" filtresi hiç yazılmayan bir
+  enum değerine bağlıydı (daima boş; girişler `security_events`'te) · "gönderen e-posta" alanı ÖLÜ
+  (`from` her zaman `MAIL_FROM`) · ön sipariş "yayın tarihinde teslim edilir" ama o tarihte hiçbir
+  süpürme tetiklenmiyor · `/releases` sürüm kapısı YOKTU (düşük sürüm 201, "siteler güncelleyebilir"
+  der, hiçbir site ASLA almaz — sitelere sunulan max semver) + "En yeni" rozeti `created_at`'ten ·
+  `/deployments` "30 dk sonra otomatik kapanır" derken temizlik yalnız `request()` içinde ve banner
+  çıkınca formlar kapalı (kilit kendi kendine AÇILAMAZ) · rehberde "denetim kaydı silinmez"
+  (auto-reveal 90g budanıyor) ve "her görüntüleme audit'e düşer" (yalnız owner düz metin) · Ctrl+K
+  sessizce ≥3 RAKAM istiyor · hesap ürününde anahtar araması çalışmaz · sert kotanın ödenmiş siparişi
+  429 ile REDDETTİĞİ hiçbir kullanıcı metninde yoktu · `GELISTIRME.md` taze klonda çalışmıyordu
+  (portları açan `docker-compose.override.yml` `.gitignore`'da, örneği YOKTU, `3005` hiçbir compose'da
+  geçmiyordu) → **`docker-compose.override.yml.example`** + `wp-dev.sh` artık `exit 1` ·
+  `RUNBOOK-RELEASE`'te elle rollback komutu geri almayı İPTAL ediyordu · `RUNBOOK-DR`'de iki
+  dış-kopya alarmı eksikti.
+- **[KOD]** `allocatableCountForLine` ön-sipariş kapısını (`stockless && release_at > now()`)
+  saymıyordu → değişimde SONSUZ "tekrar deneyin" döngüsü (SQL NULL tuzağı: `NOT (a AND b)` yazılamaz,
+  üç dallı OR gerekti) · admin kimlik uzunluğu OLUŞTURMA yolunda sınırsızdı (200+ karakterli e-postayla
+  açılan hesap KALICI giriş yapamaz; seed yolu controller Zod'unu hiç geçmiyor) · `ACCOUNT_FAIL_KEY`
+  inline kopyaları · `notExpiredCond` elle kopyası · geri çekme sonuç bandı askıdakileri saymıyordu
+  (yeşil "başarılı" derken iş listesi doluydu) · "hiç bağlanmadı" rozeti `last_seen_at`'e bakmıyordu ·
+  `revoke_failed` + `notice_failed` sözlükte yoktu (operatör çıplak snake_case görüyordu — ilki
+  sistemin EN ALARM VERİCİ olayı: "müşteride canlı lisans kalmış olabilir").
+- **[BAĞIMLILIK] Dev açıkları kapandı:** vitest 2→3 + `vite`/`esbuild` override → `pnpm audit`
+  **TÜM AĞAÇ** için temiz (6 açık). Daha önce "vitest 2→3 MAJOR, 400+ testi riske atar" diye
+  ertelenmişti; paket `globalSetup` sayesinde aynı DB'de tekrar tekrar koşabildiği için risk artık
+  ÖLÇÜLEBİLİYORDU → yükseltildi ve entegrasyon 410/410 + yarış 3/3 ile doğrulandı.
+- **[TEST]** sabit payload'lar etiketlendi (MASTER_KEY sabitlenirse `payload_hash` çakışır ve
+  `onConflictDoNothing` SESSİZCE atlar) + `importKeys`'e "sessiz atlama yasağı" kontrolü + dosya
+  sırası **ALFABETİK** sabitlendi (`sequence.sequencer`). Eskiden sıra dosya BOYUTUNA bağlıydı → bir
+  satır eklemek koşum sırasını sessizce değiştiriyordu; **koşarak DOĞRULANDI** (`account-…`,
+  `admin-revoke-…`, `admin-totp`, `admin-users.auth`, `anonymize`, `audit-list`).
+- **[OPS — kod değil, CANLI YAPILDI] `ADMIN_TOKEN` rotasyonu.** Tüm tüketiciler tek `.env`'den okuyor
+  (compose → api+admin; runner betikleri grep'liyor) → tek satır + yeniden başlatma. Değer hiçbir yere
+  YAZDIRILMADAN döndürüldü. Doğrulandı: yeni token 200, **eski token 401**, `/health` 200, admin
+  render ediyor, deploy+backup runner'ları 201 almaya devam ediyor (75 sn ölçüm: yeni 401 YOK —
+  log'daki 401'ler geçmişten kalma). `.env` yedeği (tüm prod sırlarının kopyası) silindi.
+- **Doğrulama:** typecheck 4/4 + **5 kapı** · birim shared 64 + api 174 + admin 154 · build 3/3 ·
+  **VPS taze test DB: entegrasyon 410/410 + yarış 3/3** · PHP-lint 13/13 · `pnpm audit` temiz ·
+  prod `/v1/health` 200 v1.1.0 + admin `/pending` 200 + api 0 ERROR · dev güncel · **eklenti v1.1.3
+  yayınlandı** (201, 130.557 bayt; public `plugin/info` 1.1.3, `download/1.1.3` 200, boyut birebir).
+- **BİLİNÇLİ YAPILMAYAN (raporlandı):** `.env.bak.1785665590` (benim değil, ~2 hafta önce) tüm prod
+  sırlarının fazladan kopyası — canlı `.env` ile AYNI MASTER_KEY/SESSION_SECRET/DB parolası taşıyor
+  (yani kurtarma artefaktı DEĞİL), izinleri 0600 ve `.dockerignore` kapsamında → SİLİNMEDİ (kullanıcının
+  dosyası, düşük risk). · `apps/audit/constants.ts`'te `login` enum değeri bilerek bırakıldı (sunucu
+  doğrulaması enum'un tamamını kabul etmeli), yalnız açılır listeden elendi.
+- **OPERATÖRE KALAN (kod değil, DEĞİŞMEDİ):** prod `SMTP_HOST` TANIMSIZ → teslimat mailleri gerçek
+  müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm) · `BACKUP_OFFSITE_CMD` TANIMSIZ → yedekler
+  yalnız o sunucuda. (ADMIN_TOKEN rotasyonu bu turda YAPILDI, listeden düştü.)
