@@ -25,8 +25,20 @@ export const DELIVERY_TEMPLATE_SAMPLE_VARS: Record<string, string> = {
   /**
    * Süreli hesap ürünlerinde lisansın bitiş tarihi (siparişteki EN YAKIN bitiş).
    * Süresiz üründe boş kalır.
+   *
+   * BİÇİM = GERÇEK ÇIKTI (mail.processor → formatValidUntil): gün.ay.yıl SAAT + saat dilimi.
+   * Buradaki örnek daha önce saat gösteriyor ama gerçek mail YALNIZ GÜN yazıyordu; yani
+   * şablon önizlemesi ile gönderilen mail ayrışmıştı — tam da bu dosyanın docstring'inde
+   * uyarılan sapma sınıfı. Saat dilimi etiketi ŞART: aynı an, mağazanın diliminde FARKLI
+   * GÜNE düşebiliyor (bkz. formatValidUntil gerekçesi).
    */
-  valid_until: '01.09.2027 21:00',
+  valid_until: '01.09.2027 21:00 (UTC+03:00)',
+  /**
+   * Aynı bitişin HAM ISO 8601 (UTC) karşılığı — yoruma kapalı, makine-okunur.
+   * Mağaza sayfası/.txt tarihi bu anlık değerden üretir → operatör şablonda ikisini yan yana
+   * kullanarak mail ile müşteri sayfasının aynı anı gösterdiğini kanıtlayabilir.
+   */
+  valid_until_iso: '2027-09-01T18:00:00.000Z',
   /**
    * §7 kurulum/etkinleştirme rehberi bloğu — ürüne bağlı talimat metni (product_guides).
    * Şablonda YOKSA blok mailin SONUNA eklenir (mail.processor → withGuides): mevcut

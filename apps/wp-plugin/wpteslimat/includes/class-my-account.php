@@ -108,18 +108,57 @@ class Wpteslimat_My_Account {
                 '</div>';
         }
 
-        // §7 durum matrisi: suspended ('inceleme altında') ve expired-hidden ('süreniz doldu')
-        // ATAMA-durum bayraklarından (order.status'a güvenmeden) çıkar — bunlar deliveries listesinde
-        // görünmese de müşteriye açıklanmalı.
+        /*
+         * §7 durum matrisi: suspended ('inceleme altında') ve expired-hidden ('süreniz doldu')
+         * ATAMA-durum bayraklarından (order.status'a güvenmeden) çıkar — bunlar deliveries
+         * listesinde görünmese de müşteriye açıklanmalı.
+         *
+         * KAPSAM DÜZELTMESİ: bu iki bant SİPARİŞ DÜZEYİNDE basılıyor ama koşul ATAMA
+         * düzeyinde oluşuyordu. Windows anahtarı (süresiz) + Office 365 (365 gün) taşıyan bir
+         * siparişte, bir yıl sonra sayfanın ÜSTÜNDE "Lisans sürenizin süresi doldu, tekrar
+         * satın alın" yazarken hemen ALTINDA Windows anahtarı canlı duruyordu (aynısı askıya
+         * almada). Panel `expiredProductNames` ile süre nedeniyle GİZLENEN atamaların ürün
+         * adlarını döndürüyor → bant o ürünlerle sınırlandırılır. Alan YOKSA (admin/api ayrı
+         * dağıtılır; dağıtım sapması olağandır) eski genel metne düşülür — hata verilmez.
+         */
+        $expired_names = self::string_list(isset($body['expiredProductNames']) ? $body['expiredProductNames'] : null);
+        $has_live = !empty($deliveries);
+
         if ($suspended) {
             echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
-                esc_html__('Lisansınız şu an inceleme altında. İnceleme tamamlanınca burada tekrar görünür olacaktır.', 'wpteslimat') .
+                esc_html(
+                    // Ekranda hâlâ canlı lisans varsa "Lisansınız inceleme altında" cümlesi
+                    // siparişin TAMAMINI kapsıyormuş gibi okunur → kapsamı daralt.
+                    $has_live
+                        ? __('Bu siparişteki bazı lisanslar şu an inceleme altında. İnceleme tamamlanınca burada tekrar görünür olacaktır.', 'wpteslimat')
+                        : __('Lisansınız şu an inceleme altında. İnceleme tamamlanınca burada tekrar görünür olacaktır.', 'wpteslimat')
+                ) .
                 '</div>';
         }
         if ($expired_h) {
+            if (!empty($expired_names)) {
+                // Adet DEĞİL, ÜRÜN ADI yazılır: gelen liste tekilleştirilmiş ürün adlarıdır;
+                // "N lisansın süresi doldu" demek yanlış bir sayı iddia etmek olurdu.
+                $shown = array_slice($expired_names, 0, 6);
+                $more  = count($expired_names) - count($shown);
+                $names = implode(', ', $shown);
+                if ($more > 0) {
+                    $names .= ' ' . sprintf(
+                        /* translators: %d = listede gösterilmeyen ürün adedi */
+                        __('ve %d ürün daha', 'wpteslimat'),
+                        $more
+                    );
+                }
+                $msg = sprintf(
+                    /* translators: %s = süresi dolan ürün adları */
+                    __('Şu ürünlerin lisans süresi doldu: %s. Yeni bir lisans için mağazadan tekrar satın alabilir veya destek ekibimizle iletişime geçebilirsiniz.', 'wpteslimat'),
+                    $names
+                );
+            } else {
+                $msg = __('Lisans sürenizin süresi doldu. Yeni bir lisans için mağazadan tekrar satın alabilir veya destek ekibimizle iletişime geçebilirsiniz.', 'wpteslimat');
+            }
             echo '<div class="woocommerce-info" role="status" style="margin-bottom:12px">' .
-                esc_html__('Lisans sürenizin süresi doldu. Yeni bir lisans için mağazadan tekrar satın alabilir veya destek ekibimizle iletişime geçebilirsiniz.', 'wpteslimat') .
-                '</div>';
+                esc_html($msg) . '</div>';
         }
 
         // §7 kısmi ilerleme göstergesi (partial → "X / Y teslim edildi" + çubuk).
@@ -159,6 +198,18 @@ class Wpteslimat_My_Account {
                     echo '<p>' . esc_html($this->status_message($status)) . '</p>';
                 }
             }
+
+            /*
+             * "Sorun Bildir" BOŞ/HATA dallarında da basılır.
+             *
+             * Buton yalnız teslimat DÖNGÜSÜNÜN İÇİNDE render ediliyordu → stok beklerken,
+             * `unmapped`'ta, `revoked`'da, panel erişilemezken ve süre dolup lisans gizlendiğinde
+             * ekranda HİÇBİR aksiyon kalmıyordu; üstelik bu dallardaki iki mesaj "destek
+             * ekibimizle iletişime geçin" derken bir bağlantı vermiyordu (çıkmaz sokak). Panel
+             * atamasız talebi ZATEN destekliyor (`assignmentId` opsiyonel) → boş atama kimliğiyle
+             * tek bir buton yeter. Tüm boş dalları kapsasın diye blok SONUNDA, tek yerde basılır.
+             */
+            Wpteslimat_Report_Issue::render_button($order, '');
         } else {
             self::clear_held($order);
 
@@ -206,15 +257,37 @@ class Wpteslimat_My_Account {
                 // Başlık YALNIZ kalem gerçekten çözülebildiğinde basılır; çözülemeyen satır (eski
                 // teslimat, silinmiş/bilinmeyen kalem) başlıksız ESKİ davranışa düşer — asla fatal olmaz.
                 if ($group['label'] !== '') {
-                    echo '<div class="wpt-card__head">';
-                    echo '<span class="wpt-card__title">' . esc_html($group['label']) . '</span>';
+                    /*
+                     * (§11 MAK / çok kullanımlı) Sayaç YALNIZ KAYIT sayıyordu: MAK'ta qty=5 tek
+                     * atamaya düşer (units=5) → müşteri kartında "1 lisans" yazarken sipariş
+                     * kutusu "1 lisans (toplam 5 kullanım hakkı)", mail ise "(5 adet)" diyordu.
+                     * Aynı veri üç yüzeyde üç farklı sayı → müşteri eksik teslimat sanıyordu.
+                     * v1.0.7'de sipariş kutusu düzeltilmişti, MÜŞTERİ kartı atlanmıştı; artık
+                     * sipariş kutusuyla BİREBİR aynı dil kullanılıyor. Tek kullanımlık üründe
+                     * (tüm units=1) metin AYNEN eski hâlinde kalır — gereksiz gürültü eklenmez.
+                     */
+                    $rows_count  = count($group['rows']);
+                    $units_total = 0;
+                    foreach ($group['rows'] as $gr) {
+                        $units_total += isset($gr[1]['units']) ? max(1, (int) $gr[1]['units']) : 1;
+                    }
                     // `_n()` KULLANILMIYOR: Türkçede sayıdan sonra çoğul eki gelmez ("3 lisans"),
                     // iki özdeş biçim yazmak çeviri dosyasına anlamsız bir çoğul kuralı sokardı.
-                    echo '<span class="wpt-card__count">' . esc_html(sprintf(
+                    $count_txt = sprintf(
                         /* translators: %d = bu üründe teslim edilen lisans kaydı adedi */
                         __('%d lisans', 'wpteslimat'),
-                        count($group['rows'])
-                    )) . '</span>';
+                        $rows_count
+                    );
+                    if ($units_total > $rows_count) {
+                        $count_txt .= ' ' . sprintf(
+                            /* translators: %d = kayıtların taşıdığı toplam kullanım/aktivasyon hakkı */
+                            __('(toplam %d kullanım hakkı)', 'wpteslimat'),
+                            $units_total
+                        );
+                    }
+                    echo '<div class="wpt-card__head">';
+                    echo '<span class="wpt-card__title">' . esc_html($group['label']) . '</span>';
+                    echo '<span class="wpt-card__count">' . esc_html($count_txt) . '</span>';
                     echo '</div>';
                 }
                 echo '<div class="wpt-card__body">';
@@ -318,6 +391,16 @@ class Wpteslimat_My_Account {
                 echo '</div>'; // .wpt-card
             }
         }
+
+        /*
+         * §13 DESTEK YAZIŞMASI — teslimat listesinin altında, her dalda (teslimat olsun olmasın).
+         *
+         * Operatör panelden "Ek bilgi iste" dediğinde müşteriye mail gidiyor ama müşterinin
+         * CEVAP VERECEK hiçbir yolu yoktu: tek çıkış "Sorun Bildir"e tekrar basmaktı, o da YENİ
+         * talep açıp 24 saatlik bütçeyi yiyordu ve eski talep sonsuza dek `info_requested`
+         * kalıyordu. Blok kendi hatalarını içeride yutar (panel erişilemezse sayfa DÜŞMEZ).
+         */
+        Wpteslimat_Report_Issue::render_threads($order);
 
         // §7 canlı tamamlama yoklaması: sipariş HENÜZ TAMAMLANMADIYSA (pending/partial/held) küçük bir
         // script durum özetini periyodik yoklar, ilerleyince sayfayı yeniler (payload JS'e girmez).
@@ -431,7 +514,14 @@ class Wpteslimat_My_Account {
         .wpteslimat-deliveries .wpt-code{user-select:all;word-break:break-all;background:rgba(128,128,128,.14);border-radius:6px;padding:3px 8px;font-size:.95em}
         .wpteslimat-deliveries .wpt-code--key{font-size:1.02em;letter-spacing:.02em}
         .wpteslimat-deliveries .wpt-note{margin:4px 0 0;font-size:.85em;opacity:.8}
-        .wpteslimat-deliveries .wpt-note--warn{color:#b45309;opacity:1}
+        /*
+         * "Süresi doldu" vurgusu TEMA-NÖTR. Eskiden sabit `color:#b45309` idi: koyu zeminde
+         * ≈3,7:1 kontrast veriyor, üstelik `.wpt-note`ın `.85em` puntosuyla birleşince
+         * okunmuyordu. Renk artık temadan MİRAS ALINIR (currentColor) — ayrım kalınlık,
+         * tam opaklık, biraz daha büyük punto ve yarı saydam gri katmanla yapılır. Yeni
+         * sabit renk EKLENMEZ (kart stillerinin tema-nötr yaklaşımının aynısı).
+         */
+        .wpteslimat-deliveries .wpt-note--warn{opacity:1;font-size:.9em;font-weight:600;display:inline-block;background:rgba(128,128,128,.18);border-radius:6px;padding:2px 8px}
         .wpteslimat-deliveries .wpt-guide{border-top:1px solid rgba(128,128,128,.22);background:rgba(128,128,128,.05)}
         .wpteslimat-deliveries .wpt-guide__summary{cursor:pointer;padding:10px 14px;font-weight:600;font-size:.95em;list-style:none}
         .wpteslimat-deliveries .wpt-guide__summary::-webkit-details-marker{display:none}
@@ -665,7 +755,12 @@ class Wpteslimat_My_Account {
                     $lines[] = sprintf($units_msg, $units);
                 }
                 if (!empty($d['validUntil'])) {
-                    $lines[] = __('Geçerlilik:', 'wpteslimat') . ' ' . self::format_date($d['validUntil']);
+                    // Ekranla AYNI ayrım: süresi DOLMUŞ lisans "Geçerlilik:" diye yazılırsa
+                    // müşterinin SAKLADIĞI dosya ölü lisansı geçerliymiş gibi gösterir (ekran
+                    // "Süresi doldu:" derken dosya tersini söylüyordu — iki yüzey çelişemez).
+                    $lines[] = (!empty($d['expired'])
+                        ? __('Süresi doldu:', 'wpteslimat')
+                        : __('Geçerlilik:', 'wpteslimat')) . ' ' . self::format_date($d['validUntil']);
                 }
                 $lines[] = '';
             }
@@ -797,9 +892,36 @@ class Wpteslimat_My_Account {
         switch ($status) {
             case 'pending':   return __('Siparişiniz hazırlanıyor, stok bekleniyor.', 'wpteslimat');
             case 'partial':   return __('Siparişinizin bir kısmı teslim edildi, kalanı hazırlanıyor.', 'wpteslimat');
-            case 'revoked':   return __('Bu sipariş iade/iptal edildi.', 'wpteslimat');
+            /*
+             * 'revoked' İADE İDDİA ETMEZ.
+             *
+             * Bu durum yalnız iade/iptalde değil, İNCELEME REDDİNDE de oluşur (§8): ödeme
+             * alınmıştır, WooCommerce siparişi hâlâ "İşleniyor" görünür. Eski metin ("Bu sipariş
+             * iade/iptal edildi.") müşteriyi olmayan bir para iadesini beklemeye itiyordu.
+             * Doğru olan tek şey lisansların geri alındığıdır; ticari sonucu (iade yapıldıysa)
+             * müşteri WooCommerce'in KENDİ sipariş durumundan zaten görür. Destek yolu hemen
+             * altındaki "Sorun Bildir" ile verilir.
+             */
+            case 'revoked':   return __('Bu siparişteki lisanslar geri alındı ve artık kullanılamıyor. Sorunuz varsa aşağıdan destek ekibimize yazabilirsiniz.', 'wpteslimat');
             case 'unmapped':  return __('Siparişiniz inceleniyor; kısa süre içinde hazırlanacak.', 'wpteslimat');
             default:          return __('Teslimat bilgisi yükleniyor.', 'wpteslimat');
         }
+    }
+
+    /**
+     * Panelden gelen serbest dizinin güvenli string listesi (boşlar elenir, tekilleştirilir).
+     * Alan hiç gelmeyebilir (dağıtım sapması) → boş dizi; çağıran eski metne düşer.
+     *
+     * @return array<int, string>
+     */
+    private static function string_list($raw) {
+        if (!is_array($raw)) return [];
+        $out = [];
+        foreach ($raw as $v) {
+            if (!is_scalar($v)) continue;
+            $v = trim((string) $v);
+            if ($v !== '') $out[] = $v;
+        }
+        return array_values(array_unique($out));
     }
 }

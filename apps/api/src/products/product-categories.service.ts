@@ -1,6 +1,7 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
+import { notExpiredCond } from '../assignment/assign';
 import { rawRows } from '../db/raw-query';
 import { isUniqueViolation } from '../db/pg-error';
 import { productCategories } from '../db/schema/productCategories';
@@ -65,8 +66,11 @@ export class ProductCategoriesService {
           LEFT JOIN license_items li
             ON li.product_id = p.id
            AND li.status = 'available'
-           -- Süresi geçmiş kalem ATANAMAZ → sayımdan da düşer (assign.ts notExpiredCond ile aynı).
-           AND (li.expires_at IS NULL OR li.expires_at > now())
+           -- Süresi geçmiş kalem ATANAMAZ → sayımdan da düşer. Yüklem ELLE YAZILMAZ:
+           -- assign.ts'teki TEK KAYNAK (notExpiredCond) buraya da import edilir — o dosyanın
+           -- "kopyala-yapıştır sapması imkânsız olsun" güvencesini bu sayım da taşısın
+           -- (18 tüketici arasında tek elle yazılmış kopya buydu).
+           AND ${notExpiredCond('li')}
           GROUP BY p.id, p.category_id, p.low_stock_threshold
         ),
         cards AS (

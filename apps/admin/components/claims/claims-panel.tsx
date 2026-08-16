@@ -174,8 +174,15 @@ export function PendingClaimsPanel({
           <AlertDescription>
             Havuz sunucu üst sınırına{limit ? ` (${limit.toLocaleString('tr-TR')} kalem)` : ''}{' '}
             dayandı — bildirilmeyi bekleyen bazı (daha eski) kalemler aşağıdaki gruplarda
-            GÖRÜNMÜYOR olabilir. Fiş kesildiğinde adaylar sunucuda kilit altında TAZEDEN okunur,
-            yani fiş eksik kesilmez; eksik olan yalnız bu ekrandaki önizlemedir.
+            GÖRÜNMÜYOR olabilir.{' '}
+            {/* "FİŞ EKSİK KESİLMEZ" GARANTİSİ KALDIRILDI: fiş kesme yolu adayları kilit altında
+                TAZEDEN okur ama AYNI üst sınırla (MAX_CLAIM_ITEMS = 2000) okur ve `create()`
+                herhangi bir kırpma bayrağı DÖNDÜRMEZ. Aday sayısı sınırı aşıyorsa fiş de o
+                kadarını kapsar ve operatör bunu hiçbir yerde göremez — "eksik olan yalnız
+                önizleme" demek yanlış güven veriyordu. */}
+            Kesilecek fiş de aynı üst sınıra tabidir: sınırı aşan kalemler bu fişe GİRMEZ ve
+            havuzda bekler — kalanlar için ikinci bir fiş kesin (ya da tedarikçi/tarih aralığını
+            daraltın).
           </AlertDescription>
         </Alert>
       )}

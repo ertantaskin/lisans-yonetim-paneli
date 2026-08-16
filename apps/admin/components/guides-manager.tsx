@@ -307,8 +307,16 @@ function GuideForm({
           <li>
             <strong>Madde listesi:</strong> satır başına <code>-</code> koyun.
           </li>
+          {/*
+            KURAL EKSİKTİ: `renderGuideHtml` bir bloğu YALNIZ tek satırdan oluşuyorsa başlık
+            sayar (`lines.length === 1`). "## Kurulum" hemen adımların üstüne yazılırsa aynı
+            bloğa düşer, başlık olarak TANINMAZ ve mağaza sayfasında ham "## Kurulum" görünür
+            (üstelik e-posta düz metin sürümü temiz göründüğü için iki yüzey sessizce ayrışır).
+          */}
           <li>
-            <strong>Ara başlık:</strong> satır başına <code>##</code> koyun.
+            <strong>Ara başlık:</strong> satır başına <code>##</code> koyun ve{' '}
+            <strong>öncesinde/sonrasında boş satır bırakın</strong> — başlık tek başına bir satır
+            olmalı; adımlara bitişik yazılırsa başlık olarak tanınmaz, olduğu gibi görünür.
           </li>
           <li>
             <strong>Vurgu:</strong> <code>**önemli**</code> yazımı kalınlaştırır.

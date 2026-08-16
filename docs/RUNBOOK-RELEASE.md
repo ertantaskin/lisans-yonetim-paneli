@@ -48,16 +48,41 @@ dağıtım yapacaksa bu adımları izler. Amaç: her seferinde aynı, güvenli, 
    ```bash
    ssh -i <key> root@167.233.108.12 'cd /opt/lisans-yonetim-paneli && ./scripts/deploy.sh api admin'
    ```
-   `deploy.sh` şunları yapar: `git pull` → değişen servis(ler)i build → `up -d` →
-   migration (api açılışında otomatik: `migrate.js && main.js`) → `/health` 200 kontrolü →
-   **başarısızsa otomatik geri alma** (önceki commit'e checkout + rebuild) → `docs/DEPLOY-LOG.md`'ye kayıt.
+   `deploy.sh` şunları yapar: temiz-ağaç kontrolü → `git pull --ff-only` → **argümanla verilen
+   servisleri** (varsayılan `api admin`; değişiklik tespiti YOK, verilen ne ise o) build →
+   `up -d` → migration (api açılışında otomatik: `migrate.js && main.js`) → sağlık kapısı
+   (**API `/v1/health` + admin dağıtıldıysa admin runtime probu**) → **başarısızsa otomatik geri
+   alma** (dala BAĞLI kalarak `git reset --hard <önceki-sha>` + rebuild) → disk temizliği
+   (dangling imaj + eski build cache) → sunucu-yerel `.deploy-history.log`'a ham denetim satırı.
+
+   > **`docs/DEPLOY-LOG.md` OTOMATİK GÜNCELLENMEZ.** Betiğin yazdığı dosya `.deploy-history.log`'tur
+   > ve `.gitignore`'dadır (sunucu-yerel, ham). Görünür geçmiş satırını **siz** eklersiniz;
+   > `deploy.sh` bitişte yalnız bunu hatırlatan bir satır basar.
 6. **Doğrula:** `curl https://api.167-233-108-12.sslip.io/v1/health` → `{"status":"ok"}`.
 
 ### Geri alma (rollback)
-`deploy.sh` health başarısızsa otomatik geri alır. Elle geri almak için:
+`deploy.sh` build/up/sağlık adımlarından biri başarısızsa **otomatik** geri alır: dala BAĞLI
+kalarak `git reset --hard <önceki-sha>` + rebuild (bilerek `git checkout` DEĞİL — detached HEAD
+sonraki tüm dağıtımları `git pull --ff-only` adımında kilitlerdi).
+
+> **Elle geri alırken `git checkout <sha>` KULLANMAYIN.** Bu, geri almayı iptal eder: bir
+> sonraki `deploy.sh` detached HEAD'i görüp `main` dalına döner (self-heal) ve ff-pull ile
+> **yine en yeni kodu** dağıtır. Doğru iki yol:
+
 ```bash
-ssh ... 'cd /opt/lisans-yonetim-paneli && git checkout <önceki-sha> && ./scripts/deploy.sh api admin'
+# 1) KALICI (önerilen) — kötü commit'i geri al, normal akışla dağıt:
+#    geliştirici makinesinde:
+git revert <kötü-sha> && git push origin main
+#    sonra VPS'te:
+ssh ... 'cd /opt/lisans-yonetim-paneli && ./scripts/deploy.sh api admin'
+
+# 2) ACİL/GEÇİCİ (VPS'te, dala bağlı kalır):
+ssh ... 'cd /opt/lisans-yonetim-paneli && git reset --hard <önceki-sha> \
+  && docker compose build api admin && docker compose up -d api admin'
 ```
+
+(2) geçicidir: bir sonraki `deploy.sh` koşumu ff-pull ile yine ileri sarar → kalıcı çözüm için
+(1) şarttır.
 Migration geri alma: migration'lar ileri-uyumlu additive'dir; şema geri almak GEREKMEZ
 (eski kod yeni şemayla çalışır). Gerekirse DB yedeğinden dön (bkz. RUNBOOK-DR).
 
@@ -70,7 +95,10 @@ gereği istek (panel) ile çalıştırma (host) ayrıdır. Sayfada canlı sürü
 
 **Runner kurulumu (VPS'te, bir kez):**
 ```bash
-apt-get install -y jq                      # gerekli (JSON)
+apt-get install -y jq                      # jq ZORUNLU (betik yokluğunu açıkça bildirir)
+# Ayrıca şunlar kurulu olmalı: curl · git · docker (deploy.sh için) · base64 (publish-plugin.sh)
+# · flock = util-linux (tek-örnek kilidi) · sed. Eksiklerinde arıza YANLIŞ teşhis edilir
+# (ör. curl yoksa "claim başarısız / API kapalı" gibi görünür).
 crontab -e
 # şu satırı ekle (dakikada bir bekleyen isteği kontrol eder):
 * * * * * /opt/lisans-yonetim-paneli/scripts/deploy-runner.sh >> /var/log/deploy-runner.log 2>&1
@@ -84,9 +112,21 @@ crontab -e
 > da kilitlenmez, ama tek doğru kurulum budur).
 
 Runner `ADMIN_TOKEN`'ı repo kökündeki `.env`'den okur; API'ye `X-Admin-Token` ile bağlanır.
-Aynı anda yalnız bir aktif dağıtım olur; runner çökerse 30dk'dan eski "running" kaydı otomatik
-"failed" olur (kilit açılır). İlk kez bu özelliği yayına almak için A adımını (SSH+deploy.sh) bir
-kez kullan; sonraki dağıtımlar panelden tetiklenebilir.
+Aynı anda yalnız bir aktif iş olur — **dağıtım ve yedek AYNI kuyruğu paylaşır** (bkz. §A2 ve
+`docs/RUNBOOK-DR.md §4.3`). Runner çökerse "running" kaydı **hedefe göre** otomatik "failed"
+olur ve kilit açılır:
+
+| Hedef | Zombi eşiği |
+|---|---|
+| `api` · `admin` · `api admin` · `plugin` | 30 dk |
+| `backup` | 120 dk |
+| `backup-drill` | 240 dk (RTO ≤ 2sa hedefi — süren meşru bir tatbikatı erken öldürmemek için) |
+
+Hiç claim edilmemiş **`pending`** istek ise hedeften bağımsız **30 dk** sonra kapatılır (bu
+"runner çalışmıyor" demektir — cron'u ve `/var/log/deploy-runner.log`'u kontrol et).
+
+İlk kez bu özelliği yayına almak için A adımını (SSH+deploy.sh) bir kez kullan; sonraki
+dağıtımlar panelden tetiklenebilir.
 
 Runner **iki hedef sınıfına** dallanır (claim yanıtındaki `target`):
 
@@ -153,13 +193,18 @@ kendi güncelleyicisiyle `/v1/updates/plugin/info`'yu yoklar).
    yayınlar; B2'yi ayrıca çalıştırmak aynı sürümü üzerine yazar, zararsızdır.)
 
    Sonra panelde **Sürümler (/releases)** → **"Kaynaktan yayınla"** (changelog metni girilebilir).
+   **Owner-only:** her iki yayınlama yolu da yalnız `owner` rolündeki yöneticiye görünür
+   (birincil kapı Next `isOwner()`, API'de `OwnerGuard` savunma derinliği). Owner değilseniz
+   düğme yerine açıklama görürsünüz.
    Panel bir dağıtım isteği kaydeder (`target=plugin`, `note=changelog`); VPS host'undaki cron
    runner (`deploy-runner.sh`) bunu alır ve `publish-plugin.sh`'ı çalıştırır:
    `git pull --ff-only` → eklenti dizini temiz mi → sürümü **HEAD'den** oku (başlık +
    `WPTESLIMAT_VERSION` tutarlı ve SemVer olmalı) → `git archive` ile zip → panele publish.
    Sonuç (başarılı/başarısız + SHA + tam log) **/deployments** ekranında görünür.
 
-   **Alternatif (UI, elle zip):** panelde **Sürümler (/releases)** → "Yeni sürüm yayınla" (zip yükle).
+   **Alternatif (UI, elle zip):** panelde **Sürümler (/releases)** → "Yeni sürüm yayınla" (zip yükle) —
+   bu da **owner-only**'dir (kurtarma yolu; normalde "Kaynaktan yayınla" tercih edilir, çünkü
+   "yayınlanan zip = HEAD" invaryantını yalnız o korur).
 3. **Doğrula:** panelde **/releases** listesinde yeni sürüm görünür; müşteri sitesi
    WP yönetici → Güncellemeler'de eklentiyi güncelleyebilir.
 
@@ -170,7 +215,9 @@ kendi güncelleyicisiyle `/v1/updates/plugin/info`'yu yoklar).
 
 ### B3. Neden VPS'te sürüm artırılmıyor / commit-push yapılmıyor?
 
-`release-plugin.sh` VPS'te **çalışamaz** ve bu bilinçli bir sınırdır:
+`release-plugin.sh` VPS'te **sürüm ARTIRAMAZ** (yalnızca sürüm dosyaları HEAD ile zaten
+aynıysa, yani "aynı sürümü yeniden yayınla" durumunda commit adımını atlayıp devam eder).
+Bu bilinçli bir sınırdır; VPS'in doğru aracı `publish-plugin.sh`'tır:
 
 * Prod checkout'unda (`/opt/lisans-yonetim-paneli`) `git config user.email` ve `user.name`
   **tanımlı değil** → `git commit` hata verir.
@@ -202,12 +249,31 @@ runner tarafından **/deployments** kaydına yazılır):
 ## C. İzole dev/staging (VPS'te)
 
 Prod'a dokunmadan gerçek bir ortamda test için ayrı proje:
+Tek giriş noktası `scripts/dev-stack.sh` — compose'u elle çağırma:
 ```bash
-# VPS'te (ayrı proje adı → ayrı DB/ağ/volume; prod ile karışmaz)
-ssh ... 'cd /opt/lisans-dev && docker compose -p lisansdev --env-file .env.dev up -d --build'
+ssh ... '/opt/lisans-yonetim-paneli/scripts/dev-stack.sh up'          # panel yığını (build + sağlık beklemesi)
+ssh ... '/opt/lisans-yonetim-paneli/scripts/dev-stack.sh wp'          # izole WordPress dev sitesi
+ssh ... '/opt/lisans-yonetim-paneli/scripts/dev-stack.sh status'      # durum
+ssh ... '/opt/lisans-yonetim-paneli/scripts/dev-stack.sh down'        # durdur
+ssh ... '/opt/lisans-yonetim-paneli/scripts/dev-stack.sh subdomains'  # prod Caddy'yi dev ağına bağla
 ```
-Detay + alt-alan adları: `docs/GELISTIRME.md` ve dev override dosyaları. İzole yığın
-kendi Postgres/Redis/DB'siyle çalışır → test siparişleri prod DB'sine **asla** yazılmaz.
+
+Betiğin sardığı komut (yalnız elle koşmak gerekirse):
+```bash
+cd /opt/lisans-dev && docker compose -p lisansdev --env-file .env.dev \
+  -f docker-compose.yml -f docker-compose.dev.yml \
+  up -d --build postgres redis mailpit api admin
+```
+
+> **İKİ AYRINTI KRİTİK** (eksikse komut ya işe yaramaz ya da PROD'u böler):
+> `-f docker-compose.dev.yml` verilmezse dev portları (`127.0.0.1:3002/3006/8026`) **hiç
+> yayınlanmaz**; servis listesi verilmezse **`caddy` de kalkar** ve 80/443'ü tutan **prod
+> Caddy ile çakışır**.
+
+Erişim: dev API `http://127.0.0.1:3002/v1/health`, dev admin `http://127.0.0.1:3006`
+(SSH tüneli ile) ya da prod Caddy üzerinden dev alt-alan adları (`subdomains` alt komutu).
+Detay: `docs/GELISTIRME.md`. İzole yığın kendi Postgres/Redis/DB'siyle çalışır → test
+siparişleri prod DB'sine **asla** yazılmaz.
 
 ---
 
@@ -218,5 +284,5 @@ kendi Postgres/Redis/DB'siyle çalışır → test siparişleri prod DB'sine **a
 - [ ] CHANGELOG güncellendi
 - [ ] sürüm artırıldı + tag atıldı (sürüm çıktıysa)
 - [ ] `deploy.sh` health 200 döndü
-- [ ] DEPLOY-LOG.md satırı eklendi (deploy.sh otomatik ekler)
+- [ ] DEPLOY-LOG.md satırı **elle** eklendi (deploy.sh otomatik YAZMAZ — yalnız hatırlatır; onun yazdığı dosya sunucu-yerel `.deploy-history.log`'tur)
 - [ ] (eklentiyse) /releases'te yeni sürüm göründü

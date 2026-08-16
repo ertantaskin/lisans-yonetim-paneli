@@ -112,10 +112,11 @@ const facets: FacetConfig[] = [
   {
     columnId: 'status',
     title: 'Durum',
-    options: [
-      { label: 'Başarısız', value: 'failed', icon: TriangleAlert },
-      { label: 'Geri döndü', value: 'bounced', icon: TriangleAlert },
-    ],
+    // ÖLÜ SEÇENEK KALDIRILDI: 'bounced' yalnız OKUMA yüklemlerinde geçiyor (`ops.service`,
+    // `ai-summary.service`) — bu durumu YAZAN hiçbir kod yolu yok. Sağlayıcı bounce webhook'u
+    // bilinçli kapsam dışı (SMTP-only). Seçilebilir bırakılırsa filtre daima boş liste döndürür
+    // ve operatör bunu "geri dönen mail yok" diye okur.
+    options: [{ label: 'Başarısız', value: 'failed', icon: TriangleAlert }],
   },
 ];
 

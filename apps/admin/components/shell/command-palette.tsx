@@ -137,8 +137,21 @@ export function CommandPalette() {
             <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">ESC</kbd>
           </div>
           <Command.List className="max-h-80 overflow-y-auto p-2">
-            <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
-              Sonuç yok.
+            {/*
+              DÜRÜSTLÜK DÜZELTMESİ (denetim bulgusu): anahtar araması sessizce EN AZ 3 RAKAM
+              ister — search/search.service.ts:96-98 `digitCount < 3` ise sorguyu hiç
+              çalıştırmadan boş döner (yanlış eşleşme gürültüsünü kesen bilinçli kapı). Harf
+              ağırlıklı bir son-5 hane arayan operatör yalnız "Sonuç yok." görüyor, hata
+              almıyordu → "bu anahtar panelde kayıtlı değil" yanılgısı. Kısıt artık boş
+              durumda yazılı (kod kapısına dokunulmadı).
+            */}
+            <Command.Empty className="space-y-1 py-6 text-center text-sm text-muted-foreground">
+              <p>Sonuç yok.</p>
+              <p className="text-xs">
+                Anahtar araması için yazdığınız metinde <strong>en az 3 rakam</strong> olmalıdır;
+                harf ağırlıklı son-5 hane burada sonuç döndürmez. Tam anahtarla aramak için
+                Envanter ekranını kullanın.
+              </p>
             </Command.Empty>
 
             {filteredPages.length > 0 && (

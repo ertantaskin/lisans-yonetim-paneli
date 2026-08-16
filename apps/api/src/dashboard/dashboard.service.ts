@@ -166,10 +166,16 @@ const COUNTER_CACHE_TTL_MS = 60_000;
  * sipariş sayımıyla BİREBİR aynı SQL'dir → /mappings ekranındaki "N sipariş bekliyor" ile
  * üst şerit sayacı asla çelişmez.
  *
- * PERF: koşul `order_lines_pending_product_idx` KISMİ index'iyle (product_id üzerinde,
- * WHERE status IN ('pending','partial') AND canceled = false) birebir örtüşür. Eski sorgunun
- * taradığı `orders.status` için ADANMIŞ index YOKTU (seq scan) — yani bu değişiklik doğruluğu
- * düzeltirken poll sıcak yolunu da ucuzlatır.
+ * PERF: koşul `order_lines_pending_fifo_idx` KISMİ index'inin YÜKLEMİYLE örtüşür
+ * (WHERE status IN ('pending','partial') AND canceled = false). NOT: bu index'in kolonları
+ * (product_id, priority DESC, created_at) sayımın ihtiyaç duyduğundan fazladır — örtüşme
+ * SIRALAMADA değil yalnız KISMİ YÜKLEMDE tamdır; kazanç "yalnız iş bekleyen küçük alt küme
+ * taranır"dan gelir. (Eski yorum artık VAR OLMAYAN `order_lines_pending_product_idx`e
+ * dayanıyordu — migration 0042 onu DÜŞÜRDÜ; ön eki ve kısmi koşulu aynı olduğu için
+ * yeni index onun karşıladığı planları da karşılar, bkz. schema/orders.ts.)
+ * Eski sorgunun taradığı `orders.status` için o tarihte ADANMIŞ index YOKTU (seq scan) —
+ * yani bu değişiklik doğruluğu düzeltirken poll sıcak yolunu da ucuzlatmıştı; bugün
+ * `orders_open_status_idx` (0042) o eksiği de kapatıyor.
  *
  * İptal (canceled) satır DIŞARIDA: iade/iptal edilmiş satır asla teslim edilmez (§2), operatörden
  * eşleme beklemez.
@@ -531,7 +537,7 @@ export class DashboardService {
    *  - toplam 6 sorgu (N ayrı poller yerine tek uç; sayaçlar TEK sorguda toplanır),
    *  - sıcak yoldaki liste ve sayaç sorguları index'ten karşılanır (orders_created_idx /
    *    order_lines_order_idx / notifications_created_idx / notifications_unread_idx /
-   *    orders_held_idx / order_lines_pending_product_idx / replacement_requests_created_idx).
+   *    orders_held_idx / order_lines_pending_fifo_idx / replacement_requests_created_idx).
    *    DÜRÜST İSTİSNALAR: (a) açık destek sayacı `replacement_requests_status_idx`'i ancak
    *    seçicilik yeterliyse kullanır, (b) eşlemesiz SİPARİŞ sayacı kısmi index'ten okunur ama
    *    tekilleştirme (count DISTINCT order_id) için satır başına heap erişimi gerektirir —
@@ -793,11 +799,15 @@ export class DashboardService {
    * unmappedLines'ın sipariş bazında tekilleştirilmiş hâli; ikisi de AYNI satır kümesini okur,
    * dolayısıyla "kaç satır / kaç sipariş" cevapları birbiriyle her zaman tutarlıdır.
    *
-   * PERF NOTU: üç satır-tabanlı sayaç da `order_lines_pending_product_idx` KISMİ index'iyle
-   * (WHERE status IN ('pending','partial') AND canceled = false) örtüşür ve tek gidiş-dönüşte
-   * skalar alt-sorgu olarak toplanır (ek round-trip YOK). unmappedOrders tekilleştirme için
-   * heap'ten order_id okur; bu yine de eski `orders.status='unmapped'` sayımından ucuzdur
-   * (orada index yoktu → seq scan). Migration bu partide kapsam DIŞI.
+   * PERF NOTU: üç satır-tabanlı sayaç da `order_lines_pending_fifo_idx` KISMİ index'inin
+   * YÜKLEMİYLE (WHERE status IN ('pending','partial') AND canceled = false) örtüşür ve tek
+   * gidiş-dönüşte skalar alt-sorgu olarak toplanır (ek round-trip YOK). Örtüşme kısmi yüklemde
+   * tamdır; index'in kolon listesi (product_id, priority DESC, created_at) sayımın
+   * gerektirdiğinden geniştir — kazanç "yalnız iş bekleyen alt küme taranır"dan gelir.
+   * (Yorum eskiden DÜŞÜRÜLMÜŞ `order_lines_pending_product_idx` adına dayanıyordu —
+   * migration 0042; ön eki/kısmi koşulu aynı olduğu için plan kaybı yok.)
+   * unmappedOrders tekilleştirme için heap'ten order_id okur; bu yine de eski
+   * `orders.status='unmapped'` sayımından ucuzdur. Migration bu partide kapsam DIŞI.
    */
   private async liveCounters(): Promise<
     Omit<LiveStats, 'lowStockProducts' | 'unmappedCatalogProducts'>

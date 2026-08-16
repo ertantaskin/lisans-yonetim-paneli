@@ -153,7 +153,13 @@ export default async function BatchDetailPage({ params }: { params: Promise<{ id
               label: 'Stokta',
               value: batch.unsoldCount,
               tone: batch.unsoldCount === 0 ? 'default' : 'success',
-              hint: 'satılabilir, geri çekmede iptal olur',
+              // İPUCU GERÇEĞE UYDURULDU: sayaç `status IN ('available','depleted')`, yani
+              // kapasitesi tükenmiş (artık SATILAMAYAN) MAK anahtarlarını da içerir. Bu
+              // BİLİNÇLİDİR — küme, geri çekmenin VOID EDECEĞİ kümeyle birebir aynı tutulur
+              // (`recallBatch` aynı yüklemi kullanır); eskiden yalnız 'available' sayılıyor ve
+              // ekran "Stokta 0" derken geri çekme sessizce anahtar void ediyordu. Metnin
+              // "satılabilir" demesi bu kez ters yönde yanıltıyordu.
+              hint: 'geri çekmede iptal olacak küme (satılabilir + kapasitesi tükenmiş)',
             },
             {
               icon: Users,

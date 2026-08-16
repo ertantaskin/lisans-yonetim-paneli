@@ -37,16 +37,59 @@ import { TemplatesService, render } from './templates.service';
 type MailJobData = DeliveryJob | ReplacementNoticeJob;
 
 /**
- * Geçerlilik bitişini müşteriye gösterilecek YEREL tarihe çevirir (§11 süreli hesap).
- * Boş/geçersiz değer → '' (şablon token'ı boş kalır, mail bozulmaz — kritik olmayan bir
- * alan yüzünden teslimat maili ASLA düşmemeli). Saat dilimi konteynerden gelir
- * (docker-compose: TZ=Europe/Istanbul) → panelin gösterdiği tarihle aynı gün sınırı.
+ * Yerel saat dilimi etiketi (ör. `UTC+03:00`) — o ANDAKİ ofset (yaz saati dahil doğru).
+ *
+ * ICU'ya (`timeZoneName`) BİLEREK dayanmaz: çıktı Node/ICU sürümüne göre "GMT+3" / "+3" gibi
+ * değişebilirdi ve bu değer hem maile hem şablon önizlemesine giriyor — iki yüzeyin ayrışmaması
+ * için biçim deterministik olmalı.
+ */
+function localUtcOffsetLabel(d: Date): string {
+  const minutes = -d.getTimezoneOffset();
+  const sign = minutes < 0 ? '-' : '+';
+  const abs = Math.abs(minutes);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `UTC${sign}${hh}:${mm}`;
+}
+
+/**
+ * Geçerlilik bitişini müşteriye gösterilecek YEREL tarih-SAATE çevirir (§11 süreli hesap).
+ *
+ * NEDEN SAAT ve SAAT DİLİMİ VAR (ölçülmüş sapma): burası yalnız GÜN yazıyordu ve gün, API
+ * konteynerinin saat dilimine göre hesaplanıyordu; müşteri sayfası/.txt ise MAĞAZANIN saat
+ * diliminde ve SAATLİ gösteriyordu. İkisini bağlayan hiçbir kod yoktu. Somut sonuç:
+ * `valid_until = 2026-08-16T22:30Z` + mağaza UTC ise mail "17.08.2026", sayfa "16.08.2026 22:30"
+ * diyordu — süreli hesap müşterisi bir günü olduğunu (ya da olmadığını) sanıyordu. Belirsizlik
+ * en kötü seçenektir: hangi dilimde gösterildiği artık METİNDE yazılıdır ve makine-okunur
+ * karşılığı `{{valid_until_iso}}` ile ayrıca sunulur.
+ *
+ * Boş/geçersiz değer → '' (şablon token'ı boş kalır, mail bozulmaz — kritik olmayan bir alan
+ * yüzünden teslimat maili ASLA düşmemeli). Saat dilimi konteynerden gelir (docker-compose:
+ * TZ=Europe/Istanbul) → panelin gösterdiği gün sınırıyla aynı.
  */
 export function formatValidUntil(value: Date | string | null | undefined): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const date = d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  // Saat ELLE biçimlenir: `toLocaleTimeString` bazı ICU sürümlerinde gece yarısını '24:00'
+  // yazar ve hour12/hourCycle davranışı sürüme göre değişir — tarih zaten kritik bir alan.
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${date} ${time} (${localUtcOffsetLabel(d)})`;
+}
+
+/**
+ * Aynı değerin HAM ISO 8601 (UTC) karşılığı — `{{valid_until_iso}}`.
+ *
+ * Yerel biçim insan içindir ve saat dilimi etiketiyle birlikte okunmalıdır; ISO ise
+ * yoruma kapalıdır. Mağazanın kendi yüzeyi (sayfa/.txt) tarihi zaten UTC anlık değerinden
+ * üretir → operatör şablonunda ikisini yan yana kullanarak iki yüzeyi birebir eşleyebilir.
+ */
+export function formatValidUntilIso(value: Date | string | null | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString();
 }
 
 /** Şablon gövdesinde `{{guides}}` token'ı geçiyor mu (boşluklu yazım da sayılır). */
@@ -308,6 +351,9 @@ export class MailProcessor extends WorkerHost {
 
       // Şablon: ilk satırın ürününe göre (site override > ürün > varsayılan, §6).
       const tpl = await this.templates.resolve(rows[0]!.productId, order.siteId);
+      // Siparişteki EN YAKIN bitiş — iki değişkenin (yerel biçim + ISO) AYNI anı anlatması
+      // için tek kez hesaplanır (iki ayrı çağrı, aralarında sweep koşarsa ayrışabilirdi).
+      const earliest = earliestValidUntil(rows.map((r) => r.validUntil));
       const vars = {
         order_no: order.remoteOrderId,
         site_name: site?.domain ?? 'Mağaza',
@@ -319,7 +365,11 @@ export class MailProcessor extends WorkerHost {
         // kalem farklı tarihler taşıyabilir ve tek değişkene sığmaz; "en erken biten" müşteri
         // için en güvenli özettir (kalem kalem doğru tarih zaten `{{items}}` bloğunda yazılıdır).
         // Süresiz üründe BOŞ string (şablon token'ı sessizce kaybolur — mevcut render davranışı).
-        valid_until: formatValidUntil(earliestValidUntil(rows.map((r) => r.validUntil))),
+        valid_until: formatValidUntil(earliest),
+        // Aynı anın yoruma kapalı ISO karşılığı: yerel biçim ile mağaza sayfasının gösterdiği
+        // tarih FARKLI GÜN olabildiği için (bkz. formatValidUntil gerekçesi) makine-okunur
+        // değer de sunulur — operatör şablonda ikisini eşleyebilir.
+        valid_until_iso: formatValidUntilIso(earliest),
         // §7 kurulum/etkinleştirme rehberi bloğu. Rehbersiz siparişte BOŞ string → token
         // sessizce kaybolur (mevcut render davranışı), mailde boşluk bırakmaz.
         guides: guideBlock.text,

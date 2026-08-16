@@ -17,6 +17,29 @@ import { defineConfig } from 'vitest/config';
 // doğrudan kaynağa (src/index.ts) yönlendiriyoruz; build adımı gerekmez.
 const sharedSrc = fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url));
 
+/**
+ * DOSYA SIRASI ALFABETİK SABİTLENİR.
+ *
+ * Vitest'in varsayılan sıralayıcısı önce sonuç önbelleğine, o yoksa DOSYA BOYUTUNA (büyükten
+ * küçüğe) bakar. Yani bir test dosyasına satır eklemek koşum sırasını SESSİZCE değiştirir.
+ * Bu paket dosyaları seri koşuyor (`fileParallelism:false`) ve birkaç test GLOBAL tabloyu
+ * tarıyor (saklama süpürmesi, incelemedeki siparişler, `allTime` maliyet raporu) — yani sıra
+ * gerçekten gözlemlenebilir. Değişken sıra, bir arızayı YENİDEN ÜRETİLEMEZ yapar: aynı kod
+ * bir koşumda geçip diğerinde düşebilir ve fark kod değişikliği gibi görünür.
+ *
+ * Alfabetik sıra "doğru" bir sıra değildir — SABİT bir sıradır; amaç da budur.
+ */
+class AlfabetikSiralayici {
+  async shard<T>(files: T[]): Promise<T[]> {
+    // Parçalama (shard) kullanılmıyor; olduğu gibi geçir.
+    return files;
+  }
+
+  async sort<T extends { moduleId?: string }>(files: T[]): Promise<T[]> {
+    return [...files].sort((a, b) => String(a.moduleId ?? '').localeCompare(String(b.moduleId ?? '')));
+  }
+}
+
 export default defineConfig({
   resolve: {
     alias: { '@lisans/shared': sharedSrc },
@@ -29,5 +52,6 @@ export default defineConfig({
     hookTimeout: 60_000,
     // Testler ortak tabloya dokunur — dosya-içi paralellik kapalı (tag izolasyonu + seri).
     fileParallelism: false,
+    sequence: { sequencer: AlfabetikSiralayici as never },
   },
 });

@@ -89,15 +89,31 @@ export function SiteConfigForm({
       <form action={action} className="space-y-6">
         <input type="hidden" name="siteId" value={siteId} />
 
+        {/*
+          DÜRÜSTLÜK DÜZELTMELERİ (denetim bulguları):
+          [7] Bu bölüm yalnız DİNAMİK kotayı anlatıyordu ("reddedilmez"). SERT tavanın
+              (salesDailyQuota) sonucu hiçbir kullanıcı metninde yazmıyordu: aşımda
+              orders.service.ts:375 `SalesQuotaExceededException` → ÖDENMİŞ sipariş 429 ile
+              REDDEDİLİR (tx rollback, sipariş satırı oluşmaz). İki kotanın zıt davranışı
+              artık yan yana yazılı.
+          [a] "(taban 20)" evrensel bir taban ima ediyordu. GERÇEK (orders.service.ts:1199-1202):
+              DYNAMIC_MIN_FLOOR=20 YALNIZ son 30 günde 20'den az meşru siparişi olan siteye
+              uygulanır; yeterli geçmişi olan sitede eşik ceil(ortalama × çarpan) olur ve 1'e
+              kadar düşebilir.
+          [b] "teslim edilebilecek en fazla sipariş" YANLIŞ kelimeydi: todayCount
+              (orders.service.ts:1166-1170) bugün OLUŞTURULMUŞ TÜM siparişleri sayar — statü
+              süzgeci YOK (eşlenmemiş/incelemedeki/iade edilmiş dahil). Yani hiç teslimat
+              yapılmadan kota dolabilir.
+        */}
         <FormSection
           title="Satış kotası"
-          description="Günlük teslimat limiti. Dinamik kotada eşik aşılırsa sipariş reddedilmez; İnceleme Kuyruğu'na alınır (taban 20)."
+          description="İki ayrı mekanizma: sert tavan siparişi REDDEDER, dinamik eşik yalnız İncelemeye alır."
         >
           <FieldRow>
             <Field
-              label="Günlük satış kotası"
+              label="Günlük satış kotası (sert tavan)"
               htmlFor="sc-quota"
-              hint="Bir günde teslim edilebilecek en fazla sipariş. Boş = limitsiz."
+              hint="Bir günde bu siteden KABUL EDİLECEK en fazla sipariş. Boş = limitsiz. Aşıldığında sipariş incelemeye alınmaz, doğrudan REDDEDİLİR (mağaza 429 alır) — müşteri ödemiş olsa bile panele hiç kaydedilmez, gün sonunda sıfırlanır. Sayaç o gün oluşturulan TÜM siparişleri sayar (eşlenmemiş, incelemedeki ve iade edilenler dahil), yalnız teslim edilenleri değil."
             >
               <Input
                 id="sc-quota"
@@ -113,7 +129,7 @@ export function SiteConfigForm({
             <Field
               label="İnceleme eşiği çarpanı"
               htmlFor="sc-review-multiplier"
-              hint="Dinamik kota: son 30 günün günlük ortalamasının kaç katına kadar otomatik teslim edilsin (üstü incelemeye alınır)."
+              hint="Dinamik kota: son 30 günün günlük ortalamasının kaç katına kadar otomatik teslim edilsin (üstü incelemeye alınır). Ortalama yalnız teslim edilmiş, incelemeye alınmamış geçmiş siparişlerden hesaplanır."
             >
               <Input
                 id="sc-review-multiplier"
@@ -141,7 +157,13 @@ export function SiteConfigForm({
               Dinamik satış kotası
             </label>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Açıkken sabit kota yerine 30 günlük ortalamaya göre eşik uygulanır.
+              Açıkken sert tavana <em>ek olarak</em> 30 günlük ortalamaya göre bir eşik daha
+              uygulanır: <strong>eşik aşılırsa sipariş reddedilmez</strong>, kabul edilip{' '}
+              <strong>İnceleme Kuyruğu</strong>na alınır (siz onaylayana kadar teslimat yapılmaz).
+              Eşik = ortalama günlük satış × yukarıdaki çarpan. <strong>20&apos;lik taban yalnız
+              yeni/az geçmişli sitelerde</strong> geçerlidir (son 30 günde 20&apos;den az teslim
+              edilmiş sipariş); yeterli geçmiş biriktiğinde eşik tamamen ortalamaya göre hesaplanır
+              ve 1&apos;e kadar inebilir.
             </p>
           </div>
         </FormSection>
@@ -151,10 +173,17 @@ export function SiteConfigForm({
           description="Teslimat e-postası ve mağaza entegrasyonuna geri bildirim ayarları."
         >
           <FieldRow>
+            {/*
+              ÖLÜ ALAN — metin gerçeği söylemeli (denetim bulgusu). `senderEmail` kaydediliyor
+              ama HİÇBİR mail yolunda okunmuyor: gönderen HER ZAMAN `MAIL_FROM`'dur
+              (mail.service `createMailTransport` + mail.processor). "Teslimat maillerinde
+              görünen gönderen" demek, operatörün buraya adres yazıp gönderenin değiştiğini
+              SANMASINA yol açıyordu. Aynı düzeltme site-oluşturma sihirbazında da yapıldı.
+            */}
             <Field
               label="Gönderen e-posta"
               htmlFor="sc-sender"
-              hint="Teslimat maillerinde görünen gönderen. Boş = varsayılan gönderen."
+              hint="Kayda geçer ancak ŞU AN mail gönderimini etkilemez — gönderen adresi sunucu ayarındaki MAIL_FROM'dur."
             >
               <Input
                 id="sc-sender"
@@ -215,9 +244,19 @@ export function SiteConfigForm({
           </Field>
         </FormSection>
 
+        {/*
+          DÜRÜSTLÜK DÜZELTMESİ (denetim bulgusu): burada "sandbox açıkken siparişler GERÇEK
+          TESLİMAT ÜRETMEZ" yazıyordu — YANLIŞ ve tehlikeliydi. `sandbox` alanı API'de YALNIZ
+          mail yolunda okunur (mail.service.ts / mail.processor.ts: alıcıyı gönderen adrese
+          çevirir + konuya '[TEST MODU]' ekler). `orders.service.ts` sandbox'a HİÇ bakmaz →
+          sipariş oluşturma, atama, stok tüketimi ve getDeliveries aynen çalışır. Operatör
+          canlı siteyi "test moduna alıp" deneme siparişi geçerse GERÇEK stok yanar ve müşteri
+          çalışan anahtarı mağazasının sipariş ekranında görür. Metin artık ne yaptığını değil
+          NE YAPMADIĞINI da söylüyor (15 satır aşağıdaki açıklama zaten doğruydu).
+        */}
         <FormSection
           title="Test modu"
-          description="Sandbox açıkken bu siteden gelen siparişler gerçek teslimat üretmez."
+          description="Sandbox YALNIZ teslimat e-postalarını yönlendirir; siparişin kendisi normal işlenir."
         >
           <div className="flex flex-col gap-1.5">
             <label
@@ -234,7 +273,16 @@ export function SiteConfigForm({
               Sandbox (test modu)
             </label>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Açıkken teslimat mailleri gerçek müşteriye gitmez; entegrasyon testleri için.
+              Açıkken teslimat mailleri gerçek müşteriye gitmez: alıcı panelin gönderen adresine
+              çevrilir ve konuya <strong>[TEST MODU]</strong> öneki eklenir.
+            </p>
+            <p className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed text-warning">
+              <strong>Dikkat — siparişi durdurmaz.</strong> Sandbox açıkken de sipariş normal
+              işlenir: <strong>gerçek stok tüketilir</strong>, <strong>gerçek lisans atanır</strong>{' '}
+              ve müşteri o lisansı mağazanın &quot;Siparişlerim&quot; ekranında{' '}
+              <strong>çözülmüş hâlde görebilir</strong>. Yalnız mail yolu test edilir. Canlı bir
+              mağazada deneme siparişi geçmek için güvenli <strong>değildir</strong>; bunun için
+              ayrı bir test sitesi kullanın.
             </p>
           </div>
         </FormSection>

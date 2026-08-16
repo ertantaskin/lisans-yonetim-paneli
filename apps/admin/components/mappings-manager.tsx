@@ -155,10 +155,12 @@ export function MappingsManager({
               emptyText="Ürün bulunamadı"
             />
           </Field>
+          {/* Bkz. map-product-sheet.tsx: ölçek sipariş ADEDİYLE çarpılır (line.qty × bundleQty),
+              "1 sipariş = N lisans" DEĞİL. Yanlış okuma fazla teslimat → yanan stok demektir. */}
           <Field
             label="Paket adedi"
             htmlFor="map-bundle"
-            hint="1 mağaza siparişi kaç lisans teslim etsin (varsayılan 1)."
+            hint="Mağaza kaleminin HER 1 adedi için kaç lisans teslim edilsin (varsayılan 1). Sipariş adediyle çarpılır: 3 × 2 adet = 6 lisans."
           >
             <Input
               id="map-bundle"

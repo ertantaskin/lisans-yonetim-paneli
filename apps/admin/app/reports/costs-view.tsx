@@ -459,9 +459,14 @@ export function CostsView({ data }: { data: CostReport }) {
             <CardTitle className="flex items-center gap-2">
               <Truck className="size-4 text-muted-foreground" /> Teslim Edilen Mal Maliyeti
             </CardTitle>
+            {/* KÜME ADI DÜZELTİLDİ: "Aktif + teslim edilmiş" değil — `costs.service` AYAKTA
+                atamaları (`STANDING_STATUSES` = active | suspended | expired, teslim tarihi
+                dolu olanlar) sayar. Yalnız 'active' saymak askıdaki ve süresi dolmuş
+                TESLİMATLARI maliyetten düşürüyordu; metin o eski davranışı anlatıyordu. */}
             <CardDescription>
-              Aktif + teslim edilmiş atamaların satılan mal maliyeti (import anındaki birim
-              maliyet anlık-görüntüsü üzerinden; yalnız maliyet, gelir/kâr içermez).
+              Müşteride duran teslimatların satılan mal maliyeti — aktif, askıya alınmış ve süresi
+              dolmuş atamalar dahil (import anındaki birim maliyet anlık-görüntüsü üzerinden;
+              yalnız maliyet, gelir/kâr içermez).
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">

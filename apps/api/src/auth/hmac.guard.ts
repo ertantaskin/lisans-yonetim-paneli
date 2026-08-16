@@ -44,10 +44,20 @@ const PLUGIN_VERSION_RE = /^\d+\.\d+\.\d+$/;
 
 /**
  * IP başına dakikalık BAŞARISIZ kimlik-doğrulama tavanı. YALNIZ auth-FAIL (geçersiz api_key ya da
- * geçersiz imza) sayılır — meşru bir mağazanın (imzası her zaman geçerli) sayacı ASLA artmaz, yani
- * meşru yüksek-hacimli trafik HİÇ kısıtlanmaz. Amaç yalnız geçersiz-imza selinin `findForAuth` DB
- * lookup'ıyla havuzu tüketmesini önlemek: bir IP bu kadar başarısızlığa ulaşınca sonraki istekleri
- * DB'ye HİÇ inmeden (peek) 429 yer. Meşru mağaza normalde 0 başarısızlık üretir; 120 çok cömert.
+ * geçersiz imza) sayılır — imzası her zaman geçerli olan bir mağazanın KENDİ istekleri sayacı ASLA
+ * artırmaz. Amaç yalnız geçersiz-imza selinin `findForAuth` DB lookup'ıyla havuzu tüketmesini
+ * önlemek: bir IP bu kadar başarısızlığa ulaşınca sonraki istekleri DB'ye HİÇ inmeden (peek) 429 yer.
+ *
+ * KOVANIN BİRİMİ **IP**'DİR, SİTE DEĞİL (`hmacfail:ip:<ip>`) ve peek imza doğrulanmadan ÖNCE
+ * uygulanır. Bu yüzden "meşru trafik HİÇ kısıtlanmaz" güvencesi yalnız KENDİ isteklerin için
+ * geçerlidir; ÇIKIŞ IP'Sİ PAYLAŞILAN kurulumlarda (paylaşımlı hosting, NAT'lı ofis/veri merkezi,
+ * ortak çıkışlı CDN/proxy) YANLIŞ YAPILANDIRILMIŞ TEK BİR mağaza (ör. rotasyondan sonra eski
+ * secret'la imzalayan bir kurulum) dakikada bu tavana ulaşırsa AYNI IP'deki HATASIZ mağazalar da
+ * 429 alır ve siparişleri panele düşmez. Belirti mağaza tarafında görünür (401/429 → retry),
+ * panelde ise "o siteden istek gelmiyor" olarak okunur — operatör sebebi burada aramaz.
+ * Bu bilinçli bir denge: kova siteye bağlanamaz, çünkü peek'in AMACI DB lookup'ından (yani
+ * sitenin çözülmesinden) ÖNCE karar vermektir. Tavan bu yüzden cömert seçildi (120/dk) ve
+ * `HMAC_IP_FAIL_LIMIT` ile yükseltilebilir; meşru mağaza normalde 0 başarısızlık üretir.
  */
 const HMAC_IP_FAIL_DEFAULT = 120;
 /** IP başarısızlık penceresi (saniye). Retry-After da bu değerdir. */
@@ -66,7 +76,10 @@ export interface AuthedRequest extends FastifyRequest {
  *   X-Signature = HMAC-SHA256(secret, METHOD\nPATH\nTS\nNONCE\nSHA256(body))
  *
  * - Timestamp ±300sn (saat kayması)
- * - Nonce Redis'te 10dk tekil (replay engeli)
+ * - Nonce Redis'te `HMAC_NONCE_TTL_SEC` (= 2×tolerans + 60 = 660sn) boyunca tekil (replay engeli).
+ *   Değer paylaşılan sözleşmeden gelir; "10dk" (600sn) yazmak 2×tolerans'a EŞİT olduğu için
+ *   nonce'un replay penceresini kapsama invaryantını sınır kenarında bozan bir sayıyı
+ *   normalleştirirdi (bkz. packages/shared/src/api/hmac.ts).
  * - api_key hash'ten site bulunur, hmac_secret çözülür, imza sabit-zamanlı karşılaştırılır
  */
 @Injectable()

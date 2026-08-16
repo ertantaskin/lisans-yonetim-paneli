@@ -23,6 +23,10 @@ import {
 } from './queries';
 import { PublishForm } from './publish-form';
 import { PublishFromSourceForm } from './publish-from-source-form';
+// Sürüm sıralaması TEK KAYNAKTAN (./semver) — API'nin `updates.service.compareVersions`
+// kuralıyla birebir. Bu dosyada yerel bir `cmpVersion` vardı ve `parseInt(...)||0` ile
+// GEÇERSİZ biçimi 0.0.0 sayıyordu; artık geçersiz sürüm "en düşük" olarak ele alınır.
+import { compareVersions, highestVersion } from './semver';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,19 +35,6 @@ function fmt(ts: string | null): string {
   return new Date(ts).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-/**
- * SemVer karşılaştırma (a<b → -1). Sayısal olmayan/eksik parça 0 sayılır; bilinmeyen biçimde
- * yanlış "eski" damgası basmamak için çağıran taraf null sürümü ayrıca ele alır.
- */
-function cmpVersion(a: string, b: string): number {
-  const pa = a.split('.').map((n) => Number.parseInt(n, 10) || 0);
-  const pb = b.split('.').map((n) => Number.parseInt(n, 10) || 0);
-  for (let i = 0; i < 3; i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d < 0 ? -1 : 1;
-  }
-  return 0;
-}
 
 /**
  * Sürümler (§16) — WP eklentisi sürüm yönetimi.
@@ -62,7 +53,13 @@ export default async function ReleasesPage() {
 
   const error = releases instanceof Error ? releases.message : null;
   const rows: ReleaseRow[] = releases instanceof Error ? [] : releases;
-  const latest = rows[0]?.version ?? null;
+  /*
+   * SİTELERE FİİLEN SUNULAN SÜRÜM = EN YÜKSEK SEMVER (`updates.service.latest()`), yayın
+   * SIRASI değil. Burada `rows[0]` kullanılıyordu; liste ise `created_at DESC` gelir ve
+   * yeniden yayınlama `created_at`i TAZELER → panel eski bir sürüme "En yeni" damgası basıp
+   * mağazalara "eski — vX mevcut" diyebiliyordu (aynı ekranda birbiriyle çelişen iki cevap).
+   */
+  const latest = highestVersion(rows.map((r) => r.version));
 
   return (
     <div className="space-y-6">
@@ -204,7 +201,7 @@ export default async function ReleasesPage() {
                   const state =
                     !v || !latest
                       ? { variant: 'neutral' as const, label: 'bilinmiyor' }
-                      : cmpVersion(v, latest) < 0
+                      : compareVersions(v, latest) < 0
                         ? { variant: 'warning' as const, label: `eski — v${latest} mevcut` }
                         : { variant: 'success' as const, label: 'güncel' };
                   return (
@@ -258,12 +255,15 @@ export default async function ReleasesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r, i) => (
+                {rows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="whitespace-nowrap font-medium tabular-nums text-foreground">
                       <span className="inline-flex items-center gap-2">
                         v{r.version}
-                        {i === 0 && <Badge variant="success">En yeni</Badge>}
+                        {/* Rozet, listenin İLK satırına değil sitelere SUNULAN sürüme basılır
+                            (yukarıdaki `latest` = en yüksek semver) — "Sitelerdeki kurulu sürüm"
+                            kartındaki "eski — vX mevcut" damgasıyla aynı kaynak. */}
+                        {r.version === latest && <Badge variant="success">En yeni</Badge>}
                       </span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">

@@ -4,6 +4,19 @@ import { DB, type Database } from '../db/db.module';
 import { deliveryTemplates } from '../db/schema';
 
 const DEFAULT_SUBJECT = 'Siparişiniz hazır — {{order_no}}';
+/**
+ * Yerleşik varsayılan gövde — operatör hiç şablon tanımlamamışsa BU gider.
+ *
+ * DESTEK YOLU DÜZELTİLDİ (denetim bulgusu): metin "Herhangi bir sorun olursa
+ * yanıtlayabilirsiniz." diyordu. Mail `MAIL_FROM` adresinden gidiyor ve panelde GELEN mail
+ * işleyen hiçbir kod yok — yani müşteriye ÇALIŞMAYAN bir kanal gösteriliyordu; üstelik
+ * gerçekten çalışan kanal (mağazadaki sipariş sayfasında "Sorun Bildir" → panelin destek
+ * kuyruğu, §13) mailde hiç anılmıyordu. Müşteri yanıtlıyor, kimse görmüyor, talep kayboluyordu.
+ *
+ * NOT: bu yalnız YERLEŞİK varsayılandır. Veritabanında kayıtlı şablonu olan kurulumlar
+ * etkilenmez (§6 çözümleme sırası) → onlarda aynı cümle duruyorsa /templates ekranından
+ * güncellenmelidir.
+ */
 const DEFAULT_BODY = `Merhaba,
 
 {{order_no}} numaralı siparişinizin teslimatı aşağıdadır:
@@ -12,7 +25,9 @@ const DEFAULT_BODY = `Merhaba,
 
 {{guides}}
 
-Herhangi bir sorun olursa yanıtlayabilirsiniz.
+Bir sorun yaşarsanız bu maili yanıtlamak yerine mağazadaki sipariş sayfanızdan
+"Sorun Bildir" adımını kullanın — talebiniz doğrudan destek ekibimize ulaşır ve
+lisans bilgileriniz talebe otomatik olarak eklenir.
 
 İyi günler,
 {{site_name}}`;

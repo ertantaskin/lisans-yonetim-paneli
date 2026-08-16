@@ -15,6 +15,7 @@ import {
   createSite,
   makeCrypto,
   makeDb,
+  tagPrefix,
   type Db,
 } from './_helpers';
 
@@ -59,9 +60,21 @@ const securityFake = {
   recordQuotaHeld: async () => false,
 } as never;
 
-/** Sıra sabit ve gözle okunur olsun: 01..08. */
-const KEYS_A = Array.from({ length: 8 }, (_, i) => `SIRA-A-${String(i + 1).padStart(2, '0')}`);
-const KEYS_B = Array.from({ length: 3 }, (_, i) => `SIRA-B-${String(i + 1).padStart(2, '0')}`);
+/*
+ * Sıra sabit ve gözle okunur olsun: 01..08. TAG ÖN EKİ ŞART — `payload_hash` GLOBAL unique ve
+ * `stock.import` mükerrerleri `onConflictDoNothing` ile SESSİZCE atlar; sabit metinler MASTER_KEY
+ * sabitlendiği anda her koşuda AYNI hash'i üretir → ikinci koşuda `imported` eksilir ve
+ * aşağıdaki `toBe(KEYS_A.length)` gerçek sebebini söylemeden patlar. Assert'ler bu SABİTLERLE
+ * karşılaştırdığı için ön ek eklemek beklentileri bozmaz (ikisi de aynı diziden türer).
+ */
+const KEYS_A = Array.from(
+  { length: 8 },
+  (_, i) => `${tagPrefix(tag)}-SIRA-A-${String(i + 1).padStart(2, '0')}`,
+);
+const KEYS_B = Array.from(
+  { length: 3 },
+  (_, i) => `${tagPrefix(tag)}-SIRA-B-${String(i + 1).padStart(2, '0')}`,
+);
 
 /**
  * Listeleme satırlarından düz anahtar metnini çıkarır. Alan adı `value`

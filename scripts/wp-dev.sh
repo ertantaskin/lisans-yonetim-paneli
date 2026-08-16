@@ -54,9 +54,24 @@ say "Panel yığını ayağa kaldırılıyor (ilk seferde api/admin imajları de
 docker compose up -d
 
 say "API sağlık bekleniyor ($API_HOST/v1/health)…"
+# DÜZELTME (denetim bulgusu): burada zaman aşımında yalnız UYARI basılıp DEVAM ediliyordu —
+# kardeş WP-CLI beklemesi (aşağıda) ise `exit 1` ediyor, yani iki bekleme tutarsızdı. Sessizce
+# devam etmenin bedeli: site oluşturma curl'ü (`|| true` ile) de sessizce düşüyor, eklenti
+# bağlantısız aktive ediliyor ve betik sonunda ERİŞİLEMEZ adresler yazan "HAZIR" banner'ı
+# basılıyordu. En sık kök neden port yayınlanmamış olmasıdır (docker-compose.override.yml
+# kopyalanmadıysa API host'a HİÇ port açmaz) — teşhisi banner gizliyordu.
 for i in $(seq 1 60); do
   if curl -fsS "$API_HOST/v1/health" >/dev/null 2>&1; then ok "API hazır."; break; fi
-  [ "$i" = 60 ] && { warn "API 120sn'de hazır olmadı — 'docker compose logs api' bakın."; }
+  if [ "$i" = 60 ]; then
+    warn "API 120sn'de $API_HOST üzerinden hazır olmadı."
+    if [ ! -f docker-compose.override.yml ]; then
+      warn "OLASI SEBEP: 'docker-compose.override.yml' YOK → api/admin/mailpit host'a port yayınlamaz."
+      warn "  Çözüm: cp docker-compose.override.yml.example docker-compose.override.yml && pnpm wp:dev"
+    else
+      warn "  Kontrol: 'docker compose port api 3001' ve 'docker compose logs api'."
+    fi
+    exit 1
+  fi
   sleep 2
 done
 

@@ -48,7 +48,8 @@
 # DEV_*_DOMAIN prod .env'de gerçek subdomain'e ayarlanırsa aktif; ayarlanmazsa
 # *.localhost'a düşer (iç sertifika, dış etki YOK). Upstream'ler lisansdev projesinin
 # container'larıdır — prod Caddy'nin `lisansdev_default` ağına bağlı olması gerekir
-# (dev-stack.sh 'up' bunu yapar). Bağlı değilse yalnız bu rotalar 502 verir; PROD ETKİLENMEZ.
+# (bunu `dev-stack.sh subdomains` yapar — `up` DEĞİL; ağ bağlama o alt komutta, dev-stack.sh:85-94).
+# Bağlı değilse yalnız bu rotalar 502 verir; PROD ETKİLENMEZ.
 {$DEV_ADMIN_DOMAIN:dev-admin.localhost} {
 	encode gzip zstd
 	reverse_proxy lisansdev-admin-1:3000

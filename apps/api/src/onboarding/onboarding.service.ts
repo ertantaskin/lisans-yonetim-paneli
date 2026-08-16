@@ -1,5 +1,6 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import {
+  BadRequestException,
   HttpException,
   HttpStatus,
   Inject,
@@ -142,9 +143,26 @@ export class OnboardingService {
     const creds = await this.db.transaction(async (tx) => {
       // Creds'i çöz (blob'lar hâlâ dolu) — null'lamadan ÖNCE.
       //
-      // AAD artık TOKEN SATIRINA bağlı (`connect_token:<id>`); eski satırlar site AAD'siyle
-      // şifrelenmiştir → tek seferlik geri düşüş. Sıra ÖNEMLİ: önce YENİ ad alanı denenir, aksi
-      // halde eski (zayıf) ad alanı hâlâ kabul ediliyor olurdu ve düzeltme etkisiz kalırdı.
+      /*
+       * AAD TOKEN SATIRINA BAĞLI (`connect_token:<id>`) — GERİ DÜŞÜŞ YOK.
+       *
+       * NEDEN GERİ DÜŞÜŞ KALDIRILDI (denetim bulgusu — önceki düzeltme EKSİKTİ):
+       * Eskiden yeni AAD patlayınca `catch` eski site AAD'sini (`site_secret:<siteId>`) deniyordu
+       * ve bu, kapatılmak İSTENEN açığın ta kendisini AÇIK BIRAKIYORDU. Saldırı zinciri kodda
+       * tamamen karşılanıyordu: `site_connect_tokens.site_id` düz uuid (FK YOK) → DB'ye YAZMA
+       * erişimi olan biri `sites.hmac_secret_enc` blob'unu kendi eklediği bir token satırına
+       * KOPYALAR, `expires_at`i kendi yazar, kimlik istemeyen `POST /v1/connect/claim`i çağırır.
+       * Yeni AAD tutmaz → catch → eski AAD **blob'un gerçekten şifrelendiği AAD'dir** → çözülür
+       * → sitenin DÜZ METİN `hmac_secret`i yanıtta döner. Sonrasında site-facing her uç (düz
+       * metin lisans döndüren `GET /orders/:id/deliveries` dahil) imzalanabilir — hem de
+       * MASTER_KEY hiç ele geçirilmeden. Geri düşüş KOŞULSUZ olduğu için "kodlar 15 dakikada
+       * ölür" gerekçesi saldırganı bağlamıyordu: `expires_at`i o yazıyor, dal asla ölmüyordu.
+       *
+       * GERİYE DÖNÜK ETKİ YOK: bağlan kodlarının ömrü 15 dakika; token AAD'sine geçiş bundan
+       * çok daha önce dağıtıldı, yani eski ad alanıyla şifrelenmiş HİÇBİR meşru kod artık
+       * geçerli değil. Böyle bir satır yine de gelirse çözme başarısız olur ve aşağıdaki
+       * `catch` bunu 400 + GÖRÜNÜR log ile bildirir (sessiz kabul yerine gürültülü ret).
+       */
       const decryptCreds = (): { apiKey: string; hmacSecret: string } => {
         const tokenAad = CryptoService.connectTokenAad(token.id);
         try {
@@ -153,29 +171,13 @@ export class OnboardingService {
             hmacSecret: this.crypto.decrypt(token.hmacSecretEnc!, tokenAad),
           };
         } catch {
-          /*
-           * LEGACY GERİ DÜŞÜŞ — SESSİZ OLAMAZ (denetim C9).
-           *
-           * İki sebeple loglanır:
-           *  (1) GÜVENLİK: AAD ad-alanı çakışması düzeltmesinin bütün amacı, bir saldırganın
-           *      `sites.hmac_secret_enc` blob'unu bir connect-token satırına KOPYALAYIP bu
-           *      public ucu çözme oracle'ı gibi kullanmasını engellemekti. Böyle bir deneme
-           *      GERÇEKTE tam olarak "yeni AAD tutmadı, eski AAD tuttu" biçiminde görünür —
-           *      yani bu satır o denemenin TEK canlı sinyalidir.
-           *  (2) TEMİZLİK: kodların ömrü 15 dakika olduğu için bu dal, dağıtımdan kısa süre
-           *      sonra MEŞRU olarak asla çalışmamalıdır. Log görülmüyorsa geri düşüş güvenle
-           *      kaldırılabilir; hâlâ görülüyorsa kaldırmak kurulumları kırardı.
-           * SIR yazılmaz: yalnız token/site kimliği.
-           */
-          this.logger.warn(
-            `Connect kodu ESKİ (site) AAD ad alanıyla çözüldü — legacy geri düşüş kullanıldı ` +
-              `(token=${token.id}, site=${token.siteId}). Beklenen: yalnız düzeltme öncesi üretilmiş kodlar.`,
+          // Bu satır artık bir SALDIRI SİNYALİDİR (meşru kod bu dala düşemez): ya blob başka bir
+          // ad alanıyla şifrelendi ya da satır elle enjekte edildi. SIR yazılmaz.
+          this.logger.error(
+            `Bağlan kodu kendi AAD ad alanıyla ÇÖZÜLEMEDİ — istek reddedildi ` +
+              `(token=${token.id}, site=${token.siteId}). Elle eklenmiş/taşınmış satır olabilir.`,
           );
-          const legacyAad = CryptoService.siteSecretAad(token.siteId);
-          return {
-            apiKey: this.crypto.decrypt(token.apiKeyEnc!, legacyAad),
-            hmacSecret: this.crypto.decrypt(token.hmacSecretEnc!, legacyAad),
-          };
+          throw new BadRequestException('Bağlan kodu geçersiz.');
         }
       };
       const { apiKey, hmacSecret } = decryptCreds();

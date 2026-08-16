@@ -265,7 +265,18 @@ type RecallNotice = {
   /** Partinin ürün tipi — sonuç metni "anahtar/hesap/kod" der (nötr "kalem" yerine). */
   kind?: string;
   voided: number;
+  /** OTOMATİK değiştirilebilen (yalnız `active`) atama sayısı. */
   soldNeedingReplacement: number;
+  /**
+   * Müşterinin ELİNDEKİ tüm canlı atamalar (`active` + `suspended`) — API `customerHeld`.
+   *
+   * NEDEN AYRI ALAN: sonuç bandı `soldNeedingReplacement` kullanıyordu ama AYNI dosyadaki
+   * onay modali `customerCount` (active|suspended) kullanıyor. Yalnız ASKIDA ataması olan bir
+   * partide band "0" görüp YEŞİL "başarılı" çıkıyor, modal ise az önce "N kalem korunur"
+   * demiş oluyordu → operatör iş listesini boş sanıp parti detayına hiç bakmıyordu. Kardeş
+   * `batch-recall-button.tsx` bu hizalamayı zaten yapıyordu; alan burada tipten DÜŞÜYORDU.
+   */
+  customerHeld: number;
 };
 
 /**
@@ -306,6 +317,9 @@ function RecallDialog({
           kind: batch.productKind,
           voided: res.voided ?? 0,
           soldNeedingReplacement: res.soldNeedingReplacement ?? 0,
+          // Eski API sürümünde alan gelmeyebilir → aktif sayıya düş (band en azından eskisi
+          // kadar doğru kalır, uydurma sıfır basmaz).
+          customerHeld: res.customerHeld ?? res.soldNeedingReplacement ?? 0,
         });
       } else {
         onError(res.error ?? 'Geri çekilemedi');
@@ -567,17 +581,22 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
   return (
     <div className="space-y-4">
       {notice && (
-        <Alert variant={notice.soldNeedingReplacement > 0 ? 'warning' : 'success'}>
-          {notice.soldNeedingReplacement > 0 ? <TriangleAlert /> : <CheckCircle2 />}
+        /* SAYI HİZASI: band, onay modali (customerCount) ve parti detayındaki
+           "Müşterilerdeki lisanslar" listesi AYNI kümeyi saymalı — aktif + askıda. */
+        <Alert variant={notice.customerHeld > 0 ? 'warning' : 'success'}>
+          {notice.customerHeld > 0 ? <TriangleAlert /> : <CheckCircle2 />}
           <div className="min-w-0 flex-1">
             <AlertTitle>Parti geri çekildi — {notice.label}</AlertTitle>
             <AlertDescription>
               Stoktaki {itemCount(notice.voided, notice.kind)} geçersiz kılındı.
-              {notice.soldNeedingReplacement > 0 && (
+              {notice.customerHeld > 0 && (
                 <>
                   {' '}
-                  Müşterilerdeki {itemCount(notice.soldNeedingReplacement, notice.kind)} çalışmaya
-                  devam ediyor — hangisini değiştireceğinize{' '}
+                  Müşterilerdeki {itemCount(notice.customerHeld, notice.kind)} çalışmaya devam
+                  ediyor
+                  {notice.customerHeld > notice.soldNeedingReplacement &&
+                    ` (${notice.customerHeld - notice.soldNeedingReplacement} tanesi askıda)`}
+                  {' '}— hangisini değiştireceğinize{' '}
                   <Link
                     href={`/batches/${notice.batchId}`}
                     className="underline underline-offset-4"

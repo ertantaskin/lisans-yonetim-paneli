@@ -171,8 +171,22 @@ export const DeliveriesResponse = z.object({
   total: z.number().int().nonnegative().optional(),
   /** §7 — bu siparişte askıya alınmış (suspended) atama var (müşteriye "inceleme altında"). */
   suspended: z.boolean().optional(),
-  /** §7 — onExpiry='hide' ürünün süresi geçmiş ataması vardı (müşteriye "süreniz doldu"). */
+  /**
+   * §7 — onExpiry='hide' ürünün süresi geçmiş ataması vardı (müşteriye "süreniz doldu").
+   *
+   * SİPARİŞ düzeyinde bir bayraktır: karışık siparişte (süresiz Windows anahtarı + 365 günlük
+   * Office 365) süresi dolan TEK kalem yüzünden de true olur. Genel bir "tekrar satın alın"
+   * bandı için TEK BAŞINA KULLANMAYIN — hangi ürünün bittiğini `expiredProductNames` söyler.
+   */
   expiredHidden: z.boolean().optional(),
+  /**
+   * §7 — süre nedeniyle GİZLENEN atamaların ürün adları (tekrarsız, tr'ye göre sıralı).
+   *
+   * `expiredHidden === true` iken doludur; boş dizi ya da alanın hiç gelmemesi (eski panel
+   * sürümü) mümkündür → okuyucu savunmacı davranmalı ve bu durumda ürün adı YAZMAMALIDIR.
+   * Siparişteki DİĞER kalemler canlı olabilir; bu liste yalnız biten ürünleri kapsar.
+   */
+  expiredProductNames: z.array(z.string()).optional(),
   /**
    * §7 kurulum/etkinleştirme rehberleri — siparişteki ürünlere bağlı, TEKRARSIZ liste.
    * Teslimat kalemleri `guideId` ile buraya bağlanır. Rehberi olmayan siparişte boş dizi

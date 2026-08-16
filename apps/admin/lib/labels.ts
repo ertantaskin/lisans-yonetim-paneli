@@ -449,11 +449,17 @@ export const aiPriorityLabel = (p: string) => lookup(AI_PRIORITY, p);
 // döndürür). Bilinmeyen anahtar → ham değer (regresyonsuz geri düşüş); hedef: hiçbir ham
 // snake_case string (ör. `assignment_created`) operatöre çıplak görünmesin.
 //
-// DENETİM (bu sözlük API'ye karşı doğrulandı — `insert(fulfillmentEvents)` çağrılarının tamamı
-// tarandı). API'nin ÜRETTİĞİ tam küme 13 değerdir; aşağıda "ölü" diye işaretlenenler HİÇBİR
-// yerde üretilmiyor. Ölü anahtarlar SİLİNMEDİ: zararsızlar ve eski kayıtlarda (ya da ileride
-// eklenecek olaylarda) karşılığı hazır dursun — ama yenisini eklerken bu listeye güvenme,
-// kaynağı grep'le.
+// DENETİM (bu sözlük API'ye karşı YENİDEN doğrulandı — `insert(fulfillmentEvents)` çağrılarının
+// tamamı tarandı). API'nin ÜRETTİĞİ tam küme bugün **16** değerdir: 14'ü düz string literal,
+// 2'si `orders.service` içindeki koşullu ifadeden gelir (`partially_fulfilled`/`pending_stock`
+// — grep'te literal olarak görünmezler, o yüzden yalnız literal saymak eksik sonuç verir).
+// Aşağıda "ölü" diye işaretlenenler HİÇBİR yerde üretilmiyor; SİLİNMEDİLER (zararsızlar ve eski
+// kayıtlarda karşılığı hazır dursun).
+//
+// SAYI BİR TARİHE AİTTİR: "13" notu `account_credentials_rotated` ucu eklenmeden önce yazılmıştı
+// ve sözlük güncellenmeyince operatör zaman çizelgesinde ham anahtar gördü — aynı sınıf hata
+// `revoke_failed`/`notice_failed` ile TEKRARLADI. Yeni bir olay tipi üreten kod eklerken bu
+// listeye GÜVENME, kaynağı grep'le ve sözlüğü aynı commit'te güncelle.
 const EVENT_TYPE: Record<string, string> = {
   order_received: 'Sipariş alındı',
   held_for_review: 'İncelemeye alındı',
@@ -476,6 +482,17 @@ const EVENT_TYPE: Record<string, string> = {
   // ÖNCE yazılmıştı; olay üretilmeye başlayınca sözlük güncellenmediği için zaman çizelgesinde
   // ham `account_credentials_rotated` görünüyordu (aynı sınıf: `mail_resent` yanlış anahtarı).
   account_credentials_rotated: 'Hesap bilgileri yenilendi',
+  // ── ARIZA OLAYLARI ────────────────────────────────────────────────────────
+  // İkisi de "işlem yapıldı ama bir YAN ETKİ başarısız oldu" der; TONLARI AYRIDIR ve
+  // `revoked` = "Geri alındı" ile KARIŞMAMALIDIR (o, işin BAŞARIYLA yapıldığı satırdır).
+  //
+  // `revoke_failed` (admin-orders `revokeOrderForSite` kaçak atama dalı): iade sırasında bir
+  // teslimat geri ALINAMADI → müşterinin elinde CANLI lisans kalmış olabilir. Bu tablonun en
+  // alarm verici satırıdır; operatör siparişten elle iptal etmelidir.
+  revoke_failed: 'İPTAL EDİLEMEDİ — müşteride canlı lisans olabilir',
+  // `notice_failed` (admin-orders `rejectHeld`): işlem yapıldı ama müşteri bildirimi kuyruğa
+  // ALINAMADI → lisans durumu doğru, müşteri yalnız haberdar değil (başka kanaldan bilgilendirin).
+  notice_failed: 'Müşteri bildirimi gönderilemedi',
   // ── ÖLÜ ANAHTARLAR (API bu tiplerde olay YAZMIYOR) ────────────────────────
   // `assignment_created` / `replaced` / `suspended` / `unsuspended`: bu eylemler `audit_log`'a
   // ve atama durumuna yazılır, `fulfillment_events`'e DEĞİL.

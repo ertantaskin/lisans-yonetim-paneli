@@ -68,7 +68,9 @@ export class AdminTotpService {
    * eklemek migration gerektirirdi (bu iş migration üretmiyor); (b) `SET NX` atomiktir, çok
    * replikalı/eşzamanlı iki istek arasında yarış bırakmaz; (c) auth sayaçları (`authfail:*`)
    * ve HMAC nonce'ları zaten Redis'te — replay koruması aynı yerde, aynı dille yaşar; (d) veri
-   * doğası gereği GEÇİCİ (90 sn), kalıcı kolonda tutmak gereksiz yazma yükü olurdu.
+   * doğası gereği GEÇİCİ (TTL `totpReplayTtlSec()` = (2×window+2)×step = 120 sn; sayı ELLE
+   * YAZILMAZ, varsayılanlar window=1/step=30 üzerinden buradan türetilir — eski yorumdaki
+   * "90 sn" bir adım paylı formülle uyuşmuyordu), kalıcı kolonda tutmak gereksiz yazma yükü olurdu.
    *
    * FAIL-CLOSED: Redis erişilemezse doğrulama REDDEDİLİR (hız sınırı fail-open'dır ama bu bir
    * KORUMA değil KİMLİK DOĞRULAMA adımıdır — HmacGuard nonce'u ile aynı ilke). Aksi hâlde
@@ -211,7 +213,11 @@ export class AdminTotpService {
     if (!byOwner && !authDisabled) {
       /*
        * HESAP KOVASI (denetim bulgusu): bu uç parola DOĞRULUYOR ama hiçbir hız sınırı yoktu.
-       * Her deneme bir scrypt (N=16384, ~60-100 ms) demek; sınırsız deneme hem parola
+       * Her deneme bir scrypt (GÜNCEL maliyet N=2^17=131072, r=8 → ~192 ms / 128 MB; ölçüm
+       * `auth/password.ts` başlığında. Eski yorum N=2^14 / "60-100 ms" diyordu — o değer
+       * 2^17'ye yükseltilirken güncellenmemişti ve bu kovanın gerekçesini 3× DÜŞÜK
+       * gösteriyordu; eski formatlı hash'ler hâlâ 2^14 ile doğrulanır, ama maliyeti
+       * belirleyen üst sınır CURRENT_PARAMS'tır) demek; sınırsız deneme hem parola
        * brute-force'u hem de teslimat yolunu da servis eden event loop'a ucuz bir DoS'tur.
        * Giriş ile AYNI kova kullanılır (ayrı kova = parolayı bilene taze bütçe, bkz.
        * ACCOUNT_FAIL_KEY yorumu).

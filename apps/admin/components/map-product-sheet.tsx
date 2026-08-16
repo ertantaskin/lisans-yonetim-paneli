@@ -259,10 +259,16 @@ export function MapProductSheet({
             />
           </Field>
 
+          {/*
+            İPUCU DÜZELTİLDİ — "1 mağaza SİPARİŞİ" değil, mağaza kaleminin 1 ADEDİ. Teslimat
+            motoru `orders.service`te `line.qty * mapping.bundleQty` hesaplar: paket adedi 3 olan
+            bir üründen müşteri 2 adet alırsa 6 lisans gider. Yanlış okuma doğrudan stok yakar
+            (fazla teslim edilen lisans geri gelmez).
+          */}
           <Field
             label="Paket adedi"
             htmlFor={`map-bundle-${uid}`}
-            hint="1 mağaza siparişi kaç lisans teslim etsin (varsayılan 1)."
+            hint="Mağaza kaleminin HER 1 adedi için kaç lisans teslim edilsin (varsayılan 1). Sipariş adediyle çarpılır: 3 × 2 adet = 6 lisans."
           >
             <Input
               id={`map-bundle-${uid}`}

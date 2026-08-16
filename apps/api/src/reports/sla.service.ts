@@ -14,8 +14,14 @@ import { rawRows } from '../db/raw-query';
  *
  *   • Sipariş anı  : `orders.created_at`      (indexli: orders_created_idx / orders_site_created_idx)
  *   • Teslim anı   : `assignments.created_at` (indexli: assignments_created_idx / assignments_line_idx)
- *     `delivered_at` DEĞİL: o kolon nullable ve INDEKSSİZ; aynı anda (atama satırı yazılırken)
- *     doldurulduğu için zaman bilgisi aynıdır, ama pencere taraması index'ten karşılanamazdı.
+ *     `delivered_at` DEĞİL — ve bu artık SEMANTİK bir tercihtir, teknik zorunluluk değil:
+ *     kolon migration 0043'ten beri indekslidir (`assignments_delivered_at_idx`, kısmi:
+ *     `WHERE delivered_at IS NOT NULL`), yani eski gerekçe ("nullable ve INDEKSSİZ, pencere
+ *     taraması index'ten karşılanamaz") GEÇERSİZDİR. `created_at` yine de tercih edilir:
+ *     NOT NULL'dur (nullable kolonda ölçülemeyen satır SESSİZCE kohorttan düşerdi) ve atama
+ *     satırı yazılırken aynı anda doldurulduğu için taşıdığı zaman bilgisi zaten aynıdır.
+ *     Kısmi indeks de yalnız teslim edilmiş atamaları kapsar; SLA ise "hâlâ açık" satırları
+ *     (stillOpen) görmek zorundadır.
  *
  * ── "ANINDA" vs "BEKLEDİ" AYRIMI — EŞİK DEĞİL, YAPISAL ────────────────────────────────────
  * `createOrder` siparişi VE atamalarını TEK transaction'da yazar; iki tablonun `created_at`

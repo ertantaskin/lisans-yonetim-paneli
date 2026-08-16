@@ -6,7 +6,7 @@ import { StockService } from '../../src/stock/stock.service';
 import { ProductsService } from '../../src/products/products.service';
 import { FulfillmentService } from '../../src/orders/fulfillment.service';
 import type { CryptoService } from '../../src/crypto/crypto.service';
-import { cleanupByTag, createProduct, makeCrypto, makeDb, type Db } from './_helpers';
+import { cleanupByTag, createProduct, makeCrypto, makeDb, tagPrefix, type Db } from './_helpers';
 
 /**
  * ENTEGRASYON — TOPLU stok düzeltme (`createAdjustment` + `licenseItemIds[]`).
@@ -34,13 +34,29 @@ const configFake = { get: () => undefined } as never;
 const autocompleteQueueFake = { add: async () => ({ id: 'fake' }) } as never;
 
 async function importKeys(productId: string, keys: string[]): Promise<string[]> {
-  await stock.import(
+  /*
+   * ANAHTARLAR TAG'LENİR — aksi halde paylaşılan bir DB'de SESSİZCE atlanırlar.
+   * `payload_hash` GLOBAL unique ve `stock.import` mükerrerleri `onConflictDoNothing` ile
+   * sessizce atlar. Sabit metinler ('BULK-A1'…) MASTER_KEY sabitlendiği anda her koşuda AYNI
+   * hash'i üretir → ikinci koşuda `imported` eksilir, `ids` kısalır ve assert'ler gerçek
+   * sebebinden UZAKTA patlar ("3 bekleniyordu 2 geldi" gibi). Tag ile her koşu benzersiz.
+   */
+  const tagged = keys.map((k) => `${tagPrefix(tag)}-${k}`);
+  const res = await stock.import(
     productId,
-    keys.map((payload) => ({ payload })),
+    tagged.map((payload) => ({ payload })),
     undefined,
     false,
     ACTOR,
   );
+  // SESSİZ ATLAMA YASAĞI (projenin kendi kuralı): beklenenden az kayıt girdiyse testi burada,
+  // net bir mesajla düşür — yoksa hata üç assert sonra ve yanlış sebeple görünür.
+  if (res.imported !== tagged.length) {
+    throw new Error(
+      `Test kurulumu bozuk: ${tagged.length} anahtar beklenirken ${res.imported} girildi ` +
+        `(mükerrer: ${res.duplicates ?? 0}). Paylaşılan DB'de tag çakışması olabilir.`,
+    );
+  }
   const page = await stock.listLicenseItems({ productId, pageSize: 100 }, ACTOR, true);
   // Listeleme "en yeni giriş üstte" → bu testte sıra önemli değil, id kümesi yeterli.
   return page.rows.map((r) => r.id);

@@ -9,10 +9,18 @@ import { getActor, isOwner } from '../../lib/session';
 // NOT: sabit buradan EXPORT EDİLEMEZ ('use server' modülü yalnız async fonksiyon export
 // edebilir — bkz. commit 9b81c9b), bu yüzden nötr modülde durur.
 import { MAX_ZIP_BYTES, MAX_ZIP_LABEL, formatBytes } from './zip-limit';
+import { getReleases } from './queries';
+import { compareVersions, highestVersion } from './semver';
 
 export interface PublishState {
   ok: boolean;
   message: string;
+  /**
+   * Yayın SÜRÜM KAPISINA takıldı (düşük/eşit sürüm) → form "yine de yayınla" onay kutusunu
+   * gösterir. Kutu baştan görünmez: her yüklemede sunulan bir "kuralı atla" seçeneği, kuralın
+   * kendisini işlevsiz kılardı.
+   */
+  needsConfirm?: boolean;
 }
 
 /**
@@ -55,6 +63,17 @@ export async function requestPluginRelease(
  * Yeni eklenti sürümü yayınla (POST /v1/admin/updates/plugin). Yüklenen .zip sunucuda
  * base64'e çevrilip API'ye iletilir; ADMIN_TOKEN yalnız Next sunucusunda kalır. Aynı
  * sürüm varsa API upsert yapar. Zip kökü 'wpteslimat/' olmalı (WP doğru klasöre açsın).
+ *
+ * SÜRÜM KAPISI (denetim bulgusu — eskiden HİÇBİR karşılaştırma yoktu): API yalnız
+ * `^\d+\.\d+\.\d+$` biçimine bakar ve `onConflictDoUpdate` ile sessizce ÜZERİNE YAZAR;
+ * sitelere sunulan paket ise `updates.service.latest()` ile EN YÜKSEK SEMVER'dir. Yani
+ * v1.1.0 canlıyken v1.0.5 yüklemek 201 döner, panel "yayınlandı" der ve o paketi HİÇBİR
+ * site ASLA almaz — operatör sessizce yanlış bir işin bittiğini sanır. Bu yüzden:
+ *  · daha düşük/eşit sürüm ya da mevcut bir sürümün üzerine yazma → önce UYARIYLA REDDEDİLİR,
+ *    operatör "yine de yayınla" onayını işaretlerse geçer (bilinçli kurtarma yolu),
+ *  · başarı mesajı gerçeği söyler: paket sitelere sunuluyor mu, sunulmuyor mu.
+ * Mevcut sürümler okunamazsa (API hatası) yayın ENGELLENMEZ — kapı bir yardımcıdır, tek
+ * dağıtım yolunu bir okuma hatası yüzünden kapatmak daha kötüdür; mesaj bunu belirtir.
  */
 export async function publishRelease(_prev: PublishState, formData: FormData): Promise<PublishState> {
   // GÜVENLİK (H1): manuel .zip yükleme de owner-only'dir. Bu action kardeşi requestPluginRelease
@@ -88,6 +107,33 @@ export async function publishRelease(_prev: PublishState, formData: FormData): P
     };
   }
 
+  // Onay kutusu: yalnız operatör bilerek işaretlediğinde düşük/eşit sürüm geçer.
+  const force = formData.get('allowNotLatest') != null;
+
+  // Mevcut sürümler — okunamazsa `null` (kapı devre dışı, yayın engellenmez).
+  let known: string[] | null = null;
+  try {
+    known = (await getReleases()).map((r) => r.version);
+  } catch {
+    known = null;
+  }
+  const highest = known ? highestVersion(known) : null;
+  const overwrite = known?.includes(version) ?? false;
+  const notLatest = highest != null && compareVersions(version, highest) < 0;
+
+  if (!force && (overwrite || notLatest)) {
+    return {
+      ok: false,
+      needsConfirm: true,
+      message: overwrite
+        ? `v${version} zaten yayınlanmış — devam ederseniz o sürümün paketi ve değişiklik notu ` +
+          `ÜZERİNE YAZILIR (geri alınamaz). Emin iseniz "yine de yayınla" kutusunu işaretleyin.`
+        : `v${version}, yayındaki en yüksek sürümden (v${highest}) düşük. Siteler daima en yüksek ` +
+          `sürümü çeker → bu paket hiçbir siteye SUNULMAZ. Emin iseniz "yine de yayınla" ` +
+          `kutusunu işaretleyin.`,
+    };
+  }
+
   const zipB64 = Buffer.from(await file.arrayBuffer()).toString('base64');
   try {
     await apiPost('/v1/admin/updates/plugin', {
@@ -99,5 +145,23 @@ export async function publishRelease(_prev: PublishState, formData: FormData): P
     return { ok: false, message: e instanceof ApiError ? e.message : 'Yayın başarısız' };
   }
   revalidatePath('/releases');
-  return { ok: true, message: `v${version} yayınlandı — müşteri siteleri güncelleyebilir.` };
+  // MESAJ GERÇEĞE UYDURULDU: "müşteri siteleri güncelleyebilir" YALNIZ paket en yüksek semver
+  // olduğunda doğrudur (public update-checker `latest()` = max semver döndürür).
+  if (notLatest) {
+    return {
+      ok: true,
+      message:
+        `v${version} kaydedildi ama sitelere SUNULMUYOR — yayındaki en yüksek sürüm v${highest}. ` +
+        `Sitelerin bu paketi alması için daha yüksek bir sürüm numarasıyla yayınlayın.`,
+    };
+  }
+  return {
+    ok: true,
+    message:
+      `v${version} yayınlandı${overwrite ? ' (mevcut sürümün üzerine yazıldı)' : ''} — müşteri ` +
+      `siteleri güncelleyebilir.` +
+      (known === null
+        ? ' NOT: mevcut sürüm listesi okunamadığı için sürüm kontrolü yapılamadı.'
+        : ''),
+  };
 }

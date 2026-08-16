@@ -82,8 +82,11 @@ const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
  * (`purchase-orders.service`), KISMEN teslim alınmış emirde NULL'dur ama `qty_received > 0`
  * olduğu için harcaması vardır. Yedeksiz bir süzgeç o emirleri SESSİZCE düşürürdü.
  *
- * İNDEKS NOTU: ifade indeksi yok (rapor bu yüzden yalnız `purchase_orders`ı tarar; tablo
- * diğerlerine göre küçüktür). Gerekli DDL entegratöre raporlandı.
+ * İNDEKS: bu İFADE artık indekslidir — `purchase_orders_spent_at_idx`
+ * (migration 0043, `btree(coalesce(received_at, created_at))`), yani dönem penceresi
+ * (`?from&to`) indeksten karşılanır. (Eski not "ifade indeksi yok / DDL entegratöre
+ * raporlandı" diyordu; 0043 o DDL'in ta kendisidir.) Mevcut `purchase_orders_created_idx`
+ * bu ifadeyi KARŞILAMAZ — ikisi ayrı indeks olarak durmalıdır.
  */
 const PO_SPENT_AT = 'coalesce(po.received_at, po.created_at)';
 
@@ -589,9 +592,11 @@ export class CostsService {
    * kolonun tanımlı olduğu kümede çalışıyoruz). `created_at` seçilmedi: bu blok "bu dönemde
    * teslim edilen malın maliyeti"ni ölçer, atamanın satır olarak yazıldığı anı değil.
    *
-   * İNDEKS: `delivered_at` İNDEKSSİZ (SLA servisi de bu yüzden `created_at` kullanıyor).
-   * Pencere yine de tarama BOYUTUNU düşürür ama tam kazanç için kısmi indeks gerekir —
-   * DDL entegratöre raporlandı (migration bu iş kapsamında EKLENMEDİ).
+   * İNDEKS: `delivered_at` artık İNDEKSLİ — `assignments_delivered_at_idx`
+   * (migration 0043, `btree(delivered_at) WHERE delivered_at IS NOT NULL`), yani istenen
+   * KISMİ indeksin ta kendisi eklendi ve sorgunun `IS NOT NULL` süzgeci onunla birebir
+   * örtüşür. (Eski not "indekssiz / DDL entegratöre raporlandı, migration EKLENMEDİ"
+   * diyordu — 0043 ile geçersiz kaldı.)
    */
   private async deliveredCogs(w: CostWindow): Promise<CostDeliveredCogs[]> {
     const cogs = PRORATED_COST('a.units', 'li.unit_cost_cents', 'li.max_uses');

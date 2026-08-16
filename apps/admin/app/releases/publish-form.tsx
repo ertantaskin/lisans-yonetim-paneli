@@ -18,7 +18,18 @@ export function PublishForm() {
   const [state, action, pending] = useActionState(publishRelease, initial);
   return (
     <form action={action} className="space-y-4">
-      <Field label="Sürüm" htmlFor="version" hint="SemVer — ör. 0.2.0. Mevcut sürümden büyük olmalı.">
+      {/*
+        İPUCU GERÇEĞE UYDURULDU: eskiden "Mevcut sürümden büyük olmalı" yazıyordu ama HİÇBİR
+        yerde karşılaştırma yoktu (API yalnız SemVer BİÇİMİNE bakar, aynı sürümü de sessizce
+        üzerine yazar). Sitelere sunulan paket EN YÜKSEK semver'dir → düşük sürüm 201 döner ama
+        hiçbir siteye ulaşmaz. Kural artık gerçekten uygulanıyor (actions.ts sürüm kapısı) ve
+        aşmak bilinçli bir onay gerektiriyor.
+      */}
+      <Field
+        label="Sürüm"
+        htmlFor="version"
+        hint="SemVer — ör. 0.2.0. Siteler daima EN YÜKSEK sürümü çeker; daha düşük ya da mevcut bir sürüm onay ister."
+      >
         <Input id="version" name="version" placeholder="0.2.0" required />
       </Field>
       <Field
@@ -41,9 +52,28 @@ export function PublishForm() {
         <Input id="zip" type="file" name="zip" accept=".zip" required />
       </Field>
       {state.message && (
-        <Alert variant={state.ok ? 'success' : 'destructive'}>
+        <Alert variant={state.ok ? 'success' : state.needsConfirm ? 'warning' : 'destructive'}>
           <AlertDescription>{state.message}</AlertDescription>
         </Alert>
+      )}
+      {/* Onay kutusu YALNIZ kapıya takıldıktan sonra çıkar (bkz. PublishState.needsConfirm). */}
+      {state.needsConfirm && (
+        <label
+          htmlFor="allowNotLatest"
+          className="flex items-start gap-2 text-sm text-muted-foreground"
+        >
+          <input
+            id="allowNotLatest"
+            name="allowNotLatest"
+            type="checkbox"
+            value="on"
+            className="mt-0.5 size-4 rounded border-input accent-primary"
+          />
+          <span>
+            Yine de yayınla — sonucun ne olacağını (paketin sitelere sunulmaması ya da mevcut
+            sürümün üzerine yazılması) anlıyorum.
+          </span>
+        </label>
       )}
       <Button type="submit" disabled={pending}>
         <UploadCloud />

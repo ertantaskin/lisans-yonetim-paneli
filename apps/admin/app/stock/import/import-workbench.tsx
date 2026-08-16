@@ -106,8 +106,12 @@ const BATCH_MODES: ReadonlyArray<{ value: BatchMode; title: string; desc: string
   },
   {
     value: 'new',
+    // KOŞUL EKLENDİ: satın alma emri YALNIZ tedarikçi çözülebilirse açılır (`stock.service`
+    // auto-PO dalı) ve bu modda tedarikçi OPSİYONELDİR → tedarikçisiz girişte parti açılır,
+    // PO açılmaz. Aynı ekrandaki bilgi kutusu bunu zaten doğru söylüyordu; segment açıklaması
+    // koşulsuz vaat ediyordu (iki metin çelişiyordu).
     title: 'Yeni parti',
-    desc: 'Bu girişle birlikte teslim alınmış bir parti (+ satın alma emri) açılır.',
+    desc: 'Bu girişle birlikte teslim alınmış bir parti açılır (tedarikçi seçerseniz satın alma emri de).',
   },
   {
     value: 'existing',

@@ -89,12 +89,24 @@ export type ReplacementNoticeStatus = 'approved' | 'rejected' | 'info_requested'
 export const REPLACEMENT_NOTICE_SUBJECT_PREFIX = 'Değişim talebiniz';
 
 /**
+ * SİPARİŞ DURUMU bildiriminin sabit öneki (TEK KAYNAK) — §8 İnceleme Kuyruğu reddi gibi,
+ * bir değişim talebine bağlı OLMAYAN müşteri bilgilendirmeleri.
+ *
+ * Ayrı bir önek: bu maili "Değişim talebiniz — 1042" diye göndermek müşteriye hiç açmadığı
+ * bir talep olduğunu söylerdi. Önek değiştiğinde NOTICE_SUBJECT_PREFIXES de güncellenmeli —
+ * aksi halde /ops replay'i bunu TESLİMAT maili sanar ve müşteriye tüm anahtarları yollar.
+ */
+export const ORDER_NOTICE_SUBJECT_PREFIX = 'Siparişiniz hakkında';
+
+/**
  * Teslimat OLMAYAN (dolayısıyla teslimat işi olarak replay edilemeyecek) mail konularının
  * önekleri. '[TEST MODU] ' sandbox öneki ve '[TEST] ' şablon test maili de dahildir.
  */
 export const NOTICE_SUBJECT_PREFIXES = [
   REPLACEMENT_NOTICE_SUBJECT_PREFIX,
   `[TEST MODU] ${REPLACEMENT_NOTICE_SUBJECT_PREFIX}`,
+  ORDER_NOTICE_SUBJECT_PREFIX,
+  `[TEST MODU] ${ORDER_NOTICE_SUBJECT_PREFIX}`,
   '[TEST]', // templates.service.sendTest — şablon test maili (orderId zaten null)
 ] as const;
 
@@ -163,26 +175,7 @@ export class MailService {
     status: ReplacementNoticeStatus,
     note?: string | null,
   ): Promise<NoticeEnqueueResult> {
-    // Sipariş no + sandbox için siparişi/siteyi çöz (yoksa yine gönderilir).
-    const [order] = await this.db
-      .select({ remoteOrderId: orders.remoteOrderId, siteId: orders.siteId })
-      .from(orders)
-      .where(eq(orders.id, orderId))
-      .limit(1);
-
-    let sandbox = false;
-    let siteName = 'Mağaza';
-    if (order?.siteId) {
-      const [site] = await this.db
-        .select({ sandbox: sites.sandbox, domain: sites.domain })
-        .from(sites)
-        .where(eq(sites.id, order.siteId))
-        .limit(1);
-      sandbox = site?.sandbox === true;
-      siteName = site?.domain ?? siteName;
-    }
-
-    const orderNo = order?.remoteOrderId ?? orderId;
+    const { orderNo, siteName, sandbox } = await this.orderContext(orderId);
     const headline = this.replacementHeadline(status);
     // Konu öneki TEK KAYNAKTAN: /ops replay'i mail türünü bu önekle ayırt eder
     // (bkz. REPLACEMENT_NOTICE_SUBJECT_PREFIX) — metin burada elle değiştirilmemeli.
@@ -198,11 +191,108 @@ export class MailService {
       bodyLines.push('', `Not: ${note.trim()}`);
     }
     bodyLines.push('', 'İyi günler,', siteName);
-    const body = bodyLines.join('\n');
 
-    // Sandbox (test modu, §14): gerçek müşteriye GİTMEZ — yöneticiye yönlendirilir. Karar
-    // ENQUEUE anında verilir (worker sade kalsın; site sonradan sandbox'tan çıksa bile
-    // kuyruktaki iş oluşturulduğu andaki kurala uyar).
+    return this.dispatchNotice(orderId, toEmail, subject, bodyLines.join('\n'), sandbox, 'Değişim');
+  }
+
+  /**
+   * SİPARİŞ DURUMU bildirimi (§8) — bir değişim talebine BAĞLI OLMAYAN müşteri bilgilendirmesi.
+   *
+   * NEDEN VAR (denetim bulgusu): İnceleme Kuyruğu REDDİ (`rejectHeld`) müşteriye HİÇBİR ŞEY
+   * söylemiyordu. Ödeme alınmış, mağaza siparişi "İşleniyor" görünüyor, müşterinin lisans
+   * bloğu ise siparişin geri alındığını yazıyor — ve kimse müşteriyi bilgilendirmiyordu.
+   * Kardeş yol (`replacements.reject`) bunu ÇOKTAN yapıyordu; asimetri kapatıldı.
+   *
+   * METİN SINIRI (§2/§6): panel ÖDEMEYE DOKUNMAZ → gövde iade İDDİA ETMEZ. Yalnız durumu
+   * bildirir ve destek yoluna yönlendirir; para hareketi mağaza/geçit tarafının işidir.
+   *
+   * SÖZLEŞME: `enqueueReplacementNotice` ile aynı — ASLA fırlatmaz, sonucu `{ queued }` ile
+   * döndürür ve çağıran "bildirildi" iddiasını BU değerden türetir.
+   */
+  async enqueueOrderNotice(
+    orderId: string,
+    toEmail: string,
+    headline: string,
+    note?: string | null,
+  ): Promise<NoticeEnqueueResult> {
+    const { orderNo, siteName, sandbox } = await this.orderContext(orderId);
+    // Önek TEK KAYNAKTAN (bkz. ORDER_NOTICE_SUBJECT_PREFIX): /ops replay'i mail türünü bundan
+    // ayırt eder — elle değiştirilirse bildirim, teslimat maili sanılıp anahtarlarla yeniden gider.
+    const subject = `${ORDER_NOTICE_SUBJECT_PREFIX} — ${orderNo}`;
+    const bodyLines = ['Merhaba,', '', `${orderNo} numaralı siparişiniz hakkında:`, '', headline];
+    if (note && note.trim().length > 0) {
+      bodyLines.push('', `Not: ${note.trim()}`);
+    }
+    bodyLines.push('', 'İyi günler,', siteName);
+
+    return this.dispatchNotice(orderId, toEmail, subject, bodyLines.join('\n'), sandbox, 'Sipariş');
+  }
+
+  /**
+   * Siparişin bildirim bağlamı: mağazanın gördüğü sipariş no + site adı + sandbox bayrağı.
+   * Sipariş/site bulunamazsa bildirim yine gönderilir (kritik olmayan alanlar için makul
+   * varsayılan) — bir isim çözülemedi diye müşteri bilgisiz KALMAMALI.
+   *
+   * ASLA FIRLATMAZ (denetim bulgusu): bu iki SELECT eskiden çağıranların `try` bloğunun
+   * DIŞINDAYDI, yani "bu metot ASLA fırlatmaz" sözleşmesi bir DB hıçkırığında YANLIŞTI.
+   * Bugün zararsızdı çünkü tek çağıran ayrıca `.catch()` koyuyordu; ama sözleşmeye güvenip
+   * catch'siz ikinci bir çağıran ekleyen kişi admin approve/reject aksiyonunu 500'letirdi.
+   * Sözleşmeyi DARALTMAK yerine kod düzeltildi: hata yutulmaz, GÖRÜNÜR biçimde loglanır ve
+   * varsayılanlarla devam edilir — asıl arıza zaten hemen ardından gelen email_log yazımında
+   * yüzeye çıkar ve `queued:false` olarak dürüstçe raporlanır.
+   */
+  private async orderContext(
+    orderId: string,
+  ): Promise<{ orderNo: string; siteName: string; sandbox: boolean }> {
+    try {
+      const [order] = await this.db
+        .select({ remoteOrderId: orders.remoteOrderId, siteId: orders.siteId })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1);
+
+      let sandbox = false;
+      let siteName = 'Mağaza';
+      if (order?.siteId) {
+        const [site] = await this.db
+          .select({ sandbox: sites.sandbox, domain: sites.domain })
+          .from(sites)
+          .where(eq(sites.id, order.siteId))
+          .limit(1);
+        sandbox = site?.sandbox === true;
+        siteName = site?.domain ?? siteName;
+      }
+      return { orderNo: order?.remoteOrderId ?? orderId, siteName, sandbox };
+    } catch (err) {
+      this.logger.warn(
+        `Bildirim bağlamı okunamadı (order=${orderId}), varsayılanlarla devam: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
+      // SANDBOX VARSAYILANI `false` (fail-open DEĞİL, bilinçli): true dönmek gerçek müşteriye
+      // giden bir bildirimi sessizce yöneticiye yönlendirirdi. Ayrıca bu yol yalnız DB zaten
+      // erişilemezken koşar; o durumda email_log yazımı da düşer ve mail HİÇ gönderilmez.
+      return { orderNo: orderId, siteName: 'Mağaza', sandbox: false };
+    }
+  }
+
+  /**
+   * Bildirimi email_log'a yazıp kuyruğa alan ORTAK gövde (iki bildirim türü de buradan geçer).
+   *
+   * Tek yerde durur ki sandbox yönlendirmesi, email_log semantiği ve "asla fırlatma" sözleşmesi
+   * türler arasında AYRIŞAMASIN (bu panelde aynı işi iki kez yazmak tekrarlayan bir hata sınıfı).
+   *
+   * Sandbox (test modu, §14): gerçek müşteriye GİTMEZ — yöneticiye yönlendirilir. Karar ENQUEUE
+   * anında verilir (worker sade kalsın; site sonradan sandbox'tan çıksa bile kuyruktaki iş
+   * oluşturulduğu andaki kurala uyar).
+   */
+  private async dispatchNotice(
+    orderId: string,
+    toEmail: string,
+    subject: string,
+    body: string,
+    sandbox: boolean,
+    kindLabel: string,
+  ): Promise<NoticeEnqueueResult> {
     let logId: string | null = null;
     try {
       const mailFrom = this.config.getOrThrow<string>('MAIL_FROM');
@@ -232,7 +322,7 @@ export class MailService {
     } catch (err) {
       // Kuyruğa alınamadı (DB/Redis erişilemez). Admin aksiyonunu BOZMA — dürüstçe raporla.
       const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`Değişim bildirimi kuyruğa alınamadı (order=${orderId}): ${message}`);
+      this.logger.warn(`${kindLabel} bildirimi kuyruğa alınamadı (order=${orderId}): ${message}`);
       if (logId) await this.setStatus(logId, 'failed', message).catch(() => undefined);
       return { queued: false, emailLogId: logId, error: message };
     }

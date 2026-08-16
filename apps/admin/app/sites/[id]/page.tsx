@@ -232,6 +232,13 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               <dd className="font-medium text-foreground">
                 {pluginVersion ? (
                   <Badge variant="success">v{pluginVersion}</Badge>
+                ) : lastSeenAt ? (
+                  /* "HİÇ BAĞLANMADI" DEMEK YANLIŞTI: karar yalnız `plugin_version`e bakıyordu,
+                     oysa `last_seen_at` HER imzalı istekte yazılır (HmacGuard). Sürüm başlığını
+                     v1.0.0 ÖNCESİ eklenti ya da marketplace/bayi istemcisi hiç göndermez → aynı
+                     kartta "Son görülme: az önce" ile "hiç bağlanmadı" YAN YANA çıkıyor ve
+                     operatör gereksiz yere rekey/bağlan kodu üretmeye yöneliyordu. */
+                  <Badge variant="neutral">sürüm bilinmiyor (bağlantı var)</Badge>
                 ) : pluginInfoAvailable ? (
                   <Badge variant="warning">
                     <TriangleAlert />
@@ -251,7 +258,10 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
               </dd>
             </div>
           </dl>
-          {!pluginVersion && pluginInfoAvailable && (
+          {/* Açıklama YALNIZ gerçekten hiç istek gelmemişse çıkar: `lastSeenAt` doluyken
+              "hiç imzalı istek göndermedi" demek düpedüz yanlıştı (yukarıdaki rozetle aynı
+              kök neden) ve operatörü çalışan bir mağazada rekey'e itiyordu. */}
+          {!pluginVersion && !lastSeenAt && pluginInfoAvailable && (
             <p className="text-xs text-muted-foreground">
               Bu site panele hiç imzalı istek göndermedi — eklenti kurulmamış ya da bağlan kodu
               hiç kullanılmamış olabilir.{' '}

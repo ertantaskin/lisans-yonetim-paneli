@@ -59,6 +59,17 @@ import {
  * sunucudadır; envanter tablosunun (`components/inventory/license-items-table.tsx`) deseni.
  */
 
+/**
+ * ÖLÜ SÜZGEÇ DEĞERLERİ — `audit_action` enum'unda VAR ama hiçbir kod yolu YAZMIYOR.
+ *
+ * 'login': girişler `security_events`'e düşer (`admin-users.service`), `audit_log`'a değil →
+ * seçilebilir bırakılırsa filtre DAİMA boş liste döndürür ve operatör bunu "giriş kaydı yok"
+ * diye okur. Enum listesinin kendisi (`constants.ts`) BUDANMAZ: sunucu tarafı doğrulaması
+ * enum'un tamamını kabul etmelidir (ileride yazılmaya başlarsa uç 400 vermesin) — elenen
+ * yalnız açılır listedeki SEÇENEKtir.
+ */
+const DEAD_ACTIONS = new Set<string>(['login']);
+
 /** Eylem → ikon. Etiket `lib/labels.ts` → `auditActionLabel` (TEK KAYNAK). */
 const ACTION_ICON: Record<string, LucideIcon> = {
   reveal: Eye,
@@ -248,7 +259,10 @@ export function AuditTable({ initial }: { initial: AuditPageData | null }) {
           onChange={(v) => set('action', v)}
           options={[
             { value: '', label: 'Tümü' },
-            ...AUDIT_ACTIONS.map((a) => ({ value: a, label: auditActionLabel(a) })),
+            ...AUDIT_ACTIONS.filter((a) => !DEAD_ACTIONS.has(a)).map((a) => ({
+              value: a,
+              label: auditActionLabel(a),
+            })),
           ]}
         />
         <FilterSelect

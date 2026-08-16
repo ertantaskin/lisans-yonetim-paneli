@@ -11,7 +11,7 @@ import { AccountPayloadSchema } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { isUniqueViolation } from '../db/pg-error';
-import { notExpiredCond } from '../assignment/assign';
+import { notExpiredCond, STANDING_STATUSES } from '../assignment/assign';
 import {
   products,
   siteProductMappings,
@@ -791,21 +791,34 @@ export class ProductsService {
   /**
    * Satış hızı: bu ürünün atamalarında (assignments→order_lines) 7/30 gün penceresinde
    * tüketilen units toplamı. reports.velocity ile AYNI mantık, tek ürüne daraltılmış.
-   * Yalnız AYAKTA atamalar (active/suspended/expired) — iade/değişimde geri alınan eski
-   * atama satış SAYILMAZ (reports.velocity ile tutarlı).
+   *
+   * YÜKLEM TEK KAYNAKTAN: statü kümesi `STANDING_STATUSES` (assignment/assign.ts) + iptal
+   * edilen satırın dışlanması (`ol.canceled = false`). Bu ikisi `reports.velocity` ve
+   * `reorder.salesCte` ile BİREBİR aynı olmak ZORUNDA — aksi halde aynı ürün iki ekranda
+   * farklı "tükenme tahmini" gösterir (bir kez yaşandı: elle yazılmış statü listesi +
+   * eksik `canceled` filtresi). Buradaki koşulu değiştiren, o iki yeri de değiştirmeli.
    */
   private async detailVelocity(id: string): Promise<{ sold7d: number; sold30d: number }> {
     const list = await rawRows<{ sold7d: number; sold30d: number }>(this.db, sql`
       SELECT
-        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold7d,
-        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days' AND a.status IN ('active','suspended','expired')), 0)::int AS sold30d
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '7 days' AND a.status IN ${STANDING_STATUSES}), 0)::int AS sold7d,
+        coalesce(sum(a.units) FILTER (WHERE a.created_at >= now() - interval '30 days' AND a.status IN ${STANDING_STATUSES}), 0)::int AS sold30d
       FROM assignments a
       JOIN order_lines ol ON ol.id = a.line_id
       WHERE ol.product_id = ${id}
         -- PERF (reports.velocity ile aynı budama): dış tarama 30 güne daraltılır. Toplamlar
         -- ZATEN yalnız 7g/30g FILTER'larından çıkıyor → 30 günden eski atamaların katkısı 0'dı;
         -- WHERE olmadan ürünün TÜM geçmişi taranıyordu. SONUÇ BİREBİR AYNI (yalnız okunan satır azalır).
-        AND a.created_at >= now() - interval '30 days';
+        AND a.created_at >= now() - interval '30 days'
+        -- İPTAL EDİLEN SATIR SATIŞ SAYILMAZ — reports.velocity ve reorder.salesCte ile AYNI yüklem.
+        -- BU EKSİKTİ ve gerçek bir sayı ayrışması üretiyordu: iade yollarının aday kümesi
+        -- ('active','suspended') olduğu için süresi dolmuş (expired) bir atama TAM İADEDEN SONRA
+        -- da hayatta kalır ve satır 'canceled' olur. O atama STANDING_STATUSES içinde olduğundan
+        -- BURADA satış sayılıyor, iki raporda sayılmıyordu → aynı ürün için ürün detayı
+        -- "3 gün kaldı" derken /reports/reorder "9 gün kaldı" diyordu; operatör hangisine
+        -- güveneceğini bilemiyordu (bu projede tekrarlayan "aynı kavramın iki yüklemi" sınıfı).
+        -- (DİKKAT: bu blok bir sql şablonunun İÇİNDE — ters tırnak KULLANMA, template erken kapanır.)
+        AND ol.canceled = false;
     `);
     return { sold7d: Number(list[0]?.sold7d ?? 0), sold30d: Number(list[0]?.sold30d ?? 0) };
   }

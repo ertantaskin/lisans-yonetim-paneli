@@ -23,7 +23,11 @@ export default async function TemplatesPage() {
         <PageHeader
           icon={FileText}
           title="Teslimat Şablonları"
-          description="Mail konusu + gövdesi. Öncelik: site override > ürün > genel varsayılan."
+          /* ÖNCELİK SIRASI TERS YAZILMIŞTI ("site override > ürün > genel"). GERÇEK sıra
+             `mail/templates.service.resolve`ta: ürün+site → ÜRÜN geneli → SİTE geneli → genel
+             varsayılan. Yani ürün şablonu, siteye özel şablonu EZER; ters metne güvenen operatör
+             yazdığı site şablonunun sessizce devre dışı kalmasını anlayamıyordu. */
+          description="Mail konusu + gövdesi. Öncelik: ürün+site > ürün > site > genel varsayılan."
         />
         <Button asChild>
           <Link href="/templates/new">

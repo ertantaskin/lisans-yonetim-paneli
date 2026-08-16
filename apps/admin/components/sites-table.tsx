@@ -32,21 +32,44 @@ import type { FacetConfig } from './data-table/data-table-toolbar';
 export type SiteListRow = SiteRow & {
   /** Sitede kurulu WP eklenti sürümü (imzalı istekteki `x-wpteslimat-version`). */
   pluginVersion?: string | null;
-  /** Bu sürümün en son ne zaman bildirildiği (ISO) — fiilî "son bağlantı" kanıtı. */
+  /** Bu sürümün en son ne zaman bildirildiği (ISO) — sürüm DEĞİŞİNCE yazılır, canlılık ölçmez. */
   pluginVersionAt?: string | null;
+  /**
+   * Mağazadan gelen SON imzalı isteğin zamanı (ISO; `sites.last_seen_at`, HmacGuard yazar).
+   * BAĞLANTININ asıl kanıtı budur — sürüm başlığı yalnız v1.0.0+ WP eklentisinden gelir.
+   */
+  lastSeenAt?: string | null;
 };
 
-/** Bağlantı süzgeci/kolonu için üç kova: hiç bağlanmadı / bağlı / bilinmiyor. */
-type ConnectionBucket = 'never' | 'connected' | 'unknown';
+/** Bağlantı süzgeci/kolonu için kovalar. */
+type ConnectionBucket = 'never' | 'connected' | 'connected-no-version' | 'unknown';
 
+/*
+ * KARAR ARTIK `last_seen_at`E DE BAKIYOR.
+ *
+ * Eskiden yalnız `plugin_version` vardı → sürüm başlığını göndermeyen bir istemci (v1.0.0
+ * ÖNCESİ eklenti, marketplace/bayi entegrasyonu) DAKİKALAR ÖNCE imzalı istek atmış olsa bile
+ * "hiç bağlanmadı" damgası yiyordu; /sites üstündeki sessizlik bandı ise aynı siteyi "son
+ * görülme: az önce" diye gösteriyordu. Çelişen iki cevap operatörü gereksiz rekey'e (çalışan
+ * mağazayı kırma riski) itiyordu.
+ */
 function connectionBucket(site: SiteListRow): ConnectionBucket {
-  // Alanın kendisi yoksa (eski API) "hiç bağlanmadı" DEME — bu yanlış alarm olurdu.
-  if (site.pluginVersion === undefined && site.pluginVersionAt === undefined) return 'unknown';
-  return site.pluginVersion ? 'connected' : 'never';
+  if (site.pluginVersion) return 'connected';
+  if (site.lastSeenAt) return 'connected-no-version';
+  // Hiçbir sinyal alanı gelmediyse (eski API) "hiç bağlanmadı" DEME — yanlış alarm olurdu.
+  if (
+    site.pluginVersion === undefined &&
+    site.pluginVersionAt === undefined &&
+    site.lastSeenAt === undefined
+  ) {
+    return 'unknown';
+  }
+  return 'never';
 }
 
 const CONNECTION_LABEL: Record<ConnectionBucket, string> = {
   connected: 'Bağlı',
+  'connected-no-version': 'Bağlı (sürüm bilinmiyor)',
   never: 'Hiç bağlanmadı',
   unknown: 'Bilinmiyor',
 };
@@ -109,6 +132,22 @@ const baseColumns: ColumnDef<SiteListRow>[] = [
             <TriangleAlert />
             hiç bağlanmadı
           </Badge>
+        );
+      }
+      if (bucket === 'connected-no-version') {
+        // Bağlantı VAR (imzalı istek geldi) ama istemci sürüm başlığı göndermiyor → uyarı
+        // TONU KULLANILMAZ: bu bir arıza değil, yalnız eksik telemetridir.
+        const seen = site.lastSeenAt ?? null;
+        const seenRel = seen ? relativeTime(seen) : null;
+        return (
+          <span className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="neutral">sürüm bilinmiyor</Badge>
+            {seen && seenRel && (
+              <span className="text-xs text-muted-foreground" title={fmtDateTime(seen)}>
+                {seenRel === 'az önce' ? seenRel : `${seenRel} önce`}
+              </span>
+            )}
+          </span>
         );
       }
       const at = site.pluginVersionAt ?? null;

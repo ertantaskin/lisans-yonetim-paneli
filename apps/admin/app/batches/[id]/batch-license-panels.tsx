@@ -63,9 +63,16 @@ export function BatchLicensePanels({
               {itemCount(customerCount, kind)}. {recalled ? 'Parti geri çekildi ama b' : 'B'}
               unlar çalışmaya devam ediyor ve müşteri görmeye devam ediyor — otomatik iptal
               edilmezler. Sorunlu olanı satırdaki{' '}
-              <strong>“Yenisiyle değiştir”</strong> ile yenileyin: müşteriye başka bir partiden
-              taze bir kalem atanır, eskisi karantinaya gider ve bu listeden düşer. Uygun stok
-              yoksa işlem yapılmaz, müşteri boşta kalmaz.
+              <strong>“Yenisiyle değiştir”</strong> ile yenileyin: müşteriye stoktaki uygun ilk
+              kalem atanır, eskisi karantinaya gider ve bu listeden düşer. Uygun stok yoksa işlem
+              yapılmaz, müşteri boşta kalmaz.
+              {!recalled && (
+                <>
+                  {' '}
+                  Parti henüz geri çekilmediği için <strong>aynı partiden</strong> bir kalem
+                  atanabilir — kusur partinin tamamındaysa önce partiyi geri çekin.
+                </>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -313,6 +313,20 @@ export class FulfillmentService {
    *     assignAvailableSingleUse use_count'a
    *     DOKUNMAZ, releaseAllocations GREATEST(0, …) ile 0'da tutar → available tek-kullanım
    *     kaleminde daima use_count=0 < max_uses=1. Yani tek-kullanım davranışı birebir korunur.
+   *   · ÖN SİPARİŞ (stoksuz) KAPISI — `NOT (stockless AND release_at > now())` (denetim bulgusu):
+   *     bu koşul atama SORGUSUNDA değil, ÇAĞIRANLARDA duruyor (completeLine · createOrder ·
+   *     bonusAssign hepsi aynı kapıyı uyguluyor) ve burada UNUTULMUŞTU. Stok girilmiş ama
+   *     `release_at` HÂLÂ İLERİDE olan ön sipariş ürününde sayım > 0 dönerken completeLine
+   *     erken çıkıp added=0 veriyordu → değişim çağıranları (replacements.approveTx / admin
+   *     replaceAssignment) bunu ÇEKİŞME sanıp "eşzamanlı işlem sürüyor, tekrar deneyin"
+   *     SONSUZ döngüsüne giriyordu (lisans kaybı yok — tx rollback — ama değişim hiç
+   *     tamamlanamaz ve mesaj yanlış sebebi gösterir). Kapı SAYIMA eklendi (yalnız yorumla
+   *     "istisna" yazmak yetmezdi: sayı 0 dönmeli ki çağıran "şu an atanabilir stok yok"
+   *     desin — gerçek durum budur).
+   *     SQL NULL DİKKATİ: yüklem `NOT (stockless AND release_at > now())` biçiminde YAZILAMAZ —
+   *     `release_at` NULL iken karşılaştırma NULL, `true AND NULL` = NULL, `NOT NULL` = NULL
+   *     olur ve satır SESSİZCE düşerdi (release_at'i olmayan TÜM stoksuz ürünler sayımdan
+   *     yok olurdu). Bu yüzden üç ayrı, kesin doğru/yanlış dönen dal OR'lanır.
    * Kasıtlı TEK fark: FOR UPDATE SKIP LOCKED yoktur (yukarıdaki "çekişme" ayrımı bunu ister).
    *
    * `exec`: dış transaction verilebilir (revoke sonrası KENDİ tx'imizin etkisini görmek için).
@@ -322,6 +336,7 @@ export class FulfillmentService {
       .select({ n: sql<number>`count(*)::int` })
       .from(licenseItems)
       .innerJoin(orderLines, eq(orderLines.id, lineId))
+      .innerJoin(products, eq(products.id, licenseItems.productId))
       .where(
         and(
           eq(licenseItems.productId, orderLines.productId),
@@ -329,6 +344,10 @@ export class FulfillmentService {
           // Drizzle sorgu kurucusu tabloyu takma adsız basar → alias = tablo adı.
           notExpiredCond('license_items'),
           sql`${licenseItems.useCount} < ${licenseItems.maxUses}`,
+          // Ön sipariş/stoksuz kapısı — completeLine/createOrder/bonusAssign ile aynı invaryant.
+          sql`(${products.stockless} = false
+                OR ${products.releaseAt} IS NULL
+                OR ${products.releaseAt} <= now())`,
         ),
       );
     return Number(row?.n ?? 0);

@@ -4,7 +4,9 @@
  *   X-Signature = HMAC-SHA256(secret, METHOD\nPATH\nTS\nNONCE\nSHA256(body))
  *
  * - X-Timestamp: unix saniye, ±300sn tolerans (saat kayması)
- * - X-Nonce: Redis'te 10dk tekil (replay engeli)
+ * - X-Nonce: Redis'te `HMAC_NONCE_TTL_SEC` (= 2×tolerans + 60 = 660sn) boyunca tekil (replay engeli).
+ *   "10dk" YAZILMAZ: 600sn tam olarak 2×tolerans'tır ve aşağıdaki invaryantı (TTL replay
+ *   penceresini KAPSAMALI) sınır kenarında ihlal eder.
  * - Anahtar rotasyonu: eski secret 24 saat paralel geçerli
  * - X-Trace-Id: uçtan uca taşınır
  */

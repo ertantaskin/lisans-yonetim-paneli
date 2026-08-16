@@ -251,7 +251,7 @@ export function ProductFormFields({
         <FormSection
           boxed
           title="Hesap alanları"
-          description="Müşteriye teslim edilen alanlar. 'Gizli' işaretli alanlar panelde maskelenir."
+          description="Müşteriye teslim edilen alanlar. 'Gizli' işaretli alanlar mağaza tarafında ve owner olmayan yöneticilere maskeli gösterilir."
         >
           <input type="hidden" name="payloadSchema" value={schemaJson} />
           <div className="space-y-2">
@@ -312,9 +312,21 @@ export function ProductFormFields({
               </div>
             ))}
           </div>
+          {/*
+            MASKELEME KAPSAMI GERÇEĞE UYDURULDU (denetim A1): "panelde maskelenir, çıplak
+            gösterilmez" YANLIŞTI. `canRevealPlaintext` (auth/admin-role.decorator) owner rolüne
+            — ve auth KAPALIykense rolsüz varsayılan oturuma — DÜZ METİN verir; sipariş detayı
+            (admin-orders `detail`) ile lisans envanteri (stock.controller) bu karara göre
+            maskesiz döner (her görüntüleme `reveal` audit'ine düşer). Maskeleme owner OLMAYAN
+            'admin' rolünde, mağaza tarafında (getDeliveries / WP My Account + meta box) ve
+            global aramada geçerlidir. Metnin "panelde asla görünmez" demesi operatöre yanlış
+            güven veriyordu.
+          */}
           <p className="text-xs leading-relaxed text-muted-foreground">
-            “Gizli” işaretli alanlar (ör. parola) panelde maskelenir, çıplak gösterilmez.
-            “Zorunlu” işaretini kaldırmak alanı içe aktarımda opsiyonel yapar (boş bırakılabilir).
+            “Gizli” işaretli alanlar (ör. parola) mağaza tarafında ve owner olmayan yöneticilerde
+            maskeli görünür; owner rolü (auth kapalıysa varsayılan oturum) bunları düz metin
+            görebilir — her görüntüleme denetim iznine yazılır. “Zorunlu” işaretini kaldırmak alanı
+            içe aktarımda opsiyonel yapar (boş bırakılabilir).
           </p>
           <Button type="button" onClick={addField} variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs">
             <Plus className="size-3.5" /> Alan ekle
@@ -397,10 +409,21 @@ export function ProductFormFields({
         description="Ön sipariş ve içe aktarma sırasında format doğrulaması."
       >
         <FieldRow>
+          {/*
+            METİN GERÇEĞE UYDURULDU: `release_at` bir ZAMANLAYICI DEĞİL, yalnız bir KAPIDIR.
+            Teslimat motorunun üç yerinde (fulfillment.service `completeLine`/`bonusAssign`/
+            `autoCompleteProduct` + orders.service `createOrder`) "release_at gelecekteyse ATAMA
+            YAPMA" diye okunur; o tarih GELDİĞİNDE hiçbir şeyi TETİKLEMEZ. `autoCompleteProduct`ın
+            tek iki çağıranı stok girişi ve onun kuyruk işidir; zamanlanmış sekiz süpürmenin
+            hiçbiri `release_at` taramaz. Yani stok ZATEN girilmişse tarih geçince sipariş
+            kendiliğinden teslim edilmez — operatör "Kalanları Ata" ya da yeni bir stok girişiyle
+            tetikler. (API'nin kendi tanısı bunu doğru söylüyor: pending-lines "Ön sipariş —
+            yayın tarihinden önce teslim edilmez".)
+          */}
           <Field
             label="Stoksuz / ön sipariş"
             htmlFor="p-stockless"
-            hint="Stok olmadan satışa açık; yayın tarihinde teslim."
+            hint="Stok olmadan satışa açık; yayın tarihine kadar teslimat yapılmaz."
           >
             <div className="flex h-9 items-center gap-2">
               <input
@@ -417,7 +440,7 @@ export function ProductFormFields({
           <Field
             label="Yayın tarihi"
             htmlFor="p-release-at"
-            hint="Ön sipariş bu tarihte teslim edilir."
+            hint="Bu tarihten ÖNCE teslimat yapılmaz. Tarih geldiğinde otomatik teslimat başlamaz — stok girişi ya da sipariş detayındaki “Kalanları Ata” ile tetiklenir."
           >
             <Input
               id="p-release-at"

@@ -1723,12 +1723,18 @@ export class StockService {
     }
 
     // ── Arama (§13) ──
-    // ŞİFRELİ payload üzerinde LIKE YAPILAMAZ → anahtar araması global aramadaki
-    // (search.service) ANAHTARLI son-hane hash'i üzerinden yapılır: payload_suffix_hash
-    // `suffix:<son 5 karakter>` HMAC'idir. Bu yüzden anahtar araması ancak girilen metnin
-    // SON 5 karakteri anahtarın son 5 karakteriyle eşleşirse çalışır (5+ karakter girdi;
-    // 4 hane TEK BAŞINA eşleşmez — kısıt bilinçli, sır sızdırmayan tek yol budur).
-    // Diğer eksenler düz metin: müşteri e-postası, mağaza sipariş no, parti kodu.
+    // ŞİFRELİ payload üzerinde LIKE YAPILAMAZ → anahtar araması yalnız ANAHTARLI hash
+    // EŞİTLİĞİYLE mümkündür ve İKİ YOLLUDUR (ayrıntı aşağıdaki blokta):
+    //   1) payload_hash        → TAM anahtar (operatör anahtarın tamamını yapıştırır)
+    //   2) payload_suffix_hash → SON 5 hane (elinde yalnız kuyruğu varken; 4 hane tek başına
+    //      eşleşmez — kısıt bilinçli, sır sızdırmayan tek yol budur)
+    // Düz metin eksenler: ÜRÜN ADI / SKU · parti kodu · müşteri e-postası · mağaza sipariş no.
+    //
+    // DİKKAT (bu başlık eskiden gövdeyle ÇELİŞİYORDU: "ancak son 5 karakter eşleşirse çalışır"
+    // diyor, ürün adı/SKU eksenini de hiç anmıyordu): `payload_hash` dalı ÖLÜ DEĞİLDİR — tam
+    // anahtar araması yalnız oradan çalışır, kaldırılırsa sessizce kaybolur.
+    // NOT (hesap ürünleri): `payload_suffix_hash` account tipinde YAZILMAZ (kanonik JSON'un
+    // kuyruğunu hash'lemek yanıltıcıydı) → hesap kalemlerinde son-hane araması hiç eşleşmez.
     const term = (params.search ?? '').trim();
     if (term.length >= 2) {
       const pattern = `%${escapeLike(term)}%`;

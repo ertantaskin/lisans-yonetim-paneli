@@ -209,9 +209,17 @@ function ReplaceDeliveredButton({
   const run = async () => {
     const res = await confirm({
       title: `Bu ${noun} yenisiyle değiştirilsin mi?`,
+      // "BAŞKA bir partiden" GARANTİSİ YOK — kaldırıldı. Atama motoru (assignment/assign.ts)
+      // parti farkında DEĞİLDİR: aday sıralaması `expires_at → created_at → seq`, yani aynı
+      // içe aktarımdan gelen KOMŞU anahtar büyük olasılıkla seçilir. Kusurlu bir partide bu
+      // cümle operatöre "sorun kaynağından uzaklaşıyorum" dedirtiyordu; gerçekte aynı partiden
+      // ikinci bir kusurlu kalem gidebilir. (Parti geri çekilmişse o partinin stoğu void
+      // edildiği için seçilemez — bu yüzden `batches-table` içindeki aynı cümle DOĞRUDUR.)
       description:
-        `Müşteriye BAŞKA bir partiden taze bir ${noun} atanır; şu anki kayıt karantinaya alınır` +
-        ' ve bir daha satılmaz. Uygun stok yoksa işlem yapılmaz — müşteri boşta kalmaz.',
+        `Müşteriye stoktaki uygun ilk ${noun} atanır; şu anki kayıt karantinaya alınır` +
+        ' ve bir daha satılmaz. Uygun stok yoksa işlem yapılmaz — müşteri boşta kalmaz.' +
+        ' Sorun partiden geliyorsa önce partiyi geri çekin: aksi hâlde aynı partiden başka bir' +
+        ` ${noun} atanabilir.`,
       details: [
         `Sipariş ${d.remoteOrderId} · ${d.customerEmail}`,
         `Ürün: ${row.productName}`,

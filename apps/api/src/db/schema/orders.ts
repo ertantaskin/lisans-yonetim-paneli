@@ -67,7 +67,8 @@ export const orders = pgTable(
     // siparişlerin ezici çoğunluğu 'fulfilled' olduğu için milyonlarca satır okunup atılır),
     // ya da seq scan + top-N sort yapıyordu; hiç 'unmapped' sipariş yoksa tablonun TAMAMI
     // taranıp ekran BOŞ dönüyordu. Terminal olmayan durumlar küçük bir alt küme → kısmi index
-    // (order_lines_pending_product_idx felsefesi).
+    // (kısmi-index felsefesi — bkz. `order_lines_pending_fifo_idx`; adı geçen eski
+    // `order_lines_pending_product_idx` 0042'de düşürüldü, aşağıdaki satır 147 bunu anlatıyor).
     // İkinci kolon DESC olmak ZORUNDA (0031 dersi: btree'de yön ayna değildir; `created_at DESC,
     // id DESC` sıralaması ancak aynı yönde tanımlı indeksten karşılanır).
     //

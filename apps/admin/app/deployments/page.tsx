@@ -193,8 +193,14 @@ export default async function DeploymentsPage() {
   // TAKILI İSTEK TEŞHİSİ: runner (host cron) dakikada bir yoklar. Birkaç dakikadır
   // 'pending' duran bir istek "yavaş" değil, ALINMAMIŞ demektir — ve panelden yeni dağıtım
   // 409 yer. Eskiden ekran bunu söylemiyordu: operatör "kuyrukta" sanıp bekliyordu.
-  // (Sunucu tarafı ayrıca 30dk'dan eski 'pending'i otomatik 'failed' yapar; bu bant o
-  // eşikten ÖNCE nedeni gösterir.)
+  //
+  // DİKKAT (metin gerçeğe uyduruldu): 30 dakikalık öksüz-'pending' temizliği ZAMANLANMIŞ
+  // DEĞİLDİR — yalnız `DeploymentsService.request()` transaction'ının içinde koşar
+  // (`expireZombieRunning` ise yalnız 'running' satırlara bakar; periyodik süpürme YOK).
+  // Yani kilit KENDİ KENDİNE açılmaz. Üstelik bu bant görünürken `hasActiveDeployment`
+  // true olduğu için paneldeki iki form da (dağıtım + yedek) kapalıdır → `request()` bu
+  // ekrandan çağrılamaz. Çıkış yolu: host cron'unu onarmak ya da yeni bir istek yaratacak
+  // bir çağrı (API ucu) yapmak; acil durumda VPS'te elle deploy.
   const STALL_MS = 3 * 60 * 1000;
   const stalled = rows
     .filter((r) => r.status === 'pending' && r.createdAt)
@@ -238,10 +244,13 @@ export default async function DeploymentsPage() {
               <code className="rounded bg-muted px-1 py-0.5 text-xs">
                 docs/RUNBOOK-RELEASE.md §A2
               </code>
-              . Bekleyen istek 30 dakika sonra otomatik olarak &quot;başarısız&quot;a düşer ve
-              kuyruk açılır; acele ediyorsanız VPS&apos;te{' '}
+              . <strong>Bu istek kendi kendine kapanmaz:</strong> 30 dakikalık temizlik yalnız YENİ
+              bir dağıtım isteği oluşturulurken çalışır, zamanlanmış bir süpürme yoktur — ve bu bant
+              görünürken bu sayfadaki dağıtım/yedek formları da kapalıdır. Kuyruğu açmak için
+              host&apos;taki runner cron&apos;unu onarın; dağıtımı beklemeden yapmanız gerekiyorsa
+              VPS&apos;te{' '}
               <code className="rounded bg-muted px-1 py-0.5 text-xs">./scripts/deploy.sh</code> ile
-              elle dağıtabilirsiniz.
+              elle dağıtın.
             </AlertDescription>
           </div>
         </Alert>

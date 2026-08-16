@@ -250,10 +250,17 @@ export function Wizard() {
                 </select>
               </Field>
 
+              {/*
+                METİN GERÇEĞE UYDURULDU: bu alan MAİL GÖNDERİMİNİ ETKİLEMİYOR. `mail.service`
+                ve `mail.processor` gönderen adresini HER ZAMAN `MAIL_FROM` env değişkeninden
+                alır (`getOrThrow('MAIL_FROM')`); `sites.sender_email` kaydedilir ama hiçbir
+                mail yolunda okunmaz. Eski ipucu, teslimat maillerinin bu adresten gideceğine
+                dair yanlış bir vaatti — operatör mağaza adresini yazıp öyle sanıyordu.
+              */}
               <Field
                 label="Gönderen e-posta (opsiyonel)"
                 htmlFor="wz-sender"
-                hint="Teslimat maillerinde görünecek gönderen adresi. Boş = panel varsayılanı."
+                hint="Mağaza iletişim adresi olarak kayda geçer. ŞU AN mail gönderimini etkilemez — teslimat mailleri panelin MAIL_FROM adresinden gider."
               >
                 <Input
                   id="wz-sender"

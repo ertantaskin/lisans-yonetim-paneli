@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.1.2
+Stable tag: 1.1.3
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,20 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.1.3 =
+* DESTEK YAZIŞMASI (kapalı döngü): müşteri açtığı talebi sipariş sayfasında görür, destek ekibinin
+  yazdıklarını okur ve AYNI talebe yanıt yazabilir. Önceden "Ek bilgi iste" denince müşterinin cevap
+  verecek hiçbir yolu yoktu; tek çıkış yeni talep açmaktı (talep bütçesini yiyor, eski talep açık kalıyordu).
+* "Sorun Bildir" artık teslimat beklerken, ürün eşlenmemişken, lisans geri alındığında, süre dolduğunda
+  ve panel erişilemezken de görünüyor (eskiden yalnız teslim edilmiş satırda vardı — çıkmaz sokak).
+* Çok kullanımlı (MAK) üründe müşteri kartı artık "1 lisans (toplam 5 kullanım hakkı)" diyor; sipariş
+  kutusu ve teslimat maili ile aynı dil (eskiden "1 lisans" deyip eksik teslimat izlenimi veriyordu).
+* "Süresi doldu" / "inceleme altında" bantları artık yalnız ilgili ürünleri kapsıyor; çok ürünlü
+  siparişte canlı lisans dururken tüm siparişi kapsayan yanıltıcı uyarı basılmıyor.
+* İptal/iade edilmiş sipariş metni artık para iadesi İDDİA ETMİYOR (inceleme reddinde de aynı durum oluşuyor).
+* İndirilen .txt dosyası süresi dolmuş lisansı "Geçerlilik:" yerine "Süresi doldu:" olarak yazıyor (ekranla aynı).
+* Koyu temada okunmayan destek formu ve "süresi doldu" notu tema-nötr hâle getirildi (sabit renk kaldırıldı).
 
 = 1.1.2 =
 * Silinen sipariş kalemi artık panele bildiriliyor (tam senkron): teslim edilmiş lisanslar müşteride canlı kalmıyor.

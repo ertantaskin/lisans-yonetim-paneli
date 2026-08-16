@@ -516,7 +516,9 @@ export class AdminOrdersService {
    * "bu siparişin eşlemesi olmayan AKTİF satırı var mı" (S1 ile aynı ifade). Sipariş `status`
    * alanı kısmen teslim edilmiş karma siparişlerde 'partial' olabilir ama satırlarından biri
    * hâlâ eşlemesizdir; operatör bunu status'ten göremiyordu. Tek EXISTS alt sorgusu ile çözülür
-   * (N+1 YOK); `order_lines_order_idx` + kısmi `order_lines_pending_product_idx` karşılar.
+   * (N+1 YOK); `order_lines_order_idx` + kısmi `order_lines_pending_fifo_idx` karşılar
+   * (eski `order_lines_pending_product_idx` 0042'de DÜŞÜRÜLDÜ; yenisinin kısmi yüklemi aynı,
+   * önder kolonu yine `product_id` — bu sayımı karşılar, kolon listesi yalnız daha geniştir).
    *
    * Her satırda ayrıca `productSummary` döner: siparişin HANGİ ürün için beklediği + ürün
    * başına eksik adet (aşağıdaki gerekçe). Ekran stok önceliğini listeden okuyabilsin diye.
@@ -1466,7 +1468,11 @@ export class AdminOrdersService {
     // DIŞINDA çağırırız: rejectHeld aynı advisory kilidini AYRI bir tx/bağlantıda alır; iç içe alım
     // aynı-anahtar deadlock'u yaratır (dış tx kilidi tutar, iç tx onu bekler → kilitlenme).
     if (order.heldForReview) {
-      await this.rejectHeld(order.id, reason, actor);
+      // notifyCustomer=false: bu yol MAĞAZA kaynaklı iptal/iade akışıdır — müşteriyi mağazanın
+      // kendi iptal/iade bildirimi zaten uyarır. Panelin ayrıca "siparişiniz teslim edilemedi"
+      // maili atması, iptali kendisi isteyen müşteriye çelişkili ikinci bir mesaj olurdu.
+      // Panelden ELLE reddetme (İnceleme Kuyruğu "Reddet") varsayılan true ile bildirir.
+      await this.rejectHeld(order.id, reason, actor, false);
     }
 
     // F3 (§2 iade ↔ releaseHeld yarışı): releaseHeld held bayrağını (advisory-lock'lu) tx'te temizler
@@ -2940,9 +2946,21 @@ export class AdminOrdersService {
    * yapılmadığından geri alınacak lisans YOK; satırlar 'canceled' işaretlenir → recompute 'revoked'
    * (tüm satırlar iptal) + değişim/yeniden-atama havuzuna girmez. Müşteri bir key ALMADI (mail/webhook
    * gönderilmemişti). WP sipariş durumunu bulkStatus poll'unda 'revoked' görür. audit + event izi.
+   *
+   * MÜŞTERİ BİLDİRİMİ (denetim bulgusu): bu yol müşteriye HİÇBİR ŞEY söylemiyordu — ödeme alınmış,
+   * mağaza siparişi "İşleniyor" görünüyor, müşterinin lisans bloğu ise siparişin geri alındığını
+   * yazıyor ve kimse müşteriyi bilgilendirmiyordu. Kardeş yol (`replacements.reject`) bunu çoktan
+   * yapıyordu. Bildirim commit SONRASI ve BEST-EFFORT'tur: kuyruğa alınamazsa reddi DÜŞÜRMEZ ama
+   * SESSİZ de kalmaz (görünür warn + siparişin zaman çizelgesine uyarı satırı).
+   *
+   * @param notifyCustomer Mağaza kaynaklı iptal/iade akışı (`revokeOrderForSite`) bunu `false`
+   *   geçer: orada müşteriyi mağazanın kendi iade/iptal bildirimi zaten uyarır ve panelin ikinci
+   *   bir "teslim edilemedi" maili göndermesi çelişkili görünürdü. Panelden ELLE reddetme
+   *   (İnceleme Kuyruğu "Reddet") varsayılan `true` ile bildirir — asıl boşluk oradaydı.
    */
-  async rejectHeld(orderId: string, reason: string, actor: string) {
-    return this.db.transaction(async (tx) => {
+  async rejectHeld(orderId: string, reason: string, actor: string, notifyCustomer = true) {
+    let customerEmail: string | null = null;
+    const outcome = await this.db.transaction(async (tx) => {
       // #7 denetim (yarış + H1 tekrarı): advisory-lock altında CAS. release/refund ile yarışı
       // dışlar; İDEMPOTENT — kilit altında held DEĞİLSE (başka geçiş kazandı / zaten kapandı)
       // no-op döner (revokeOrderForSite held siparişi güvenle kapatmak için bunu çağırır).
@@ -2967,6 +2985,9 @@ export class AdminOrdersService {
       if (!order.heldForReview) {
         return { orderId, rejected: false, status: order.status, alreadyClosed: true as const };
       }
+      // Alıcı adresi tx İÇİNDE okunur (kilit altındaki taze satır), bildirim ise commit SONRASI
+      // gönderilir: tx rollback olursa müşteriye gerçekleşmemiş bir ret bildirilmiş olmaz.
+      customerEmail = order.customerEmail;
 
       // KİLİT SIRASI: atamalar ÖNCE kilitlenir (sözleşme: assignments → order_lines → orders).
       // Aşağıdaki revoke döngüsü bu satırları yeniden kilitleyecek; aynı tx zaten sahibi olduğu
@@ -3038,5 +3059,60 @@ export class AdminOrdersService {
       });
       return { orderId, rejected: true, status: s };
     });
+
+    /*
+     * MÜŞTERİ BİLDİRİMİ — commit SONRASI, BEST-EFFORT.
+     *
+     * Metin bilinçli olarak İADE İDDİA ETMEZ (§2/§6: panel ödemeye dokunmaz, ödeme tamamen
+     * mağaza/geçit tarafındadır) — "para iadeniz yapıldı" demek panelin bilmediği bir şeyi
+     * söylemek olurdu. Yalnız durumu bildirir ve destek yoluna yönlendirir.
+     *
+     * `reason` GÖVDEYE KONULMAZ: operatörün iç gerekçesi ("şüpheli sipariş", "kart riski")
+     * müşteriye gitmemelidir; gerekçe zaten audit_log + zaman çizelgesinde durur.
+     */
+    if (notifyCustomer && outcome.rejected && customerEmail) {
+      /*
+       * TRY BLOĞU ŞART — `.catch()` YETMEZ: `enqueueOrderNotice` SENKRON fırlatırsa (ör. mail
+       * bağımlılığı bu metodu taşımıyorsa: eski/kısmi bir stub, dağıtım sapması) hata promise'e
+       * DÖNÜŞMEZ ve `.catch()` onu HİÇ görmez → tamamlanmış bir reddi geriye TypeError ile
+       * 500'lerdi (işlem commit'lenmiş, çağıran ise hata alıyor). Bildirim yan etkidir;
+       * ASIL AKSİYONU (ret) hiçbir koşulda düşürmemeli.
+       */
+      let queued = false;
+      let why = 'bilinmeyen sebep';
+      try {
+        const res = await this.mail.enqueueOrderNotice(
+          orderId,
+          customerEmail,
+          'Siparişiniz incelendi ve teslim edilemedi. Konuyla ilgili destek ekibimiz sizinle ' +
+            'iletişime geçecek; ödemenizle ilgili sorularınız için mağazayla iletişime geçebilirsiniz.',
+        );
+        // "Bildirildi" iddiası SONUÇ ALANINDAN türetilir, promise'in çözülmesinden DEĞİL
+        // (metot hata durumunda da normal döner — MailService sözleşmesi).
+        queued = res?.queued === true;
+        if (!queued) why = res?.error ?? why;
+      } catch (e: unknown) {
+        why = e instanceof Error ? e.message : String(e);
+      }
+      if (!queued) {
+        // SESSİZ KALMA KURALI: müşteri bilgilendirilemedi ise operatör bunu GÖREBİLMELİ —
+        // hem sunucu log'una hem operatörün baktığı yere (siparişin zaman çizelgesi) yazılır.
+        this.logger.warn(
+          `İnceleme reddi bildirimi KUYRUĞA ALINAMADI (order=${orderId}): ${why} — müşteri bilgilendirilmedi`,
+        );
+        await this.db
+          .insert(fulfillmentEvents)
+          .values({
+            orderId,
+            type: 'notice_failed',
+            message:
+              'UYARI: ret bildirimi müşteriye gönderilemedi (kuyruğa alınamadı). ' +
+              'Müşteriye elle ulaşın.',
+          })
+          .catch(() => undefined);
+      }
+    }
+
+    return outcome;
   }
 }

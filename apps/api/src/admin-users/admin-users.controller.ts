@@ -25,6 +25,7 @@ import { ZodBody } from '../common/zod-validation.pipe';
 import {
   AdminUsersService,
   LOGIN_FAIL_WINDOW_SEC,
+  MAX_IDENTIFIER_LEN,
   type LoginOutcome,
   type PublicAdminUser,
 } from './admin-users.service';
@@ -33,9 +34,11 @@ import { AdminTotpService } from './totp.service';
 /**
  * Kimlik üst sınırı: sınırsız identifier hem gövde limitine kadar (1 MB) şişebiliyor hem de
  * gereksiz iş üretiyordu. 200 karakter her gerçek e-posta/kullanıcı adı için fazlasıyla yeterli.
+ * Sabit servisten gelir (MAX_IDENTIFIER_LEN) — giriş ile OLUŞTURMA sınırı ayrışırsa girilemeyen
+ * hesap doğar (bkz. CreateBody ve AdminUsersService.create).
  */
 const LoginBody = z.object({
-  identifier: z.string().min(1).max(200),
+  identifier: z.string().min(1).max(MAX_IDENTIFIER_LEN),
   password: z.string().min(1),
 });
 type LoginBody = z.infer<typeof LoginBody>;
@@ -71,10 +74,16 @@ type ValidateBody = z.infer<typeof ValidateBody>;
 const LogoutBody = z.object({ sub: z.string().uuid() });
 type LogoutBody = z.infer<typeof LogoutBody>;
 
+/**
+ * Yeni admin. E-posta/kullanıcı adı üst sınırı GİRİŞ ile AYNI sabitten gelir: `login`
+ * MAX_IDENTIFIER_LEN üstündeki kimliği DB'ye hiç inmeden reddeder, yani sınırsız oluşturma
+ * "açılabilen ama ASLA giriş yapamayan" hesap üretirdi (hata jenerik olduğu için sebebi de
+ * görünmezdi). `name` de sınırlanır — gövde limitine kadar şişebilen serbest metin.
+ */
 const CreateBody = z.object({
-  email: z.string().email(),
-  username: z.string().min(3).optional(),
-  name: z.string().min(1),
+  email: z.string().email().max(MAX_IDENTIFIER_LEN),
+  username: z.string().min(3).max(MAX_IDENTIFIER_LEN).optional(),
+  name: z.string().min(1).max(200),
   password: z.string().min(8),
   role: z.enum(['owner', 'admin']).optional(),
 });

@@ -66,7 +66,10 @@ const trimmed = (v?: string): string | undefined => {
  * UYGULANMADI. Gerekçe (koda bakılarak verildi, tahminle değil):
  *
  *  1. `audit_log.meta` sözleşme gereği DÜZ-METİN SIR TAŞIMAZ (şema yorumu: "Ek bağlam
- *     — redakteli — payload düz metin ASLA girmez"). 30 yazma noktasının tamamı tarandı:
+ *     — redakteli — payload düz metin ASLA girmez"). Yazma noktalarının TAMAMI tarandı
+ *     (bu tarama yapıldığında `insert(auditLog)` 9 dosyada 32 çağrıydı; eski yorum "30"
+ *     diyordu — sayı sonradan artmıştı, güncel sayı `grep -rn "insert(auditLog)"` ile
+ *     doğrulanabilir ve yeni bir yazar eklendiğinde bu değerlendirme TEKRARLANMALIDIR):
  *     meta yalnız sayaç, uuid, enum, sebep metni ve tedarik alan adları taşıyor. Arama
  *     METNİ bile bilerek yazılmıyor (kısmi anahtar olabilir diye) — `stock.service` ve
  *     `admin-orders.service` bunu açıkça not ediyor.

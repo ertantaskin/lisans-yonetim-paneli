@@ -54,8 +54,17 @@ export const LOGIN_FAIL_WINDOW_SEC = FAIL_WINDOW_SEC;
 export const ACCOUNT_FAIL_KEY = (userId: string) => `authfail:id:${userId}`;
 export const ACCOUNT_MAX_FAILS = MAX_FAILS;
 
-/** Kimlik üst sınırı (controller ZodBody ile AYNI); savunma derinliği — bkz. verifyCredentials. */
-const MAX_IDENTIFIER_LEN = 200;
+/**
+ * Kimlik üst sınırı — GİRİŞ ile OLUŞTURMA yolunun TEK kaynağı (controller ZodBody bunu import eder).
+ *
+ * NEDEN TEK KAYNAK (denetim bulgusu): `login` bu sınırın üstündeki kimliği DB'ye hiç inmeden
+ * `null`'lar ("hiçbir gerçek kimlik bu aralığın dışında olamaz" varsayımıyla). Oysa OLUŞTURMA
+ * yolunda sınır YOKTU: `CreateBody` e-posta/kullanıcı adı için `.max()` taşımıyordu ve `onModuleInit`
+ * seed'i controller Zod'unu HİÇ geçmiyor. 200+ karakterli bir kimlikle açılan hesap KALICI olarak
+ * giriş yapamaz ve hata jenerik "Geçersiz kimlik veya parola" olduğu için sebebi görünmez.
+ * Sınır artık iki uçta da AYNI sabitten gelir → varsayım gerçekten garanti edilir.
+ */
+export const MAX_IDENTIFIER_LEN = 200;
 
 /**
  * Kimlik-dizesi kova anahtarı. HAM identifier YERİNE sha256 özeti kullanılır:
@@ -132,6 +141,14 @@ export class AdminUsersService implements OnModuleInit {
   }): Promise<PublicAdminUser> {
     const email = input.email.toLowerCase().trim();
     const username = input.username?.trim() || null;
+    // Kimlik uzunluğu: controller Zod'u ZATEN sınırlar, ama `onModuleInit` seed yolu (ADMIN_SEED_*)
+    // controller'dan HİÇ geçmez. Sınırsız bırakılırsa `login` (MAX_IDENTIFIER_LEN üstünü DB'ye
+    // inmeden reddeder) o hesabı SONSUZA DEK "geçersiz kimlik" sayar → kurtarma yolu yalnız DB.
+    if (email.length > MAX_IDENTIFIER_LEN || (username && username.length > MAX_IDENTIFIER_LEN)) {
+      throw new BadRequestException(
+        `E-posta ve kullanıcı adı en fazla ${MAX_IDENTIFIER_LEN} karakter olabilir.`,
+      );
+    }
     if (input.password.length < 8) throw new BadRequestException('Parola en az 8 karakter olmalı.');
     if (username && username.includes('@')) {
       throw new BadRequestException("Kullanıcı adı '@' içeremez.");
@@ -235,7 +252,11 @@ export class AdminUsersService implements OnModuleInit {
 
     // Hesap çözüldüyse HESAP-KİMLİĞİ kovası YETKİLİdir: e-posta ve kullanıcı adı yolları tek
     // kovada birleşir (aksi hâlde iki ayrı kova = 2×MAX_FAILS brute-force bütçesi). Kilitliyse reddet.
-    const acctKey = user ? `authfail:id:${user.id}` : null;
+    // Anahtar ELLE KURULMAZ: ACCOUNT_FAIL_KEY (yukarıda) parola girişi · TOTP adımı · TOTP
+    // kapatma için TEK sözleşmedir. Ad alanı ileride değişirse burada inline bir kopya kalsaydı
+    // TOTP yolu YENİ kovaya, giriş yolu ESKİ kovaya yazar ve dosyanın kendi uyardığı durum
+    // sessizce doğardı: ayrı kova = parolayı ele geçirene her adım için TAZE deneme bütçesi.
+    const acctKey = user ? ACCOUNT_FAIL_KEY(user.id) : null;
     if (acctKey && (Number(await this.redis.get(acctKey)) || 0) >= MAX_FAILS) {
       throw new HttpException(
         'Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.',
@@ -326,7 +347,8 @@ export class AdminUsersService implements OnModuleInit {
    * hesaba 15 dakikada toplam MAX_FAILS deneme düşer (10⁶'lık uzayda brute-force imkânsız).
    */
   async verifyTotpLogin(sub: string, code: string): Promise<PublicAdminUser | null> {
-    const acctKey = `authfail:id:${sub}`;
+    // Parola girişiyle AYNI kova — anahtar tek sözleşmeden (ACCOUNT_FAIL_KEY) türetilir.
+    const acctKey = ACCOUNT_FAIL_KEY(sub);
     if ((Number(await this.redis.get(acctKey)) || 0) >= MAX_FAILS) {
       throw new HttpException(
         'Çok fazla başarısız deneme. 15 dakika sonra tekrar deneyin.',

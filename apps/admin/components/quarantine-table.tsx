@@ -935,16 +935,21 @@ export function QuarantineTable({
               label="Ara"
               htmlFor="kusurlu-ara"
               className="min-w-0 sm:max-w-xl"
-              hint="Yazdıkça yüklenen listede süzer. Enter’a basarsanız veritabanındaki tüm kayıtlarda arar (lisans değeri şifreli olduğu için sunucuda aranmaz)."
+              hint="Yazdıkça yüklenen listede süzer (fiş numarası yalnız burada bulunur). Enter’a basarsanız veritabanındaki tüm kayıtlarda arar — ürün/SKU, müşteri, sipariş no, parti ve tedarikçi üzerinden (lisans değeri şifreli, fiş numarası ise bu aramanın kapsamı dışında)."
             >
               {/* Kutu + "Tüm kayıtlarda ara" AYNI satırda: ipucu ikisinin de altında kalır.
                   (items-end ile düğme iki satırlık ipucunun altına hizalanıyordu.) */}
               <div className="flex flex-wrap items-center gap-2">
+                {/* "fiş no" KALDIRILDI: sunucu araması (admin-orders `listQuarantine`) yalnız
+                    ürün adı/SKU, müşteri e-postası, mağaza sipariş no, parti etiketi ve tedarikçi
+                    adını kapsar — `supplier_claims.code` yüklemde YOK. "DEG-…" yazıp Enter'a basan
+                    operatör BOŞ tablo görüyor, yazdıkça çalışan yerel süzgeç ise buluyordu (aynı
+                    kutuda çelişen iki sonuç). Fişe erişim "Değişim Fişleri" sekmesindedir. */}
                 <SearchInput
                   id="kusurlu-ara"
                   value={q}
                   onValueChange={setQ}
-                  placeholder="Ürün, SKU, müşteri, sipariş no, parti, tedarikçi, fiş no…"
+                  placeholder="Ürün, SKU, müşteri, sipariş no, parti, tedarikçi…"
                   ariaLabel="Kusurlu stok kayıtlarında ara"
                   className="min-w-0 flex-1"
                 />

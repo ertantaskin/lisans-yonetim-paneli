@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.override.yml — YEREL GELİŞTİRME PORTLARI (şablon)
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#
+# NEDEN GEREKLİ: kök `docker-compose.yml` üretim topolojisidir — postgres/redis/api/
+# admin/mailpit servislerinin HİÇBİRİ host'a port YAYINLAMAZ (§8: DB dışa kapalı; API
+# ve admin yalnız `expose` ile iç ağda, dışarıya tek kapı Caddy 80/443). Bu doğru ve
+# bilinçli bir varsayılandır: canlı sunucuda veritabanını internete açmak istemeyiz.
+#
+# Ama yerelde host'tan erişim şart:
+#   * `pnpm wp:dev` API'yi http://localhost:3001/v1/health üzerinden yoklar,
+#   * panele tarayıcıdan girilir,
+#   * Mailpit kutusu okunur,
+#   * yarış/entegrasyon testleri Postgres'e ve Redis'e host'tan bağlanır.
+# Bu dosya SADECE port yayınlar; başka hiçbir ayarı değiştirmez.
+#
+# Docker Compose `docker-compose.override.yml` dosyasını OTOMATİK okur — `-f` vermeye
+# gerek yoktur, `docker compose up -d` yeterlidir.
+#
+# GÜVENLİK: her port `127.0.0.1`e bağlanır → yalnız bu makineden erişilir, LAN'a/
+# internete AÇILMAZ. Bu öneki KALDIRMAYIN (`'5432:5432'` yazmak veritabanını tüm ağa
+# açar). Bu dosyanın kendisi (`docker-compose.override.yml`) .gitignore'dadır; şablon
+# ise depoda durur, çünkü kurulum adımının kaybolması aracı sessizce çalışmaz yapıyordu.
+#
+# ÜRETİM SUNUCUSUNDA BU DOSYAYI OLUŞTURMAYIN.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  postgres:
+    ports:
+      - '127.0.0.1:5432:5432' # psql / drizzle-kit / yarış testi (DATABASE_URL=…@localhost:5432/…)
+
+  redis:
+    ports:
+      - '127.0.0.1:6379:6379' # redis-cli / gerçek Redis isteyen entegrasyon testleri
+
+  api:
+    ports:
+      - '127.0.0.1:3001:3001' # http://localhost:3001/v1/health — wp-dev.sh bu adresi yoklar
+
+  admin:
+    ports:
+      - '127.0.0.1:3005:3000' # http://localhost:3005 — panel arayüzü (konteyner içinde 3000)
+
+  mailpit:
+    ports:
+      - '127.0.0.1:8025:8025' # http://localhost:8025 — giden teslimat maillerini oku

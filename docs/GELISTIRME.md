@@ -7,22 +7,34 @@ WordPress kurulumuna karşı, "normal bir siteye bağlanmış gibi" geliştirmek
 ## Hızlı başlangıç
 
 ```bash
-cp .env.example .env    # ilk sefer: değerleri doldur (aşağıda "En az gerekenler")
-pnpm wp:dev             # panel + WordPress + WooCommerce + eklenti — tek komut
+cp .env.example .env                                          # 1) değerleri doldur (aşağıda "En az gerekenler")
+cp docker-compose.override.yml.example docker-compose.override.yml   # 2) yerel portları aç — ATLAMA
+pnpm wp:dev                                                   # 3) panel + WordPress + WooCommerce + eklenti
 ```
+
+> **2. adım neden zorunlu?** Kök `docker-compose.yml` üretim topolojisidir:
+> postgres/redis/api/admin/mailpit **host'a hiç port yayınlamaz** (dışarıya tek kapı
+> Caddy'nin 80/443'ü). Override dosyası olmadan `localhost:3001`, `localhost:3005` ve
+> `localhost:8025` **erişilemez**; `pnpm wp:dev` API sağlığını bekleyip hata vererek durur.
+> Şablon her portu `127.0.0.1`e bağlar (LAN'a açılmaz) ve dosyanın kendisi `.gitignore`dadır.
 
 Bittiğinde:
 
-| Ne | Adres | Giriş |
-|---|---|---|
-| WordPress sitesi | http://localhost:8090 | `admin` / `admin12345` (wp-admin) |
-| Panel (admin) | http://localhost:3005 | auth kapalıysa doğrudan açılır |
-| Panel API | http://localhost:3001/v1/health | — |
-| Mailpit (mail kutusu) | http://localhost:8025 | — |
+| Ne | Adres | Giriş | Portu açan |
+|---|---|---|---|
+| WordPress sitesi | http://localhost:8090 | `admin` / `admin12345` (wp-admin) | `docker-compose.wp.yml` (hazır) |
+| Panel (admin) | http://localhost:3005 | auth kapalıysa doğrudan açılır | **override** |
+| Panel API | http://localhost:3001/v1/health | — | **override** |
+| Mailpit (mail kutusu) | http://localhost:8025 | — | **override** |
+| PostgreSQL | `localhost:5432` | `.env`deki kimlikler | **override** (testler için) |
+| Redis | `localhost:6379` | — | **override** (testler için) |
+
+"override" = 2. adımda kopyaladığın `docker-compose.override.yml`. Yalnız WordPress'in
+portu kök yapılandırmadan gelir — bu yüzden override yokken tek çalışan adres 8090'dır.
 
 ### En az gerekenler (`.env`)
 
-`pnpm wp:dev` için şu üç değer yeterli (yereldir, üretim sırrı DEĞİL — istediğini yaz):
+`pnpm wp:dev` için aşağıdaki blok yeterlidir (yereldir, üretim sırrı DEĞİL — istediğini yaz):
 
 ```
 POSTGRES_USER=lisanspanel
@@ -102,8 +114,13 @@ Her iki yığın da aynı Docker ağındadır (`lisans-yonetim-paneli_default`):
 
 ## Sık sorunlar
 
-- **"API 120sn'de hazır olmadı"** — ilk çalıştırmada api/admin imajları derlenir;
-  `docker compose logs api` ile ilerlemeyi izle, sonra `pnpm wp:dev` tekrar çalıştır.
+- **"API 120sn'de hazır olmadı" / `localhost:3005` açılmıyor** — en sık sebep **override
+  dosyasının kopyalanmamış olmasıdır**: o zaman API host'a hiç port yayınlamaz, `curl
+  localhost:3001` sonsuza kadar başarısız olur ve tekrar denemek ASLA çözmez. Önce
+  kontrol et: `docker compose port api 3001` bir adres yazdırmıyorsa
+  `cp docker-compose.override.yml.example docker-compose.override.yml` yapıp
+  `pnpm wp:dev` komutunu tekrar çalıştır. Override varsa ve konteyner ayaktaysa gerçekten
+  ilk derleme sürüyor olabilir — `docker compose logs -f api` ile izle.
 - **Panel bağlantısı kurulamadı ("aynı domain zaten kayıtlı")** — daha önce site
   açılmış. Panelden o sitenin secret'ını rotate edip `pnpm wp:cli config set
   WPTESLIMAT_API_KEY '<key>' --type=constant` ile elle yaz (HMAC için de aynısı).

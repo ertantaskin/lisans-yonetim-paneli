@@ -55,8 +55,9 @@ sipariş/atama kaybı = çifte satış / müşteri mağduriyeti riski). §16 hed
   olmadığından payload'lar **çözülemez**. Anahtarı yedeğin yanına koymak = şifrelemeyi anlamsız
   kılmak = tek dosyada tüm lisansların sızması (güvenlik ihlali).
 - **Kural:**
-  - `MASTER_KEY` **DB yedeğine dahil edilmez.** (`backup-drill.sh` yalnız DB'yi dump eder; `.env`
-    veya anahtar dosyalarına dokunmaz.)
+  - `MASTER_KEY` **DB yedeğine dahil edilmez.** (`backup-drill.sh` yalnız DB'yi dump eder;
+    `.env`'i **yalnız bağlantı bilgisi için okur** — `POSTGRES_USER/DB/PASSWORD` — dosyanın
+    kendisini yedeğe **dahil etmez** ve dış kopya kancasına yalnız dump dosyasının yolu geçilir.)
   - `MASTER_KEY` ayrı bir secret store'da (parola yöneticisi / KMS / kapalı zarf) **çevrimdışı en az
     2 kopya** olarak saklanır (§8: "çevrimdışı 2 kopya").
   - Restore tatbikatında anahtarın gerçekten geri yüklenebilir olduğu da doğrulanır (anahtar kaybı =
@@ -97,8 +98,11 @@ Panelde **Dağıtımlar (/deployments)** → *Yedekler* bölümü:
 | **Tatbikat çalıştır** | `backup-drill` | `scripts/backup-drill.sh` — yukarıdakiler + ayrı `*_drill` DB'sine geri yükleme, satır sayıları, **çifte-atama=0**, RTO ölçümü |
 
 Aynı ekranda **"Son yedek"** ve **"Son tatbikat"** kartları: ne zaman, ne kadar sürdü, boyut,
-dış kopya durumu, tatbikatta geri-yükleme süresi (RTO). Yedek yoksa ya da eşiği aştıysa
-**kırmızı uyarı bandı** çıkar (yedek > **26 saat**, tatbikat > **35 gün**).
+dış kopya durumu, tatbikatta geri-yükleme süresi (RTO). Eşik aşılırsa uyarı bandı çıkar:
+yedek > **26 saat** → **kırmızı** bant; tatbikat > **35 gün** → **sarı** bant. Yedek bandı
+görünürken tatbikat bandı **bilerek gizlenir** (`deployments/page.tsx`: `!backupStale &&
+drillStale`) — önce daha acil olan iş yapılsın diye. Yani "tatbikat bayat" uyarısını ancak
+yedek tazeyken görürsün; yedeği düzeltince ortaya çıkabilir.
 
 **Mimari (değişmez kural):** panel **yalnız bir istek kaydeder**; `pg_dump`'ı host'taki runner
 çalıştırır. Panel konteynerine Docker soketi / DB kabuğu **VERİLMEZ** (konteynerden host'a tam
@@ -129,7 +133,9 @@ Sözleşmenin taşıdığı güvenceler (dağıtımla **ortak**, ayrı yol açı
 
 **Runner kurulumu (VPS'te, bir kez):**
 ```bash
-apt-get install -y jq                      # gerekli (JSON)
+apt-get install -y jq curl util-linux      # jq: JSON · curl: panel API çağrıları · flock (util-linux): tek-örnek kilidi
+# NOT: betik yalnız `jq` yokluğunu açıkça bildirir. `curl` eksikse api() boş döner ve arıza
+# "claim BAŞARISIZ / API kapalı" gibi YANLIŞ teşhis edilir — üçünü birden kurmak en temizi.
 crontab -e
 # 1) panelden tetiklenen yedek isteklerini dakikada bir yoklar:
 * * * * * /opt/lisans-yonetim-paneli/scripts/backup-runner.sh >> /var/log/backup-runner.log 2>&1
@@ -172,6 +178,15 @@ ortamdan **veya** `.env`'den okunur:
 |---|---|---|---|---|
 | Yedek bayat / hiç yok | `backup_stale` | > 26 saat | **critical** | 24 saat |
 | Tatbikat bayat / hiç yok | `drill_stale` | > 35 gün | warning | 7 gün |
+| Dış kopya kurulu değil | `backup_offsite` | son başarılı yedekte `skipped` | warning | 7 gün |
+| Dış kopya BAŞARISIZ | `backup_offsite_failed` | son başarılı yedekte `failed` | **critical** | 24 saat |
+
+Son iki alarm **ayrı tiplerdir** (aynı tipte olsaydı önce yazılan `skipped` uyarısı, sonradan
+yükselen `failed` kritiğini dedupe penceresi boyunca bastırırdı). Ayrım önemli: `skipped` =
+kanca hiç kurulmadı (operatör bunu bilir); `failed` = kanca **kurulu ama çalışmıyor**, yani
+operatör dış kopyanın alındığını **sanıyor** — yanlış güven, hiç güvenmemekten tehlikelidir.
+Yalnız son **başarılı** yedeğe bakılır; yedek zaten alınamıyorsa asıl sorun `backup_stale`'dir
+ve aynı arıza iki başlıkla bildirilmez.
 
 Tarama 6 saatte bir koşar (`backup-alarm` kuyruğu) ve kendisi patlarsa diğer sweep'ler gibi
 `sweep_failed` kritik alarmı üretir. **Kurulum doğrulaması (bir kez, kurulumdan sonra ŞART):**
@@ -186,9 +201,14 @@ curl -sS -X POST -H "X-Admin-Token: $ADMIN_TOKEN" \
 ```
 
 **Rotasyon (disk):** günlük yedek + rotasyon kapalı = disk **sessizce dolar** ve bir gün prod
-durur. Runner varsayılanı `BACKUP_KEEP_LAST=14` (≈2 hafta günlük yedek). Yalnız bu betiğin
-ürettiği `"<db>_YYYYmmdd-HHMMSS.dump"` dosyaları budanır; başka dosyalara dokunulmaz.
+durur. Runner varsayılanı `BACKUP_KEEP_LAST=14` (≈2 hafta günlük yedek).
 Disk boyutunu hesapla: `14 × (bir dump boyutu)` — panelde "Boyut" satırı gerçek değeri gösterir.
+
+> **DİKKAT — rotasyonun kapsamı sandığından geniş.** Budama deseni `"<db>_*.dump"`dur
+> (`ls -1t "$BACKUP_DIR/${DB_NAME}_"*.dump`); zaman damgası biçimi **doğrulanmaz**. Yani
+> §4.1'de **elle** aldığın `lisanspanel_$(date …).dump` dosyaları da aynı listeye girer,
+> "en yeni N" penceresini işgal eder ve pencere dolunca **silinir**. Saklamak istediğin bir
+> dump'ı `BACKUP_DIR` dışına koy ya da farklı bir önekle adlandır (ör. `saklanacak_…`).
 
 **Rotasyon YALNIZ hatasız koşumda çalışır.** Koşumda bir `[FAIL]` varsa (ör. arşiv okunamadı,
 sürüm uyuşmazlığı) eski dump'lar **silinmez** ve `[WARN] Rotasyon ATLANDI` basılır. Sebep:
@@ -252,8 +272,15 @@ echo 'BACKUP_OFFSITE_CMD=/usr/local/bin/offsite-upload.sh' >> /opt/lisans-yoneti
 > **Uyarı:** kanca yalnız dump dosyasını alır; `.env` / `MASTER_KEY` offsite'a **gönderilmez**
 > ve gönderilmemelidir (§3).
 
+> **`.env`'e yazmak yalnız runner yolunda etkilidir.** `BACKUP_OFFSITE_CMD`'yi `.env`'den okuyup
+> alt sürece aktaran taraf `backup-runner.sh`'tır (panelden tetikleme ve cron bu yoldan geçer).
+> `backup-drill.sh`'ı SSH'ten doğrudan çalıştırırsan değer okunmaz → dış kopya `skipped` olur
+> (bkz. §6).
+
 **Kurulumdan sonra doğrula:** panelden **Şimdi yedek al** → kart "Dış kopya: Dışarı kopyalandı"
-demeli; hedefte dosyayı gözle gör (boyut panelde yazan ile aynı mı).
+demeli; hedefte dosyayı gözle gör (boyut panelde yazan ile aynı mı). Kanca kurulmazsa panel
+`backup_offsite` (warning) alarmı üretir; kurulu ama çalışmıyorsa `backup_offsite_failed`
+(**critical**) — ikisi ayrı tiptir, biri diğerini bastırmaz.
 
 ---
 
@@ -278,7 +305,8 @@ docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" lisans-yonetim-paneli-postgres-1 
 docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" lisans-yonetim-paneli-postgres-1 \
   pg_restore --no-owner --no-privileges -d lisanspanel_restore < backups/<DOSYA>.dump
 
-# 3) Doğrula (satır sayıları + çifte-atama=0) — bkz. backup-drill.sh §5 sorguları
+# 3) Doğrula — bkz. scripts/backup-drill.sh "[6/7] Doğrulama" adımı
+#    (satır sayıları + çifte-atama=0 sorgusu; betikte "§5" diye bir bölüm YOKTUR)
 # 4) Uygulamayı yeni DB'ye yönelt (DATABASE_URL) VEYA restore DB'yi prod adına al (bakım penceresi).
 ```
 
@@ -306,9 +334,20 @@ olduğunu, RTO'nun hedefte kaldığını kanıtlamak.
       Tatbikatın zombi eşiği **4 saat**'tir (RTO hedefi 2 saat) — 30 dk'yı aşan koşum artık
       "başarısız" damgalanmaz. SSH alternatifi (runner kurulu değilse):
       ```bash
-      bash scripts/backup-drill.sh
+      bash scripts/backup-runner.sh --enqueue backup-drill   # TERCİH EDİLEN
       ```
       (Docker'sız / uzak PG için: `PG_HOST=... PG_PORT=... PG_USER=... PG_DB=... PG_PASSWORD=... bash scripts/backup-drill.sh`)
+
+      > **`backup-drill.sh`'ı DOĞRUDAN çalıştırırsan dış kopya ve rotasyon devre dışı kalır.**
+      > `.env` dosyasındaki `BACKUP_*` ayarlarını yalnız `backup-runner.sh` okuyup alt sürece
+      > aktarır; `backup-drill.sh` `.env`'den **yalnız `POSTGRES_*`** okur, `BACKUP_OFFSITE_CMD`
+      > / `BACKUP_KEEP_LAST` / `BACKUP_DIR` değerlerini **ortamdan** bekler. Doğrudan koşacaksan
+      > ayarları açıkça ver:
+      > ```bash
+      > BACKUP_OFFSITE_CMD=/usr/local/bin/offsite-upload.sh BACKUP_KEEP_LAST=14 \
+      >   bash scripts/backup-drill.sh
+      > ```
+      > Yukarıdaki `--enqueue` biçimi bu tuzağa düşmez (ayarları okur, sonucu panele de yazar).
 - [ ] **PASS doğrula:** çıktının son satırı `SONUC: PASS`, `FAIL=0`. Panelden koştuysan
       /deployments'ta iş **"Başarılı"** ve "Son tatbikat" kartı tazelenmiş olmalı (log da orada).
 - [ ] **Panel bandı söndü mü:** /deployments'ta kırmızı "yedek yok/bayat" ya da sarı "tatbikat
@@ -376,8 +415,8 @@ olduğunu, RTO'nun hedefte kaldığını kanıtlamak.
 | İşlem | Komut |
 |---|---|
 | **Panelden yedek / tatbikat** | /deployments → *Yedekler* (owner) — kurulum §4.3 |
-| Yalnız yedek al (host) | `BACKUP_ONLY=1 bash scripts/backup-drill.sh` |
-| Aylık tatbikat | `bash scripts/backup-drill.sh` |
+| Yalnız yedek al (host) | `bash scripts/backup-runner.sh --nightly` (ham: `BACKUP_ONLY=1 bash scripts/backup-drill.sh` — dış kopya/rotasyon YOK) |
+| Aylık tatbikat | `bash scripts/backup-runner.sh --enqueue backup-drill` (ham: `bash scripts/backup-drill.sh` — dış kopya/rotasyon YOK) |
 | Yedek runner'ı elle koştur | `bash scripts/backup-runner.sh` (kuyruktaki isteği alır) |
 | Kuyruğa yedek yaz + koştur | `bash scripts/backup-runner.sh --nightly` |
 | Kuyruğa tatbikat yaz + koştur | `bash scripts/backup-runner.sh --enqueue backup-drill` |

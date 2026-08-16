@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Keyboard,
   Lightbulb,
+  TriangleAlert,
 } from 'lucide-react';
 import { PageHeader } from '../../components/ui/page-header';
 import { Card, CardContent, CardHeader, CardDescription } from '../../components/ui/card';
@@ -105,6 +106,21 @@ function Tip({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
       <Lightbulb className="mt-0.5 size-4 shrink-0 text-warning" />
+      <div>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Uyarı kutusu — `Tip`'in aksine "dikkat etmezsen ZARAR görürsün" içindir (yanlış güvene
+ * kapılıp canlı stok yakmak gibi). Ton dili §17: warning = "insanın bilmesi gereken", yeni
+ * hue eklenmez; `text-warning` + soluk tint, panelin diğer uyarı kutularıyla (ör. sipariş
+ * detayı değişim uyarısı) birebir aynı yüzey.
+ */
+function Warn({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs leading-relaxed text-warning">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
       <div>{children}</div>
     </div>
   );
@@ -255,8 +271,23 @@ export default function GuidePage() {
         <p>
           Bağlı bir sitenin ayarlarını <R href="/sites">Siteler</R> listesinden açıp düzenleyebilirsiniz:
           günlük satış kotası, gönderen e-posta, geri kanal webhook adresi ve <strong>sandbox (test modu)</strong>.
-          Sandbox açıkken o siteden gelen siparişler gerçek teslimat/mail üretmez.
         </p>
+        {/*
+          DÜRÜSTLÜK DÜZELTMESİ (denetim bulgusu): burada "sandbox açıkken siparişler gerçek
+          teslimat/mail üretmez" yazıyordu. `sandbox` alanı API'de YALNIZ mail yolunda okunur
+          (mail.service.ts / mail.processor.ts); `orders.service.ts` ona HİÇ bakmaz → atama,
+          stok tüketimi ve müşteriye dönen teslimat aynen çalışır. Yanlış güven = canlı envanter
+          yanması. Site formundaki uyarıyla (site-config-form.tsx) birebir aynı gerçeği anlatır.
+        */}
+        <Warn>
+          <strong>Sandbox siparişi durdurmaz — yalnız maili yönlendirir.</strong> Açıkken teslimat
+          e-postası gerçek müşteriye gitmez (alıcı panelin gönderen adresine çevrilir, konuya{' '}
+          <strong>[TEST MODU]</strong> öneki eklenir). Ama sipariş normal işlenir:{' '}
+          <strong>gerçek stok tüketilir</strong>, <strong>gerçek lisans atanır</strong> ve müşteri
+          o lisansı mağazanın &quot;Siparişlerim&quot; ekranında çözülmüş hâlde görebilir. Canlı bir
+          mağazayı &quot;test moduna alıp&quot; deneme siparişi geçmeyin — bunun için ayrı bir test
+          sitesi kullanın.
+        </Warn>
         <Tip>
           Bir siteyi klonlar/staging&apos;e kopyalarsanız, klon ortam otomatik olarak panele{' '}
           <strong>yazma yapmaz</strong> (iade/iptal canlı lisansı geri almaz). Bu koruma yerleşiktir.
@@ -389,11 +420,21 @@ export default function GuidePage() {
           <li><strong>Tedarik:</strong> ürünün partileri ve satın alma emirleri.</li>
           <li><strong>Hareketler:</strong> defter kayıtları — geçmiş stok düzeltmeleri ve yeni kayıt formu.</li>
         </Bullets>
+        {/*
+          DÜZELTME (denetim bulgusu): burada koşulsuz "anahtarın tamamı / son 5 hanesi" yazıyordu.
+          Ekranın kendi ipucu (components/inventory/license-items-table.tsx) doğrusunu söylüyor:
+          HESAP ürünlerinde bu arama ÇALIŞMAZ — kalem düz metni kanonik bir JSON'dur ve hesap
+          kaleminde `payload_suffix_hash` yazılmaz, dolayısıyla parolanın/kullanıcı adının son
+          haneleri ASLA eşleşmez. Rehber panelin sahip olmadığı bir yeteneği vaat ediyordu.
+        */}
         <p>
           Envanterde arama <strong>anahtarın tamamıyla</strong> ya da <strong>son 5 hanesiyle</strong>{' '}
           yapılabilir; ayrıca ürün adı/SKU, müşteri e-postası, mağaza sipariş numarası ve parti kodu
           aranır. Anahtarlar şifreli saklandığı için ortadan birkaç hane ile arama yapılamaz; büyük/küçük
-          harf ve boşluk farkı sorun değildir.
+          harf ve boşluk farkı sorun değildir. <strong>Hesap ürünlerinde</strong> anahtar/son-hane
+          araması <strong>çalışmaz</strong> (kimlik bilgileri çok alanlı saklanır, &quot;son 5 hane&quot;
+          parolanın değil kaydın kuyruğudur) — bu kalemleri ürün adı/SKU, müşteri e-postası veya
+          sipariş numarasıyla arayın.
         </p>
         <p>
           Anahtar/hesap eklemek ayrı bir ekranda yapılır: <R href="/stock/import">Stok Girişi</R>. Ürün
@@ -606,19 +647,50 @@ export default function GuidePage() {
         title="İnceleme kuyruğu ve satış kotası"
         description="Anormal hacmi otomatik teslim yerine manuel onaya alma."
       >
+        {/*
+          DÜZELTME (denetim bulgusu, site-config-form.tsx ile aynı sınıf): bu paragraf yalnız
+          DİNAMİK kotayı anlatıp "reddedilmez" diyordu; SERT tavanın (salesDailyQuota) zıt
+          davranışı hiçbir kullanıcı metninde yazmıyordu. orders.service.ts:375 aşımda
+          `SalesQuotaExceededException` fırlatır → 429 + tx rollback: ÖDENMİŞ sipariş panele
+          hiç kaydedilmez. İki mekanizma artık yan yana ve ayrımı açık.
+        */}
         <p>
-          Site ayarlarında <strong>günlük satış kotası</strong> ve isteğe bağlı <strong>dinamik kota</strong>{' '}
-          tanımlayabilirsiniz. Dinamik kota açıkken, son 30 günün ortalamasına göre eşik aşılırsa sipariş{' '}
-          <strong>reddedilmez</strong>; <R href="/review">İnceleme Kuyruğu</R>&apos;na alınır (atama yapılmaz).
+          Site ayarlarında <strong>iki ayrı</strong> mekanizma vardır ve davranışları{' '}
+          <strong>zıttır</strong>:
         </p>
+        <Bullets>
+          <li>
+            <strong>Günlük satış kotası (sert tavan):</strong> o gün oluşturulan sipariş sayısı bu
+            değere ulaştığında sonraki sipariş <strong>REDDEDİLİR</strong> — incelemeye alınmaz,
+            mağaza 429 yanıtı alır ve sipariş panele <strong>hiç kaydedilmez</strong> (müşteri
+            ödemiş olsa bile). Gün sonunda (yerel gece yarısı) sayaç sıfırlanır. Sayaç o gün
+            oluşturulan <em>tüm</em> siparişleri sayar — eşlenmemiş, incelemedeki ve iade
+            edilenler dahil, yalnız teslim edilenler değil. Boş bırakmak = limitsiz (önerilen).
+          </li>
+          <li>
+            <strong>Dinamik kota (isteğe bağlı):</strong> son 30 günün ortalamasına göre hesaplanan
+            eşik aşılırsa sipariş <strong>reddedilmez</strong>;{' '}
+            <R href="/review">İnceleme Kuyruğu</R>&apos;na alınır (atama yapılmaz, siz karar
+            verirsiniz). Eşik = ortalama günlük satış × çarpan; <strong>20&apos;lik taban yalnız
+            yeni/az geçmişli sitelerde</strong> geçerlidir, geçmiş biriktikçe eşik tamamen
+            ortalamaya göre hesaplanır.
+          </li>
+        </Bullets>
         <Steps>
           <li>Kuyruktaki siparişi inceleyin.</li>
           <li><strong>Onayla</strong> → sipariş normal teslimat akışına girer (stok varsa hemen atanır).</li>
           <li><strong>Reddet</strong> → sipariş iptal edilir, lisans verilmez.</li>
         </Steps>
+        {/* DÜZELTME: "Otomatik reddetme yoktur" cümlesi, yukarıda belgelenen SERT tavanla
+            doğrudan çelişiyordu (salesDailyQuota aşımı 429 ile otomatik REDDEDER). İlke
+            anomali/risk tespiti ve dinamik kota için geçerlidir; operatörün kendi elleriyle
+            koyduğu sayısal tavan bilinçli bir istisnadır. Cümle kapsamlandı. */}
         <Tip>
-          İlke: <strong>&quot;AI/sistem önerir, insan onaylar.&quot;</strong> Otomatik reddetme/askıya alma yoktur;
-          şüpheli hacim yalnızca incelemeye alınır. Dinamik kota varsayılan olarak kapalıdır.
+          İlke: <strong>&quot;AI/sistem önerir, insan onaylar.&quot;</strong> Panel{' '}
+          <em>kendi kararıyla</em> sipariş reddetmez, müşteri askıya almaz; risk/anomali tespiti
+          yalnızca işaretler, şüpheli hacim yalnızca incelemeye alınır. <strong>Tek istisna sizin
+          elle koyduğunuz sert tavandır</strong> — o sayı aşıldığında sipariş otomatik reddedilir.
+          Dinamik kota varsayılan olarak kapalıdır; sert tavan da boş (limitsiz) gelir.
         </Tip>
       </Section>
 
@@ -629,7 +701,12 @@ export default function GuidePage() {
         description="Kusurlu lisansı taze biriyle değiştirme."
       >
         <Bullets>
-          <li><strong>Müşteri talebi:</strong> müşteri My Account&apos;ta &quot;Sorun Bildir&quot; ile talep açar → <R href="/support">Destek</R> kuyruğunda görünür. Onayla / Reddet / Bilgi İste yapabilirsiniz. Onay için tek teknik şart <strong>stok</strong>tur.</li>
+          <li><strong>Müşteri talebi:</strong> müşteri My Account&apos;ta &quot;Sorun Bildir&quot; ile talep açar → <R href="/support">Destek</R> kuyruğunda görünür. Onayla / Reddet / Bilgi İste yapabilirsiniz. {/* DÜZELTME (denetim bulgusu): "onay için TEK
+          teknik şart stoktur" cümlesi yanlıştı — replacements.service.ts:535 çok-kullanımlı (MAK)
+          üründe talebi stoktan BAĞIMSIZ olarak 400 ile reddeder. Aynı bölümün 4 madde altındaki
+          MAK istisnası zaten doğruydu; cümle ona hizalandı. */}
+          Onay için stok gerekir — <strong>tek şart bu değildir</strong>: çok kullanımlı (MAK)
+          ürünlerde stok olsa bile otomatik değişim yapılamaz (aşağıdaki maddeye bakın).</li>
           <li><strong>Garanti penceresi kararı size aittir:</strong> panel her talebe &quot;Garanti içi / Garanti dışı&quot; rozetini bilgi olarak basar (teslim tarihi + ürünün garanti gün sayısı; lisansın geçerlilik süresi dolmuşsa garanti içi sayılmaz). Bu rozet onayı <em>engellemez</em> — garanti dışı bir talebi de onaylayabilirsiniz. İlke aynı: <strong>&quot;sistem önerir, insan onaylar.&quot;</strong></li>
           <li><strong>Proaktif değişim:</strong> müşteri beklemeden, sipariş detayında bir atamayı <strong>&quot;Değiştir&quot;</strong> ile aynı üründen taze bir key ile değiştirebilirsiniz. Eski key karantinaya alınır, değişim geçmişi tutulur.</li>
           <li><strong>Hesap ürününde parola değiştiyse &quot;Değiştir&quot; kullanmayın.</strong> Değişim müşteriye <em>başka bir hesap</em> verir; eski hesap müşterinin elinde çalışmaya devam eder (bilgileri zaten kopyalamıştır) ve müşterinin o hesapta biriktirdiği veri kaybolur. Doğru araç: envanterde (ürün detayı → Envanter) o kalemin satırındaki <strong>&quot;Kimlik bilgilerini güncelle&quot;</strong>. Aynı hesap, aynı atama, yeni bilgiler — sebep denetim kaydına ve siparişin zaman çizelgesine yazılır. <strong>Owner yetkisi gerekir</strong> ve müşteri yeni bilgileri otomatik görmez: güncelleme sonrası siparişten <R href="/orders">teslimat mailini yeniden gönderin</R>.</li>
@@ -848,7 +925,12 @@ export default function GuidePage() {
           <li><strong><R href="/reports/costs">Maliyet Raporu</R>:</strong> tedarik harcaması + stok değerleme + teslim edilen mal maliyeti. Satış fiyatı panelde yoktur (ödeme mağaza tarafında) → kâr değil <strong>maliyet</strong> gösterilir. Tedarikçi/maliyet bilgisi olmadan (partisiz) girilen stok burada <strong>&quot;kapsanamayan&quot;</strong> olarak dürüstçe ayrı gösterilir.</li>
           <li><strong><R href="/notifications">Bildirimler</R>:</strong> düşük stok ve kritik olaylar (Telegram tanımlıysa oraya da düşer).</li>
           <li><strong><R href="/security">Güvenlik</R>:</strong> anomali/velocity tespiti, başarısız giriş denemeleri ve güvenlik olayları (otomatik askıya alma yok).</li>
-          <li><strong><R href="/audit">Denetim İzi</R>:</strong> &quot;kim, neyi, ne zaman yaptı&quot;. Güvenlik ekranından farkı: orası <em>tespit edilen riski</em>, burası <em>gerçekleşmiş insan eylemini</em> gösterir (anahtar görüntüleme, iade, iptal, stok girişi, giriş…). Kayıt silinmez ya da değiştirilemez; aktör, hedef, tarih ve iz kimliğine göre süzebilirsiniz.</li>
+          <li><strong><R href="/audit">Denetim İzi</R>:</strong> &quot;kim, neyi, ne zaman yaptı&quot;. Güvenlik ekranından farkı: orası <em>tespit edilen riski</em>, burası <em>gerçekleşmiş insan eylemini</em> gösterir (iade, iptal, değişim, stok girişi, anonimleştirme, giriş…). Kayıtlar <strong>değiştirilemez</strong> ve panelde silme yolu yoktur; aktör, hedef, tarih ve iz kimliğine göre süzebilirsiniz. {/* DÜZELTME (denetim bulgusu): burada "kayıt silinmez" deniyor ve örnek olarak "anahtar görüntüleme" veriliyordu — ikisi bir arada YANLIŞTI. maintenance/retention.service.ts:272-285 günlük olarak `action='reveal' AND meta->>'auto'='true'` satırlarını RETENTION_AUDIT_REVEAL_DAYS (varsayılan 90) sonrasında siler; silinenler tam da sipariş detayı açılışında yazılan otomatik görüntüleme izleridir. Gerçek denetim aksiyonları korunur. */}
+            <strong>Saklama istisnası:</strong> sipariş/envanter ekranı açıldığında kendiliğinden
+            yazılan <em>otomatik görüntüleme</em> izleri gürültü sayılır ve{' '}
+            <strong>90 gün</strong> sonra budanır (süre <code>RETENTION_AUDIT_REVEAL_DAYS</code> ile
+            değiştirilebilir). Operatörün yaptığı gerçek eylemler (iade, iptal, değişim, stok
+            girişi, giriş…) bu budamaya <strong>girmez</strong> — onlar korunur.</li>
           <li><strong><R href="/ops">Başarısız İşler</R>:</strong> başarısız iş/webhook kuyruğu ve yeniden deneme (replay).</li>
           <li><strong><R href="/ai">AI Operasyon</R>:</strong> destek triyajı, doğal dilden rapor, günlük anomali özeti — <em>yalnızca öneri</em>, varsayılan kapalıdır.</li>
         </Bullets>
@@ -901,7 +983,11 @@ export default function GuidePage() {
         description="Panelin veriyi nasıl koruduğu."
       >
         <Bullets>
-          <li>Lisans yükleri <strong>AES-256-GCM</strong> ile şifreli saklanır; bir key&apos;i her görüntüleme/kopyalama denetime düşer.</li>
+          {/* DÜZELTME (denetim bulgusu): "her görüntüleme denetime düşer" §Siparişler bölümündeki
+              (zaten düzeltilmiş) anlatımla ÇELİŞİYORDU. A1 kararı gereği `reveal` kaydı YALNIZ
+              gerçekten düz metin döndüğünde (owner rolü) yazılır; owner-olmayan yönetici maskeli
+              görür ve iz bırakmaz. İki bölüm artık aynı gerçeği söylüyor. */}
+          <li>Lisans yükleri <strong>AES-256-GCM</strong> ile şifreli saklanır. Düz metin lisans yalnız <strong>owner</strong> rolüne gösterilir ve <strong>her düz metin görüntüleme denetim izine yazılır</strong>; diğer yöneticiler maskeli görür (maskeli görüntüleme iz bırakmaz).</li>
           <li>Mağaza ↔ panel iletişimi <strong>HMAC-SHA256</strong> imzalıdır (zaman damgası + nonce ile tekrar saldırısına kapalı).</li>
           <li>Çifte satış yapısal olarak imkânsızdır (atomik kilit + idempotency anahtarı).</li>
           <li><strong>KVKK:</strong> bir müşterinin kişisel verisi maskeleyerek anonimleştirilebilir (kayıt silinmez, denetim korunur).</li>
@@ -915,7 +1001,12 @@ export default function GuidePage() {
         description="Paneli daha hızlı kullanmak için."
       >
         <Bullets>
-          <li><strong>Ctrl / ⌘ + K</strong> — her yerden global arama (sipariş no, e-posta, key son 5 hane). Hassas veri sonuçta gösterilmez.</li>
+          {/* DÜZELTME (denetim bulgusu): "key son 5 hane" koşulsuz vaat ediliyordu, ama
+              search/search.service.ts:96-98 aranan metin EN AZ 3 RAKAM içermiyorsa anahtar
+              aramasını hiç çalıştırmaz (yanlış eşleşme gürültüsü filtresi — bilinçli). Harf
+              ağırlıklı bir son-5'te sonuç sessizce boş gelir, hata çıkmaz; operatör "anahtar
+              panelde yok" sanırdı. Kısıt artık yazılı. */}
+          <li><strong>Ctrl / ⌘ + K</strong> — her yerden global arama (sipariş no, e-posta, anahtarın son 5 hanesi). Hassas veri sonuçta gösterilmez. <strong>Anahtar araması için aradığınız metinde en az 3 rakam olmalıdır</strong> (harf ağırlıklı son-5 sonuç döndürmez — hata da vermez, liste boş kalır); böyle anahtarları <R href="/stock">Envanter</R> ekranından tam değerle arayın.</li>
           <li><strong>Ctrl / ⌘ + B</strong> — sol menüyü aç/kapat (tercih hatırlanır).</li>
           <li>
             <strong>Kayıtlı görünüm</strong> — <R href="/orders">Siparişler</R>,{' '}

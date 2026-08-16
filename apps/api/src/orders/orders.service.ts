@@ -119,6 +119,15 @@ export class OrdersService {
       .limit(1);
     if (!order) throw new NotFoundException('Sipariş bulunamadı');
 
+    /*
+     * "Süre nedeniyle GİZLENEN atama" yüklemi — TEK KAYNAK (hem sayaç hem ürün adları buradan).
+     *
+     * İki ayrı yerde yazılsaydı biri güncellenip diğeri unutulduğunda müşteriye "süreniz doldu"
+     * bandı çıkarken ürün listesi boş kalır (ya da tersi) olurdu — bu panelde tekrarlayan bir
+     * hata sınıfı (aynı bilgiyi anlatan iki yüklemin sessizce ayrışması).
+     */
+    const expiredHiddenCond = sql`${assignments.status} in ('active','expired') and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now()`;
+
     // PERF: order lookup'tan sonraki 4 sorgu birbirinden BAĞIMSIZ (aralarında veri bağımlılığı yok)
     // → ardışık await yerine TEK Promise.all ile paralel çalıştır. Bu uç WP my-account/metabox
     // render'ında 5sn timeout ile SENKRON çağrılıyor; round-trip'i 4→1 sıraya indirmek render
@@ -191,7 +200,9 @@ export class OrdersService {
         })
         .from(orderLines)
         .where(and(eq(orderLines.orderId, order.id), eq(orderLines.canceled, false))),
-      // (4) §7 durum bayrakları: tek geçişte suspended + expiredHidden (FILTER'lı).
+      // (4) §7 durum bayrakları: tek geçişte suspended + expiredHidden + expiredProductNames
+      // (hepsi FILTER'lı → ek round-trip YOK, mevcut sorgunun içine yedirildi; bu uç mağazanın
+      // 8-60 sn'lik CANLI YOKLAMASINDA da çağrılıyor, sorgu sayısı artırılmamalı).
       this.db
         .select({
           suspended: sql<number>`count(*) filter (where ${assignments.status} = 'suspended')`,
@@ -204,7 +215,23 @@ export class OrdersService {
           // kapsar — ikisi birlikte pencereden bağımsız DOĞRU cevabı verir.
           // `on_expiry='hide' AND valid_until < now()` koşulu kümeyi zaten daraltıyor:
           // 'keep' ürünler ve süresi geçmemiş atamalar sayılmaz.
-          expiredHidden: sql<number>`count(*) filter (where ${assignments.status} in ('active','expired') and ${products.onExpiry} = 'hide' and ${assignments.validUntil} is not null and ${assignments.validUntil} < now())`,
+          expiredHidden: sql<number>`count(*) filter (where ${expiredHiddenCond})`,
+          /*
+           * SÜRESİ DOLAN ÜRÜNLERİN ADLARI (§7) — bayrağın SİPARİŞ düzeyinde olması yanıltıyordu.
+           *
+           * `expiredHidden` tek bir boolean ve mağaza onu sayfanın ÜSTÜNDE genel bir bant
+           * olarak basıyor ("lisans sürenizin süresi doldu, tekrar satın alın"). Oysa koşul
+           * ATAMA düzeyinde: Windows anahtarı (süresiz) + Office 365 (365 gün) içeren bir
+           * siparişte bir yıl sonra bant çıkıyor, hemen ALTINDA Windows anahtarı CANLI
+           * duruyordu → müşteri hâlâ çalışan lisansı için ikinci kez satın alma yapabilir.
+           * Adlar dönünce bant "hangi ürün" sorusunu yanıtlar; canlı kalemler etkilenmez.
+           *
+           * Aynı FILTER yüklemi (tek kaynak) → sayaç ile liste ASLA çelişemez. `distinct`:
+           * aynı üründen birden çok süresi geçmiş atama tek satır olarak görünür.
+           */
+          expiredProductNames: sql<
+            string[] | null
+          >`array_agg(distinct ${products.name}) filter (where ${expiredHiddenCond})`,
         })
         .from(assignments)
         .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
@@ -290,7 +317,19 @@ export class OrdersService {
       fulfilled: Number(agg?.fulfilled ?? 0),
       total: Number(agg?.total ?? 0),
       suspended: Number(flags?.suspended ?? 0) > 0,
+      // GERİYE DÖNÜK UYUM: bayrak KALIYOR — yayımlanmış eski eklenti sürümleri yalnız bunu
+      // okuyor ve alan kaldırılsaydı onlarda "süreniz doldu" bilgisi TAMAMEN kaybolurdu.
       expiredHidden: Number(flags?.expiredHidden ?? 0) > 0,
+      /*
+       * Süre nedeniyle gizlenen ürünlerin ADLARI (yeni eklenti sürümü bunu kullanır).
+       *
+       * SIRA: array_agg sıra GARANTİ ETMEZ → aynı sipariş her yenilemede ürünleri farklı
+       * sırada gösterebilirdi (bu panelde "sırasız her liste tie-break ister" dersi).
+       * NULL koruması: hiç eşleşme yoksa array_agg NULL döner (boş dizi değil).
+       */
+      expiredProductNames: (flags?.expiredProductNames ?? [])
+        .filter((n): n is string => typeof n === 'string' && n.length > 0)
+        .sort((a, b) => a.localeCompare(b, 'tr')),
     };
   }
 
@@ -731,9 +770,19 @@ export class OrdersService {
    *       idempotent revoke akışıyla (revokeAssignment: tek→karantina, multi→kapasite geri)
    *       geri al, line.qty=yeni qty.
    *   (c) aynı qty → no-op.
+   *   (d) `dto.fullSync === true` ise AYRICA: gelmeyen mevcut satır SİLİNMİŞ sayılır →
+   *       teslim edilmiş atamaları geri alınır ve satır terminal (`canceled`) yapılır.
    *
-   * Yalnız remoteLineId ile EŞLEŞEN mevcut satırlar uzlaştırılır; yeni satır ekleme/tam
-   * satır silme bilinçli kapsam dışı (WP re-push adet güncellemesi senaryosu).
+   * Yeni satır EKLEME hâlâ kapsam dışıdır (eşleşmeyen `remoteLineId` yalnız loglanır).
+   *
+   * ⚠ `fullSync` SÖZLEŞMESİ — YANLIŞ KULLANIMI CANLI ANAHTARLARI YAKAR:
+   * Bayrak "bu, siparişin ŞU ANKİ TÜM kalemlerinin TAM listesidir" ANLAMINA GELİR ve
+   * semantiği İADE'dir (satır terminal olur, MAK/multi kapasitesi havuza DÖNMEZ, §2).
+   * KISMİ bir kalem listesiyle `fullSync: true` göndermek, listeye girmeyen HER satırı
+   * "mağazada silinmiş" sayar ve müşterinin İADE ETMEDİĞİ canlı lisanslarını geri alır.
+   * Bu yüzden bayrağı YALNIZ eklentinin `resync_items` yolu gönderir (tüm kalemleri
+   * `collect_lines` ile üretir). Yeni bir istemci yolu eklenirken bu şart doğrulanmalıdır;
+   * bayrak yoksa blok HİÇ çalışmaz ve eski (güvenli) davranış aynen korunur.
    */
   /**
    * Satırın MAĞAZA adedi → PANEL birimi ölçeği (bundleQty).
