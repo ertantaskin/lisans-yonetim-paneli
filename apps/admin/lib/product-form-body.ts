@@ -18,6 +18,27 @@
  *     gönderilmeyen alanı "değişmedi" sayar → eski değer inatla kalırdı).
  */
 
+/**
+ * Form girdisi gövdeye ÇEVRİLEMEDİĞİNDE atılır (denetim C12).
+ *
+ * NEDEN: iki alan hatayı SESSİZCE yutuyordu ve sonuç "başarılı kayıt" gibi görünüyordu:
+ *   · `payloadSchema` JSON parse hatası → alan gövdeye HİÇ girmiyordu. Create'te API refine'ı
+ *     (`account ⇒ payloadSchema`) bunu reddediyordu, ama UPDATE DTO'su `.partial()` olduğu için
+ *     alanın YOKLUĞU "değişmedi" demektir → API 200 döner, form yeşil yanar, operatörün hesap
+ *     alanı düzenlemesi HİÇ KAYDEDİLMEZ. Koddaki "API refine reddeder" notu yalnız create için
+ *     doğruydu; update için yanlıştı ve tam da veri kaybının olduğu yol oydu.
+ *   · geçersiz `releaseAt` → create'te atlanıyor, UPDATE'te açık `null` gidiyordu; yani bozuk
+ *     bir tarih girdisi mevcut ön sipariş tarihini SESSİZCE SİLİYORDU.
+ * Doğru davranış: çeviremediğimiz girdiyi uydurmak/atmak değil, çağırana HATA olarak taşımak —
+ * `createProductAction`/`updateProductAction` bunu `{ ok:false, error }` ile forma yazar.
+ */
+export class ProductFormError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProductFormError';
+  }
+}
+
 /** Formda `name="..."` ile basılan TÜM alanlar. Test bu listeyi gövdeye karşı doğrular. */
 export const PRODUCT_FORM_FIELDS = [
   'sku',
@@ -76,7 +97,14 @@ export function buildProductBody(formData: FormData, isUpdate = false): Record<s
   let releaseAtIso: string | undefined;
   if (releaseAtRaw) {
     const d = new Date(releaseAtRaw);
-    if (!Number.isNaN(d.getTime())) releaseAtIso = d.toISOString();
+    // C12: çözülemeyen tarih SESSİZCE düşürülmez. Update yolunda düşürmek `null` göndermek
+    // demekti → operatörün girdiği bozuk değer mevcut ön sipariş tarihini siliyordu.
+    if (Number.isNaN(d.getTime())) {
+      throw new ProductFormError(
+        'Ön sipariş tarihi okunamadı — geçerli bir tarih/saat seçin (mevcut tarih DEĞİŞTİRİLMEDİ).',
+      );
+    }
+    releaseAtIso = d.toISOString();
   }
   const keyFormat = String(formData.get('keyFormat') || '').trim();
 
@@ -103,7 +131,12 @@ export function buildProductBody(formData: FormData, isUpdate = false): Record<s
       try {
         body.payloadSchema = JSON.parse(raw);
       } catch {
-        /* boş bırak — API refine reddeder, kullanıcı düzeltir */
+        // C12: SESSİZ VERİ KAYBI YOK. Alanı atlamak update'te "değişmedi" anlamına gelir →
+        // API 200, form yeşil, düzenleme kaybolmuş olurdu. Hata çağırana taşınır.
+        throw new ProductFormError(
+          'Hesap alanları okunamadı — alan listesi bozuk görünüyor. Sayfayı yenileyip alanları ' +
+            'yeniden düzenleyin (kayıt YAPILMADI).',
+        );
       }
     }
   }

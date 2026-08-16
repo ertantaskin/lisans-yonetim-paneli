@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, isUuid } from '../../lib/api';
+import { ApiError, apiPost, isUuid } from '../../lib/api';
 import { getSessionUser, isOwner } from '../../lib/session';
 import type { AdminActionState } from './actions';
 
@@ -23,10 +23,17 @@ export interface TotpSetupState {
   enabled?: boolean;
 }
 
+/**
+ * API hatasını operatör diline çevirir.
+ *
+ * DURUM KODUNA/VERİYE BAĞLI (denetim D4): eskiden mesajın `'POST '`/`'GET '` ile BAŞLAYIP
+ * başlamadığına bakılıyordu — yani `lib/api`nin generic kalıbı (`POST /path → 401`) metin
+ * olarak tanınmaya çalışılıyordu. Kalıp değişse (ya da API mesajı tesadüfen "GET" ile
+ * başlasa) operatöre ham teknik metin gösterilirdi. `ApiError.humanMessage` bu ayrımı VERİ
+ * olarak taşır: true = API'nin Türkçe gövdesi ya da bizim zaman aşımı metnimiz.
+ */
 function friendly(e: unknown, fallback: string): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  // API mesajları operatör diliyle yazılmış (Türkçe) → varsa olduğu gibi göster.
-  if (msg && !msg.startsWith('POST ') && !msg.startsWith('GET ')) return msg;
+  if (e instanceof ApiError) return e.humanMessage ? e.message : fallback;
   return fallback;
 }
 

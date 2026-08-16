@@ -1,4 +1,4 @@
-import { Link2, Store, PackageSearch, Clock } from 'lucide-react';
+import { Link2, Store, PackageSearch, Clock, TriangleAlert } from 'lucide-react';
 import {
   apiGet,
   type ProductRow,
@@ -6,6 +6,7 @@ import {
   type PendingLinesSummary,
 } from '../../lib/api';
 import { PageHeader } from '../../components/ui/page-header';
+import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Card } from '../../components/ui/card';
 import { UnmappedTable, type UnmappedRowView } from '../../components/unmapped-table';
 import { CatalogTable, type CatalogRowView } from '../../components/catalog-table';
@@ -44,12 +45,31 @@ export default async function MappingsPage({
   let error: string | null = null;
   let catalogError: string | null = null;
   let pendingError: string | null = null;
+  /** Mağaza özeti gelmedi mi (site seçici boşalır) — sessiz boş dropdown yasak. */
+  let summaryUnavailable = false;
+  /** Panel ürün listesi gelmedi mi — eşleme hedefi seçilemez, ama listeler okunabilir. */
+  let productsUnavailable = false;
   try {
-    [summary, rows, products] = await Promise.all([
+    /*
+      YARDIMCI VERİ SAYFAYI DÜŞÜRMEZ (denetim D2): üç uç aynı `Promise.all` içinde ÇIPLAK
+      duruyordu → herhangi biri hıçkırdığında ekranın TAMAMI (katalog + eşlenmemiş gelen
+      ürünler güvenlik ağı + bekleyen satır paneli) boşalıyordu; oysa katalog ve bekleyen
+      satır bölümleri zaten kendi try/catch'ini taşıyor, yani desen bu dosyada ZATEN vardı.
+      Birincil kaynak "Eşlenmemiş Gelen Ürünler" listesidir (bu ekranın var oluş sebebi ve
+      teslim edilemeyen siparişlerin tek görünür izi) → yalnız o çıplak kalır. Diğer ikisi
+      seçici doldurur; kendi hatalarını yutar ve GÖRÜNÜR uyarıya dönüşür.
+    */
+    const [summaryRes, rowsRes, productsRes] = await Promise.allSettled([
       apiGet<CatalogSummaryRow[]>('/v1/admin/catalog/summary'),
       apiGet<UnmappedRowView[]>('/v1/admin/mappings/unmapped'),
       apiGet<ProductRow[]>('/v1/admin/products'),
     ]);
+    if (rowsRes.status === 'rejected') throw rowsRes.reason;
+    rows = rowsRes.value;
+    if (summaryRes.status === 'fulfilled') summary = summaryRes.value;
+    else summaryUnavailable = true;
+    if (productsRes.status === 'fulfilled') products = productsRes.value;
+    else productsUnavailable = true;
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -96,6 +116,22 @@ export default async function MappingsPage({
         </Card>
       ) : (
         <div className="space-y-10">
+          {/* Yardımcı uçların arızası artık sayfayı boşaltmıyor (D2) — ama SESSİZ de kalmıyor:
+              boş bir seçici, "kayıt yok" gibi okunur ve operatörü yanlış işe (yeni ürün/mağaza
+              açmaya) iter. Uyarı, boşluğun sebebini açıkça söyler. */}
+          {(summaryUnavailable || productsUnavailable) && (
+            <Alert variant="warning">
+              <TriangleAlert />
+              <AlertDescription>
+                {summaryUnavailable && productsUnavailable
+                  ? 'Mağaza ve panel ürünü listeleri alınamadı — aşağıdaki listeler okunabilir, ancak yeni eşleme kuramazsınız.'
+                  : summaryUnavailable
+                    ? 'Mağaza listesi alınamadı — katalog bölümünde site seçemezsiniz. Diğer bölümler normal çalışıyor.'
+                    : 'Panel ürünü listesi alınamadı — eşleme yaparken hedef ürünü seçemezsiniz. Listeler normal görüntüleniyor.'}{' '}
+                Birkaç saniye sonra sayfayı yenileyin.
+              </AlertDescription>
+            </Alert>
+          )}
           <section className="space-y-3">
             <div className="flex items-center gap-2">
               <Store className="size-4 text-muted-foreground" aria-hidden />

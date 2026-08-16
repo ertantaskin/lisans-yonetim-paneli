@@ -126,13 +126,24 @@ export class UpdatesController {
       return;
     }
 
-    const zipB64 = await this.updates.getZip(version);
-    if (!zipB64) {
+    const pkg = await this.updates.getZip(version);
+    if (pkg.state === 'missing') {
       reply.status(404).send({ error: 'not_found', message: 'Sürüm bulunamadı' });
       return;
     }
+    if (pkg.state === 'archived') {
+      // 410 Gone — sürüm GERÇEKTEN yayınlandı, yalnız paketi saklama penceresinin dışına düştü.
+      // 404 demek operatöre "bu yayın hiç olmadı" dedirtirdi (sürüm geçmişi panelde duruyor).
+      reply.status(410).send({
+        error: 'gone',
+        message:
+          'Bu sürümün paketi arşivden düşürüldü (yalnız son sürümlerin paketi saklanır). ' +
+          'En son sürümü kurun ya da paketi kaynaktan yeniden yayınlayın.',
+      });
+      return;
+    }
 
-    const buffer = Buffer.from(zipB64, 'base64');
+    const buffer = Buffer.from(pkg.zipB64, 'base64');
     // ETag = paket içeriğinin sha256'sı (güçlü doğrulayıcı). WP güncelleyici/proxy aynı
     // sürümü If-None-Match ile tekrar istediğinde 304 döner → gövde yeniden gönderilmez.
     // Aynı sürüm yeniden yayınlanırsa içerik (dolayısıyla ETag) değişir → istemci taze indirir.

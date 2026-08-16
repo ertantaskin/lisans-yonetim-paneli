@@ -80,16 +80,27 @@ export default async function ProductDetailPage({
   let categories: CategoryRow[] = [];
   let guides: GuideRow[] = [];
   let error: string | null = null;
+  /**
+   * Site listesi gelmedi mi (D1). Sessizce boş bırakılmaz: eşleme formunun site seçici
+   * kutusu boş kalır ve operatör "bu ürünün hiç eşlemesi kurulamıyor" sanır — bu yüzden
+   * eşleme sekmesinde GÖRÜNÜR uyarı basılır.
+   */
+  let sitesUnavailable = false;
   try {
     // Detay + siteler + kategoriler paralel (siteler eşleme formunun site seçimi için,
     // kategoriler "Düzenle" panelindeki kategori alanı için).
     //
-    // Kategori ucu KRİTİK DEĞİL: eski API imajında (dağıtım sapması) 404 dönebilir. O yüzden
-    // `.catch(() => [])` ile YUTULUR — Promise.all'a çıplak bırakılsaydı tüm ürün detayı hata
-    // kartına düşerdi (/stock ekranındaki savunmalı desenin aynısı).
+    // YARDIMCI UÇLARIN HEPSİ KORUNUR (denetim D1): `Promise.all` içindeki ÇIPLAK bir çağrı
+    // patlarsa aşağıdaki catch onu `getProductDetail`'inkinden AYIRT EDEMEZ — `/v1/admin/sites`
+    // 404 dönseydi VAR OLAN bir ürün için `notFound()` çalışır, operatöre "sayfa bulunamadı"
+    // gösterilirdi (yanlış 404). Kategori/rehber uçları bu yüzden zaten korunmuştu; `sites`
+    // atlanmıştı. 404→notFound() dalı artık YALNIZ birincil kaynağa (ürün detayı) bağlıdır.
     [data, sites, categories, guides] = await Promise.all([
       getProductDetail(id),
-      apiGet<SiteRow[]>('/v1/admin/sites'),
+      apiGet<SiteRow[]>('/v1/admin/sites').catch(() => {
+        sitesUnavailable = true;
+        return [] as SiteRow[];
+      }),
       getCategories().catch(() => [] as CategoryRow[]),
       // Rehber ucu da KRİTİK DEĞİL (kategoriyle aynı gerekçe): erişilemezse alan yalnız
       // "Rehber gönderme" sunar, ürün detayı hata kartına DÜŞMEZ.
@@ -346,6 +357,18 @@ export default async function ProductDetailPage({
         }
         mappings={
           <div className="space-y-4">
+          {/* Site listesi alınamadıysa SESSİZ boş dropdown bırakılmaz (D1): operatör yeni
+              eşleme kuramayacağını ve bunun bir yapılandırma değil ERİŞİM sorunu olduğunu
+              bilmeli. Mevcut eşlemeler aşağıda normal listelenmeye devam eder. */}
+          {sitesUnavailable && (
+            <Alert variant="warning">
+              <TriangleAlert />
+              <AlertDescription>
+                Mağaza listesi alınamadı — yeni eşleme kurmak için gereken site seçimi şu an
+                boş. Mevcut eşlemeler etkilenmedi; birkaç saniye sonra sayfayı yenileyin.
+              </AlertDescription>
+            </Alert>
+          )}
           <Card>
             <CardHeader>
               <CardTitle icon={Link2}>Site Eşlemeleri</CardTitle>

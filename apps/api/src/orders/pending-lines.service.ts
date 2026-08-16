@@ -539,7 +539,11 @@ export class PendingLinesService {
         FROM order_lines ol
         LEFT JOIN products p ON ol.product_id = p.id
         WHERE ol.order_id = ${orderId}
-        ORDER BY ol.created_at ASC
+        -- TIE-BREAK (ol.id) ŞART: bir siparişin TÜM satırları aynı transaction'da yazılır →
+        -- created_at damgaları BİREBİR aynıdır. Tie-break'siz tanı listesi her yenilemede
+        -- FARKLI sırada gelir; operatör "satır sırası değişti, bir şey mi oldu?" sanır ve
+        -- sıra 'çöz' yolununkiyle (findCandidates) de tutmaz. Yön ayna: ASC + ASC.
+        ORDER BY ol.created_at ASC, ol.id ASC
       `,
     );
 
@@ -752,7 +756,16 @@ export class PendingLinesService {
       .innerJoin(orders, eq(orderLines.orderId, orders.id))
       .innerJoin(sites, eq(orders.siteId, sites.id))
       .where(and(...conds))
-      .orderBy(desc(orderLines.priority), asc(orders.createdAt))
+      /*
+       * TIE-BREAK (orderLines.id) ŞART. Burada eşitlik ihtimal değil GARANTİ: sıralama
+       * `orders.created_at` üzerinden yapılıyor ve ÇOK KALEMLİ bir siparişin N satırı aynı
+       * sipariş tarihini paylaşır. Tie-break'siz `limit(RESOLVE_LIMIT + 1)` penceresine hangi
+       * satırların gireceği KEYFİ olur → "tanı" (diagnose) ile "çöz" (resolve) çağrıları
+       * FARKLI alt küme işleyebilir: operatör ekranda gördüğü satırın çözüldüğünü sanır ama
+       * başka bir satır işlenmiş olur. Yön ayna: ASC sıralamada tie-break de ASC.
+       * `autoCompleteProduct` ile aynı desen (iki FIFO penceresi hizalı kalmalı).
+       */
+      .orderBy(desc(orderLines.priority), asc(orders.createdAt), asc(orderLines.id))
       .limit(RESOLVE_LIMIT + 1);
 
     return { rows: rows.slice(0, RESOLVE_LIMIT), truncated: rows.length > RESOLVE_LIMIT };

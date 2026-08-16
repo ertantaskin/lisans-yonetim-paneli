@@ -15,14 +15,32 @@ export default async function PurchaseOrdersPage() {
   let suppliers: Awaited<ReturnType<typeof getPurchaseOrderFormData>>['suppliers'] = [];
   let products: Awaited<ReturnType<typeof getPurchaseOrderFormData>>['products'] = [];
   let error: string | null = null;
-  try {
-    const [list, form] = await Promise.all([getPurchaseOrders(), getPurchaseOrderFormData()]);
-    orders = list.items;
-    truncated = list.truncated;
-    suppliers = form.suppliers;
-    products = form.products;
-  } catch (e) {
+  /** Form (tedarikçi/ürün) listeleri gelmedi mi — yeni emir açılamaz ama LİSTE okunabilir. */
+  let formDataUnavailable = false;
+  /*
+    YARDIMCI VERİ SAYFAYI DÜŞÜRMEZ (denetim D2): `getPurchaseOrderFormData()` yalnız "Yeni
+    Emir" sheet'indeki iki dropdown'ı doldurur. Aynı `Promise.all` içinde ÇIPLAK durduğu için
+    tedarikçi ya da ürün ucundan biri hıçkırdığında TÜM satın alma emri listesine okuma
+    erişimi kayboluyordu — oysa liste bağımsız bir uçtan geliyor ve sorun anında en çok
+    ihtiyaç duyulan şey tam olarak o listeyi görebilmek. İki çağrı paralel kalır (ek gecikme
+    yok), ama yardımcı olan kendi hatasını YUTAR ve aşağıda GÖRÜNÜR uyarıya dönüşür.
+  */
+  const [listResult, formResult] = await Promise.allSettled([
+    getPurchaseOrders(),
+    getPurchaseOrderFormData(),
+  ]);
+  if (listResult.status === 'fulfilled') {
+    orders = listResult.value.items;
+    truncated = listResult.value.truncated;
+  } else {
+    const e = listResult.reason;
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
+  }
+  if (formResult.status === 'fulfilled') {
+    suppliers = formResult.value.suppliers;
+    products = formResult.value.products;
+  } else {
+    formDataUnavailable = true;
   }
 
   return (
@@ -43,6 +61,20 @@ export default async function PurchaseOrdersPage() {
         </Card>
       ) : (
         <>
+          {/* Yardımcı veri gelmedi → "Yeni Emir" formundaki seçicilerin NEDEN boş olduğu
+              söylenir (sessizce boş dropdown bırakmak operatöre "tedarikçi yok" dedirtiyordu). */}
+          {formDataUnavailable && (
+            <Alert variant="warning" className="mb-4">
+              <ClipboardList />
+              <div className="min-w-0 flex-1">
+                <AlertTitle>Tedarikçi/ürün listesi alınamadı</AlertTitle>
+                <AlertDescription>
+                  Aşağıdaki emir listesi normal çalışıyor, ancak “Yeni Emir” formundaki
+                  tedarikçi ve ürün seçicileri şu an boş. Birkaç saniye sonra sayfayı yenileyin.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
           {/* Sunucu tavanı aşıldı → EN ESKİ emirler listede yok. Sessiz kırpma bu panelde
               bir kez "o kayıt yok" dedirtti; bayrak API'den ekrana kadar taşınır. */}
           {truncated && (

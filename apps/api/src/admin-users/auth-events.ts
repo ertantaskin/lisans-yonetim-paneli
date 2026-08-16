@@ -1,5 +1,15 @@
+import { Logger } from '@nestjs/common';
 import type { Database } from '../db/db.module';
 import { securityEvents } from '../db/schema/securityEvents';
+
+/**
+ * NEDEN LOGGER (denetim C2): bu yazıcı brute-force görünürlüğünün TEK kaynağıdır — başarısız
+ * girişler yalnız buradan `security_events`'e düşer. Yazım sessizce yutulursa saldırı anında
+ * /security ekranı BOŞ kalır ve operatör "deneme yok" sanır; en çok ihtiyaç duyulan anda
+ * (DB baskı altında, disk dolu, kolon sapması) tam olarak bu yazım başarısız olur.
+ * Best-effort davranış DEĞİŞMEZ (auth akışı asla bozulmaz) — yalnız arıza GÖRÜNÜR olur.
+ */
+const logger = new Logger('AuthEvents');
 
 /**
  * Admin auth/hesap YAŞAM DÖNGÜSÜ denetim izi (denetim A4) — PAYLAŞILAN yazıcı.
@@ -29,7 +39,14 @@ export async function recordAuthEvent(
       detail,
       meta,
     });
-  } catch {
-    /* denetim izi best-effort — auth/CRUD akışını bozmaz */
+  } catch (err) {
+    // Best-effort korunur (fırlatmaz) ama SESSİZ DEĞİL: aksi halde güvenlik izinin kaybı,
+    // tam da izleme ihtiyacının en yüksek olduğu anda hiçbir iz bırakmadan gerçekleşirdi.
+    // SIR yazılmaz: yalnız olay tipi + özne (e-posta/kullanıcı adı, zaten subject alanı).
+    logger.error(
+      `Güvenlik olayı yazılamadı (type=${type}, subject=${subject ?? '-'}): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
   }
 }

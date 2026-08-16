@@ -1,4 +1,14 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Res, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { CreateOrderRequest, type CreateOrderResponse } from '@lisans/shared';
@@ -80,9 +90,16 @@ export class OrdersController {
     }
   }
 
-  /** Müşteri ekranı: yalnız aktif atamalar + çözülmüş payload (§4, §7). */
+  /**
+   * Müşteri ekranı: yalnız aktif atamalar + çözülmüş payload (§4, §7).
+   *
+   * `:id` = PANEL sipariş id'si (uuid) — mağaza sipariş numarası DEĞİL (o `:remoteOrderId`
+   * taşıyan uçlarda kullanılır ve serbest metindir, ParseUUIDPipe oraya KONMAZ). Pipe olmadan
+   * bozuk bir id `orders.id = '...'` karşılaştırmasına kadar gidip PG 22P02 ile ham 500
+   * üretiyordu; artık 400 döner (eklenti tarafında da anlamlı bir hata).
+   */
   @Get(':id/deliveries')
-  deliveries(@CurrentSite() site: Site, @Param('id') id: string) {
+  deliveries(@CurrentSite() site: Site, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.orders.getDeliveries(site, id);
   }
 
@@ -160,7 +177,9 @@ export class OrdersController {
   mbReveal(
     @CurrentSite() site: Site,
     @Param('remoteOrderId') remoteOrderId: string,
-    @Param('assignmentId') assignmentId: string,
+    // assignmentId = panel `assignments.id` (uuid). remoteOrderId AKSİNE serbest metin
+    // DEĞİLDİR → bozuk değer 22P02/500 yerine 400 almalı.
+    @Param('assignmentId', new ParseUUIDPipe()) assignmentId: string,
     @WpActor() wpUser: string,
   ) {
     return this.adminOrders.siteReveal(
@@ -177,7 +196,9 @@ export class OrdersController {
   mbReplace(
     @CurrentSite() site: Site,
     @Param('remoteOrderId') remoteOrderId: string,
-    @Param('assignmentId') assignmentId: string,
+    // assignmentId = panel `assignments.id` (uuid). remoteOrderId AKSİNE serbest metin
+    // DEĞİLDİR → bozuk değer 22P02/500 yerine 400 almalı.
+    @Param('assignmentId', new ParseUUIDPipe()) assignmentId: string,
     @Body(new ZodBody(ReplaceBody)) body: { reason: string },
     @WpActor() wpUser: string,
   ) {
@@ -196,7 +217,9 @@ export class OrdersController {
   mbSuspend(
     @CurrentSite() site: Site,
     @Param('remoteOrderId') remoteOrderId: string,
-    @Param('assignmentId') assignmentId: string,
+    // assignmentId = panel `assignments.id` (uuid). remoteOrderId AKSİNE serbest metin
+    // DEĞİLDİR → bozuk değer 22P02/500 yerine 400 almalı.
+    @Param('assignmentId', new ParseUUIDPipe()) assignmentId: string,
     @Body(new ZodBody(SuspendBody)) body: { suspend: boolean },
     @WpActor() wpUser: string,
   ) {

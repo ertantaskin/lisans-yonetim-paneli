@@ -55,6 +55,8 @@ export default async function CustomersPage({
    * (Bu panelde admin ve api ayrı imajlar; biri önce dağıtılabiliyor.)
    */
   let summaryUnavailable = false;
+  /** Mağaza SÜZGECİ listesi gelmedi mi (D2) — müşteri listesi etkilenmez, süzgeç boş kalır. */
+  let siteFilterUnavailable = false;
   // Arama, site süzgecini EZER: operatör bir mağazanın içindeyken arama yaptığında
   // sonuç o mağazayla sınırlı kalsaydı "aradığım müşteri yok" yanılgısı doğardı.
   const mode: 'search' | 'site' | 'sites' = term ? 'search' : site ? 'site' : 'sites';
@@ -73,9 +75,20 @@ export default async function CustomersPage({
       }
     }
     if (mode !== 'sites' || summaryUnavailable) {
+      /*
+        YARDIMCI VERİ SAYFAYI DÜŞÜRMEZ (denetim D2): `getSitesForFilter()` yalnız başlıktaki
+        mağaza süzgeci kutusunu doldurur; müşteri listesini ÜRETMEZ. Aynı `Promise.all` içinde
+        ÇIPLAK durduğu için site ucunun geçici hatası müşteri listesine erişimi tamamen
+        kaybettiriyordu — destek çağrısı sırasında en çok ihtiyaç duyulan ekran tam olarak bu.
+        Bir üstteki `site-summary` çağrısı zaten aynı gerekçeyle korunmuş; süzgeç atlanmıştı.
+        Boş süzgeç SESSİZ bırakılmaz (aşağıda uyarı) — "mağaza yok" gibi okunmasın.
+      */
       const [res, siteList] = await Promise.all([
         getCustomers(mode === 'search' ? { search: term } : { siteId: site }),
-        getSitesForFilter(),
+        getSitesForFilter().catch(() => {
+          siteFilterUnavailable = true;
+          return [] as SiteOption[];
+        }),
       ]);
       customers = res.items;
       truncated = res.truncated;
@@ -162,6 +175,20 @@ export default async function CustomersPage({
                 <AlertDescription>
                   API bu sürümde mağaza özetini vermiyor (dağıtım sırası) — tüm müşteriler düz
                   listede gösteriliyor. Arama ve müşteri detayı normal çalışır.
+                </AlertDescription>
+              </div>
+            </Alert>
+          )}
+          {/* Süzgeç listesi gelmediyse SESSİZ boş dropdown bırakılmaz: boş süzgeç "bağlı
+              mağaza yok" gibi okunur ve operatörü yanlış teşhise götürür. */}
+          {siteFilterUnavailable && (
+            <Alert variant="warning" className="mb-4">
+              <TriangleAlert />
+              <div>
+                <AlertTitle>Mağaza süzgeci yüklenemedi</AlertTitle>
+                <AlertDescription>
+                  Müşteri listesi ve arama normal çalışıyor; yalnız mağazaya göre daraltma
+                  kutusu şu an boş. Birkaç saniye sonra sayfayı yenileyin.
                 </AlertDescription>
               </div>
             </Alert>

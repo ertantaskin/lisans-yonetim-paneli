@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiGet, apiPost, isUuid } from '../../../lib/api';
+import { ApiError, apiGet, apiPost, isUuid } from '../../../lib/api';
 import { getActor } from '../../../lib/session';
 
 /**
@@ -241,9 +241,14 @@ export async function resendAction(orderId: string): Promise<MutationState> {
     revalidatePath(`/orders/${orderId}`);
     return { ok: true, message: 'Mail yeniden kuyruğa alındı.' };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : '';
-    // 60sn debounce → 400: hata değil, bilgi niteliğinde uyarı.
-    if (/→\s*400\b/.test(msg)) {
+    /*
+      DURUM KODUNA BAĞLI (denetim D4): burada `/→\s*400\b/` REGEX'i vardı ve yalnız
+      `lib/api`nin GENERIC mesaj kalıbıyla (`POST /path → 400`) eşleşiyordu. API bu uç için
+      `message` gövdesi döndürdüğü an — ki `toApiError` varsa onu tercih eder — kalıp sessizce
+      eşleşmeyi bırakır ve operatör "çok sık denendi" yerine anlamsız "Mail gönderilemedi."
+      görürdü. Doğru desen aynı kod tabanında ZATEN var: `app/ops/actions.ts` → `ApiError.status`.
+    */
+    if (e instanceof ApiError && e.status === 400) {
       return { ok: false, error: 'Çok sık denendi — 60 sn bekleyip tekrar deneyin.' };
     }
     return { ok: false, error: 'Mail gönderilemedi.' };

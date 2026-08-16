@@ -371,15 +371,40 @@ export class SitesService {
     if (!site || site.status !== 'active') return null;
 
     const aad = CryptoService.siteSecretAad(site.id);
-    const secrets = [this.crypto.decrypt(site.hmacSecretEnc, aad)];
+    // NEDEN SARILDI (denetim A1): `crypto.decrypt` HAM `Error` fırlatır (HttpException DEĞİL).
+    // Bu metot HmacGuard üzerinden HER site-facing istekte çağrıldığı için, çözme patladığında
+    // mağaza 401 yerine **500 "Internal server error"** alıyordu. Tetikleyici senaryo gerçek:
+    // yanlış/rotasyonlu MASTER_KEY ile dağıtım ya da kısmi geri yükleme → sipariş push'u,
+    // katalog senkronu, iade uzlaştırması ve My Account okuması HEPSİ 500'e düşer.
+    //
+    // Bu, ARIZAYI UZATAN bir hataydı: WP eklentisi 401/403'ü "yapılandırma hatası" sayıp
+    // retry zincirini DURDURUR (kalıcı not bırakır), 500'ü ise geçici sanıp yeniden dener →
+    // gerçek sebep (çözülemeyen sır) hiçbir yerde görünmeden saatlerce yeniden denenir.
+    //
+    // Bu yüzden: `null` dön → guard KENDİ doğal 401'ini üretsin (sözleşme korunur, çağıran
+    // doğru sınıfta hata görür) + `logger.error` ile GÖRÜNÜR yaz (sessiz kalırsa MASTER_KEY
+    // sapması teşhis edilemez). Aynı desen kod tabanında zaten var: `totp.service.checkCode`
+    // (fail-closed + error log), `search.service.maskFor`, `stock.service`.
+    let secrets: string[];
+    try {
+      secrets = [this.crypto.decrypt(site.hmacSecretEnc, aad)];
 
-    // Rotasyon zarafet penceresi içindeyse eski secret'ı da kabul et.
-    if (
-      site.hmacSecretPrevEnc &&
-      site.hmacSecretRotatedAt &&
-      Date.now() - site.hmacSecretRotatedAt.getTime() <= HMAC_KEY_ROTATION_GRACE_SEC * 1000
-    ) {
-      secrets.push(this.crypto.decrypt(site.hmacSecretPrevEnc, aad));
+      // Rotasyon zarafet penceresi içindeyse eski secret'ı da kabul et.
+      if (
+        site.hmacSecretPrevEnc &&
+        site.hmacSecretRotatedAt &&
+        Date.now() - site.hmacSecretRotatedAt.getTime() <= HMAC_KEY_ROTATION_GRACE_SEC * 1000
+      ) {
+        secrets.push(this.crypto.decrypt(site.hmacSecretPrevEnc, aad));
+      }
+    } catch (err) {
+      // Sır ADI/DEĞERİ loglanmaz; siteyi teşhis için id + domain yeterli.
+      this.logger.error(
+        `Site HMAC secret'ı ÇÖZÜLEMEDİ (siteId=${site.id} domain=${site.domain}) — istek 401 ` +
+          `olarak reddediliyor. Olası sebep: MASTER_KEY sapması / kısmi geri yükleme / bozuk kayıt. ` +
+          `Hata: ${String(err)}`,
+      );
+      return null;
     }
 
     return { site, hmacSecrets: secrets };

@@ -113,6 +113,7 @@ export class PurchaseOrdersService {
     notes?: string;
   }): Promise<PurchaseOrder> {
     const status = input.status ?? 'draft';
+    await this.assertRefsExist(input.supplierId, input.productId);
     const [row] = await this.db
       .insert(purchaseOrders)
       .values({
@@ -131,26 +132,69 @@ export class PurchaseOrdersService {
     return row!;
   }
 
-  /** Kısmi güncelleme: status/eta/notes. draft→ordered geçişinde orderedAt işaretlenir. */
+  /**
+   * FK ön-kontrolü: `supplier_id` / `product_id` gerçekten var mı?
+   *
+   * NEDEN VAR: DTO yalnız BİÇİMİ (`z.string().uuid()`) doğrular. Silinmiş bir tedarikçinin ya
+   * da ürünün id'siyle emir açmak PG 23503 (foreign_key_violation) ile ham 500 üretiyordu —
+   * operatör "Internal server error" görüp hangi alanın geçersiz olduğunu anlayamıyordu.
+   * Desen `products.controller.assertCategoryExists` ile aynı: önce varlığı çöz, yoksa
+   * HANGİSİNİN eksik olduğunu SÖYLEYEN 404.
+   *
+   * YARIŞ (kontrol ile INSERT arası silme) burada kapatılmaz — kapatılması gereksiz: o dar
+   * pencerede oluşan 23503'ü global `PgExceptionFilter` yine anlamlı bir 404'e çevirir.
+   * Bu ön-kontrolün katkısı, YAYGIN durumda hangi kaydın eksik olduğunu adıyla söylemesidir.
+   */
+  private async assertRefsExist(supplierId: string, productId: string): Promise<void> {
+    const [supplier, product] = await Promise.all([
+      this.db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, supplierId)).limit(1),
+      this.db.select({ id: products.id }).from(products).where(eq(products.id, productId)).limit(1),
+    ]);
+    if (supplier.length === 0) throw new NotFoundException('Tedarikçi bulunamadı');
+    if (product.length === 0) throw new NotFoundException('Ürün bulunamadı');
+  }
+
+  /**
+   * Kısmi güncelleme: status/eta/notes. draft→ordered geçişinde orderedAt işaretlenir.
+   *
+   * TRANSACTION + FOR UPDATE (denetim bulgusu): eskiden `getById` → `UPDATE` iki AYRI
+   * ifadeydi ve satır kilitlenmiyordu. İki eşzamanlı `draft→ordered` çağrısında ikisi de
+   * `orderedAt == null` okuyup ikisi de damga yazıyordu → emrin "sipariş verildi" anı SONRAKİ
+   * çağrının zamanına kayıyordu. Tek tüketicisi tedarikçi karnesindeki
+   * `avgLeadDays = avg(received_at − ordered_at)`, yani sessizce YANLIŞ bir KPI üretiliyordu.
+   * Kardeş metot `receive()` bu kilidi ZATEN alıyor — sertlik farkı kapatıldı.
+   */
   async update(
     id: string,
     patch: { status?: PoStatus; eta?: string | null; notes?: string | null },
   ): Promise<PurchaseOrder> {
-    const current = await this.getById(id);
-    const set: Partial<typeof purchaseOrders.$inferInsert> = { updatedAt: new Date() };
-    if (patch.status !== undefined) {
-      set.status = patch.status;
-      if (patch.status === 'ordered' && current.orderedAt == null) set.orderedAt = new Date();
-    }
-    if (patch.eta !== undefined) set.eta = patch.eta ? new Date(patch.eta) : null;
-    if (patch.notes !== undefined) set.notes = patch.notes;
+    return this.db.transaction(async (tx) => {
+      // JOIN'li `getById` yerine ham satır: burada yalnız `orderedAt` okunuyor ve kilit
+      // (FOR UPDATE) yalnız tek tabloda anlamlı — JOIN'li select kilidi diğer tablolara da
+      // yayardı (`receive()` ile aynı desen: yalnız purchase_orders satırı kilitlenir).
+      const [current] = await tx
+        .select()
+        .from(purchaseOrders)
+        .where(eq(purchaseOrders.id, id))
+        .for('update')
+        .limit(1);
+      if (!current) throw new NotFoundException('Satın alma emri bulunamadı');
 
-    const [row] = await this.db
-      .update(purchaseOrders)
-      .set(set)
-      .where(eq(purchaseOrders.id, id))
-      .returning();
-    return row!;
+      const set: Partial<typeof purchaseOrders.$inferInsert> = { updatedAt: new Date() };
+      if (patch.status !== undefined) {
+        set.status = patch.status;
+        if (patch.status === 'ordered' && current.orderedAt == null) set.orderedAt = new Date();
+      }
+      if (patch.eta !== undefined) set.eta = patch.eta ? new Date(patch.eta) : null;
+      if (patch.notes !== undefined) set.notes = patch.notes;
+
+      const [row] = await tx
+        .update(purchaseOrders)
+        .set(set)
+        .where(eq(purchaseOrders.id, id))
+        .returning();
+      return row!;
+    });
   }
 
   /**

@@ -54,11 +54,17 @@ export async function recallBatchAction(id: string, reason: string): Promise<Rec
   }
 }
 
-/** Toplu değiştirme sonucu — değiştirilen + stok yok atlanan kalem sayısı. */
+/** Toplu değiştirme sonucu — değiştirilen + stok yok atlanan + sistem hatası alan kalem sayısı. */
 export interface BulkReplaceResult extends ActionState {
   total?: number;
   replaced?: number;
   skippedNoStock?: number;
+  /**
+   * ALTYAPI ARIZASI (deadlock / statement_timeout / havuz tükenmesi) yüzünden işlenemeyen kalem.
+   * "Stok yok"tan AYRI: eskiden ikisi tek sayaçta toplanıyor ve ekran altyapı arızasını "uygun
+   * stok yoktu" diye yazıyordu — stok DOLUYKEN (operatör yanlış işe yönlendiriliyordu).
+   */
+  failed?: number;
 }
 
 /**
@@ -69,17 +75,20 @@ export interface BulkReplaceResult extends ActionState {
 export async function bulkReplaceBatchAction(id: string): Promise<BulkReplaceResult> {
   if (!isUuid(id)) return { ok: false, error: 'Geçersiz parti kimliği — liste yenilenmeli.' };
   try {
-    const res = await apiPost<{ total: number; replaced: number; skippedNoStock: number }>(
-      `/v1/admin/batches/${id}/bulk-replace`,
-      {},
-      await getActor(),
-    );
+    const res = await apiPost<{
+      total: number;
+      replaced: number;
+      skippedNoStock: number;
+      failed?: number;
+    }>(`/v1/admin/batches/${id}/bulk-replace`, {}, await getActor());
     revalidatePath('/batches');
     return {
       ok: true,
       total: res.total,
       replaced: res.replaced,
       skippedNoStock: res.skippedNoStock,
+      // Eski API imajı bu alanı döndürmeyebilir (admin ve api ayrı dağıtılır) → `?? 0`.
+      failed: res.failed ?? 0,
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Toplu değiştirme başarısız' };

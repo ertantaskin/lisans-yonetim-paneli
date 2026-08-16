@@ -338,11 +338,37 @@ export class MailProcessor extends WorkerHost {
         text: withGuides(render(tpl.body, vars), tpl.body, guideBlock.text),
       });
 
-      // Mail GİTTİ. Log güncellemesi başarısız olsa bile job'ı FAIL etme (retry = mükerrer).
+      /*
+       * Mail GİTTİ. Log güncellemesi başarısız olsa bile job'ı FAIL etme (retry = mükerrer).
+       *
+       * AMA SESSİZ OLAMAZ (denetim C6): bu yazım düşerse email_log satırı sonsuza dek
+       * 'queued' kalır ve ÜÇ şey birden bozulur —
+       *   (a) idempotency kapısı (`existing.status === 'sent'`) AÇILMAZ: aynı iş herhangi bir
+       *       sebeple tekrar koşarsa müşteriye LİSANS ANAHTARI TAŞIYAN İKİNCİ mail gider,
+       *   (b) satır /ops dead-letter listesinde 'askıda' olarak görünür (yanlış teşhis),
+       *   (c) `failedEmails` alarmı bu satırı 'başarısız' saymaz.
+       * 'error' KRİTİK seviyede loglanır: bu bir "önemsiz log kaybı" değil, mükerrer teslimat
+       * riskidir ve operatörün ARAMASI gereken tek izdir.
+       */
       try {
         await this.setStatus(emailLogId, 'sent', null, info.messageId);
-      } catch {
-        // yut — mail gönderildi, log güncellemesi kritik değil
+      } catch (first) {
+        // TEK sınırlı yeniden deneme: gerçek arızaların çoğu anlık bir bağlantı kesintisidir ve
+        // idempotency kapısının açık kalmasının bedeli (mükerrer lisans maili) bir ek UPDATE'in
+        // maliyetinden kat kat yüksektir. Sınırlı tutulur — teslimat yolu ASLA bloklanmamalı.
+        this.logger.warn(
+          `email_log 'sent' yazımı başarısız, bir kez daha denenecek (emailLog=${emailLogId}): ${String(first)}`,
+        );
+        try {
+          await this.setStatus(emailLogId, 'sent', null, info.messageId);
+        } catch (err) {
+          this.logger.error(
+            `Mail GÖNDERİLDİ ama email_log 'sent' yazılamadı (emailLog=${emailLogId}, order=${orderId}) — ` +
+              `bu kayıt 'queued' kaldı, olası MÜKERRER teslimat maili riski: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+          );
+        }
       }
     } catch (err) {
       await this.setStatus(emailLogId, 'failed', err instanceof Error ? err.message : String(err));

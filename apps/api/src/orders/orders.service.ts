@@ -300,7 +300,11 @@ export class OrdersService {
       .select({ status: emailLog.status })
       .from(emailLog)
       .where(eq(emailLog.orderId, orderId))
-      .orderBy(desc(emailLog.createdAt))
+      // TIE-BREAK (id DESC) ŞART: aynı sipariş için birden çok mail kaydı TEK transaction'da
+      // yazılabilir (teslimat + bildirim) ve `now()` tx başını döndürdüğü için createdAt
+      // damgaları BİREBİR aynı olur → tie-break'siz LIMIT 1 KEYFİ satır seçer ve WP eklentisine
+      // giden mail durumu iki çağrıda farklı çıkar. Yön AYNA olmalı (DESC + DESC).
+      .orderBy(desc(emailLog.createdAt), desc(emailLog.id))
       .limit(1);
     return row?.status ?? null;
   }
@@ -354,7 +358,9 @@ export class OrdersService {
             .where(and(eq(orders.siteId, site.id), eq(orders.remoteOrderId, dto.remoteOrderId)))
             .limit(1);
           if (dup) {
-            duplicateOutcome = this.buildOutcome(await this.loadOrderResult(dup));
+            // `tx` GEÇİLMEK ZORUNDA: tx bir bağlantı tutarken kök havuzdan sorgu istemek,
+            // advisory-lock bekleyen diğer isteklerle birlikte havuzu kilitler (bkz. loadOrderResult).
+            duplicateOutcome = this.buildOutcome(await this.loadOrderResult(dup, tx));
             throw new DuplicateOrderSignal();
           }
         }
@@ -638,9 +644,15 @@ export class OrdersService {
       // Sert kota aşımı → best-effort security_event (dedupe'lu) + 429'u aynen fırlat.
       // Retry-After başlığını controller (reply erişimi orada) set eder.
       if (e instanceof SalesQuotaExceededException) {
+        // Best-effort korunur ama SESSİZ DEĞİL (denetim C3): bu olay kota aşımının panelde
+        // görünen TEK izidir; yutulursa mağaza 429 yerken /security ve günlük özet boş kalır.
         await this.security
           .recordQuotaExceeded(site.id, e.todayCount, e.limit)
-          .catch(() => undefined);
+          .catch((err: unknown) =>
+            this.logger.warn(
+              `Kota aşımı güvenlik olayı yazılamadı (site=${site.id}, count=${e.todayCount}): ${String(err)}`,
+            ),
+          );
         throw e;
       }
       // Eşzamanlı ikiz (idempotency_key UNIQUE ihlali) → mevcut siparişi döndür (tx dışı).
@@ -693,9 +705,15 @@ export class OrdersService {
     // `as` ile birlik tipi geri kazanılır, sonra if daraltır.)
     const held = heldMeta as { todayCount: number; threshold: number } | null;
     if (held) {
+      // Yazım yutulursa §8'in "hold sessizdi" boşluğu GERİ AÇILIR: sipariş incelemeye alınır,
+      // müşteri bekler, panelde alarm çıkmaz. Best-effort davranış korunur, arıza görünür olur.
       await this.security
         .recordQuotaHeld(site.id, held.todayCount, held.threshold)
-        .catch(() => undefined);
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `İnceleme (quota_review) güvenlik olayı yazılamadı (site=${site.id}, order=${result.orderId}): ${String(err)}`,
+          ),
+        );
     }
 
     return this.buildOutcome(result);
@@ -1151,10 +1169,22 @@ export class OrdersService {
     return { action: 'allow' };
   }
 
-  /** Mevcut siparişin sonucunu (idempotent tekrar için) yeniden kurar. */
-  private async loadOrderResult(order: Order): Promise<CreateOrderResponse> {
-    const lines = await this.db.select().from(orderLines).where(eq(orderLines.orderId, order.id));
-    const asgs = await this.db.select().from(assignments).where(eq(assignments.orderId, order.id));
+  /**
+   * Mevcut siparişin sonucunu (idempotent tekrar için) yeniden kurar.
+   *
+   * `exec`: bir TRANSACTION İÇİNDEN çağrılıyorsa o transaction'ın executor'ı MUTLAKA geçilmelidir
+   * (products.getById / resolveMapping ile aynı sözleşme). postgres.js'te `transaction()` bir
+   * bağlantıyı rezerve eder; gövdeden kök havuza (`this.db`) sorgu atmak İKİNCİ bir bağlantı ister.
+   * Havuz max:10 iken kilit altındaki tx'ler bağlantıları tutarken bu talep dairesel beklemeye
+   * dönüşür (bu kod tabanında createOrder ve supplier-claims'te k6 ile ÖLÇÜLDÜ: tam havuz açlığı,
+   * /v1/health dahil her şey bağlantısız). Tx DIŞINDAKİ çağıranlar varsayılanla devam eder.
+   */
+  private async loadOrderResult(
+    order: Order,
+    exec: Pick<Database, 'select'> = this.db,
+  ): Promise<CreateOrderResponse> {
+    const lines = await exec.select().from(orderLines).where(eq(orderLines.orderId, order.id));
+    const asgs = await exec.select().from(assignments).where(eq(assignments.orderId, order.id));
 
     const lineById = new Map(lines.map((l) => [l.id, l]));
     return {

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import {
   AccountPayloadSchema,
@@ -46,6 +46,8 @@ export interface SearchResult {
  */
 @Injectable()
 export class SearchService {
+  private readonly logger = new Logger(SearchService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly crypto: CryptoService,
@@ -114,7 +116,11 @@ export class SearchService {
           SELECT a.order_id
           FROM assignments a
           WHERE a.license_item_id = li.id
-          ORDER BY a.created_at DESC
+          -- Tie-break (a.id DESC) ŞART: bir kalemin atamaları TEK transaction'da yazılabilir
+          -- (MAK kapasitesinden aynı anda birden çok atama) → created_at damgaları BİREBİR
+          -- aynı olur ve tie-break'siz LIMIT 1 KEYFİ siparişi seçer; arama sonucundaki link
+          -- iki koşuda FARKLI siparişe giderdi. Yön ayna: DESC + DESC.
+          ORDER BY a.created_at DESC, a.id DESC
           LIMIT 1
         ) AS order_id
       FROM license_items li
@@ -150,7 +156,22 @@ export class SearchService {
         }
       }
       return maskSecret(plain);
-    } catch {
+    } catch (err) {
+      /*
+       * GÖRÜNÜRLÜK (denetim C7): güvenli sabit maske DÖNMEYE DEVAM EDER (sır sızmaz, ekran
+       * bozulmaz) ama arıza artık SESSİZ DEĞİL. Sessizken tek belirti "Ctrl+K her anahtarı
+       * `••••••` gösteriyor" olurdu ve bu görüntü ÜÇ tamamen farklı durumda birebir aynıdır:
+       *   (a) tek bir satırın ciphertext'i bozulmuş,
+       *   (b) AAD/şema sapması (v1↔v2 geri düşüş kırıldı),
+       *   (c) MASTER_KEY yanlış/rotasyon hatası → TÜM payload'lar çözülemiyor (felaket).
+       * Log satırı olmadan (a) ile (c) ayırt EDİLEMEZ. licenseItemId yazılır (sır değil,
+       * arızalı kaydı bulmanın tek yolu); payload/anahtar ASLA loglanmaz.
+       */
+      this.logger.error(
+        `Arama maskesi üretilemedi — payload çözülemedi (licenseItem=${id}, kind=${kind}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       return '••••••';
     }
   }

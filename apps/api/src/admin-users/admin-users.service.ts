@@ -384,7 +384,7 @@ export class AdminUsersService implements OnModuleInit {
    * Pasifleştirmede tokenVersion +1 (mevcut oturum anında geçersizleşir).
    */
   async setDisabled(id: string, disabled: boolean): Promise<PublicAdminUser> {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('admin_users_lockout'))`);
       const [target] = await tx.select().from(adminUsers).where(eq(adminUsers.id, id)).limit(1);
       if (!target) throw new NotFoundException('Admin bulunamadı.');
@@ -404,15 +404,23 @@ export class AdminUsersService implements OnModuleInit {
         })
         .where(eq(adminUsers.id, id))
         .returning();
-      await this.recordAuthEvent(
-        disabled ? 'admin_disabled' : 'admin_reactivated',
-        'warning',
-        row!.email,
-        disabled ? 'Admin pasifleştirildi (oturumlar iptal edildi)' : 'Admin yeniden aktifleştirildi',
-        { userId: row!.id },
-      );
-      return this.toPublic(row!);
+      return row!;
     });
+
+    // Denetim izi COMMIT'ten SONRA yazılır (deferEffects deseni). İKİ sebep:
+    //  1) ATOMİKLİK: tx geri alınırsa "Admin pasifleştirildi" olayı GERÇEKLEŞMEMİŞ bir değişiklik
+    //     için kayda geçmez (olay ancak değişiklik kalıcı olduğunda yazılır).
+    //  2) HAVUZ: tx bir bağlantı tutarken kök havuzdan ikinci bağlantı istenmez. Yazımı `tx`e
+    //     almak da doğru DEĞİLDİ: best-effort yutma tx içinde çalışmaz — başarısız INSERT tx'i
+    //     abort eder (25P02) ve yutma yalnız sebebi gizleyip commit'i anlaşılmaz biçimde düşürürdü.
+    await this.recordAuthEvent(
+      disabled ? 'admin_disabled' : 'admin_reactivated',
+      'warning',
+      result.email,
+      disabled ? 'Admin pasifleştirildi (oturumlar iptal edildi)' : 'Admin yeniden aktifleştirildi',
+      { userId: result.id },
+    );
+    return this.toPublic(result);
   }
 
   /**
@@ -454,7 +462,7 @@ export class AdminUsersService implements OnModuleInit {
 
   /** Sil. Advisory-lock'lı → son aktif admin silinemez (yarışsız). */
   async remove(id: string): Promise<{ ok: true }> {
-    return this.db.transaction(async (tx) => {
+    const removed = await this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('admin_users_lockout'))`);
       const [target] = await tx.select().from(adminUsers).where(eq(adminUsers.id, id)).limit(1);
       if (!target) throw new NotFoundException('Admin bulunamadı.');
@@ -466,10 +474,13 @@ export class AdminUsersService implements OnModuleInit {
         if (n <= 1) throw new BadRequestException('Son aktif admin silinemez.');
       }
       await tx.delete(adminUsers).where(eq(adminUsers.id, id));
-      await this.recordAuthEvent('admin_removed', 'warning', target.email, 'Admin silindi', {
-        userId: target.id,
-      });
-      return { ok: true as const };
+      return { email: target.email, userId: target.id };
     });
+
+    // COMMIT'ten SONRA (setDisabled ile aynı gerekçe: atomiklik + havuz).
+    await this.recordAuthEvent('admin_removed', 'warning', removed.email, 'Admin silindi', {
+      userId: removed.userId,
+    });
+    return { ok: true as const };
   }
 }

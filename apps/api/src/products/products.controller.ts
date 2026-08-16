@@ -42,6 +42,38 @@ const KeyFormatPattern = z
     if (reason) ctx.addIssue({ code: z.ZodIssueCode.custom, message: reason });
   });
 
+/*
+ * SAYISAL ÜST SINIRLAR — gerekçe (aynı üslup: procurement/purchase-orders.controller.ts:16).
+ *
+ * PG kolonları `integer` (int4): sınırsız girdi 2.147.483.647 üstünde 22003 ile ham 500
+ * üretirdi. Ama asıl tehlike taşma DEĞİL, TAŞMAYAN absürt değerlerdir — ÖLÇÜLDÜ:
+ * `validityDays = 5e8` int4'e RAHATÇA sığar, ürün kaydı BAŞARILI olur ve arıza günler sonra,
+ * o ürüne gelen ilk siparişte patlar: teslimat `now + gün` hesabı Invalid Date üretir,
+ * `toISOString()` RangeError atar → mağazanın sipariş push'u 500 alır (yani hata,
+ * yapılandırmayı yapan ekranda değil, para kazandıran yolda görünür).
+ *
+ * Bu yüzden sınırlar int4 tavanı değil, İŞ ANLAMI taşıyan değerlerdir.
+ */
+/**
+ * 10 yıl. Tarihe çevrilen alanların (teslimde başlayan geçerlilik, garanti penceresi) tavanı:
+ * bu panelde satılan hiçbir dijital ürünün ömrü/garantisi 10 yılı aşmaz ("süresiz" isteniyorsa
+ * alan BOŞ bırakılır — null zaten "süre yok" demektir). `now + 3650 gün` her zaman geçerli bir
+ * Date'tir, yani yukarıdaki gecikmeli arıza sınıfı tamamen kapanır.
+ */
+const MAX_DAYS = 3650;
+/**
+ * Anahtar başına kullanım hakkı (MAK). Gerçek MAK anahtarları birkaç bin aktivasyon taşır;
+ * 100.000 fazlasıyla pay bırakır ama "1 anahtar = 2 milyar birim" gibi tek satırla tüm stok
+ * sayaçlarını (Σ max_uses − use_count) anlamsızlaştıran girdiyi engeller.
+ */
+const MAX_USES_CAP = 100_000;
+/**
+ * Düşük stok eşiği + benzeri adet alanları. Stok girişi tavanıyla (stock.controller count
+ * max 1.000.000) hizalı: erişilebilecek en yüksek stok adedinden büyük bir eşik zaten
+ * "her zaman uyarı ver" demektir.
+ */
+const MAX_QTY = 1_000_000;
+
 // Ürün alan tabanı — refine'sız düz nesne, böylece update için .partial() türetilebilir
 // (ZodEffects/refined şema .partial() vermez).
 const ProductObject = z.object({
@@ -49,8 +81,8 @@ const ProductObject = z.object({
   name: z.string().min(1),
   kind: z.enum(['key', 'account', 'custom', 'code']).default('key'),
   usageMode: z.enum(['single', 'multi']).default('single'),
-  maxUses: z.number().int().positive().optional(),
-  validityDays: z.number().int().positive().optional(),
+  maxUses: z.number().int().positive().max(MAX_USES_CAP).optional(),
+  validityDays: z.number().int().positive().max(MAX_DAYS).optional(),
   /** Süreli hesapta süre bitince davranış (§11). */
   onExpiry: z.enum(['hide', 'keep']).default('hide'),
   /** Hesap ürünü (kind=account) alan şeması — {username,password,...}. */
@@ -58,11 +90,11 @@ const ProductObject = z.object({
   fulfillmentPolicy: z
     .enum(['partial-auto', 'partial-approval', 'all-or-nothing'])
     .default('partial-auto'),
-  warrantyDays: z.number().int().nonnegative().optional(),
+  warrantyDays: z.number().int().nonnegative().max(MAX_DAYS).optional(),
   /** Anahtar biçimi (regex) — ReDoS kapısı için bkz. `KeyFormatPattern`. */
   keyFormat: KeyFormatPattern.optional(),
   /** null/omit = düşük-stok uyarısı KAPALI; >=0 ise eşik (§12). */
-  lowStockThreshold: z.number().int().nonnegative().optional(),
+  lowStockThreshold: z.number().int().nonnegative().max(MAX_QTY).optional(),
   /** Stoksuz/ön-sipariş: pending akış, release_at'te teslim (§11). */
   stockless: z.boolean().default(false),
   releaseAt: z.string().datetime().optional(),
@@ -109,9 +141,12 @@ type CreateProductBody = z.infer<typeof CreateProductBody>;
 // (yalnız gövde doğrulaması yeterli değil — mevcut stoğu şema göremez).
 const UpdateProductBody = ProductObject.partial()
   .extend({
-    validityDays: z.number().int().positive().nullable().optional(),
-    warrantyDays: z.number().int().nonnegative().nullable().optional(),
-    lowStockThreshold: z.number().int().nonnegative().nullable().optional(),
+    // ÜST SINIRLAR CREATE ile BİREBİR aynı olmalı: bu blok `.partial()` alanlarının ÜZERİNE
+    // yazar (`.extend`), yani sınır burada tekrarlanmazsa CREATE'te kapatılan kapı PATCH ile
+    // açık kalırdı — `keyFormat` ReDoS kapısında da aynı gerekçe yazılı.
+    validityDays: z.number().int().positive().max(MAX_DAYS).nullable().optional(),
+    warrantyDays: z.number().int().nonnegative().max(MAX_DAYS).nullable().optional(),
+    lowStockThreshold: z.number().int().nonnegative().max(MAX_QTY).nullable().optional(),
     // CREATE ile AYNI ReDoS kapısı (bkz. `KeyFormatPattern`) + güncellemeye özgü `null`
     // ("alanı temizle"). Kapı yalnız CREATE'e konsaydı riskli desen PATCH ile girebilirdi.
     keyFormat: KeyFormatPattern.nullable().optional(),
@@ -190,9 +225,12 @@ export class ProductsController {
     return this.products.list();
   }
 
+  // ParseUUIDPipe (denetim): bozuk id ile gelen istek eskiden sorguya kadar gidip PG 22P02
+  // (invalid_text_representation) ile ham 500 üretiyordu; artık 400 döner. Aynı desen:
+  // notifications.controller / customers.controller / audit.controller.
   @Patch('products/:id')
   async update(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodBody(UpdateProductBody)) body: UpdateProductBody,
   ) {
     await this.assertCategoryExists(body.categoryId);
@@ -226,7 +264,7 @@ export class ProductsController {
 
   /** Ürün detay panosu (§13): stok kırılımı + parti + PO + satış hızı + düzeltmeler. */
   @Get('products/:id/detail')
-  detail(@Param('id') id: string) {
+  detail(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.products.getDetail(id);
   }
 

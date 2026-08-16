@@ -358,7 +358,21 @@ export class AdminOrdersService {
       .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
       .innerJoin(products, eq(orderLines.productId, products.id))
       .where(eq(assignments.id, assignmentId))
-      .limit(1);
+      .limit(1)
+      // FOR UPDATE OF assignments — durum guard'ı KİLİT ALTINDA okunmalı.
+      //
+      // Kilitsiz hâlde araya eşzamanlı bir "Askıya al" giriyordu: burada 'active' okunuyor,
+      // guard geçiyor, stok ön-kontrolü geçiyor; sonra atama 'suspended' oluyor ve aşağıdaki
+      // `revokeAssignment` YALNIZ 'revoked' durumunda `already` döndüğü için 'suspended' atamayı
+      // geri alıp completeLine ile TAZE anahtar veriyordu. Sonuç: operatörün dolandırıcılık/
+      // inceleme gerekçesiyle BİLEREK askıya aldığı lisans, guard'ın yasakladığı hâlde çalışan
+      // yeni bir anahtarla değiştiriliyor ve stoktan bir anahtar yanıyordu.
+      //
+      // Kardeş yol `replacements.approveTx` bu okumayı ZATEN kilitli yapıyor — parite sağlandı.
+      // `of: assignments`: yalnız atama satırı kilitlenir (proje kilit sırası advisory →
+      // assignments → license_items → order_lines → orders; join'lenen tabloları da kilitlemek
+      // bu sırayı bozar ve gereksiz çekişme yaratırdı).
+      .for('update', { of: assignments });
     if (!row) throw new NotFoundException('Atama bulunamadı');
     if (row.status !== 'active') {
       throw new BadRequestException('Yalnız aktif atama değiştirilebilir');
@@ -441,8 +455,12 @@ export class AdminOrdersService {
         targetType: 'order',
         targetId: orderId,
       });
-    } catch {
-      /* audit yazımı başarısız → mail yine de kuyrukta */
+    } catch (err) {
+      // Akış düşürülmez (mail kuyrukta) ama SESSİZ kalınmaz: denetim izinde boşluk oluştuğunu
+      // yalnız bu satır söyler.
+      this.logger.warn(
+        `Denetim kaydı yazılamadı (resend, sipariş=${orderId}): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return { queued: true };
   }
@@ -828,7 +846,12 @@ export class AdminOrdersService {
           gte(auditLog.createdAt, order.createdAt),
         ),
       )
-      .orderBy(desc(auditLog.createdAt))
+      // TIE-BREAK ZORUNLU: `id DESC` olmadan bu pencere KEYFİ. Bir siparişin denetim kayıtları
+      // tek transaction'da yazılabilir ve `now()` tx BAŞINI döndürdüğü için `created_at`
+      // damgaları BİREBİR eşit olur; aşağıdaki "en yeni kazanır" mantığı o durumda iki koşuda
+      // FARKLI revoke sebebi gösterirdi (LIMIT 300 penceresine kimin gireceği de keyfi olurdu).
+      // Yön AYNA DEĞİLDİR: birincil sıralama DESC olduğu için tie-break de DESC olmalı.
+      .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
       .limit(300);
 
     // Bir atamanın birden çok revoke kaydı olamaz ama defansif: en yeni kazanır.
@@ -894,8 +917,14 @@ export class AdminOrdersService {
           targetId: orderId,
           meta: { auto: true, view: 'order_detail', count: asgRows.length },
         });
-      } catch {
-        /* audit yazımı başarısız → görüntüleme yine de döner */
+      } catch (err) {
+        // DEĞİŞMEZ KURAL: "reveal audit'e düşer". Yazım başarısız olduğunda düz metin lisans
+        // GÖSTERİLİR ama denetim izine HİÇBİR ŞEY yazılmaz — `/audit` "kimse görüntülemedi" der.
+        // Okuma yolunu düşürmemek meşru; SESSİZ kalmak değil (bu ikisi ayrı şeydir).
+        this.logger.error(
+          `REVEAL AUDIT YAZILAMADI — düz metin gösterildi ama denetim izine geçmedi ` +
+            `(sipariş=${orderId}, aktör=${actor}): ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
@@ -1978,8 +2007,14 @@ export class AdminOrdersService {
           `Siparişinize ek lisans eklendi — ${o.remoteOrderId}`,
         );
       }
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      // C5: bu enqueue MÜŞTERİYE LİSANS TAŞIYAN maildir. Sessizce yutulduğunda panel "eklendi"
+      // der, `email_log` satırı bile oluşmaz ve müşteri lisansı HİÇ ALMAZ — hiçbir ekranda iz yok.
+      // Kardeş yollar (orders.service / fulfillment.service) aynı enqueue'yu ZATEN logluyor.
+      this.logger.error(
+        `Bonus teslimat maili kuyruğa alınamadı — MÜŞTERİ LİSANSI ALMAMIŞ OLABİLİR ` +
+          `(sipariş=${res.orderId}, satır=${lineId}): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return res;
   }
@@ -2682,8 +2717,13 @@ export class AdminOrdersService {
       } else {
         try {
           await writeAudit();
-        } catch {
-          /* audit yazımı başarısız → liste yine de döner (kök havuz: tx zehirlenmesi yok) */
+        } catch (err) {
+          // Liste yine de döner (kök havuz: tx zehirlenmesi yok) ama düz metin gösterilip
+          // denetim izine geçmemesi SESSİZ kalmamalı — "reveal audit'e düşer" değişmez kuralı.
+          this.logger.error(
+            `REVEAL AUDIT YAZILAMADI — düz metin döndürüldü ama denetim izine geçmedi: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     }
@@ -2838,14 +2878,43 @@ export class AdminOrdersService {
         // C4: BAĞLAM İADE/İPTAL → `returnMultiCapacity=false` (§2). Varsayılan `true` bırakılmıştı:
         // MAK'ta teslim edilmiş birim geri alınırken `use_count` düşüyor ve harcanan aktivasyon
         // yeniden satılabilir görünüyordu (sessiz aşırı-satış).
-        await this.revokeAssignment(
-          a.id,
-          'İade/iptal ile yarış — teslimat geri alındı',
-          actor,
-          true,
-          undefined,
-          false,
-        ).catch(() => undefined);
+        /*
+         * SESSİZ YUTMA KALDIRILDI (§2 — para yolu).
+         *
+         * Bu revoke, iade ile yarışan bir teslimatı geri alır. Eskiden hata TAMAMEN yutuluyordu:
+         * deadlock (40P01) ya da `lock_timeout` yendiğinde atama `active` KALIYOR, panel ise
+         * "Geri alındı" diyordu → müşteri iade ettiği lisansı kullanmaya devam ediyor ve bunun
+         * hiçbir izi kalmıyordu (log yok, olay yok, alarm yok; `reconcile` de bu çelişkiyi bu
+         * biçimde yakalamıyor). Akışı düşürmemek DOĞRU (iade tamamlanmalı) ama SESSİZ KALMAK
+         * değil: hata hem sunucu log'una hem operatörün baktığı yere — siparişin zaman
+         * çizelgesine — yazılır.
+         */
+        try {
+          await this.revokeAssignment(
+            a.id,
+            'İade/iptal ile yarış — teslimat geri alındı',
+            actor,
+            true,
+            undefined,
+            false,
+          );
+        } catch (err) {
+          this.logger.error(
+            `Kaçak atama geri alınamadı — MÜŞTERİDE CANLI LİSANS KALMIŞ OLABİLİR ` +
+              `(sipariş=${orderId}, atama=${a.id}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          // Zaman çizelgesi yazımı da başarısız olabilir; o zaman elimizde log kalır.
+          await this.db
+            .insert(fulfillmentEvents)
+            .values({
+              orderId,
+              type: 'revoke_failed',
+              message:
+                `UYARI: iade sırasında bir teslimat geri ALINAMADI (atama ${a.id}). ` +
+                'Lisans müşteride hâlâ çalışıyor olabilir — sipariş detayından elle iptal edin.',
+            })
+            .catch(() => undefined);
+        }
       }
     }
 
@@ -2878,27 +2947,53 @@ export class AdminOrdersService {
       // dışlar; İDEMPOTENT — kilit altında held DEĞİLSE (başka geçiş kazandı / zaten kapandı)
       // no-op döner (revokeOrderForSite held siparişi güvenle kapatmak için bunu çağırır).
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${orderId}))`);
-      const [order] = await tx
-        .select()
-        .from(orders)
-        .where(eq(orders.id, orderId))
-        .limit(1)
-        .for('update');
+      /*
+       * `orders FOR UPDATE` BİLİNÇLİ OLARAK KALDIRILDI (ABBA deadlock düzeltmesi).
+       *
+       * Projenin yazılı kilit sözleşmesi: advisory → assignments → order_lines → orders.
+       * Bu metot tersine gidiyordu (orders → order_lines → assignments) ve `revokeAssignment`
+       * advisory ALMADIĞI için iki yol serileşmiyordu:
+       *   · Yol A (rejectHeld): orders + order_lines kilitli → assignments'ı bekler,
+       *   · Yol B (sipariş detayı "İptal" / destek "Değiştir" / revokeOrderForSite'ın commit
+       *     sonrası advisory'siz döngüsü): assignments kilitli → order_lines → orders'ı bekler.
+       *   → SQLSTATE 40P01, isteklerden biri opak 500.
+       * Aynı desen `revokeOrderForSite`'tan daha önce tam bu gerekçeyle kaldırılmıştı; burası
+       * atlanmıştı. CAS güvenliği kaybolmaz: advisory-lock release/reject/iade yollarını zaten
+       * serileştirir ve READ COMMITTED'da kilit alındıktan SONRAKİ SELECT taze anlık görüntü
+       * kullanır → ikinci çağıran `heldForReview=false` görür ve idempotent no-op döner.
+       */
+      const [order] = await tx.select().from(orders).where(eq(orders.id, orderId)).limit(1);
       if (!order) throw new NotFoundException('Sipariş bulunamadı');
       if (!order.heldForReview) {
         return { orderId, rejected: false, status: order.status, alreadyClosed: true as const };
       }
 
-      await tx
-        .update(orders)
-        .set({ heldForReview: false, updatedAt: new Date() })
-        .where(eq(orders.id, orderId));
+      // KİLİT SIRASI: atamalar ÖNCE kilitlenir (sözleşme: assignments → order_lines → orders).
+      // Aşağıdaki revoke döngüsü bu satırları yeniden kilitleyecek; aynı tx zaten sahibi olduğu
+      // için beklemez. Kilitleri burada, order_lines'a DOKUNMADAN ÖNCE almak yukarıdaki ABBA
+      // penceresini kapatan asıl adımdır. `ORDER BY id` — küme kilitlerinde deterministik sıra.
+      const liveAsgs = await tx
+        .select({ id: assignments.id })
+        .from(assignments)
+        .where(
+          and(
+            eq(assignments.orderId, orderId),
+            inArray(assignments.status, ['active', 'suspended']),
+          ),
+        )
+        .orderBy(asc(assignments.id))
+        .for('update');
 
       // Satırlar terminal 'canceled' (yeniden-teslime uygun değil, §2). SIRA BİLİNÇLİ: iptal
       // işareti kaçak atamaları geri almadan ÖNCE basılır — `revokeOrderForSite` ile aynı desen.
       // Böylece `revokeAssignment` satırı ZATEN terminal görür, `canceled_units` defterini
       // şişirmez ve gereksiz "N birim kalıcı iptal edildi" olayı yazmaz.
       await tx.update(orderLines).set({ canceled: true }).where(eq(orderLines.orderId, orderId));
+
+      await tx
+        .update(orders)
+        .set({ heldForReview: false, updatedAt: new Date() })
+        .where(eq(orders.id, orderId));
 
       /*
        * C4 — Held satırda normalde atama yoktur (createOrder held-dalı atama yapmaz); yine de bir
@@ -2914,17 +3009,10 @@ export class AdminOrdersService {
        * Artık MEVCUT idempotent yardımcı kullanılır: markLineCanceled=true (gerçek iptal),
        * tx geçilir (aynı bağlantı/kilitler — ayrı bağlantı kendi kilidimizi beklerdi),
        * returnMultiCapacity=false (§2 — bağlam iade/iptal, MAK hakkı havuza dönmez).
+       *
+       * `liveAsgs` YUKARIDA, order_lines'a dokunulmadan ÖNCE ve FOR UPDATE ile okunur (ABBA
+       * düzeltmesi — gerekçe advisory-lock bloğunda yazılı).
        */
-      const liveAsgs = await tx
-        .select({ id: assignments.id })
-        .from(assignments)
-        .where(
-          and(
-            eq(assignments.orderId, orderId),
-            inArray(assignments.status, ['active', 'suspended']),
-          ),
-        )
-        .orderBy(asc(assignments.id));
       for (const a of liveAsgs) {
         await this.revokeAssignment(
           a.id,

@@ -16,10 +16,18 @@ cd "$(dirname "$0")/.."
 
 SERVICES="${*:-api admin}"
 HEALTH_URL="${HEALTH_URL:-https://api.167-233-108-12.sslip.io/v1/health}"
-# Admin runtime probu: admin kök URL'i (auth AÇIKKEN 3xx döner — yine de "runtime ayakta"
-# demektir; yalnız gateway hatası/erişilemezlik sağlıksız sayılır). Yalnız SERVICES'te
-# 'admin' varsa kontrol edilir (admin-only deploy'un runtime çöküşü de yakalanır).
-ADMIN_HEALTH_URL="${ADMIN_HEALTH_URL:-https://admin.167-233-108-12.sslip.io/}"
+# Admin runtime probu — GERÇEKTEN RENDER EDEN bir rota (denetim A2).
+#
+# ESKİDEN kök `/` idi ve prob HİÇBİR React bileşeni çalıştırmıyordu: `apps/admin/middleware.ts`
+# kök yolu RENDER'DAN ÖNCE 307 ile `/pending`'e yönlendiriyor; curl `-L` taşımadığı ve
+# [200,500) aralığı kabul edildiği için prob o 307'yi görüp "sağlıklı" diyordu. Sonuç: kök
+# layout ya da herhangi bir sayfa render'da patlasa bile dağıtım BAŞARILI sayılıyor ve
+# otomatik geri alma TETİKLENMİYORDU — yani admin sağlık kapısı fiilen boştu.
+#
+# ARTIK `/pending` (auth kapalıyken gerçek ekran; auth AÇIKKEN `-L` ile `/login`'e izlenir —
+# o da gerçek bir render'dır ve kök layout'u çalıştırır). Her iki durumda da Next sunucu
+# runtime'ı + kök layout GERÇEKTEN koşar.
+ADMIN_HEALTH_URL="${ADMIN_HEALTH_URL:-https://admin.167-233-108-12.sslip.io/pending}"
 LOG=".deploy-history.log"
 
 # Renkler YALNIZ gerçek TTY'de. Runner çıktıyı $(...) ile yakaladığında stdout TTY değildir →
@@ -34,14 +42,59 @@ ok(){  printf '%s✓ %s%s\n' "$C_OK" "$*" "$C_RST"; }
 err(){ printf '%s✗ %s%s\n' "$C_ERR" "$*" "$C_RST" >&2; }
 
 health(){ curl -fsS --max-time 10 "$HEALTH_URL" 2>/dev/null | grep -q '"status":"ok"'; }
-# Admin runtime: HTTP yanıtı var + gateway hatası değil (2xx/3xx/4xx ok; 5xx / bağlantı yok = sağlıksız).
+
+# Admin runtime probu. Son sağlıksızlık sebebi burada tutulur → rollback mesajı "neden"i söyler
+# (prob bir döngüde 30 kez koştuğu için her denemede log basmak gürültü olurdu).
+ADMIN_FAIL_REASON=''
+
+# Admin sağlıklı mı? ÜÇ koşul birlikte:
+#   1) `-L` ile yönlendirmeler İZLENİR → prob bir middleware 307'sinde durup "tamam" demez
+#      (A2'nin kök nedeni tam olarak buydu).
+#   2) Nihai HTTP kodu [200,500): 2xx/3xx/4xx runtime ayakta demektir (auth AÇIKKEN /login
+#      ekranı 200 döner; REQUIRE_AUTH yanlış yapılandırmasının 503'ü ise BURADA yakalanır).
+#      5xx / bağlantı yok = sağlıksız.
+#   3) YALNIZ HTTP KODUNA BAKMAK YETMEZ: Next hata sınırı (error.tsx) sayfa render'da
+#      patladığında da **200** döner. Bu yüzden gövdede hata sınırının imzası aranır
+#      ("Hata kodu:" + "Tekrar dene") — desen `scripts/smoke-routes.sh` ile BİREBİR aynı
+#      (iki yerde ayrışırsa biri kırığı temiz raporlar; aynı tutulmalı).
+#      NOT (bilinen sınır, smoke-routes.sh ile ORTAK): `ErrorState` "Hata kodu:" satırını
+#      yalnız `error.digest` varken basar. Sunucuda üretilen hatalarda Next digest'i her
+#      zaman koyar (probumuz JS çalıştırmayan düz bir HTTP isteğidir, yani yalnız SSR
+#      sınırlarını görür) → pratikte kapsanır. Yine de bu iki ifadeden biri değişirse İKİ
+#      betik BİRLİKTE güncellenmelidir.
 admin_health(){
-  local code
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$ADMIN_HEALTH_URL" 2>/dev/null)" || code=000
-  [ -n "$code" ] && [ "$code" -ge 200 ] && [ "$code" -lt 500 ]
+  local body code html digest
+  ADMIN_FAIL_REASON=''
+  # -L: yönlendirmeleri izle. Gövde + nihai kod tek çağrıda alınır (son satır = kod).
+  body="$(curl -sL -w $'\n%{http_code}' --max-time 15 "$ADMIN_HEALTH_URL" 2>/dev/null)" || body=$'\n000'
+  code="$(printf '%s' "$body" | tail -n1)"
+  html="$(printf '%s' "$body" | sed '$d')"
+
+  case "$code" in ''|*[!0-9]*) ADMIN_FAIL_REASON="yanıt yok/geçersiz kod"; return 1;; esac
+  # curl bağlanamazsa %{http_code} '000' basar → "HTTP 000" yerine anlaşılır sebep yaz.
+  if [ "$code" -eq 0 ]; then
+    ADMIN_FAIL_REASON="bağlantı kurulamadı (TLS/DNS/konteyner ayakta değil)"
+    return 1
+  fi
+  if [ "$code" -lt 200 ] || [ "$code" -ge 500 ]; then
+    ADMIN_FAIL_REASON="HTTP $code"
+    return 1
+  fi
+  if printf '%s' "$html" | grep -q 'Hata kodu:' && printf '%s' "$html" | grep -q 'Tekrar dene'; then
+    # `|| true` ŞART: bu betik `set -e` ile koşuyor (smoke-routes.sh koşmuyor). digest
+    # beklenmedik bir biçimdeyse grep 1 döner, atama başarısız olur ve set -e dağıtımı
+    # TAM DA teşhis satırını yazarken öldürürdü — teşhis, dağıtımı düşürme sebebi olamaz.
+    digest="$(printf '%s' "$html" | grep -o 'Hata kodu: [0-9]*' | head -n1 || true)"
+    ADMIN_FAIL_REASON="HTTP $code ama Next HATA SINIRI render edildi (${digest:-digest yok})"
+    return 1
+  fi
+  return 0
 }
 # Dağıtılan TÜM hedefler sağlıklı mı: API her zaman; admin yalnız SERVICES'te varsa.
 all_healthy(){
+  # Sebep her turda SIFIRLANIR: API sağlıksızsa admin probu HİÇ koşmaz; sıfırlanmasa bir
+  # önceki turdan kalan admin sebebi basılır ve teşhis yanlış yöne gider.
+  ADMIN_FAIL_REASON=''
   health || return 1
   case " $SERVICES " in *" admin "*) admin_health || return 1;; esac
   return 0
@@ -118,6 +171,12 @@ if [ "$OKH" = 1 ]; then
 
   say "docs/DEPLOY-LOG.md'ye satır eklemeyi unutma (görünür geçmiş)."
 else
-  err "SAĞLIK BAŞARISIZ ($NEW)."
+  # Sebebi YAZ: admin probu artık "200 ama hata sınırı" gibi ayrımlar da yapıyor; sebep
+  # basılmazsa operatör 5xx ile render çöküşünü ayırt edemez (log/panel yalnız bu satırı görür).
+  if [ -n "$ADMIN_FAIL_REASON" ]; then
+    err "SAĞLIK BAŞARISIZ ($NEW). Admin probu: $ADMIN_FAIL_REASON ($ADMIN_HEALTH_URL)"
+  else
+    err "SAĞLIK BAŞARISIZ ($NEW). API sağlık ucu 'ok' vermedi ($HEALTH_URL)"
+  fi
   rollback
 fi

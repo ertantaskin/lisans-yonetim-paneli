@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiGet, apiPost, apiSend, isUuid, type CatalogRow } from '../../lib/api';
+import { ApiError, apiGet, apiPost, apiSend, isUuid, type CatalogRow } from '../../lib/api';
 import { getActor } from '../../lib/session';
 
 /**
@@ -558,23 +558,48 @@ export async function resolvePendingLinesAction(input: {
   }
 }
 
+/**
+ * Eşleme mutasyonlarının ortak sonucu (§3).
+ *
+ * NEDEN (denetim C13): `updateMappingAction`/`removeMappingAction` `catch {}` ile hatayı
+ * TAMAMEN yutuyor ve `void` dönüyordu → API 403/500 verse bile ekranda HİÇBİR ŞEY olmuyor,
+ * operatör "pasifleştirdim" sanıp ayrılıyordu (eşleme hâlâ aktif, teslimat davranışı
+ * beklediğinden farklı). Sessiz yutmanın gerekçesi meşruydu (yakalanmamış throw tüm sayfayı
+ * error boundary'ye düşürür) ama doğru çözüm hatayı GÖRÜNMEZ kılmak değil, sayfayı düşürmeden
+ * SONUÇ olarak döndürmektir — `app/mappings/actions.ts:removeMappingWithResult` tam bu
+ * yetersizlik için yazılmıştı; desen buraya da taşındı.
+ */
+export interface MappingMutationState {
+  ok: boolean;
+  error?: string;
+}
+
 /** Eşlemeyi pasifleştir/etkinleştir (§3). productId ürün detayını tazelemek için (opsiyonel). */
-export async function updateMappingAction(formData: FormData) {
+export async function updateMappingAction(formData: FormData): Promise<MappingMutationState> {
   const id = String(formData.get('id') || '');
   const active = String(formData.get('active') || '') === 'true';
   const productId = String(formData.get('productId') || '').trim();
   // SEC-1: kimlik yola gömülüyor → şekli doğrulanmadan istek YAPILMAZ.
-  if (!isUuid(id)) return;
+  if (!isUuid(id)) {
+    return { ok: false, error: 'Geçersiz eşleme kimliği — liste yenilenip tekrar denenmeli.' };
+  }
+  let result: MappingMutationState;
   try {
     await apiSend('PATCH', `/v1/admin/mappings/${id}`, { active }, await getActor());
-  } catch {
-    // Eşleme eşzamanlı silinmiş / API 500 dönmüş olabilir — throw'u YUT ki yakalanmamış
-    // hata tüm sayfayı Next error boundary'sine düşürüp boşaltmasın (kardeş action'lar da
-    // hata yutar). revalidate UI'ı gerçek duruma tazeler.
+    result = { ok: true };
+  } catch (e) {
+    // Action ASLA fırlatmaz (yakalanmamış hata tüm sayfayı error boundary'ye düşürürdü);
+    // ama artık sessiz de değil — çağıran sonucu ekranda gösterir.
+    result = {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Eşleme durumu değiştirilemedi',
+    };
   }
   // Toggle formu productId taşıyorsa ürün detayını tazele; yoksa (geriye dönük) /stock.
+  // Hata durumunda da tazelenir: eşleme eşzamanlı silinmiş/değişmiş olabilir, liste gerçeğe döner.
   if (productId) revalidatePath(`/products/${productId}`);
   else revalidatePath('/stock');
+  return result;
 }
 
 /**
@@ -609,20 +634,31 @@ export async function changeMappingAction(
   }
 }
 
-/** Eşlemeyi tamamen KALDIR (§3). Basit form action; hata yutulur (kardeş action deseni), revalidate tazeler.
- *  productId taşınırsa ürün detayını tazeler (ürün-merkezli kutu); yoksa /mappings (katalog ekranı). */
-export async function removeMappingAction(formData: FormData) {
+/**
+ * Eşlemeyi tamamen KALDIR (§3). Sonuç DÖNDÜRÜR (bkz. `MappingMutationState` — denetim C13):
+ * eskiden hata yutuluyordu ve DELETE 500 alsa bile operatör hiçbir şey görmüyordu.
+ * productId taşınırsa ürün detayını tazeler (ürün-merkezli kutu); yoksa /mappings (katalog ekranı).
+ */
+export async function removeMappingAction(formData: FormData): Promise<MappingMutationState> {
   const id = String(formData.get('mappingId') || '').trim();
   // SEC-1: kimlik yola gömülüyor → şekli doğrulanmadan istek YAPILMAZ.
-  if (!isUuid(id)) return;
+  if (!isUuid(id)) {
+    return { ok: false, error: 'Geçersiz eşleme kimliği — liste yenilenip tekrar denenmeli.' };
+  }
   const productId = String(formData.get('productId') || '').trim();
+  let result: MappingMutationState;
   try {
     await apiSend('DELETE', `/v1/admin/mappings/${id}`, undefined, await getActor());
-  } catch {
-    // Eşleme zaten silinmiş / 404 olabilir — yut; revalidate UI'ı gerçek duruma tazeler.
+    result = { ok: true };
+  } catch (e) {
+    // Uç idempotenttir: 404 = kayıt zaten yok ⇒ istenen sonuç sağlanmış, BAŞARI sayılır
+    // (`removeMappingWithResult` ile aynı kural — iki ekran çelişmemeli).
+    if (e instanceof ApiError && e.status === 404) result = { ok: true };
+    else result = { ok: false, error: e instanceof Error ? e.message : 'Eşleme kaldırılamadı' };
   }
   if (productId) revalidatePath(`/products/${productId}`);
   else revalidatePath('/mappings');
+  return result;
 }
 
 /**

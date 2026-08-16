@@ -43,7 +43,14 @@ const CreateAdjustmentBody = z
      */
     licenseItemIds: z.array(z.string().uuid()).min(1).max(500).optional(),
     action: z.enum(['void', 'damage', 'correct', 'recall']),
-    qty: z.number().int().nonnegative().default(0),
+    /**
+     * Defter kaydına yazılan adet. Üst sınır int4 taşmasına karşı (stock_adjustments.qty
+     * `integer`): sınırsız girdi 2.147.483.647 üstünde PG 22003 ile ham 500 üretirdi, artık
+     * kullanıcı 400 alır (gerekçe: purchase-orders.controller:16). 1.000.000 tavanı stok
+     * girişi/PO adet tavanlarıyla hizalıdır — tek bir düzeltme kaydı bir stok girişinden
+     * daha büyük olamaz.
+     */
+    qty: z.number().int().nonnegative().max(1_000_000).default(0),
     reason: z.string().min(1),
   })
   .refine((b) => !(b.licenseItemId && b.licenseItemIds), {

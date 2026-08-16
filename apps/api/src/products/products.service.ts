@@ -257,9 +257,30 @@ export class ProductsService {
 
   constructor(@Inject(DB) private readonly db: Database) {}
 
+  /**
+   * Yeni ürün. SKU çakışması 409 döner — `products_sku_uniq` ihlali eskiden ham 23505 olarak
+   * dışarı çıkıp "Internal server error" üretiyordu (panelde tetiklemesi EN KOLAY 500: aynı
+   * SKU'yu ikinci kez kaydetmek). Desen kardeş servislerle BİREBİR aynı:
+   * `product-categories.service.create` / `product-guides.service.create`.
+   *
+   * Global `PgExceptionFilter` bu kodu zaten 409'a çevirir; buradaki yakalama ondan ÖNCE
+   * gelir ve mesajın HANGİ SKU'nun çakıştığını söylemesini sağlar (filtre genel bir metin
+   * verir, çünkü hangi alanın çakıştığını bilemez).
+   */
   async create(input: NewProduct): Promise<Product> {
-    const [row] = await this.db.insert(products).values(input).returning();
-    return row!;
+    try {
+      const [row] = await this.db.insert(products).values(input).returning();
+      return row!;
+    } catch (e) {
+      // 23505 = unique_violation (products_sku_uniq — tablodaki TEK benzersiz kısıt)
+      if (isUniqueViolation(e)) {
+        throw new ConflictException(
+          `"${input.sku}" SKU'su zaten başka bir üründe kullanılıyor. SKU ürünün benzersiz ` +
+            'kodudur; farklı bir SKU girin ya da mevcut ürünü düzenleyin.',
+        );
+      }
+      throw e;
+    }
   }
 
   /**
@@ -397,11 +418,26 @@ export class ProductsService {
       const set: Partial<NewProduct> =
         patch.usageMode === 'single' ? { ...patch, maxUses: null } : { ...patch };
 
-      const [row] = await tx
-        .update(products)
-        .set({ ...set, updatedAt: new Date() })
-        .where(eq(products.id, id))
-        .returning();
+      // SKU çakışması (create ile AYNI gerekçe): ham 23505 "Internal server error" olarak
+      // çıkmasın. Yakalama transaction'ın İÇİNDE: istisna callback'ten dışarı çıktığı için
+      // tx zaten geri alınır (aborted tx üzerinde başka sorgu ÇALIŞTIRILMAZ — 25P02 tuzağı).
+      const nextSku = set.sku ?? current.sku;
+      let row: Product | undefined;
+      try {
+        [row] = await tx
+          .update(products)
+          .set({ ...set, updatedAt: new Date() })
+          .where(eq(products.id, id))
+          .returning();
+      } catch (e) {
+        if (isUniqueViolation(e)) {
+          throw new ConflictException(
+            `"${nextSku}" SKU'su zaten başka bir üründe kullanılıyor. SKU ürünün benzersiz ` +
+              'kodudur; farklı bir SKU girin.',
+          );
+        }
+        throw e;
+      }
       if (!row) throw new NotFoundException('Ürün bulunamadı');
       return row;
     });
@@ -1455,7 +1491,16 @@ export class ProductsService {
       .from(siteProductMappings)
       .innerJoin(products, eq(siteProductMappings.productId, products.id))
       .where(where)
-      .orderBy(asc(siteProductMappings.remoteProductId))
+      /*
+       * TIE-BREAK (`id`) ZORUNLU: `remote_product_id` bu tabloda BENZERSİZ DEĞİLDİR —
+       * varyasyonlu bir üründe ebeveyn satırı ve HER varyasyon AYNI `remote_product_id`'yi
+       * taşır (varyasyon `remote_variation_id` ile ayrılır). Yani eşitlik istisna değil,
+       * GARANTİDİR ve tek anahtarlı sıralamada LIMIT penceresine hangi satırların gireceği
+       * keyfi olur: aynı veri, iki çağrıda farklı satır seti → WP eşleme kutusunda bir
+       * varyasyonun eşlemesi "yok" görünebilir. Aynı gerekçe purchase-orders.list ve
+       * supply-ops.listBatches'te de yazılı ("LIMIT'li her ORDER BY'ın tie-break'i olmalı").
+       */
+      .orderBy(asc(siteProductMappings.remoteProductId), asc(siteProductMappings.id))
       .limit(500);
   }
 

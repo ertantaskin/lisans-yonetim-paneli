@@ -202,8 +202,11 @@ export class StockController {
     return this.stock.preview(body.productId, body.count);
   }
 
+  // ParseUUIDPipe: bu dosyadaki diğer üç uç (void/update/rotate-credentials) zaten kullanıyor;
+  // yalnız bu okuma ucu atlanmıştı → bozuk productId sorguya gidip PG 22P02 ile ham 500
+  // üretiyordu, artık 400 döner.
   @Get('stock/:productId/available')
-  async available(@Param('productId') productId: string) {
+  async available(@Param('productId', new ParseUUIDPipe()) productId: string) {
     return { productId, available: await this.stock.availableCount(productId) };
   }
 

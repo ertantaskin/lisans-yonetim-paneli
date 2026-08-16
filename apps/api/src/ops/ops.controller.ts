@@ -1,4 +1,12 @@
-import { BadRequestException, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { AdminGuard } from '../auth/admin.guard';
 import { OpsService, type DeadLetterPage, type ReplayKind } from './ops.service';
 
@@ -22,11 +30,17 @@ export class OpsController {
     return this.ops.deadLetterPage();
   }
 
-  /** İlgili dead-letter kaydını yeniden kuyruğa alır (kind: outbox|email). */
+  /**
+   * İlgili dead-letter kaydını yeniden kuyruğa alır (kind: outbox|email).
+   *
+   * `:id` = `outbox_events.id` veya `email_log.id` (ikisi de uuid). ParseUUIDPipe olmadan
+   * bozuk bir id sorguya kadar gidip PG 22P02 ile ham 500 üretiyordu — `kind` zaten açık
+   * 400 ile doğrulanırken id'nin sessizce 500 vermesi tutarsızdı.
+   */
   @Post('replay/:kind/:id')
   async replay(
     @Param('kind') kind: string,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
   ): Promise<{ replayed: true; kind: ReplayKind; id: string }> {
     if (kind !== 'outbox' && kind !== 'email') {
       throw new BadRequestException("kind yalnız 'outbox' veya 'email' olabilir");

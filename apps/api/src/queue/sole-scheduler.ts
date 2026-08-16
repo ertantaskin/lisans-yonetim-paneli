@@ -22,6 +22,19 @@ import type { JobSchedulerTemplateOptions, Queue, RepeatOptions } from 'bullmq';
  * Temizlik BEST-EFFORT: silme hatası boot'u DÜŞÜRMEZ (yetim zamanlayıcı, çalışmayan bir
  * API'den iyidir) ama `warn` ile GÖRÜNÜR loglanır — sessiz kalırsa aynı sınıf hata yine
  * fark edilmeden yaşar.
+ *
+ * BOOT DAYANIKLILIĞI (denetim A5): `upsertJobScheduler` de artık try/catch İÇİNDE.
+ * NEDEN: bu yardımcıyı 8 servis `onModuleInit`'te çağırıyor; `onModuleInit` `app.listen()`
+ * içinde koşar → upsert Redis erişilemezken fırlatsaydı **port HİÇ açılmaz**, `/health` bile
+ * yanıt vermezdi. Bu, runtime tasarımıyla ÇELİŞİKTİ: sistem bilinçli olarak Redis'siz de
+ * ayakta kalacak şekilde kurulu (nonce fail-closed-FAST, rate-limit fail-open, `/health`
+ * `degraded` döner). Dahası dağıtım betiği sağlık kapısına bakar → Redis yeniden başlatmasına
+ * denk gelen bir dağıtım, İYİ bir sürümü boşuna rollback ettirirdi.
+ *
+ * ÖDÜN (açıkça): upsert başarısız olursa o süpürme zamanlayıcısı KURULMAZ; iş gecikir
+ * (bir sonraki boot/dağıtımda kendini onarır, çünkü upsert idempotenttir). Gecikmiş bir
+ * süpürme, HİÇ açılmayan bir API'den iyidir — ama sessiz kalmaması için `error` ile loglanır
+ * (temizlik hatasından DAHA ağır: burada tekrarlı iş hiç kurulmamıştır).
  */
 export async function upsertSoleJobScheduler(
   queue: Queue,
@@ -30,11 +43,25 @@ export async function upsertSoleJobScheduler(
   template: { name: string; data?: unknown; opts?: JobSchedulerTemplateOptions },
   logger: Logger,
 ): Promise<void> {
-  await queue.upsertJobScheduler(schedulerId, repeat, {
-    name: template.name,
-    data: template.data,
-    opts: template.opts,
-  });
+  try {
+    await queue.upsertJobScheduler(schedulerId, repeat, {
+      name: template.name,
+      data: template.data,
+      opts: template.opts,
+    });
+  } catch (err) {
+    logger.error(
+      `Tekrarlı zamanlayıcı KURULAMADI (kuyruk=${queue.name} id=${schedulerId}) — bu süpürme ` +
+        `bir sonraki başarılı boot'a kadar KOŞMAYACAK. Boot devam ediyor (API Redis'siz de ` +
+        `ayakta kalmalı: nonce fail-closed, rate-limit fail-open, /health degraded). ` +
+        `Hata: ${String(err)}`,
+    );
+    // ERKEN ÇIKIŞ ŞART: upsert başarısızsa beklenen kimlikli zamanlayıcının var olduğunu
+    // BİLMİYORUZ. Aşağıdaki temizlik "beklenen kimlik dışındaki her şey yetimdir" kuralıyla
+    // çalışır; burada koşsaydı MEŞRU (önceki boot'tan kalan, çalışan) zamanlayıcıyı silip
+    // kuyruğu SIFIR zamanlayıcıyla bırakabilirdi — yani hatayı büyütürdü.
+    return;
+  }
 
   try {
     // 0..999: bu kuyruklarda beklenen zamanlayıcı sayısı 1'dir; yüksek tavan yalnız

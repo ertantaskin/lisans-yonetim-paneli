@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
-import { afterAll, describe, expect, it } from 'vitest';
+import { eq, inArray, sql } from 'drizzle-orm';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { RetentionService } from '../../src/maintenance/retention.service';
 import * as schema from '../../src/db/schema';
 import {
@@ -438,6 +438,10 @@ describe('RetentionService.runRetention — idempotans', () => {
       notificationsAllDeleted: 0,
       deploymentsDeleted: 0,
       connectTokensDeleted: 0,
+      // Eklenti paketi arşivlemesi de idempotent: gövdesi boşaltılan satır bir daha aday
+      // kümesine girmez (sorgu `zip_b64 <> ''` süzer), aksi halde her koşuda aynı satırlar
+      // yeniden yazılırdı. Bu testin verisinde yayın yok → zaten 0.
+      pluginZipsArchived: 0,
     });
   });
 });
@@ -521,10 +525,135 @@ describe('RetentionService — tedarikçi fişi düz metin anahtar maskesi', () 
     // İdempotans: ikinci koşu aynı satırları TEKRAR maskelemeye çalışmamalı (sonsuz yazma).
     const second = await retention.runRetention();
     expect(second.claimKeysMasked).toBe(0);
+    // NOT: aşağıdaki "özet satırı" testi bu koşumun ürettiği raporu kullanmaz — kendi koşusunu yapar.
 
     // Temizlik: bu dosyanın kendi satırları (cleanupByTag fiş tablolarını kapsamıyor).
     await db.execute(
       sql`DELETE FROM supplier_claims WHERE created_by = ${claimTag}`,
     );
+  });
+});
+
+describe('RetentionService.runRetention — operatöre görünen özet satırı', () => {
+  /**
+   * NEDEN BU TEST VAR (gerçek hata): `claimKeysMasked` adımı eklenirken özet satırındaki
+   * `${...}` interpolasyonları KAYBOLDU (commit dec4c91) → süpürmenin operatöre görünen TEK
+   * satırı üç adım için boş değer basıyordu ("security= sil, email= maske/ sil"). Kod
+   * çalışıyordu, testler geçiyordu, typecheck geçiyordu — yalnız gözlem YALAN söylüyordu.
+   * Bu, projenin en sık tekrarlayan hata sınıfı: "sistem sessizce yanlış bir şey söylüyor".
+   *
+   * Bu test log METNİNİ ezberlemez (kırılgan olurdu); raporun HER sayısının satırda
+   * gerçekten geçtiğini doğrular → yeni bir adım eklenip özete yazılmayı unutursa da yakalar.
+   */
+  it('özet satırı raporun HER sayısını taşır (kayıp interpolasyon regresyonu)', async () => {
+    const messages: string[] = [];
+    const spy = vi
+      .spyOn((retention as unknown as { logger: { log: (m: string) => void } }).logger, 'log')
+      .mockImplementation((m: string) => {
+        messages.push(String(m));
+      });
+
+    let report: Awaited<ReturnType<typeof retention.runRetention>>;
+    try {
+      report = await retention.runRetention();
+    } finally {
+      spy.mockRestore();
+    }
+
+    const summary = messages.find((m) => m.startsWith('Saklama koşusu bitti:'));
+    expect(summary, 'özet satırı hiç loglanmadı').toBeDefined();
+    const line = summary as string;
+
+    // Etiket+değer çiftleri: değer 0 olsa bile "etiket=0" geçmeli. Kayıp interpolasyonda
+    // satırda "security= sil" olur ve "security=0" ARANDIĞINDA bulunamaz → test KIRMIZI.
+    expect(line).toContain(`fulfillment=${report.fulfillmentEventsDeleted} sil`);
+    expect(line).toContain(`outbox=${report.outboxDeleted} sil`);
+    expect(line).toContain(`security=${report.securityEventsDeleted} sil`);
+    expect(line).toContain(`email=${report.emailMasked} maske/${report.emailDeleted} sil`);
+    expect(line).toContain(`fis anahtari=${report.claimKeysMasked} maske`);
+    expect(line).toContain(`audit auto-reveal=${report.auditRevealDeleted} sil`);
+    expect(line).toContain(`bildirim=${report.notificationsDeleted} sil`);
+    expect(line).toContain(`dagitim=${report.deploymentsDeleted} sil`);
+    expect(line).toContain(`baglan-kodu=${report.connectTokensDeleted} sil`);
+
+    // Savunma derinliği: hiçbir etiket DEĞERSİZ kalmamalı ("etiket=" hemen ardından boşluk/
+    // virgül/satır sonu gelirse interpolasyon kaybolmuş demektir).
+    expect(line).not.toMatch(/=(?=[\s,)]|$)/);
+  });
+});
+
+describe('RetentionService.runRetention — plugin_releases .zip arşivleme', () => {
+  /**
+   * NEDEN BU TESTLER VAR: eklenti paketleri base64 olarak DB'de tutulur ve bu tablo saklama
+   * kapsamı DIŞINDAYDI → her yayınla kalıcı ~108 KB büyüyordu (ölçüldü: prod'da 18 yayının
+   * gövdesi 1947 kB, gecelik yedek dosyası 1,1 MB — yedeğin neredeyse tamamı tarihî zip'ler).
+   *
+   * KRİTİK İNVARYANT: müşteri siteleri güncellemede EN YÜKSEK SEMVER'in paketini indirir.
+   * Yalnız `created_at`e göre budamak, sırasız yayında (1.4.0'dan sonra hotfix 1.3.9) CANLI
+   * güncelleme paketini silebilirdi — bu yüzden semver-en-yüksek her hâlükârda korunur ve
+   * aşağıdaki ilk assert tam olarak onu kilitler.
+   *
+   * NOT: `= ANY(${dizi})` biçimi drizzle `sql` şablonunda BOZUK SQL üretir (bu projede iki kez
+   * yaşandı) → küme sorguları `inArray` ile kurulur.
+   */
+  const V_HIGH = '900.1.0'; // EN YÜKSEK semver ama EN ESKİ kayıt
+  const V_OLD = '900.0.1';
+  const V_MID = '900.0.2';
+  const V_NEW = '900.0.3';
+  const ALL_V = [V_HIGH, V_OLD, V_MID, V_NEW];
+
+  /** keep=2 döndüren ConfigService stub'ı ile ayrı servis örneği (varsayılan 20'yi ezer). */
+  const keep2Config = {
+    get: (name: string) => (name === 'RETENTION_PLUGIN_RELEASE_KEEP' ? '2' : undefined),
+  } as never;
+  const retentionKeep2 = new RetentionService(db as never, {} as never, keep2Config);
+
+  /** Sürümün .zip gövdesi hâlâ dolu mu? */
+  async function hasBody(version: string): Promise<boolean> {
+    const [row] = await db
+      .select({ zipB64: schema.pluginReleases.zipB64 })
+      .from(schema.pluginReleases)
+      .where(eq(schema.pluginReleases.version, version))
+      .limit(1);
+    return Boolean(row?.zipB64);
+  }
+
+  afterAll(async () => {
+    await db
+      .delete(schema.pluginReleases)
+      .where(inArray(schema.pluginReleases.version, ALL_V));
+  });
+
+  it('EN YÜKSEK SEMVER korunur (tarihçe en eski olsa bile); pencere dışı sürüm arşivlenir', async () => {
+    await db.insert(schema.pluginReleases).values([
+      { version: V_HIGH, changelog: null, zipB64: 'AAAA', createdAt: daysAgo(100) },
+      { version: V_OLD, changelog: null, zipB64: 'BBBB', createdAt: daysAgo(3) },
+      { version: V_MID, changelog: null, zipB64: 'CCCC', createdAt: daysAgo(2) },
+      { version: V_NEW, changelog: null, zipB64: 'DDDD', createdAt: daysAgo(1) },
+    ]);
+
+    const report = await retentionKeep2.runRetention();
+    expect(report.pluginZipsArchived).toBeGreaterThanOrEqual(1);
+
+    // KRİTİK: canlı güncelleme paketi. Bu assert kırmızıysa müşteri siteleri güncelleyemez.
+    expect(await hasBody(V_HIGH)).toBe(true);
+    // En yeni iki KAYIT (created_at) korunur — geri alma derinliği.
+    expect(await hasBody(V_NEW)).toBe(true);
+    expect(await hasBody(V_MID)).toBe(true);
+    // Pencerenin dışında kalan ve semver-en-yüksek OLMAYAN tek sürüm arşivlenir.
+    expect(await hasBody(V_OLD)).toBe(false);
+  });
+
+  it('idempotent: ikinci koşu aynı satırları TEKRAR arşivlemeye çalışmaz', async () => {
+    const second = await retentionKeep2.runRetention();
+    expect(second.pluginZipsArchived).toBe(0);
+  });
+
+  it('satır SİLİNMEZ — sürüm geçmişi panelde görünür kalır', async () => {
+    const rows = await db
+      .select({ version: schema.pluginReleases.version })
+      .from(schema.pluginReleases)
+      .where(inArray(schema.pluginReleases.version, ALL_V));
+    expect(rows).toHaveLength(4);
   });
 });

@@ -5,19 +5,30 @@ import { OwnerGuard } from '../auth/owner.guard';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { SitesService } from './sites.service';
 
+/**
+ * Günlük satış kotası üst sınırı (§5). Gerekçe purchase-orders.controller:16 ile aynı: PG
+ * kolonu `integer` (int4) → sınırsız girdi 2.147.483.647 üstünde 22003 ile ham 500 üretirdi,
+ * artık kullanıcı 400 alır. 1.000.000 sipariş/gün, panelin başka yerlerindeki adet tavanıyla
+ * (stok girişi count max 1.000.000) hizalıdır ve gerçek bir mağazanın günlük hacminin çok
+ * üstündedir — "limitsiz" isteniyorsa alan zaten `null` bırakılır.
+ */
+const MAX_DAILY_QUOTA = 1_000_000;
+
 const CreateSiteBody = z.object({
   domain: z.string().min(1),
   type: z.enum(['woocommerce', 'marketplace', 'reseller']).optional(),
   senderEmail: z.string().email().optional(),
   webhookUrl: z.string().url().optional(),
   // Operasyon ayarları (§5/§14) — opsiyonel. null = limitsiz kota.
-  salesDailyQuota: z.number().int().positive().nullable().optional(),
+  salesDailyQuota: z.number().int().positive().max(MAX_DAILY_QUOTA).nullable().optional(),
   sandbox: z.boolean().optional(),
 });
 type CreateSiteBody = z.infer<typeof CreateSiteBody>;
 
 const UpdateSiteBody = z.object({
-  salesDailyQuota: z.number().int().positive().nullable().optional(),
+  // Sınır CREATE ile BİREBİR aynı (bkz. MAX_DAILY_QUOTA) — yalnız birine konsaydı aynı
+  // kolon PATCH yolundan sınırsız beslenmeye devam ederdi.
+  salesDailyQuota: z.number().int().positive().max(MAX_DAILY_QUOTA).nullable().optional(),
   // Dinamik satış kotası (§8): açıksa eşik aşımında sipariş held_for_review'e alınır (429 değil).
   dynamicQuotaEnabled: z.boolean().optional(),
   reviewMultiplier: z.number().int().min(1).max(100).optional(),

@@ -885,10 +885,60 @@ export class StockService {
     }
 
     // ── TEK TRANSACTION: parti çözümü/oluşumu + lisans kayıtları + audit ──
-    // Legacy `batchId` doğrulaması da buraya taşındı: doğrulama ile insert arasındaki
-    // TOCTOU (araya giren recall) ücretsiz kapanır. Yeni parti ise henüz commit edilmediği
-    // için ancak AYNI tx'ten görülebilir → `resolveBatchForImport` de `exec` alır.
+    // Legacy `batchId` doğrulaması da buraya taşındı. TOCTOU "ücretsiz" KAPANMAZ: aynı tx'te
+    // olmak yetmez, okumanın KİLİTLİ olması gerekir (bkz. resolveBatchForImport FOR SHARE).
+    // Yeni parti ise henüz commit edilmediği için ancak AYNI tx'ten görülebilir →
+    // `resolveBatchForImport` de `exec` alır.
     const { inserted, duplicates, outcome } = await this.db.transaction(async (tx) => {
+      /*
+       * ÜRÜN SÖZLEŞMESİNİ KİLİT ALTINDA YENİDEN DOĞRULA (eşzamanlılık bulgusu).
+       *
+       * `values` dizisi bu transaction'dan ÖNCE kuruldu ve ürünün o anki hâline BAĞLI dört
+       * karar taşıyor: `maxUses` (usageMode+maxUses'ten), kanonik payload serileştirmesi
+       * (`kind` + `payloadSchema` → `payload_hash`) ve anahtar biçimi. Ürün satırı o okuma
+       * sırasında KİLİTLENMEDİĞİ için araya `products.update` girebiliyordu:
+       *
+       *   · import ürünü okur (multi, maxUses=500) → payload şifreleme saniyeler sürer (tx dışı),
+       *   · products.update tx açar, ürünü FOR UPDATE kilitler, `license_items` sayımı 0 döner
+       *     (import henüz YAZMADI) → "canlı kalem yok" guard'ı GEÇER → ürün 'single' olur,
+       *   · import max_uses=500 ile satırları yazar; ürün artık 'single' olduğu için allocate()
+       *     tek-kullanım dalına girer ve anahtarın TAMAMINI 'assigned' yapar
+       *     → anahtar başına 499 aktivasyon SESSİZCE yok olur. Guard'ın var olma sebebi tam budur.
+       *
+       * Aynı pencere `kind`/`payloadSchema` için de geçerliydi: satırlar BAYAT şemayla
+       * kanonikleştirilip yazılır, `payload_hash` sapar ve mükerrer denetimi kaçar.
+       *
+       * FOR SHARE, products.update'in FOR UPDATE'i ile ÇAKIŞIR → iki yön de doğru sonuç verir:
+       * import önce alırsa update bekler ve canlı kalemleri GÖRÜR; update önce alırsa import
+       * güncel satırı okur ve aşağıdaki karşılaştırma 409 verir (sessiz veri kaybı yerine
+       * operatöre "ürün değişti, tekrar deneyin" denir).
+       */
+      const [fresh] = await tx
+        .select({
+          usageMode: products.usageMode,
+          maxUses: products.maxUses,
+          kind: products.kind,
+          payloadSchema: products.payloadSchema,
+        })
+        .from(products)
+        .where(eq(products.id, productId))
+        .limit(1)
+        .for('share');
+      if (!fresh) throw new NotFoundException('Ürün bulunamadı.');
+      const freshMaxUses = fresh.usageMode === 'multi' ? fresh.maxUses : 1;
+      const contractChanged =
+        fresh.usageMode !== product.usageMode ||
+        freshMaxUses !== maxUses ||
+        fresh.kind !== product.kind ||
+        JSON.stringify(fresh.payloadSchema ?? null) !== JSON.stringify(product.payloadSchema ?? null);
+      if (contractChanged) {
+        throw new ConflictException(
+          'Ürün bu stok girişi hazırlanırken değiştirildi (tip / kullanım modu / kapasite / hesap ' +
+            'alanları). Kayıtlar eski sözleşmeye göre hazırlandığı için yazılmadı — sayfayı ' +
+            'yenileyip girişi tekrarlayın.',
+        );
+      }
+
       let plan: AutoReceiptPlan | null = null;
       let resolvedBatchId: string | null = batchId ?? null;
       let costSnapshot: { unitCostCents: number; costCurrency: string } | null = null;
@@ -1081,7 +1131,24 @@ export class StockService {
       .from(batches)
       .leftJoin(purchaseOrders, eq(purchaseOrders.id, batches.purchaseOrderId))
       .where(eq(batches.id, batchId))
-      .limit(1);
+      .limit(1)
+      // FOR SHARE OF batches — TOCTOU'yu GERÇEKTEN kapatan tek şey budur.
+      //
+      // Bu okumanın import ile AYNI transaction'da olması yetmez: READ COMMITTED altında
+      // kilitsiz SELECT araya giren bir `recallBatch`i ENGELLEMEZ. Kilitsiz hâlde:
+      //   · import 'active' okur (kilit yok) → 1000'lik dilimlerle 10.000 satıra kadar INSERT eder,
+      //   · aynı anda recallBatch `batches FOR UPDATE` alır (BEKLEMEZ), status='recalled' yazar ve
+      //     `license_items` süpürmesini yapar — import'un HENÜZ COMMIT EDİLMEMİŞ satırlarını GÖREMEZ,
+      //   · import commit eder → geri çekilmiş partinin altında TAZE `available` anahtarlar kalır ve
+      //     süpürme bir daha koşmaz → kusurlu parti müşteriye satılır (§2).
+      // `recallBatch` FOR UPDATE aldığı için FOR SHARE onunla ÇAKIŞIR ve sıra hangi yönde olursa
+      // olsun doğru sonuç verir: import önce alırsa recall bekler ve commit sonrası yeni satırları
+      // da süpürür; recall önce alırsa import kilit gelince GÜNCEL satırı okur (EvalPlanQual) ve
+      // aşağıdaki `status !== 'active'` dalından 409 döner.
+      //
+      // `of: batches` ZORUNLU: purchaseOrders bu sorguda LEFT JOIN'in nullable tarafıdır ve
+      // Postgres nullable tarafa satır kilidi uygulanmasına izin vermez (hata verir).
+      .for('share', { of: batches });
 
     if (!row) throw new NotFoundException('Parti (batch) bulunamadı.');
     if (row.batchProductId !== productId) {

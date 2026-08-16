@@ -137,7 +137,12 @@ export class OpsService {
       )
       SELECT dl.*, (count(*) OVER ())::int AS total
       FROM dl
-      ORDER BY updated_at DESC
+      -- TIE-BREAK ŞART: bir arıza anında yüzlerce outbox/mail kaydı AYNI transaction'da
+      -- (ya da aynı milisaniyede) yazılır ve updated_at damgaları BİREBİR aynı olur →
+      -- tie-break'siz LIMIT 100 penceresine hangi satırların gireceği KEYFİ olurdu.
+      -- Sonuç somut: operatörün replay etmesi gereken kayıt listede HİÇ görünmeyebilir ve
+      -- sayfa her yenilendiğinde başka bir alt küme gelir. (kind, id) çifti benzersizdir.
+      ORDER BY updated_at DESC, kind ASC, id DESC
       LIMIT ${DEAD_LETTER_LIMIT};
     `);
 
@@ -273,8 +278,15 @@ export class OpsService {
         targetId: id,
         meta: { op: 'replay', kind },
       });
-    } catch {
-      // Audit best-effort — ana akışı bozma.
+    } catch (err) {
+      // Audit best-effort — ana akışı bozma. Ama SESSİZ DEĞİL: replay, müşteriye mail/webhook
+      // GÖNDEREN bir operatör eylemidir; izi düşmezse "bu mail kim tarafından, kaç kez tekrar
+      // gönderildi" sorusu yanıtsız kalır (mükerrer teslimat şikâyetinin tek kanıtı bu satırdır).
+      this.logger.warn(
+        `Replay audit kaydı yazılamadı (kind=${kind}, id=${id}) — replay YAPILDI, izi düşmedi: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 }

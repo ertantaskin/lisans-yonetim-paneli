@@ -2,6 +2,7 @@
 import * as React from 'react';
 import { useActionState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Link2, Power, Trash2 } from 'lucide-react';
 import {
   createMappingAction,
@@ -249,19 +250,11 @@ export function MappingsManager({
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <form action={updateMappingAction} className="inline">
-                          <input type="hidden" name="id" value={m.id} />
-                          <input type="hidden" name="active" value={String(!m.active)} />
-                          <input type="hidden" name="productId" value={productId} />
-                          <Button
-                            type="submit"
-                            variant="ghost"
-                            size="sm"
-                            aria-label={m.active ? 'Eşlemeyi pasifleştir' : 'Eşlemeyi etkinleştir'}
-                          >
-                            <Power /> {m.active ? 'Pasifleştir' : 'Etkinleştir'}
-                          </Button>
-                        </form>
+                        <ToggleButton
+                          mappingId={m.id}
+                          productId={productId}
+                          active={m.active}
+                        />
                         <RemoveButton
                           mappingId={m.id}
                           productId={productId}
@@ -277,6 +270,52 @@ export function MappingsManager({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Eşlemeyi pasifleştir/etkinleştir — SONUCU GÖSTERİR (denetim C13).
+ *
+ * NEDEN AYRI BİLEŞEN: eskiden `<form action={updateMappingAction}>` idi ve action `void`
+ * döndürdüğü için hata (403/500/eşzamanlı silinme) ekrana HİÇ ulaşmıyordu; operatör
+ * "pasifleştirdim" sanıp ayrılıyordu. Action artık `{ ok, error }` döndürüyor — bir server
+ * action'ı doğrudan `action=` prop'una vermek ise `Promise<void>` gerektirir, o yüzden
+ * çağrı `useTransition` içinde sarmalanır ve sonuç toast ile bildirilir (panelin ortak deseni).
+ */
+function ToggleButton({
+  mappingId,
+  productId,
+  active,
+}: {
+  mappingId: string;
+  productId: string;
+  active: boolean;
+}) {
+  const router = useRouter();
+  const [pending, start] = React.useTransition();
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled={pending}
+      aria-label={active ? 'Eşlemeyi pasifleştir' : 'Eşlemeyi etkinleştir'}
+      onClick={() =>
+        start(async () => {
+          const fd = new FormData();
+          fd.set('id', mappingId);
+          fd.set('active', String(!active));
+          fd.set('productId', productId);
+          const r = await updateMappingAction(fd);
+          if (r.ok) toast.success(active ? 'Eşleme pasifleştirildi.' : 'Eşleme etkinleştirildi.');
+          else toast.error(r.error ?? 'Eşleme durumu değiştirilemedi.');
+          // Başarısızlıkta da tazelenir: satır gerçek duruma döner (bayat rozet kalmaz).
+          router.refresh();
+        })
+      }
+    >
+      <Power /> {pending ? '…' : active ? 'Pasifleştir' : 'Etkinleştir'}
+    </Button>
   );
 }
 
@@ -305,7 +344,10 @@ function RemoveButton({
         });
         if (!ok) return;
         start(async () => {
-          await removeMappingAction(fd);
+          // C13: sonuç artık dönüyor — sessiz başarısızlık yerine açık bildirim.
+          const r = await removeMappingAction(fd);
+          if (r.ok) toast.success('Eşleme kaldırıldı.');
+          else toast.error(r.error ?? 'Eşleme kaldırılamadı.');
           router.refresh();
         });
       }}

@@ -1,6 +1,6 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { apiPost, apiSend, isUuid } from '../../lib/api';
+import { ApiError, apiPost, apiSend, isUuid } from '../../lib/api';
 import { isOwner } from '../../lib/session';
 
 /**
@@ -31,16 +31,25 @@ export type CreateAdminState = AdminActionState;
 /**
  * API hatasını operatör diline çevirir. 400'ün ANLAMI çağrıya göre değişir (oluşturmada
  * "parola kısa", pasifleştirme/silmede "son aktif yönetici korunuyor") → mesaj parametre.
+ *
+ * DURUM KODUNA BAĞLI (denetim D4): eskiden hata METNİNDE `'409'`/`'400'` gibi diziler
+ * aranıyordu. İki yönlü kırılgandı: (a) API `message` gövdesi döndürdüğü anda kod metinde
+ * hiç geçmez ve HER hata "İşlem başarısız" olurdu; (b) daha kötüsü, mesajın İÇİNDE geçen
+ * alakasız bir sayı (ör. "en az 400 karakter" ya da bir kayıt kimliği) YANLIŞ dala düşürürdü.
+ * `ApiError.status` bunu veri olarak taşır. ApiError olmayan hata (ağ/serileştirme) generic kalır.
  */
 function friendlyError(
   e: unknown,
   badRequest = 'Geçersiz bilgi (parola en az 8 karakter olmalı).',
 ): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (msg.includes('409')) return 'Bu e-posta veya kullanıcı adı zaten kayıtlı.';
-  if (msg.includes('400')) return badRequest;
-  if (msg.includes('403')) return 'Bu işlem için owner yetkisi gerekir.';
-  if (msg.includes('404')) return 'Yönetici bulunamadı (silinmiş olabilir).';
+  if (e instanceof ApiError) {
+    if (e.status === 409) return 'Bu e-posta veya kullanıcı adı zaten kayıtlı.';
+    if (e.status === 400) return badRequest;
+    if (e.status === 403) return 'Bu işlem için owner yetkisi gerekir.';
+    if (e.status === 404) return 'Yönetici bulunamadı (silinmiş olabilir).';
+    // Zaman aşımı (504) gibi kendi ürettiğimiz insan-okur mesajlar olduğu gibi gösterilir.
+    if (e.humanMessage) return e.message;
+  }
   return 'İşlem başarısız. Tekrar deneyin.';
 }
 

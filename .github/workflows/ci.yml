@@ -64,6 +64,13 @@ jobs:
       - name: Ortam değişkeni geçirme denetimi
         run: pnpm check:env
 
+      # Transaction gövdesinden KÖK HAVUZ kullanımı: postgres.js'te tx bir bağlantıyı rezerve
+      # eder; gövdeden `this.db` ile sorgu atmak ikinci bağlantı ister ve havuz dolduğunda
+      # dairesel bekleme oluşur (/v1/health dahil TÜM API cevapsız). Bu sınıf ÜÇ kez yaşandı,
+      # ikisi k6 ile ÖLÇÜLEN tam kesinti. `tsc` görmez — tip düzeyinde her şey geçerlidir.
+      - name: Transaction/bağlantı havuzu denetimi
+        run: pnpm check:tx-pool
+
       - name: Build
         run: pnpm build
 

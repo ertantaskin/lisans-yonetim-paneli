@@ -3,7 +3,7 @@ import { APP_FILTER } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
 import { stdSerializers } from 'pino';
-import { SentryExceptionFilter } from './observability/sentry-exception.filter';
+import { PgExceptionFilter } from './common/pg-exception.filter';
 import { sanitizeLogUrl } from './observability/log-redact';
 import { validateEnv } from './config/env.validation';
 import { DbModule } from './db/db.module';
@@ -179,9 +179,19 @@ function prettyTransport() {
     RateLimitModule,
   ],
   providers: [
-    // Global istisna filtresi: 5xx/beklenmeyen hataları Sentry'ye iletir (env-gated; DSN
-    // yoksa no-op), sonra Nest varsayılanına devreder → yanıt biçimi değişmez.
-    { provide: APP_FILTER, useClass: SentryExceptionFilter },
+    /**
+     * TEK global istisna filtresi. `PgExceptionFilter`, `SentryExceptionFilter`'ı GENİŞLETİR:
+     *   1) ham Postgres hatasını (SQLSTATE) anlamlı bir 4xx/503'e çevirir — operatör artık
+     *      "Internal server error" yerine ne olduğunu ve ne yapacağını söyleyen Türkçe bir
+     *      mesaj alır (mükerrer SKU, silinmiş id, bozuk UUID, sayı taşması, kilit/zaman aşımı);
+     *   2) ardından üst sınıfa devreder → 5xx/beklenmeyen hatalar aynen Sentry'ye iletilir
+     *      (env-gated; DSN yoksa no-op) ve Nest varsayılanı yanıtı render eder.
+     *
+     * İKİ AYRI catch-all filtre KAYDEDİLMEZ: Nest global filtreleri kayıt sırasının TERSİNDEN
+     * dener, yani hangisinin önce çalışacağı framework iç detayına bağlı kalırdı ve yanlış
+     * sırada bu çeviri SESSİZCE devre dışı kalırdı. Kalıtım bu sırayı kod akışıyla sabitler.
+     */
+    { provide: APP_FILTER, useClass: PgExceptionFilter },
   ],
 })
 export class AppModule {}

@@ -401,6 +401,13 @@ type BulkReplaceNotice = {
   total: number;
   replaced: number;
   skippedNoStock: number;
+  /**
+   * ALTYAPI ARIZASI nedeniyle işlenemeyen kalem (deadlock / statement_timeout / havuz tükenmesi).
+   * "Stok yok"tan AYRI tutulur: eskiden ikisi tek sayaçta toplanıyordu ve ekran altyapı arızasını
+   * *"… için uygun stok yoktu"* diye yazıyordu — stok DOLUYKEN. Operatör o mesaja bakıp stok
+   * girmeye çalışır, sorun tekrar eder ve gerçek sebep hiçbir yerde görünmezdi.
+   */
+  failed: number;
 };
 
 /**
@@ -430,6 +437,9 @@ function BulkReplaceDialog({
           total: res.total ?? 0,
           replaced: res.replaced ?? 0,
           skippedNoStock: res.skippedNoStock ?? 0,
+          // `?? 0` — alan API'ye eklemeli geldi; admin ve api ayrı imajlar olduğu ve biri önce
+          // dağıtılabildiği için eski API yanıtında bu alan bulunmayabilir (dağıtım sapması).
+          failed: res.failed ?? 0,
         });
       } else {
         onError(res.error ?? 'Toplu değiştirme başarısız');
@@ -591,8 +601,22 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
         </Alert>
       )}
       {bulkNotice && (
-        <Alert variant={bulkNotice.skippedNoStock > 0 ? 'warning' : 'success'}>
-          {bulkNotice.skippedNoStock > 0 ? <TriangleAlert /> : <CheckCircle2 />}
+        <Alert
+          variant={
+            // Altyapı arızası "stok yok"tan DAHA ciddidir: stok yok beklenen bir ticari sonuçtur,
+            // arıza ise tekrar denenmesi gereken bir hatadır → tonu o belirler.
+            bulkNotice.failed > 0
+              ? 'destructive'
+              : bulkNotice.skippedNoStock > 0
+                ? 'warning'
+                : 'success'
+          }
+        >
+          {bulkNotice.failed > 0 || bulkNotice.skippedNoStock > 0 ? (
+            <TriangleAlert />
+          ) : (
+            <CheckCircle2 />
+          )}
           <div className="min-w-0 flex-1">
             <AlertTitle>Toplu değiştirme tamamlandı — {bulkNotice.label}</AlertTitle>
             <AlertDescription>
@@ -603,6 +627,17 @@ export function BatchesTable({ batches }: { batches: BatchRow[] }) {
                   {' '}
                   {itemCount(bulkNotice.skippedNoStock, bulkNotice.kind)} için uygun stok yoktu —
                   eskisi KORUNDU (müşteri boşta kalmadı), stok girince tekrar deneyin.
+                </>
+              )}
+              {bulkNotice.failed > 0 && (
+                <>
+                  {' '}
+                  <strong>
+                    {itemCount(bulkNotice.failed, bulkNotice.kind)} bir sistem hatası yüzünden
+                    işlenemedi
+                  </strong>{' '}
+                  (stokla ilgili değil — eskisi KORUNDU). Kısa süre sonra tekrar deneyin; sürerse
+                  sunucu günlüklerine bakın.
                 </>
               )}
             </AlertDescription>

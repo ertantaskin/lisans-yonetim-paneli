@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { desc, eq, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
@@ -8,6 +14,20 @@ import { AdminOrdersService } from '../orders/admin-orders.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 import { recordReplacementLineage } from '../orders/assignment-history';
 import { notExpiredCond } from '../assignment/assign';
+
+/**
+ * Toplu değiştirmede BEKLENEN "şimdi atanamadı" sinyali (stok tükendi ya da SKIP LOCKED
+ * çekişmesi). Transaction'ı rollback etmek için fırlatılır — eski atama CANLI kalır.
+ *
+ * NEDEN AYRI SINIF (denetim C8): çıplak `catch` her hatayı "stok yok" sayıyordu. Bu sınıf,
+ * ticari sonucu (stok/çekişme) altyapı arızasından (deadlock/timeout/havuz) AYIRAN tek işaret.
+ */
+class BulkReplaceContentionSignal extends Error {
+  constructor() {
+    super('bulk-replace: atama açılamadı (çekişme/stok)');
+    this.name = 'BulkReplaceContentionSignal';
+  }
+}
 
 /** Toplu değiştirme (§13) özet sonucu. */
 export interface BulkReplaceResult {
@@ -19,6 +39,16 @@ export interface BulkReplaceResult {
   skippedNoStock: number;
   /** Çok-kullanımlı (MAK) olduğu için otomatik değiştirilemeyen kalem sayısı (elle işlenir). */
   skippedUnsupported: number;
+  /**
+   * BEKLENMEYEN bir hata (deadlock, statement_timeout, bağlantı havuzu tükenmesi,
+   * MAX_PARAMETERS_EXCEEDED…) yüzünden işlenemeyen kalem sayısı — "stok yok" DEĞİLDİR.
+   *
+   * NEDEN AYRI SAYAÇ (denetim C8): eskiden bu durumlar da `skippedNoStock`'a ekleniyordu ve
+   * ekran "… için uygun stok yoktu" diye yazıyordu — stok DOLUYKEN. Operatör yanlış teşhise
+   * yönlendiriliyor ("stok girince tekrar deneyin"), gerçek altyapı arızası ise hiçbir yerde
+   * görünmüyordu. Eklemeli alan: mevcut okuyucular (admin) etkilenmez.
+   */
+  failed: number;
 }
 
 /** Geri çekilmiş partinin özet sonucu. */
@@ -109,6 +139,8 @@ export interface BatchRow {
  */
 @Injectable()
 export class SupplyOpsService {
+  private readonly logger = new Logger(SupplyOpsService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly adminOrders: AdminOrdersService,
@@ -473,6 +505,7 @@ export class SupplyOpsService {
     let replaced = 0;
     let skippedNoStock = 0;
     let skippedUnsupported = 0;
+    let failed = 0;
 
     for (const c of candidates) {
       // MAK/çok-kullanımlı: otomatik değişim aynı paylaşımlı anahtarı yeniden atardı (no-op)
@@ -544,7 +577,9 @@ export class SupplyOpsService {
           const res = await this.fulfillment.completeLine(c.line_id, 1, true, tx);
           if (res.added <= 0) {
             // added=0 "stok yok" DEĞİL (SKIP LOCKED çekişmesi olabilir) → throw ⇒ rollback ⇒ eski canlı.
-            throw new Error('bulk-replace: atama açılamadı (çekişme/stok)');
+            // SINYAL SINIFI: aşağıdaki catch bunu BEKLENEN sonuç sayar; başka her hata
+            // (deadlock/timeout/havuz) 'failed' olarak AYRI raporlanır (denetim C8).
+            throw new BulkReplaceContentionSignal();
           }
           // Soyağacı (§3): eski→yeni assignment_history (recall-toplu-değiştir yolu da izlenir).
           // newAssignmentId KESİN yolla geçilir (bu turda oluşturulan atama) — aksi halde
@@ -566,10 +601,30 @@ export class SupplyOpsService {
         } else {
           skippedNoStock++;
         }
-      } catch {
-        // Rollback oldu → eski atama CANLI kaldı (müşteri kaybı yok); sonraki stok girişinde
-        // partial-auto meşru şekilde doldurur. Bu adayı "stok yok" say (özet dürüst kalır).
-        skippedNoStock++;
+      } catch (err) {
+        // Her iki dalda da rollback oldu → eski atama CANLI kaldı (müşteri kaybı yok).
+        if (err instanceof BulkReplaceContentionSignal) {
+          // BEKLENEN sonuç: stok tükendi ya da SKIP LOCKED çekişmesi. Sonraki stok girişinde
+          // partial-auto meşru şekilde doldurur. Ticari sonuç → "stok yok" kovası doğru.
+          skippedNoStock++;
+        } else {
+          /*
+           * BEKLENMEYEN hata (denetim C8): deadlock (40P01), statement_timeout (57014),
+           * bağlantı havuzu tükenmesi, MAX_PARAMETERS_EXCEEDED, şema sapması…
+           *
+           * Eskiden bunlar da `skippedNoStock`'a ekleniyordu ve ekran operatöre
+           * "… için uygun stok yoktu — stok girince tekrar deneyin" diyordu; stok DOLUYKEN.
+           * Yani ticari bir sonuç gibi görünen şey aslında bir altyapı arızasıydı ve tek izi
+           * yoktu. Artık AYRI sayaçta raporlanır ve loglanır (özet dürüst kalır).
+           */
+          failed++;
+          this.logger.error(
+            `Toplu değiştirme kalemi beklenmeyen hatayla düştü (batch=${batchId}, ` +
+              `assignment=${c.assignment_id}, line=${c.line_id}) — eski atama korundu: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+          );
+        }
       }
     }
 
@@ -579,10 +634,17 @@ export class SupplyOpsService {
       actor,
       targetType: 'batch',
       targetId: batchId,
-      meta: { op: 'bulk_replace', total: candidates.length, replaced, skippedNoStock, skippedUnsupported },
+      meta: {
+        op: 'bulk_replace',
+        total: candidates.length,
+        replaced,
+        skippedNoStock,
+        skippedUnsupported,
+        failed,
+      },
     });
 
-    return { total: candidates.length, replaced, skippedNoStock, skippedUnsupported };
+    return { total: candidates.length, replaced, skippedNoStock, skippedUnsupported, failed };
   }
 
   /**

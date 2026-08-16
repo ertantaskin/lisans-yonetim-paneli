@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -12,6 +13,7 @@ import {
   type PayloadField,
 } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
+import { isUniqueViolation } from '../db/pg-error';
 import { rawRows } from '../db/raw-query';
 import { auditLog } from '../db/schema/audit';
 import { supplierClaimItems, supplierClaims } from '../db/schema/supplierClaims';
@@ -621,15 +623,43 @@ export class SupplierClaimsService {
         throw new BadRequestException('İptal edilmiş fişte sonuç işaretlenemez.');
       }
 
-      const updated = await tx
-        .update(supplierClaimItems)
-        .set({
-          outcome: input.outcome,
-          outcomeNote: input.note ? input.note.slice(0, 500) : null,
-          resolvedAt: input.outcome === 'pending' ? null : new Date(),
-        })
-        .where(and(eq(supplierClaimItems.claimId, claimId), inArray(supplierClaimItems.id, ids)))
-        .returning({ id: supplierClaimItems.id });
+      /*
+       * DETERMİNİSTİK 500 KAPATILDI (denetim B5) — `supplier_claim_items_open_uniq`.
+       *
+       * Kısmi unique index "bir lisans kalemi aynı anda YALNIZ BİR açık fişte olabilir" der
+       * ve `rejected` kalemleri BİLEREK dışarıda bırakır (reddedilen anahtar havuza döner).
+       * Bu ikisi birleşince tamamen meşru bir sıra 23505 üretir:
+       *   fiş A'da kalem X 'rejected'  → X havuza döner
+       *   → fiş B kesilir, X'i alır (index izin verir, A'daki satır 'rejected')
+       *   → operatör A'ya dönüp X'i 'replaced' yapar → X iki AÇIK fişte olur → 23505.
+       * INSERT yolu advisory-lock'la korunuyordu, UPDATE yolunda ne kilit ne catch vardı →
+       * operatör ham 500 görüyor ve arayüzde bunun imkânsız olduğuna dair hiçbir işaret yok.
+       * Artık ANLAMLI 409: sebebi söyler, ne yapılacağını söyler, tx rollback olur (veri güvenli).
+       */
+      let updated: Array<{ id: string }>;
+      try {
+        updated = await tx
+          .update(supplierClaimItems)
+          .set({
+            outcome: input.outcome,
+            outcomeNote: input.note ? input.note.slice(0, 500) : null,
+            resolvedAt: input.outcome === 'pending' ? null : new Date(),
+          })
+          .where(and(eq(supplierClaimItems.claimId, claimId), inArray(supplierClaimItems.id, ids)))
+          .returning({ id: supplierClaimItems.id });
+      } catch (err) {
+        // Kod okuma TEK kaynaktan (`db/pg-error`): drizzle sürücü hatasını sarmaladığı için
+        // `err.code === '23505'` gibi kırılgan desenler bu projede bir kez SESSİZCE devre dışı
+        // kalmıştı (409 demesi gereken yollar 500 dönmeye başlamıştı).
+        if (isUniqueViolation(err)) {
+          throw new ConflictException(
+            'Seçilen kalemlerden en az biri BAŞKA bir fişte hâlâ açık (daha önce reddedilip ' +
+              'havuza dönmüş ve yeni bir fişe alınmış olabilir). Bu fişte sonuç işaretlemek ' +
+              'için önce diğer fişteki kaydı kapatın ya da o kalemi seçimden çıkarın.',
+          );
+        }
+        throw err;
+      }
 
       if (updated.length === 0) {
         throw new BadRequestException('Seçilen kalemler bu fişte bulunamadı.');

@@ -2,9 +2,11 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Queue, type Job } from 'bullmq';
-import { sql, type SQL } from 'drizzle-orm';
+import { inArray, sql, type SQL } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
+import { pluginReleases } from '../db/schema';
+import { compareVersions } from '../updates/updates.service';
 import { SweepAlarmService } from './sweep-alarm.service';
 import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
 
@@ -58,6 +60,12 @@ export interface RetentionReport {
   deploymentsDeleted: number;
   /** site_connect_tokens: tüketilmiş VEYA süresi çoktan geçmiş SİLİNEN satır. */
   connectTokensDeleted: number;
+  /**
+   * plugin_releases: gövdesi (zip_b64) ARŞİVDEN DÜŞÜRÜLEN sürüm sayısı. Satır SİLİNMEZ —
+   * sürüm geçmişi panelde görünür kalır (kullanıcının açıkça istediği özellik); yalnız .zip
+   * base64 gövdesi boşaltılır.
+   */
+  pluginZipsArchived: number;
 }
 
 /**
@@ -395,6 +403,10 @@ export class RetentionService implements OnModuleInit {
       `,
     );
 
+    const pluginZipsArchived = await this.archivePluginZips(
+      this.days('RETENTION_PLUGIN_RELEASE_KEEP', 20),
+    );
+
     const report: RetentionReport = {
       fulfillmentEventsDeleted,
       outboxDeleted,
@@ -408,20 +420,67 @@ export class RetentionService implements OnModuleInit {
       notificationsAllDeleted,
       deploymentsDeleted,
       connectTokensDeleted,
+      pluginZipsArchived,
     };
     this.logger.log(
       `Saklama koşusu bitti: fulfillment=${fulfillmentEventsDeleted} sil, outbox=${outboxDeleted} sil, ` +
-        `security= sil, email= maske/ sil, ` +
-        `fis anahtari= maske, ` +
+        `security=${securityEventsDeleted} sil, email=${emailMasked} maske/${emailDeleted} sil, ` +
+        `fis anahtari=${claimKeysMasked} maske, ` +
         `audit auto-reveal=${auditRevealDeleted} sil` +
         (auditAllDays !== null ? `, audit tam=${auditAllDeleted} sil (${auditAllDays}g)` : '') +
         `, bildirim=${notificationsDeleted} sil` +
         (notificationAllDays !== null
           ? `, bildirim tam=${notificationsAllDeleted} sil (${notificationAllDays}g)`
           : '') +
-        `, dagitim=${deploymentsDeleted} sil, baglan-kodu=${connectTokensDeleted} sil`,
+        `, dagitim=${deploymentsDeleted} sil, baglan-kodu=${connectTokensDeleted} sil` +
+        `, eklenti-paketi=${pluginZipsArchived} arsiv`,
     );
     return report;
+  }
+
+  /**
+   * plugin_releases: EN YENİ `keep` sürümün DIŞINDA kalanların .zip gövdesini boşaltır.
+   *
+   * NEDEN (ÖLÇÜLDÜ): eklenti paketleri base64 olarak DB'de tutuluyor (bilinçli mimari karar) ve
+   * bu tablo saklama kapsamında DEĞİLDİ → her yayınla kalıcı ~108 KB büyüyor. Prod'da 18 yayının
+   * gövdesi 1947 kB, gecelik yedek dosyası ise 1,1 MB: yani YEDEĞİN NEREDEYSE TAMAMI tarihî
+   * eklenti zip'leri. Dış kopya (offsite) henüz kurulmadığı ve DR hedefi RPO≤5dk/RTO≤2sa olduğu
+   * için yedeği ince tutmanın somut değeri var.
+   *
+   * SATIR SİLİNMEZ: yalnız gövde boşaltılır. Sürüm geçmişinin panelde görünür kalması kullanıcının
+   * açıkça istediği bir özellik; ayrıca `latest()` yalnız meta kolonları okur, yani güncelleme
+   * denetçisi bundan etkilenmez.
+   *
+   * EN YÜKSEK SEMVER HER HÂLÜKÂRDA KORUNUR: müşteri siteleri güncellemede TAM O paketi indirir.
+   * `created_at` sıralaması tek başına yetmez — sırasız yayında (1.4.0'dan sonra hotfix 1.3.9)
+   * en yeni KAYIT ile en yüksek SÜRÜM farklı satırlar olabilir; `latest()` semver'e baktığı için
+   * yalnız tarihe güvenmek CANLI güncelleme paketini silebilirdi.
+   *
+   * VARSAYILAN 20: bugünkü 18 yayında TAM NO-OP (davranış değişmez), yani değişiklik canlıya
+   * risksiz gider ve ancak ileride devreye girer. Geri alma derinliği olarak da fazlasıyla yeterli.
+   */
+  private async archivePluginZips(keep: number): Promise<number> {
+    // Yalnız meta + gövdesi DOLU satırlar (arşivlenmişler tekrar işlenmesin → idempotent).
+    const rows = await rawRows<{ id: string; version: string }>(
+      this.db,
+      sql`
+        SELECT id, version FROM plugin_releases
+         WHERE zip_b64 <> ''
+         ORDER BY created_at DESC, id DESC
+      `,
+    );
+    if (rows.length <= keep) return 0;
+
+    const keepIds = new Set(rows.slice(0, keep).map((r) => r.id));
+    const newest = rows.reduce((best, r) => (compareVersions(r.version, best.version) > 0 ? r : best));
+    keepIds.add(newest.id); // semver-en-yüksek: canlı güncelleme paketi ASLA arşivlenmez
+    const doomed = rows.filter((r) => !keepIds.has(r.id)).map((r) => r.id);
+    if (doomed.length === 0) return 0;
+
+    // `inArray` parametreli IN üretir — bu kod tabanında `ANY(${dizi}::uuid[])` biçimi drizzle
+    // şablonunda BOZUK SQL ürettiği için (iki kez yaşandı) bilinçli olarak kullanılmıyor.
+    await this.db.update(pluginReleases).set({ zipB64: '' }).where(inArray(pluginReleases.id, doomed));
+    return doomed.length;
   }
 
   /**

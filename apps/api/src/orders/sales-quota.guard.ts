@@ -5,6 +5,7 @@ import {
   HttpStatus,
   Inject,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
@@ -31,6 +32,8 @@ function secondsUntilLocalMidnight(): number {
  */
 @Injectable()
 export class SalesQuotaGuard implements CanActivate {
+  private readonly logger = new Logger(SalesQuotaGuard.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly security: SecurityService,
@@ -56,9 +59,20 @@ export class SalesQuotaGuard implements CanActivate {
     if (todayCount >= site.salesDailyQuota) {
       // Gözlemlenebilirlik: kota aşımı security_events'e düşer (dedupe'lu). Best-effort —
       // kaydedememe sipariş reddini ETKİLEMEZ (kritik yol korunur).
+      //
+      // NEDEN LOGLANIR (denetim C3): yazım sessizce yutulursa §8'in özellikle kapattığı
+      // "kota olayı sessizdi" boşluğu geri açılır — mağaza 429 yer, panelde HİÇBİR iz kalmaz
+      // ve operatör "sipariş neden gelmiyor" sorusunu yanıtlayamaz. `replacements.service`
+      // aynı yazımı zaten `logger.warn` ile logluyordu; iki yol artık hizalı.
       await this.security
         .recordQuotaExceeded(site.id, todayCount, site.salesDailyQuota)
-        .catch(() => undefined);
+        .catch((err: unknown) =>
+          this.logger.warn(
+            `Kota aşımı güvenlik olayı yazılamadı (site=${site.id}, count=${todayCount}): ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          ),
+        );
       // Retry-After (§4): kota yerel gün sınırında sıfırlanır → o ana kadarki saniye.
       const res = context.switchToHttp().getResponse<{ header?: (k: string, v: string) => void }>();
       res.header?.('retry-after', String(secondsUntilLocalMidnight()));

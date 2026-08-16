@@ -41,7 +41,12 @@ export async function recordReplacementLineage(
         .select({ id: assignments.id, licenseItemId: assignments.licenseItemId })
         .from(assignments)
         .where(and(eq(assignments.lineId, opts.lineId), eq(assignments.status, 'active')))
-        .orderBy(desc(assignments.createdAt))
+        // TIE-BREAK (id DESC) ŞART: qty>1 satırda atamalar TEK transaction'da yazılır ve
+        // `now()` tx başını döndürdüğü için createdAt damgaları BİREBİR aynıdır → tie-break'siz
+        // "en yeni" seçimi KEYFİ bir atamaya düşer ve soyağacı (assignment_history) KALICI
+        // olarak yanlış atamaya bağlanır (denetim izi sonradan düzeltilemez). Yön ayna: DESC.
+        // NOT: bu yalnız GERİYE DÖNÜK daldır; `newAssignmentId` geçen çağıranlar tahmin yapmaz.
+        .orderBy(desc(assignments.createdAt), desc(assignments.id))
         .limit(1);
   if (!fresh) return null;
   await db.insert(assignmentHistory).values({

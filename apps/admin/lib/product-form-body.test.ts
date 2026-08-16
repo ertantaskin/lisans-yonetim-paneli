@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRODUCT_FORM_FIELDS, buildProductBody } from './product-form-body';
+import { PRODUCT_FORM_FIELDS, ProductFormError, buildProductBody } from './product-form-body';
 
 /**
  * Bu testler bir GERÇEK kusurdan doğdu: form `<select name="guideId">` alanını basıyordu,
@@ -91,15 +91,45 @@ describe('buildProductBody — mevcut davranış korunuyor', () => {
     expect(buildProductBody(form({ lowStockThreshold: '0' })).lowStockThreshold).toBe(0);
   });
 
-  it('bozuk payloadSchema sessizce atlanır (API refine reddeder)', () => {
-    expect(buildProductBody(form({ payloadSchema: '{bozuk' }))).not.toHaveProperty('payloadSchema');
-  });
-
   it('key tipinde payloadSchema hiç gönderilmez', () => {
     expect(buildProductBody(form({ kind: 'key' }))).not.toHaveProperty('payloadSchema');
   });
+});
 
-  it('geçersiz releaseAt gövdeye girmez (create)', () => {
-    expect(buildProductBody(form({ releaseAt: 'olmayan-tarih' }))).not.toHaveProperty('releaseAt');
+/**
+ * SESSİZ VERİ KAYBI (denetim C12). Eski davranış: bozuk girdi YUTULUYOR, alan gövdeye hiç
+ * girmiyordu. Create'te API refine'ı bunu yakalıyordu ama UPDATE DTO'su `.partial()` olduğu
+ * için alanın yokluğu "değişmedi" demek → API 200, form yeşil, DÜZENLEME KAYBOLMUŞ.
+ * Bu testler yutmanın geri gelmesini engeller.
+ */
+describe('buildProductBody — bozuk girdi sessizce yutulmaz', () => {
+  it('bozuk payloadSchema hata fırlatır (create)', () => {
+    expect(() => buildProductBody(form({ payloadSchema: '{bozuk' }))).toThrow(ProductFormError);
+  });
+
+  it('bozuk payloadSchema hata fırlatır (update) — asıl veri kaybı yolu', () => {
+    // Kritik: burada YUTULSAYDI istek `payloadSchema` alanı OLMADAN giderdi, API 200 dönerdi
+    // ve operatörün hesap-alan düzenlemesi hiçbir iz bırakmadan kaybolurdu.
+    expect(() => buildProductBody(form({ payloadSchema: '{bozuk' }), true)).toThrow(
+      /Hesap alanları okunamadı/,
+    );
+  });
+
+  it('geçersiz releaseAt hata fırlatır (create)', () => {
+    expect(() => buildProductBody(form({ releaseAt: 'olmayan-tarih' }))).toThrow(ProductFormError);
+  });
+
+  it('geçersiz releaseAt hata fırlatır (update) — mevcut tarih SİLİNMEZ', () => {
+    // Eski davranışta `releaseAt: null` gönderiliyordu, yani bozuk bir girdi kayıtlı ön
+    // sipariş tarihini sessizce siliyordu.
+    expect(() => buildProductBody(form({ releaseAt: 'olmayan-tarih' }), true)).toThrow(
+      /Ön sipariş tarihi okunamadı/,
+    );
+  });
+
+  it('geçerli değerlerde hâlâ fırlatmaz (yanlış pozitif yok)', () => {
+    expect(() => buildProductBody(form({ releaseAt: '2026-09-01T10:00' }), true)).not.toThrow();
+    // Boş releaseAt geçerlidir: update'te "temizle" anlamına gelir (açık null).
+    expect(buildProductBody(form({ releaseAt: '' }), true).releaseAt).toBeNull();
   });
 });

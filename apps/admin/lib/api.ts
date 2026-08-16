@@ -42,9 +42,71 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /**
+     * `message` operatöre GÖSTERİLEBİLİR mi (API'nin Türkçe hata gövdesi ya da bizim
+     * ürettiğimiz zaman aşımı metni) — yoksa generic `METHOD path → status` kalıbıdır.
+     *
+     * NEDEN (denetim D4): çağıranlar bunu METİN kalıbıyla ayırt ediyordu
+     * (`msg.startsWith('POST ')`, `/→\s*400\b/`). API `message` gövdesi döndürdüğü an o
+     * kalıplar sessizce eşleşmeyi bırakıyor ve kullanıcı yanlış/gizli hata görüyordu.
+     * Bayrak bu ayrımı VERİ olarak taşır; metin biçimi değişse de kırılmaz.
+     */
+    public readonly humanMessage: boolean = false,
   ) {
     super(message);
     this.name = 'ApiError';
+  }
+}
+
+/**
+ * ZAMAN AŞIMI (denetim A3) — panelin TÜM admin→API çağrıları buradan geçer.
+ *
+ * NEDEN: fetch'in varsayılanı undici'nin 300 sn'lik headers-timeout'udur. API "kapalı"
+ * değil de "ASILI" ise (bağlantı havuzu tükenmesi, PG kilidi, yarı-açık TCP) istek ne
+ * reddedilir ne çözülür → her admin sekmesi dakikalarca boş bekler ve operatör müdahale
+ * etmek için `/deployments`'ı bile açamaz (o sayfa da aynı katmandan geçer).
+ * Aynı gerekçe `lib/auth.ts:validateSessionRemote` içinde ZATEN yazılı (1.5 sn) — orada
+ * middleware her isteği beklediği için sınır daha da kısa. Burada:
+ *   · okuma  ~8 sn  — sayfa render'ı; bu süreden uzun süren okuma zaten kullanılabilir değil.
+ *   · yazma ~20 sn  — toplu stok girişi/import gibi ağır işler için pay bırakır.
+ * Sonuç sessiz donma DEĞİL, GÖRÜNÜR hata: 504 taşıyan `ApiError` → sayfa kendi
+ * error.tsx'ine düşer, sunucu aksiyonları `{ ok:false, error }` döndürür.
+ * (Değerler sabit: env'e bağlansaydı `check-env-passthrough` kapısı compose + .env.example
+ * senkronu isterdi; bu iki sayı operasyonel olarak ayarlanacak bir şey değil.)
+ */
+const READ_TIMEOUT_MS = 8_000;
+const WRITE_TIMEOUT_MS = 20_000;
+
+/** AbortSignal.timeout → DOMException('TimeoutError'); undici bunu bazen `cause`'a sarar. */
+function isTimeoutError(e: unknown): boolean {
+  const name = (e as { name?: unknown } | null)?.name;
+  if (name === 'TimeoutError' || name === 'AbortError') return true;
+  const cause = (e as { cause?: { name?: unknown } } | null)?.cause;
+  return cause?.name === 'TimeoutError' || cause?.name === 'AbortError';
+}
+
+/**
+ * Zaman aşımlı fetch. Zaman aşımı `ApiError(504)` olur — çağıranların mevcut sözleşmesi
+ * (status + `.message`) aynen çalışır, yeni bir hata tipi öğrenmeleri gerekmez.
+ */
+async function fetchWithTimeout(
+  method: string,
+  path: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  try {
+    return await fetch(`${API_URL}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e) {
+    if (isTimeoutError(e)) {
+      throw new ApiError(
+        504,
+        `API ${Math.round(timeoutMs / 1000)} sn içinde yanıt vermedi (${method} ${path}). ` +
+          `Sunucu aşırı yüklü ya da askıda olabilir; birkaç saniye sonra tekrar deneyin.`,
+        true,
+      );
+    }
+    throw e;
   }
 }
 
@@ -56,19 +118,25 @@ export class ApiError extends Error {
  */
 async function toApiError(method: string, path: string, res: Response): Promise<ApiError> {
   let message = `${method} ${path} → ${res.status}`;
+  // Mesaj API gövdesinden mi geldi (operatöre gösterilebilir) yoksa generic kalıp mı — bkz. ApiError.humanMessage.
+  let human = false;
   try {
     const data = (await res.json()) as { message?: unknown };
     const m = data?.message;
     if (typeof m === 'string' && m.trim()) {
       message = m;
+      human = true;
     } else if (Array.isArray(m)) {
       const joined = m.filter((x): x is string => typeof x === 'string').join('; ');
-      if (joined) message = joined;
+      if (joined) {
+        message = joined;
+        human = true;
+      }
     }
   } catch {
     /* gövde JSON değil → generic mesaj kalır */
   }
-  return new ApiError(res.status, message);
+  return new ApiError(res.status, message, human);
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -77,10 +145,13 @@ export async function apiGet<T>(path: string): Promise<T> {
   // Okuma çağrıları da aktör + rol iletir: (A2) en hassas görüntüleme (sipariş detayı düz-metin)
   // gerçek admin'e attribute edilir; (A1) API rol'e göre maskeli/düz döndürebilir (owner-only düz metin).
   const { actor, role } = await getActorAndRole();
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: headers(false, actor, role),
-    cache: 'no-store',
-  });
+  // A3: okuma zaman aşımı — asılı API sayfayı süresiz bekletmez, görünür 504'e döner.
+  const res = await fetchWithTimeout(
+    'GET',
+    path,
+    { headers: headers(false, actor, role), cache: 'no-store' },
+    READ_TIMEOUT_MS,
+  );
   if (!res.ok) throw await toApiError('GET', path, res);
   return res.json() as Promise<T>;
 }
@@ -105,12 +176,18 @@ export async function apiPost<T>(path: string, body?: unknown, actor?: string): 
   // düşerse ADMIN_TOKEN ile çalıştırılırdı; bu yüzden fetch'ten ÖNCE reddedilir.
   assertSafePath(path);
   const resolved = await resolveActor(actor);
-  const res = await fetch(`${API_URL}${path}`, {
-    method: 'POST',
-    headers: headers(body !== undefined, resolved.actor, resolved.role),
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    cache: 'no-store',
-  });
+  // A3: yazma zaman aşımı (okumadan uzun — ağır import/toplu işlere pay bırakır).
+  const res = await fetchWithTimeout(
+    'POST',
+    path,
+    {
+      method: 'POST',
+      headers: headers(body !== undefined, resolved.actor, resolved.role),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
+    },
+    WRITE_TIMEOUT_MS,
+  );
   if (!res.ok) throw await toApiError('POST', path, res);
   return res.json() as Promise<T>;
 }
@@ -124,12 +201,18 @@ export async function apiSend<T>(
   // YOL KAPISI (SEC-1) — PATCH/DELETE de yazma yoludur (bkz. apiPost).
   assertSafePath(path);
   const resolved = await resolveActor(actor);
-  const res = await fetch(`${API_URL}${path}`, {
+  // A3: PATCH/DELETE de yazma yoludur → yazma zaman aşımı (bkz. apiPost).
+  const res = await fetchWithTimeout(
     method,
-    headers: headers(body !== undefined, resolved.actor, resolved.role),
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    cache: 'no-store',
-  });
+    path,
+    {
+      method,
+      headers: headers(body !== undefined, resolved.actor, resolved.role),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      cache: 'no-store',
+    },
+    WRITE_TIMEOUT_MS,
+  );
   if (!res.ok) throw await toApiError(method, path, res);
   return res.json() as Promise<T>;
 }
@@ -159,12 +242,23 @@ export async function apiRaw(
   const h = headers(withBody, opts?.actor, role);
   // Koşullu istek (canlı akış poll'u): ETag eşleşirse API 304 döner → gövde hiç taşınmaz.
   if (opts?.ifNoneMatch) h['if-none-match'] = opts.ifNoneMatch;
-  return fetch(`${API_URL}${path}`, {
+  /*
+    A3: apiRaw da zaman aşımlıdır. Çağıranlar status/gövde mantığını KENDİ yönetir ama
+    "hiç yanıt gelmemesi" onların da çözemediği bir durumdur (canlı akış poll'u askıda
+    kalırsa sekme sessizce güncellenmeyi bırakırdı). Zaman aşımı ağ hatasıyla AYNI
+    sınıftır: throw. Yöntem GET ise okuma, değilse yazma sınırı.
+  */
+  return fetchWithTimeout(
     method,
-    headers: h,
-    body: withBody ? JSON.stringify(opts!.body) : undefined,
-    cache: 'no-store',
-  });
+    path,
+    {
+      method,
+      headers: h,
+      body: withBody ? JSON.stringify(opts!.body) : undefined,
+      cache: 'no-store',
+    },
+    method === 'GET' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS,
+  );
 }
 
 // ── Paylaşılan tipler (API yanıtları) ───────────────────────────────────────
@@ -465,12 +559,19 @@ export interface AdminUser {
 
 /** Kimlik + parola doğrular (API admin_users). Başarısızsa null (401), diğer hatalarda throw. */
 export async function adminLogin(identifier: string, password: string): Promise<AdminUser | null> {
-  const res = await fetch(`${API_URL}/v1/admin/auth/login`, {
-    method: 'POST',
-    headers: headers(true),
-    body: JSON.stringify({ identifier, password }),
-    cache: 'no-store',
-  });
+  // A3: giriş de zaman aşımlı — API askıdayken login formu süresiz "gönderiliyor" kalmasın
+  // (operatörün paneli açmasının TEK yolu bu istek; sessiz donma burada en görünür zarardır).
+  const res = await fetchWithTimeout(
+    'POST',
+    '/v1/admin/auth/login',
+    {
+      method: 'POST',
+      headers: headers(true),
+      body: JSON.stringify({ identifier, password }),
+      cache: 'no-store',
+    },
+    WRITE_TIMEOUT_MS,
+  );
   if (res.status === 401) return null;
   if (!res.ok) throw new Error(`login → ${res.status}`);
   const data = (await res.json()) as { user: AdminUser };

@@ -483,7 +483,18 @@ export class FulfillmentService {
           sql`coalesce(${orderLines.policyOverride}, ${products.fulfillmentPolicy}) = 'partial-auto'`,
         ),
       )
-      .orderBy(sql`${orderLines.priority} desc`, asc(orderLines.createdAt));
+      /*
+       * TIE-BREAK (orderLines.id) ŞART — bu, teslimat motorunun FIFO penceresidir.
+       *
+       * Aynı siparişin TÜM satırları tek transaction'da yazılır ve `now()` tx başını
+       * döndürdüğü için `created_at` damgaları BİREBİR aynıdır (bu projede ölçüldü: aynı
+       * damgayı paylaşan binlerce olay/satır grubu var). Tie-break olmadan:
+       *   (a) eşit öncelik + eşit tarihte HANGİ satırın önce teslim edileceği KEYFİ,
+       *   (b) `limit(cap+1)` penceresine hangi satırların gireceği KEYFİ → arka plana atılan
+       *       kalan küme her turda değişir ve bir satır turlar boyunca sürekli atlanabilir.
+       * Yön ayna: sıralama ASC olduğu için tie-break de ASC (bkz. migration 0031 dersi).
+       */
+      .orderBy(sql`${orderLines.priority} desc`, asc(orderLines.createdAt), asc(orderLines.id));
 
     // PERF (denetim bulgusu): cap yalnız İŞLEMEYİ sınırlıyordu, ÇEKMEYİ değil — eşleşen TÜM
     // bekleyen satırlar okunup sıralanıyor, sonra ilk 200'ü işleniyordu. Büyük bir backlog'da

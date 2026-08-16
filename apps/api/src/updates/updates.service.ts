@@ -72,14 +72,25 @@ export class UpdatesService {
       .orderBy(desc(pluginReleases.createdAt));
   }
 
-  /** Verilen sürümün .zip base64 gövdesi; sürüm yoksa null. */
-  async getZip(version: string): Promise<string | null> {
+  /**
+   * Verilen sürümün .zip base64 gövdesi.
+   *
+   * ÜÇ DURUM AYRILIR: sürüm hiç yok (`missing`) ≠ sürüm var ama paketi arşivden düşürülmüş
+   * (`archived`) ≠ paket hazır (`ok`). Saklama motoru eski sürümlerin GÖVDESİNİ boşaltır
+   * (sürüm geçmişi satırı KALIR — panelde görünür kalması bilinçli). Ayrım olmasaydı arşivlenmiş
+   * bir sürüm "Sürüm bulunamadı" derdi ve operatör yayının SİLİNDİĞİNİ sanırdı.
+   */
+  async getZip(
+    version: string,
+  ): Promise<{ state: 'missing' } | { state: 'archived' } | { state: 'ok'; zipB64: string }> {
     const [row] = await this.db
       .select({ zipB64: pluginReleases.zipB64 })
       .from(pluginReleases)
       .where(eq(pluginReleases.version, version))
       .limit(1);
-    return row?.zipB64 ?? null;
+    if (!row) return { state: 'missing' };
+    if (!row.zipB64) return { state: 'archived' };
+    return { state: 'ok', zipB64: row.zipB64 };
   }
 }
 
@@ -94,7 +105,7 @@ function parseSemver(v: string): [number, number, number] | null {
  * Semver karşılaştırma: a>b → +1, a<b → -1, eşit → 0. Geçersiz biçimli sürüm daima
  * daha düşük sayılır (en sona sıralanır); iki geçersizde 0 döner.
  */
-function compareVersions(a: string, b: string): number {
+export function compareVersions(a: string, b: string): number {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
   if (!pa && !pb) return 0;

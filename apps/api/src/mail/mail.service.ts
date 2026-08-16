@@ -262,11 +262,30 @@ export class MailService {
         subject: data.subject,
         text: data.body,
       });
-      // Mail GİTTİ: log güncellemesi patlasa bile işi FAIL etme (retry = mükerrer mail).
+      /*
+       * Mail GİTTİ: log güncellemesi patlasa bile işi FAIL etme (retry = mükerrer mail).
+       *
+       * SESSİZ DEĞİL (denetim C6, MailProcessor ile AYNI desen): yazım düşerse kayıt sonsuza
+       * dek 'queued' kalır → yukarıdaki idempotency kapısı bir daha AÇILMAZ ve iş yeniden
+       * koşarsa müşteriye İKİNCİ bildirim maili gider; ayrıca satır /ops'ta 'askıda' görünür.
+       * Tek sınırlı yeniden deneme: arızaların çoğu anlık bağlantı kesintisidir.
+       */
       try {
         await this.setStatus(data.emailLogId, 'sent', null, info.messageId);
-      } catch {
-        // yut — gönderim başarılı, log kritik değil (MailProcessor ile aynı desen)
+      } catch (first) {
+        this.logger.warn(
+          `email_log 'sent' yazımı başarısız, bir kez daha denenecek (emailLog=${data.emailLogId}): ${String(first)}`,
+        );
+        try {
+          await this.setStatus(data.emailLogId, 'sent', null, info.messageId);
+        } catch (err) {
+          this.logger.error(
+            `Bildirim maili GÖNDERİLDİ ama email_log 'sent' yazılamadı (emailLog=${data.emailLogId}) — ` +
+              `kayıt 'queued' kaldı, olası MÜKERRER bildirim riski: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+          );
+        }
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

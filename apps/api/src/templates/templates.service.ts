@@ -107,7 +107,40 @@ export class DeliveryTemplatesService {
     return row;
   }
 
+  /**
+   * FK ön-kontrolü: şablonun kapsamı (`productId` / `siteId`) gerçekten var mı?
+   *
+   * NEDEN VAR: DTO yalnız BİÇİMİ (`z.string().uuid()`) doğrular. Silinmiş bir ürünün/sitenin
+   * id'siyle şablon kaydetmek PG 23503 (foreign_key_violation) ile ham 500 üretiyordu ve
+   * operatör hangi alanın geçersiz olduğunu göremiyordu. Desen
+   * `products.controller.assertCategoryExists` ile aynı: yoksa HANGİSİ olduğunu söyleyen 404.
+   *
+   * null/undefined MEŞRUDUR ve denetlenmez: ürünsüz/sitesiz şablon = genel varsayılan (§6).
+   */
+  private async assertScopeExists(
+    productId?: string | null,
+    siteId?: string | null,
+  ): Promise<void> {
+    if (productId) {
+      const [p] = await this.db
+        .select({ id: products.id })
+        .from(products)
+        .where(eq(products.id, productId))
+        .limit(1);
+      if (!p) throw new NotFoundException('Şablonun bağlanacağı ürün bulunamadı');
+    }
+    if (siteId) {
+      const [s] = await this.db
+        .select({ id: sites.id })
+        .from(sites)
+        .where(eq(sites.id, siteId))
+        .limit(1);
+      if (!s) throw new NotFoundException('Şablonun bağlanacağı mağaza bulunamadı');
+    }
+  }
+
   async create(input: TemplateInput): Promise<{ id: string }> {
+    await this.assertScopeExists(input.productId, input.siteId);
     const [row] = await this.db
       .insert(deliveryTemplates)
       .values({
@@ -123,6 +156,9 @@ export class DeliveryTemplatesService {
   /** Yalnız verilen alanlar güncellenir. Yoksa 404. */
   async update(id: string, input: Partial<TemplateInput>): Promise<TemplateRow> {
     await this.get(id); // yoksa 404
+    // Kapsam DEĞİŞTİRİLİYORSA hedefin varlığı doğrulanır (create ile aynı gerekçe); alan
+    // hiç gönderilmediyse ya da açıkça null ise (kapsamı temizle) denetlenecek bir şey yok.
+    await this.assertScopeExists(input.productId, input.siteId);
 
     const patch: Partial<typeof deliveryTemplates.$inferInsert> = {};
     if (input.subject !== undefined) patch.subject = input.subject;

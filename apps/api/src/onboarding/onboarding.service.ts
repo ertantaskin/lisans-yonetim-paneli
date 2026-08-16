@@ -1,5 +1,12 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
-import { HttpException, HttpStatus, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { and, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { CryptoService } from '../crypto/crypto.service';
@@ -30,6 +37,8 @@ const CLAIM_RL_MAX = 10;
  */
 @Injectable()
 export class OnboardingService {
+  private readonly logger = new Logger(OnboardingService.name);
+
   constructor(
     @Inject(DB) private readonly db: Database,
     private readonly rateLimit: RateLimitService,
@@ -144,6 +153,24 @@ export class OnboardingService {
             hmacSecret: this.crypto.decrypt(token.hmacSecretEnc!, tokenAad),
           };
         } catch {
+          /*
+           * LEGACY GERİ DÜŞÜŞ — SESSİZ OLAMAZ (denetim C9).
+           *
+           * İki sebeple loglanır:
+           *  (1) GÜVENLİK: AAD ad-alanı çakışması düzeltmesinin bütün amacı, bir saldırganın
+           *      `sites.hmac_secret_enc` blob'unu bir connect-token satırına KOPYALAYIP bu
+           *      public ucu çözme oracle'ı gibi kullanmasını engellemekti. Böyle bir deneme
+           *      GERÇEKTE tam olarak "yeni AAD tutmadı, eski AAD tuttu" biçiminde görünür —
+           *      yani bu satır o denemenin TEK canlı sinyalidir.
+           *  (2) TEMİZLİK: kodların ömrü 15 dakika olduğu için bu dal, dağıtımdan kısa süre
+           *      sonra MEŞRU olarak asla çalışmamalıdır. Log görülmüyorsa geri düşüş güvenle
+           *      kaldırılabilir; hâlâ görülüyorsa kaldırmak kurulumları kırardı.
+           * SIR yazılmaz: yalnız token/site kimliği.
+           */
+          this.logger.warn(
+            `Connect kodu ESKİ (site) AAD ad alanıyla çözüldü — legacy geri düşüş kullanıldı ` +
+              `(token=${token.id}, site=${token.siteId}). Beklenen: yalnız düzeltme öncesi üretilmiş kodlar.`,
+          );
           const legacyAad = CryptoService.siteSecretAad(token.siteId);
           return {
             apiKey: this.crypto.decrypt(token.apiKeyEnc!, legacyAad),
