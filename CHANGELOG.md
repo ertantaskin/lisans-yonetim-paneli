@@ -14,6 +14,81 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Kararlılık turu: havuz kilitlenmesi · dağıtım probu · boot dayanıklılığı · test idempotanlığı (migration YOK)
+
+Bu tur "yeni özellik" değil, **sistemin kendini yanlış anlatmasını** bitirmeye odaklandı. Doğrulama
+tabanı baştan ölçüldü ve temiz çıktı; bu yüzden aranan şey "zaten bozuk olan" değil, degrade koşulda
+ortaya çıkan ve kimsenin fark edemediği kusurlardı. En ağır bulguların ortak paydası şuydu: sistem bir
+şeyin çalıştığını söylüyor, gerçekte çalışmıyor.
+
+**Bağlantı havuzu kilitlenmesi — bu sınıfın üçüncü tekrarı.** Sipariş oluşturma transaction'ının
+içinden, kök bağlantı havuzunu kullanan bir yardımcı çağrılıyordu. PostgreSQL sürücüsünde bir
+transaction bir bağlantıyı rezerve eder; gövdeden kök havuza sorgu atmak ikinci bir bağlantı ister.
+Havuz dolduğunda istekler dairesel beklemeye girer ve sağlık ucu dahil tüm API cevapsız kalır (bu
+kod tabanında iki kez yük testiyle ölçülmüştü). İlginç olan: aynı dosyanın başka bir dalı tam olarak
+bu çağrıyı "transaction dışı" diye işaretleyip bilinçle dışarıda yapıyordu — sonradan eklenen dal o
+kuralı ihlal etmişti. Düzeltmenin yanına **otomatik bir kapı** eklendi (`check-tx-pool`): transaction
+gövdesinde kök havuz kullanımını ve "executor parametresi sunan bir metodu transaction'sız çağırma"
+desenini derleme öncesi yakalar. Kapının ilk sürümü kontrol denemesinde hatayı **yakalayamadı**
+(yalnız gövdeyi tarıyor, varsayılan parametreyi görmüyordu); kural düzeltilip kırmızı olduğu
+görüldükten sonra bağlandı.
+
+**Geri çekilmiş partiye satılabilir anahtar eklenebiliyordu.** Stok girişi parti durumunu kilitsiz
+okuyordu ve koddaki yorum bu riskin "ücretsiz kapandığını" iddia ediyordu. Aynı transaction'da olmak
+yetmez: eşzamanlı bir geri çekme, girişin henüz işlenmemiş satırlarını göremeden süpürmesini
+tamamlayabiliyor, giriş tamamlanınca geri çekilmiş partinin altında taze satılabilir anahtarlar
+kalıyordu. Artık parti satırı çakışan bir kilitle okunuyor.
+
+**Stok girişi sırasında ürün tipi değişirse kapasite sessizce yok oluyordu.** Girilecek kayıtlar
+transaction'dan önce okunan ürüne göre hazırlanıyor, ürün güncelleme ekranındaki koruma ise o sırada
+"canlı kalem yok" görüp çok-kullanımlı ürünü tek-kullanımlığa çevirebiliyordu. Sonuç: anahtar başına
+yüzlerce aktivasyon hakkı hiçbir hata üretmeden kayboluyordu. Giriş artık ürün sözleşmesini kilit
+altında yeniden doğruluyor ve değişmişse işlemi reddedip operatöre sebebini söylüyor.
+
+**Dağıtım sağlık probu hiçbir şey render etmiyordu.** Prob panelin kök adresini kontrol ediyordu; o
+adres ise sayfa çalışmadan önce yönlendirme döndürüyor, prob da bunu "sağlıklı" sayıyordu. Yani panel
+tamamen kırık dağıtılsa bile dağıtım başarılı görünüyor ve otomatik geri alma hiç tetiklenmiyordu.
+Prob gerçekten render eden bir sayfaya alındı ve yalnız HTTP koduna değil, sayfanın gövdesindeki hata
+imzasına da bakıyor.
+
+**Redis erişilemezken API hiç ayağa kalkmıyordu** — oysa sistem bilinçli olarak Redis'siz çalışacak
+şekilde tasarlanmıştı. Zamanlayıcı kurulumu artık boot'u düşürmüyor. Ayrıca süreç düzeyinde
+yakalanmamış hata kancaları ve Redis hata dinleyicisi eklendi (Redis arızaları daha önce ham stderr'e
+yazıldığı için log altyapısında ve hata izlemede hiç görünmüyordu).
+
+**Mağazanın her isteği 500 alabiliyordu.** Kimlik doğrulama yolundaki bir çözme hatası korumasızdı;
+şifreleme anahtarı sapmış bir kurulumda mağaza 401 yerine 500 alır ve eklenti bunu geçici sanıp
+yeniden denemeye devam ederdi. Artık kimlik doğrulama düzgün başarısız oluyor ve sebep loglanıyor.
+
+**Panelden API'ye giden çağrıların hiçbirinde zaman aşımı yoktu.** API "kapalı" değil de "asılı"
+olduğunda her sekme varsayılan beş dakikaya kadar boş bekliyordu — üstelik müdahale edilecek ekran da
+aynı katmandan geçtiği için açılamıyordu. Okuma ve yazma için ayrı tavanlar eklendi.
+
+**Anlaşılmaz 500'ler anlamlı yanıtlara dönüştü.** Veritabanı hata kodları için merkezî bir çevirim
+eklendi (çakışma, eksik referans, sayı taşması, geçersiz kimlik biçimi, zaman aşımı, kilit çakışması).
+En sinsi örnek: geçerlilik süresi alanının üst sınırı yoktu; uç değer kaydediliyor, sonra o ürüne
+gelen **her** sipariş günler sonra çöküyordu. Sınır artık girişte.
+
+**Test paketi aynı veritabanında ikinci kez koşamıyordu** — biriken veri kod hatası gibi görünüyordu.
+Temizlik kapsamını genişletmek yerine (bu yol dört kez denendi, her seferinde bir sonraki tablo
+unutuldu) koşu başında tam sıfırlama yapılıyor; üretim verisini korumak için test olmayan veritabanı
+adında paket hiç başlamıyor.
+
+**Sessiz yutmalar ve sıralama belirsizlikleri.** Para yolundaki ve denetim izindeki on iki sessiz
+hata yutma görünür hâle getirildi (iade sırasında geri alınamayan lisans, kayda geçmeyen düz metin
+görüntüleme, müşteriye ulaşmayan bonus teslimat maili, altyapı arızasını "stok yok" diye raporlayan
+toplu değişim). Aynı transaction'da yazılan satırların zaman damgaları birebir eşit olduğu için
+sıralı-sınırlı sorgulara benzersiz ikincil anahtar eklendi — en önemlisi teslimat motorunun sırası.
+
+**Eklenti paketleri sınırsız büyüyordu.** Yayın paketleri veritabanında saklanıyor ve saklama
+kapsamı dışındaydı; ölçüldüğünde gecelik yedeğin neredeyse tamamı tarihî paketlerdi. Artık son
+sürümlerin paketi tutuluyor, eskiler arşivleniyor (sürüm geçmişi görünür kalır, en yüksek sürümün
+paketi her hâlükârda korunur).
+
+Ayrıca geçen turdaki kendi düzenlememin kırdığı bir kusur düzeltildi: saklama süpürmesinin operatöre
+görünen tek özet satırı üç adım için boş değer basıyordu.
+
+
 ### 3. tur: kripto AAD ad alanı · stok girişi tavanı · silinen sipariş kalemi (migration YOK, eklenti 1.1.2)
 
 Bu oturumda henüz derin denetlenmemiş dört alan tarandı: kripto/HMAC kimlik yolu, stok girişi ve

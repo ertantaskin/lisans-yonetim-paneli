@@ -2622,3 +2622,139 @@ modeli bütünlüğü · WP sipariş senkronu+iade uzlaştırması**. Her bulgu 
 - **Doğrulama:** typecheck 4/4 + dört kapı (use-server 26/88 · nest-wiring 42/130+13 · env 50 ·
   workflows 2/4/46) · birim **shared 64 + api 153 + admin 147** · build 3/3 · **TAZE VPS izole test DB:
   entegrasyon 406/406 + yarış 3/3** · PHP-lint 13/13 + eklenti davranış 108/108. Migration EKLENMEDİ.
+
+**KARARLILIK TURU → 4-LENSLİ DENETİM + 4 İŞÇİ (commit f3c73a2, CANLI prod+dev, migration YOK):**
+Kullanıcı "tüm eksikleri sorunları gider stabil hale getir projeyi" dedi. Önce doğrulama temeli
+ÖLÇÜLDÜ (typecheck 4/4, dört kapı, birim 64+153+147, `pnpm audit --prod` temiz, prod `/health` 200,
+37 rota temiz) — hepsi temiz çıktı, yani aranan şey "zaten bozuk olan" değil **degrade koşulda ortaya
+çıkan** kusurlardı. Dört bağımsız lens (havuz/sızıntı · test idempotanlığı · çökme/hata sınırları ·
+eşzamanlılık/kilit sırası; her bulgu ÇÜRÜTME denemesinden geçti) + 4 ayrık-dosya işçi + çekirdek para
+yolu (admin-orders/stock) bende. **ORTAK PAYDA: sistem bir şeyin çalıştığını söylüyor, çalışmıyor.**
+
+- **[YÜKSEK] Havuz kilitlenmesi — bu sınıfın 3. TEKRARI.** `createOrder` tx'i içinden
+  `loadOrderResult` KÖK havuzu kullanıyordu. postgres.js'te `transaction()` bir bağlantı REZERVE
+  eder; gövdeden `this.db` ile sorgu atmak İKİNCİ bağlantı ister → havuz (max:10) dolunca dairesel
+  bekleme, `/v1/health` dahil TÜM API cevapsız (k6 ile İKİ kez ÖLÇÜLDÜ: createOrder ve
+  supplier-claims). **Advisory-lock bunu ENGELLEMEZ** — kilit kaç tx'in kilidi GEÇTİĞİNİ sınırlar,
+  kaçının BAĞLANTI TUTTUĞUNU değil. En çarpıcısı: aynı dosyanın diğer ikiz yolu (`:652`) bu çağrıyı
+  *"(tx dışı)"* diye işaretleyip bilinçle dışarıda yapıyor; sonradan eklenen F2 dalı kuralı ihlal
+  etmiş. → `exec` parametresi + `tx` geçişi. **YENİ KAPI `scripts/check-tx-pool.js`** (TS AST;
+  `pnpm typecheck` + CI): tx gövdesinde `this.db` (A) ve **"executor sunan metodu tx'siz çağırma"**
+  (B) desenlerini yakalar; gerekçeli `// tx-pool-ok:` kaçış kapağı var. **DERS:** kapının İLK sürümü
+  kontrol denemesinde hatayı YAKALAMADI — yalnız metot GÖVDESİNİ tarıyordu, oysa düzeltilmiş metotta
+  `this.db` artık yalnız `exec = this.db` VARSAYILAN PARAMETRESİNDE duruyor. Kural genişletildi
+  ("executor sunan metot" = tx'ten çağrılırken tx geçilmeli), kırmızı olduğu GÖRÜLDÜKTEN sonra bağlandı.
+- **[YÜKSEK] Geri çekilmiş partiye satılabilir anahtar eklenebiliyordu.** `resolveBatchForImport`
+  parti satırını KİLİTSİZ okuyor ve koddaki yorum *"aynı tx'te olmak TOCTOU'yu ücretsiz kapatır"*
+  diyordu — **YANLIŞ**: READ COMMITTED'da kilitsiz SELECT araya giren `recallBatch`i engellemez
+  (o `FOR UPDATE` alır, beklemez, süpürmesini import'un commit EDİLMEMİŞ satırlarını göremeden
+  bitirir) → import commit edince geri çekilmiş partinin altında TAZE `available` anahtarlar kalır ve
+  süpürme bir daha koşmaz (§2). → `.for('share', { of: batches })` (`of` ZORUNLU: `purchaseOrders`
+  LEFT JOIN'in nullable tarafı, Postgres oraya satır kilidi uygulatmaz).
+- **[YÜKSEK] Stok girişi sırasında ürün sözleşmesi değişirse MAK kapasitesi SESSİZCE yok oluyordu.**
+  `values` dizisi tx'ten ÖNCE, kilitsiz okunan ürüne bağlı dört karar taşıyor (`maxUses`, `kind`,
+  `payloadSchema`, anahtar biçimi). `products.update` ürünü `FOR UPDATE` kilitliyor ama import
+  ürünü HİÇ kilitlemiyordu → update, `license_items` sayımını 0 görüp (import henüz YAZMADI)
+  "canlı kalem yok" guard'ından geçip `multi→single` yapabiliyor; import `max_uses=500` ile yazıyor;
+  `allocate()` tek-kullanım dalına girip anahtarın TAMAMINI `assigned` yapıyor → anahtar başına
+  **499 aktivasyon** hiçbir hata üretmeden kayboluyordu. Aynı pencere `kind`/`payloadSchema`
+  üzerinden `payload_hash`i saptırıp **dedupe'u da kaçırıyordu** (aynı hesap iki müşteriye).
+  → tx içinde `FOR SHARE` ile yeniden doğrulama + 409 ("ürün değişti, tekrarlayın").
+- **[ORTA] Askıdaki atama "yalnız aktif değiştirilebilir" guard'ını atlıyordu:**
+  `replaceAssignmentLocked` atamayı kilitsiz okuyor, `revokeAssignment` ise yalnız `revoked`'da
+  `already` dönüyordu → eşzamanlı "Askıya al" sonrası operatörün BİLEREK askıya aldığı lisans taze
+  anahtarla değiştiriliyor ve stoktan anahtar yanıyordu → `.for('update', { of: assignments })`
+  (kardeş `replacements.approveTx` bunu ZATEN kilitli yapıyordu — parite).
+- **[ORTA] `rejectHeld` ABBA deadlock:** kilit sırası sözleşmenin TERSİYDİ (`orders`→`order_lines`→
+  `assignments`; sözleşme advisory→assignments→order_lines→orders) ve `revokeAssignment` advisory
+  ALMADIĞI için iki yol serileşmiyordu → 40P01/opak 500. Atama kilitleri `order_lines`'a
+  DOKUNULMADAN ÖNCE alınıyor; `orders FOR UPDATE` KALDIRILDI (advisory zaten serileştirir + READ
+  COMMITTED'da kilit sonrası SELECT taze anlık görüntü kullanır → CAS korunur). Bu, `revokeOrderForSite`'ta
+  daha önce uygulanan çözümün aynısı; burası atlanmıştı.
+- **[ORTA] `deploy.sh` admin sağlık probu HİÇBİR bileşeni render etmiyordu.** Varsayılan kök `/`,
+  middleware render'DAN ÖNCE 307 veriyor, curl `-L` taşımıyor ve [200,500) kabul ediyordu → prob 307
+  alıp "sağlıklı" diyordu. **Panel tamamen kırık dağıtılsa bile dağıtım BAŞARILI sayılıyor ve otomatik
+  rollback HİÇ tetiklenmiyordu** (bu turdaki her şeyin üretimde sessizce geçmesinin sebebi buydu).
+  Prob `/pending`'e alındı, `-L` eklendi, gövdede `error.tsx` imzası aranıyor (`smoke-routes.sh`
+  deseni) + başarısızlık SEBEBİ rollback mesajına basılıyor. **Sahada ilk koşuşunda geçti.**
+- **[ORTA] Redis boot'ta erişilemezse API HİÇ ayağa kalkmıyordu** (`upsertJobScheduler` try/catch
+  DIŞINDA; 8 servis `onModuleInit`'te çağırıyor, o da `app.listen()` içinde → port hiç açılmaz,
+  `/health` bile yok). Runtime bilinçli olarak Redis'siz çalışacak şekilde tasarlanmıştı (nonce
+  fail-closed-fast, rate-limit fail-open, health `degraded`) — **boot bu tasarımla çelişiyordu** ve
+  Redis restart'ına denk gelen bir dağıtım İYİ bir sürümü rollback ettirirdi. → boot devam eder,
+  hata loglanır; upsert başarısızsa yetim temizliği KOŞMAZ (yoksa meşru zamanlayıcıyı silerdi).
+- **[ORTA] Süreç kancaları + Redis gözlem boşluğu:** `unhandledRejection`/`uncaughtException` kancası
+  YOKTU; `@nestjs/bullmq` `@OnWorkerEvent` handler'ını `.catch()` sarmadan bağlıyor → `SweepAlarmService.report`
+  dışında bir şey `await` eden İLK handler API konteynerini düşürürdü (bugün latent, belgelenmemiş,
+  tek noktaya bağlı invaryant). Ayrıca ioredis `silentEmit` ve BullMQ `emit` override'ı hataları HAM
+  `console.error`'a yazıyordu → pino JSON'una girmiyor, Sentry görmüyor, hiçbir log sorgusuyla
+  eşleşmiyordu (Redis kimlik/TLS arızası pratikte GÖRÜNMEZ). Kancalar + `.on('error')` eklendi.
+  **`main.ts:29` yorumu YANLIŞ bilgi veriyordu** — ÖLÇÜLDÜ: `requestTimeout` "isteğin İSTEMCİDEN
+  alınması" süresidir, handler süresini SINIRLAMAZ (`requestTimeout:1000` + 3 sn handler → `200, 3027 ms`);
+  gerçek tavanlar Redis `commandTimeout` / PG `statement_timeout`+`lock_timeout`. Yorum gerçeğe uyduruldu.
+- **[ORTA] `findForAuth`'ta korumasız `decrypt`** → MASTER_KEY sapmış bir kurulumda mağazanın HER
+  isteği (sipariş push, katalog senkronu, iade, My Account) 401 yerine **500**; eklenti 401'i
+  "yapılandırma hatası" sayıp durur, 500'ü geçici sanıp saatlerce yeniden dener. → `null` + `logger.error`
+  (desen kod tabanında ZATEN vardı: search/stock/totp; auth yolu atlanmıştı).
+- **[ORTA] Admin→API 254 çağrının HİÇBİRİNDE zaman aşımı yoktu** (undici varsayılanı **300 sn**):
+  API "kapalı" değil "asılı" ise her sekme dakikalarca boş bekler ve `/deployments`'ı açıp müdahale
+  etmek de aynı katmandan geçtiği için MÜMKÜN OLMAZ. Ters kanıt aynı repodaydı: `lib/auth.ts:132`
+  gerekçesini yazarak 1,5 sn kullanıyor. → `fetchWithTimeout` (okuma 8 sn / yazma 20 sn) → `ApiError(504)`.
+- **[YAPISAL] `PgExceptionFilter`** — opak 500'ler anlamlı 4xx: `23505→409` · `23503→404/409` (metin
+  `still referenced` ise 409 — aynı SQLSTATE'in iki dalı zıt HTTP karşılığı taşır) · `22003/22001→400`
+  · `22P02→400` · `57014→503+Retry-After` · `40P01/40001→409`. **`SentryExceptionFilter`'dan KALITIM**
+  (Nest birden çok global filtreyi kayıt sırasının TERSİNDEN dener → iki catch-all'da filtre sessizce
+  hiç koşmayabilirdi). **En sinsi kapanan açık: `validityDays` üst sınırsızdı** → `5e8` int4'e sığıp
+  KAYIT BAŞARILI oluyor, sonra o ürüne gelen **HER** sipariş `RangeError: Invalid time value` ile 500
+  veriyordu — arıza yapılandırmadan GÜNLER SONRA, mağazanın sipariş push'unda patlıyordu. Sayısal
+  alanlara gerekçeli üst sınırlar (validity/warranty 3650g, maxUses 100k, eşik/kota/qty 1M), SKU
+  çakışması 409, PO/şablon FK→404, 8 uçta `ParseUUIDPipe`, `purchaseOrders.update()` tx+`FOR UPDATE`.
+- **[TEST] Entegrasyon paketi AYNI DB'de tekrar koşamıyordu** (ÖLÇÜLDÜ: 1→3→8 hata; dosya tek başına
+  9/9; TAZE DB'de temiz) → biriken veri KOD REGRESYONU gibi görünüyor ve her gelecekteki doğrulamayı
+  zehirliyordu. Kök nedenler yapısaldı: `cleanupByTag` FK'siz tabloları (`audit_log`, `security_events`)
+  hiç düşürmüyor, `email_log.order_id` ON DELETE SET NULL olduğu için satır KALIYOR (CASCADE
+  yanılsaması), etiketsiz sabit payload'lar GLOBAL unique `payload_hash`e çarpıp `onConflictDoNothing`
+  ile SESSİZCE atlanıyor. **Temizlik kapsamını genişletmek REDDEDİLDİ** — bu oyun DÖRT kez oynandı
+  (site_product_mappings → batches/purchase_orders/suppliers → product_guides → supplier_claims) ve
+  her seferinde BİR SONRAKİ tablo unutuldu. Yerine koşu BAŞINDA (sonunda DEĞİL — çöken koşunun kanıtı
+  incelenebilsin) `globalSetup` ile `information_schema`'dan türetilen TAM sıfırlama + **üretim
+  verisini koruyan emniyet kilidi** (test kalıbına uymayan DB adında fail-closed; `lisanspanel` ve
+  `lisansdev` REDDEDİLİR). **KANIT: aynı DB'de ÜÇ ARDIŞIK koşu 410/410.**
+- **[SESSİZ YUTMA ×12]** para yolu + denetim izi: iade sırasında kaçak atama geri alınamazsa
+  (müşteride CANLI lisans kalır, panel "Geri alındı" der, reconcile bunu bu biçimde yakalamaz) →
+  log + sipariş zaman çizelgesine görünür uyarı · reveal audit yazılamazsa düz metin GÖSTERİLİP ize
+  geçmediği loglanır ("reveal audit'e düşer" değişmez kuralı) · bonus teslimat maili kuyruğa girmezse
+  müşteri lisansı HİÇ ALMAZ (panel "eklendi" der) · `supply-ops` altyapı arızasını "stok yok"
+  saymaz (ayrı `failed` sayacı + admin bandında destructive ton + "stokla ilgili değil" metni) ·
+  kota/hold güvenlik olayları · `email_log` `queued`da kalması (retry'da idempotency kapısı açılmaz →
+  müşteriye LİSANS TAŞIYAN ikinci mail) · AAD legacy geri düşüşü · arama kripto hatası.
+- **[TIE-BREAK]** aynı tx'te yazılan satırların `created_at` damgaları BİREBİR eşit (`now()` = tx başı)
+  → LIMIT'li her `ORDER BY`a benzersiz son anahtar: **teslimat FIFO penceresi (EN CİDDİSİ — hangi
+  satırın teslim edileceği keyfiydi)**, pending-lines (tanı ile çöz FARKLI alt küme işleyebiliyordu),
+  soyağacı, revoke sebebi, arama, `email_log`, `/ops` dead-letter, katalog. Yön AYNA DEĞİLDİR.
+- **[SAKLAMA] `plugin_releases` sınırsız büyüyordu** (saklama kapsamı DIŞINDAYDI): 18 yayının zip
+  gövdesi **1947 kB**, gecelik yedek dosyası **1,1 MB** → yedeğin NEREDEYSE TAMAMI tarihî paketler
+  (dış kopya hâlâ kurulu değilken, DR hedefi RPO≤5dk/RTO≤2sa). Son N sürümün gövdesi saklanır,
+  eskiler ARŞİVLENİR — **satır SİLİNMEZ** (sürüm geçmişi panelde görünür kalır, kullanıcının açıkça
+  istediği özellik) ve **en yüksek SEMVER her hâlükârda korunur** (müşteri siteleri tam o paketi
+  indirir; sırasız yayında tarih tek başına yanıltır). Arşivlenmiş sürüm indirmede **410** (404
+  "bu yayın hiç olmadı" dedirtiyordu). `RETENTION_PLUGIN_RELEASE_KEEP` varsayılan 20 = bugün NO-OP.
+- **[KENDİ REGRESYONUM]** saklama özet satırının ÜÇ adımında `${...}` interpolasyonları kaybolmuştu
+  (`dec4c91` — fiş-anahtarı adımını eklerken): süpürmenin operatöre görünen TEK satırı `security= sil,
+  email= maske/ sil` basıyordu. Kod tabanındaki tek örneğiydi. Düzeltildi + **raporun HER sayısının
+  satırda geçtiğini** doğrulayan test (log metnini ezberlemez → yeni adım eklenip özete yazılmazsa da yakalar).
+- **Doğrulama:** typecheck 4/4 + **BEŞ** kapı (use-server 26/88 · nest-wiring 42/130+13 · env **51** ·
+  workflows 2/4/47 · **tx-pool 36 tx gövdesi**) · birim shared 64 + api **165** + admin **150** ·
+  build 3/3 · **VPS taze test DB: entegrasyon 410/410 × ÜÇ ARDIŞIK KOŞU (aynı DB) + yarış 3/3** ·
+  PHP-lint 13/13 · prod `deploy.sh` YENİ probla geçti → `/v1/health` 200 v1.1.0, admin `/pending` 200
+  (hata sınırına düşmüyor), api 0 ERROR · dev 37 rota 200 · **canlı 4xx doğrulaması:** mükerrer SKU
+  409, `validityDays=5e8` 400, bozuk uuid 400 (üçü de eskiden 500).
+- **BİLİNÇLİ YAPILMAYAN (raporlandı):** MASTER_KEY test koşularında sabitlenmedi (sabitlemek etiketsiz
+  sabit payload kullanan iki test dosyasındaki latent `payload_hash` çakışmasını CANLANDIRIR — önce o
+  payload'lara etiket eklenmeli) · `sequence.sequencer` sabitlenmedi (dosya sırası bugün dosya
+  BOYUTUNA bağlı ve her düzenlemede sessizce değişiyor) · global + LIMIT'li okuma yapan testlerde
+  `truncated` assert'i eklenmedi.
+- **OPERATÖRE KALAN (kod değil, DEĞİŞMEDİ):** prod `SMTP_HOST` TANIMSIZ → mailler mailpit'e gidiyor,
+  gerçek müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm veriyor) · `BACKUP_OFFSITE_CMD`
+  TANIMSIZ → yedekler yalnız o sunucuda (alarm üretiliyor) · ADMIN_TOKEN rotasyonu (log geçmişinde
+  düz metin duruyor).
