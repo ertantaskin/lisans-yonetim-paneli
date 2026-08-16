@@ -14,6 +14,43 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Atama motorunda aşırı teslimat (bedava lisans) · MAK kapasitesi · mail önizleme · 33 denetim bulgusu (migration YOK, eklenti 1.1.4)
+
+**Sistemin kalbinde, üretimde canlı bir hata bulundu ve kapatıldı: bazı durumlarda bir sipariş
+satırına istenenden çok lisans atanıyordu.** Anahtar seçen sorgu "şu kadarını al" derken, ürünün
+elde kalan **tüm** stoğunu tek satıra atayabiliyordu — yani müşteriye bedava lisans gidiyor,
+envanter sessizce yanıyordu. Ölçüldü: 6 birim istenirken 20 kalemin tamamı atandı ve motorun
+kendi kaydı bunu "20/6" diye yazdı.
+
+Neden aylarca fark edilmedi: hata **aralıklıydı**. Yalnız eşzamanlı bir yazma araya girdiğinde
+tetikleniyordu, bu yüzden test paketi koşumların yaklaşık yarısında kırmızı oluyor ve bu
+"ortam gürültüsü" sanılıyordu. Bu turda kaynağı ölçülerek bulundu: aynı dosyadaki çok-kullanımlı
+(MAK) yol doğru deseni zaten kullanıyordu; tek-kullanımlık yol geride kalmıştı. İkisi hizalandı
+ve üzerine **fail-closed bir kalkan** kondu — istenenden fazla kalem seçilirse işlem sessizce
+tamamlanmak yerine geri alınır. Test paketi bu düzeltmeden sonra üst üste temiz koşuyor.
+
+**Kullanıcı isteğiyle üç yeni yetenek:**
+- **Teslimat mailinin önizlemesi** — sipariş detayındaki her mail satırında göz ikonu; içerik,
+  gönderimin kullandığı **aynı** üreticiyle yeniden oluşturulur (ikinci bir uygulama er geç
+  ayrışırdı). Panel bunun bir arşiv değil anlık üretim olduğunu açıkça söyler: mail gövdesi
+  hiçbir yerde saklanmaz (düz metin lisans log'a yazılmaz).
+- **MAK kapasitesi elle düzeltilebiliyor** — "1000 haklıydı, 900 kalmıştı, tedarikçi tekrar
+  1000'e çıkardı" durumu. Teslim edilmiş aktivasyon sayısına **dokunulmaz**; yalnız tavan
+  hareket eder, tükenmiş anahtar yeniden stoğa döner ve bekleyen siparişler o anda taranır.
+- **Envanter sadeleşti** — müşterinin lisansını değiştirme oradan kaldırıldı (o iş siparişin
+  içinde yapılır); envanter artık stoğu görmek ve **yanlış girilmiş kaydı düzeltmek** içindir.
+  Hesap bilgisi güncelleme de sipariş detayına taşındı.
+
+**Denetimden çıkan 33 düzeltme** (dört paralel işçi): tedarikçiye gönderilen maskeli fişte uyarı
+hiç görünmüyordu · inceleme kuyruğunda "Reddet" hiçbir şey yapmadığında bile "lisans gitmedi"
+diyordu · owner kendi hesabının 2FA'sını kapatmaya çalışırken kendi giriş kilidini yakabiliyordu ·
+destek yanıtı müşteriye ulaşmadığında panel "kaydedildi" diyordu · şablon önceliği ekranda
+**tersine** yazılıydı (bir mağazaya özel mail yazan operatör sessizce eziliyordu) · WordPress
+eşleme kutusu panelde pasifleştirilmiş eşlemeyi "Eşli" gösteriyor ve varyasyonlu üründe
+değiştirdiğinizi sandırıp başka bir kayıt yazıyordu · tedarikçi kusur karnesi hesaplanıp
+atılıyordu · maliyet raporunda ömrü dolmuş sermaye görünmüyordu · KVKK anonimleştirmesi yedi
+sayaçtan ikisini gösterdiği için "hiçbir şey olmadı" gibi okunuyordu.
+
 ### Kalan eksikler: AAD oracle'ı · kapalı destek döngüsü · ~40 metin↔kod sapması (migration YOK, eklenti 1.1.3)
 
 Bu tur "kalan eksikler" isteğiyle koştu ve en ağır bulgu yine **önceki turdaki kendi düzeltmemdi**.

@@ -2853,3 +2853,79 @@ docstring iddiaları · admin metinleri · ölü-uç/kapalı-döngü taraması) 
 - **OPERATÖRE KALAN (kod değil, DEĞİŞMEDİ):** prod `SMTP_HOST` TANIMSIZ → teslimat mailleri gerçek
   müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm) · `BACKUP_OFFSITE_CMD` TANIMSIZ → yedekler
   yalnız o sunucuda. (ADMIN_TOKEN rotasyonu bu turda YAPILDI, listeden düştü.)
+
+**ATAMA MOTORUNDA AŞIRI TESLİMAT (LIMIT KAÇAĞI) + 33 DENETİM BULGUSU (commit cb85d8e, CANLI
+prod+dev, eklenti v1.1.4, migration YOK):** Kullanıcı "değişikliklerini ve projeyi baştan sona
+incele, sorunları fixle, sonra dev/prod hepsini yayınla" dedi. Turun asıl bulgusu, aylardır
+"test gürültüsü" sanılan şeyin **üretimde canlı bir para-yolu hatası** olduğuydu.
+- **[KRİTİK] `assignAvailableSingleUse` LIMIT'i bazen hiç uygulamıyordu.** Desen
+  `UPDATE license_items WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP LOCKED)` idi. READ
+  COMMITTED'da UPDATE hedef satırı eşzamanlı değiştirilmiş bulursa satırın YENİ sürümü üzerinde
+  WHERE'i yeniden değerlendirir (EvalPlanQual) ve `IN (…)` alt sorgusu **YENİDEN KOŞAR**; her
+  koşuda "ilk n" baştan seçilir, `SKIP LOCKED` o an kilitli olanları atlar → kümelerin BİRLEŞİMİ
+  güncellenir ve LIMIT fiilen kalkar. **ÖLÇÜLDÜ** (izole PG+Redis, tek süreç, `fileParallelism:false`,
+  ~3 koşumda 1): `qty=6` istenirken **20 satır** — o ürünün TÜM stoğu — döndü, 20'si de tek sipariş
+  satırına atandı; motorun kendi olayı `+20 atandı (20/6)` yazdı. Yani müşteriye bedava lisans +
+  envanterden sessiz yanma. **DÜZELTME:** seçim `WITH picked AS MATERIALIZED (…)` içinde BİR KEZ
+  yapılır — MAK yolu (`consumeMultiUseCapacity`) bu doğru deseni ZATEN kullanıyordu, tek-kullanımlık
+  yol geride kalmıştı — artı **fail-closed kalkan**: istenenden fazla kalem dönerse `throw` →
+  transaction geri alınır (sessiz aşırı teslimat yerine görünür hata). `MATERIALIZED` AÇIKÇA yazılır
+  (tek referanslı CTE inline edilebilir, tuzak geri gelirdi). Regresyon: `allocate-limit.test.ts`.
+- **TEŞHİS YÖNTEMİ (ders):** ilk "izolasyon deneyim" beni YANLIŞ yöne götürdü — yeni test dosyasını
+  çıkarınca paket yeşil geldi ve dosyayı suçladım; oysa o koşu veritabanını da temizliyordu
+  (confounded). **Kontrol deneyi** (kendi değişikliklerimi TAMAMEN çıkarıp `50b0f96`'yı aynı ortamda
+  koşmak) hatanın dağıtılmış kodda olduğunu kanıtladı. Sonra: paralellik mi? (zorla tek-fork seri →
+  yine kırmızı) · ortam mı? (dev yığınından tamamen izole PG+Redis → yine kırmızı) · dosyalar arası
+  mı? (tek dosya 6/6 yeşil → evet) · hangi katman? (testi, sonra `completeLine`'ı, sonra sorgunun
+  KENDİSİNİ enstrümante ettim → `{"qty":6,"tip":"number","donen":20}`). **Aralıklı bir kırmızıyı
+  "gürültü" saymak, bir üretim hatasını aylarca gizleyebilir.**
+- **Kullanıcı istekleri (3):** **mail önizleme** — sipariş detayında göz ikonu → modal; gövde,
+  gerçek gönderimin kullandığı AYNI üreticiyle (builder gönderim yolundan TAŞINDI, kopyalanmadı)
+  üretilir; rol-farkında maskeleme + `reveal` denetim kaydı (yalnız düz metin gösterilirken) +
+  `<pre>` (şablonu operatör yazıyor). `email_log` GÖVDE SAKLAMAZ → ekranda "bu bir arşiv değil,
+  anlık yeniden üretim" AÇIKÇA yazılı. **MAK kapasitesi** — `use_count` ASLA düşmez (§2 sessiz
+  aşırı-satış); `max_uses = use_count + girilen kalan`; `depleted → available` canlanır (yoksa
+  kapasite artar ama kalem hiçbir atamaya girmez); owner-only + sebep zorunlu + ürün `FOR SHARE`
+  (import yolunun deseni; yoksa eşzamanlı `multi→single` düzenlemesi yüzlerce aktivasyonu yakardı) +
+  commit SONRASI tamamlama motoru tetiklenir (stok girişiyle paylaşılan `triggerAutoComplete`).
+  **Envanter sadeleşti** — müşteri lisansını değiştirme kaldırıldı (o iş siparişte), hesap kimlik
+  güncelleme sipariş detayına taşındı; envanter = stoğu gör + yanlış girilen kaydı düzelt.
+- **`products/limits.ts` (yeni yaprak modül):** `products.controller` ⇄ `stock.service` DÖNGÜSEL
+  import'u kırıldı. CommonJS döngüsünde ikinci yüklenen modül KISMİ `exports` görür → sabit
+  `undefined` gelir ve zod `.max(undefined)` sınırı **SESSİZCE** uygulamaz (hata yok, log yok).
+  Kapanan şey önemsiz değil: `KEY_FORMAT_MAX_LENGTH` katastrofik-backtracking regex DoS yüzeyini
+  sınırlıyor. Bugün yalnız `app.module`'deki yükleme SIRASI sayesinde patlamıyordu — invaryant değil.
+- **33 denetim bulgusu (3 denetim ajanı → 4 paralel ayrık-dosya işçi):** maskeli fiş uyarısı HİÇ
+  render edilmiyordu (bayrak zarfın üst düzeyinde, istemci `claim.masked` okuyor; `ClaimRow` tipi
+  alanı tanımladığı için `tsc` sessizdi) · `/review` "Reddet" idempotent no-op'ta bile "müşteriye
+  lisans gitmedi" diyordu · owner kendi satırındaki "2FA Kapat" ile kendi GİRİŞ kilidini yakabiliyordu
+  (parola denemeleriyle AYNI kova) · destek yanıtı müşteriye ulaşmadığında "kaydedildi" deniyordu ·
+  Ctrl+K arama hatası "Sonuç yok."a dönüşüyordu · dashboard KPI'ları elde varken "—" gösteriyordu ·
+  **şablon önceliği editörde TERS yazılıydı** (gerçek: ürün+site > ürün > site > genel → bir mağazaya
+  özel mail yazan operatör sessizce eziliyordu) · parti detayı AKTİF partide olmayan menü öğesini
+  vaat ediyordu · site sihirbazı webhook'un "boş bırakırsanız" doldurulacağını söylüyordu (gerçekte
+  connect akışı HER ZAMAN eziyor; kardeş alanın `manual` bayrağı var, webhook'ta yok) ·
+  `canceledUnits` sunuma çıkmıyordu (aynı kutuda "2/3 bekliyor" + "Teslim edildi") · tedarikçi
+  **kusur karnesi** hesaplanıp atılıyordu ("hangi tedarikçi bozuk anahtar gönderiyor" cevapsızdı) ·
+  maliyet raporunda ömrü dolmuş sermaye görünmüyordu · KVKK anonimleştirme 7 sayaçtan 2'sini
+  gösterdiği için "hiçbir şey olmadı" gibi okunuyordu · `dead_letter:*` hedef tipi hem ham görünüyor
+  hem süzülemiyordu · **WP (v1.1.4):** panelde PASİF eşleme "Eşli" görünüyordu · varyasyonlu üründe
+  kutu değiştirdiğinizi sandırıp AYRI ürün-seviyesi kayıt yazıyordu (o varyasyonun siparişleri ESKİ
+  ürünü teslim etmeye devam ediyordu) → varyasyon satırları artık salt-okunur ayrı blokta · MAK'ta
+  "Değiştir" garantili 400 veriyordu → sebebiyle kapalı (`maxUses>1` çıkarımı; panel `usageMode`
+  döndürmüyor, sınırı koda yazıldı) · ham hata enum'u ("Not Found"/"validation_error") kullanıcıya
+  basılıyordu → tek kaynak `error_message()` · katalog kırpması sessizdi → `?meta=1` zarfı + görünür
+  uyarı (önbellek anahtarı `_v2`, yoksa eski düz-dizi önbellek yeni koda düşüp listeyi BOŞALTIRDI).
+- **Doğrulama:** typecheck 4/4 + **5 kapı** (use-server 26/89 · nest-wiring 42 modül/133 sınıf +13
+  kuyruk · env 51 · workflows 2/4/47 · tx-pool 37) · birim shared 68 + api 179 + admin 159 · build 3/3 ·
+  **VPS'te dev yığınından TAMAMEN İZOLE PG+Redis: entegrasyon 421/421 × 3 ARDIŞIK + yarış 3/3**
+  (düzeltme öncesi aynı ortamda ~%50 kırmızıydı; düzeltme sonrası alt kümede ayrıca 8/8) · PHP-lint
+  12/12 + eklenti davranış **108/108** · prod `deploy.sh api admin` (rollback'li) → `/v1/health`
+  **200 v1.1.0**, admin `/pending` **200**, api **0 ERROR** · dev yığını güncel · **eklenti v1.1.4
+  yayınlandı** (201, 135.714 bayt; public `updates/plugin/info` 1.1.4 + `download/1.1.4` 200 birebir).
+- **KENDİ HATALARIM:** `sql` şablonunun İÇİNDE ters tırnak (**10. kez** — o bloğa yasak notu düşüldü) ·
+  düzeltmeyi VPS'e göndermeden koşu başlattım (bir koşu boşa gitti) · iki kez YANLIŞ ana makine adını
+  sorgulayıp (`lisans.` vs `admin.` alt alanı) kısa süre sorun sandım — ölçmeden önce adresi doğrula.
+- **OPERATÖRE KALAN (kod değil, DEĞİŞMEDİ):** prod `SMTP_HOST` TANIMSIZ → teslimat mailleri gerçek
+  müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm veriyor) · `BACKUP_OFFSITE_CMD` TANIMSIZ →
+  yedekler yalnız o sunucuda.
