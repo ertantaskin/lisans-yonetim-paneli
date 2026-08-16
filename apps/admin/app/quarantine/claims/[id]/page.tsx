@@ -4,7 +4,9 @@ import { ArrowLeft, Boxes, CalendarRange, FileText, Truck, User } from 'lucide-r
 import { ClaimStatusBadge } from '../../../../components/ui/badge';
 import { StatStrip } from '../../../../components/ui/stat-tile';
 import { ClaimDetail } from '../../../../components/claims/claim-detail';
-import { fetchClaim } from '../../claims-queries';
+import { Card } from '../../../../components/ui/card';
+import { fetchClaim, type ClaimDetailData } from '../../claims-queries';
+import { ApiError } from '../../../../lib/api';
 import { claimStatusHint } from '../../../../lib/labels';
 import { fmtDateTime } from '../../../../lib/utils';
 
@@ -29,7 +31,36 @@ export default async function ClaimDetailPage({ params }: { params: Promise<{ id
   const { id } = await params;
   if (!UUID_RE.test(id)) notFound();
 
-  const data = await fetchClaim(id);
+  /*
+   * HATA AYRIMI (denetim, kardeş desen: purchase-orders / suppliers / templates detayları):
+   * yalnız 404 "fiş yok" demektir → notFound(). 401/500/504 gibi durumlarda operatöre
+   * "bulunamadı" demek YANLIŞ bilgi verirdi (fiş duruyor, API ulaşılamıyor) ve operatör
+   * kesilmiş bir fişi kaybettiğini sanardı. Diğer hatalar geri-linkli bir kartta yazılır.
+   */
+  let data: ClaimDetailData | null = null;
+  let error: string | null = null;
+  try {
+    data = await fetchClaim(id);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) notFound();
+    error = e instanceof Error ? e.message : 'Bağlantı hatası';
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <Link
+          href="/quarantine/claims"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+        >
+          <ArrowLeft className="size-4" aria-hidden /> Değişim Fişleri
+        </Link>
+        <Card className="p-6">
+          <p className="text-sm text-destructive">Fiş yüklenemedi: {error}</p>
+        </Card>
+      </div>
+    );
+  }
   if (!data) notFound();
   const { claim, items } = data;
 

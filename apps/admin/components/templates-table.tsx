@@ -19,7 +19,7 @@ import {
 import { DataTable } from './data-table/data-table';
 import { DataTableColumnHeader } from './data-table/data-table-column-header';
 
-/** Şablon kapsam etiketi: site override > ürün > genel varsayılan (§6). */
+/** Şablon kapsam etiketi. Çözüm önceliği: ürün+site > ürün > site > genel varsayılan (§6). */
 function scopeLabel(t: TemplateRow): string {
   if (t.siteId && t.productId) return `${t.productName ?? 'ürün'} · ${t.siteDomain ?? 'site'}`;
   if (t.siteId) return `Site: ${t.siteDomain ?? t.siteId}`;

@@ -310,9 +310,11 @@ class Wpteslimat_Admin_Metabox {
         .wpt-meta--reason{white-space:normal;font-style:italic;overflow-wrap:anywhere}
         .wpt-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:12px;line-height:1.7;border:1px solid #c3c4c7;border-radius:4px;background:#fff;color:#2c3338;cursor:pointer;transition:background .1s,border-color .1s,color .1s}
         .wpt-btn .dashicons{font-size:14px;width:14px;height:14px;line-height:1}
-        .wpt-btn:hover{background:#f6f7f7;border-color:#8c8f94}
-        .wpt-btn:disabled{opacity:.55;cursor:default}
-        .wpt-btn--replace:hover{border-color:#2271b1;color:#2271b1;background:#f0f6fc}
+        /* Hover YALNIZ etkin düğmede: MAK'ta "Değiştir" sebebiyle disabled gösterilir ve hover
+           vurgusu kalsaydı tıklanabilir gibi görünürdü (yanlış afordans). */
+        .wpt-btn:not(:disabled):hover{background:#f6f7f7;border-color:#8c8f94}
+        .wpt-btn:disabled{opacity:.55;cursor:not-allowed}
+        .wpt-btn--replace:not(:disabled):hover{border-color:#2271b1;color:#2271b1;background:#f0f6fc}
         .wpt-btn--suspend .dashicons{color:#996800}
         .wpt-btn--suspend:hover{border-color:#dba617;background:#fcf9e8;color:#8a6d0b}
         .wpt-btn--resume .dashicons{color:#0a7d2c}
@@ -369,6 +371,28 @@ class Wpteslimat_Admin_Metabox {
             : (isset($a['remoteLineId']) && strpos((string) $a['remoteLineId'], 'bonus:') === 0);
         $is_account = isset($a['kind']) ? ($a['kind'] === 'account') : (!empty($a['maskedFields']));
 
+        /*
+         * MAK/çok-kullanımlı (paylaşımlı) anahtar → "Değiştir" panelde GARANTİLİ reddedilir:
+         * `admin-orders.service.replaceAssignment` `usage_mode='multi'` gördüğünde 400 verir
+         * ("Çok-kullanımlı (MAK) üründe otomatik değişim desteklenmez — elle işleyin"); gerekçe
+         * §2'dir: geri alınan kapasite AYNI paylaşımlı anahtara döner, yani taze anahtar yerine
+         * yine kusurlu anahtar seçilirdi. Panelin KENDİ ekranları (sipariş detayı, destek kuyruğu,
+         * envanter) düğmeyi bu sebeple KAPATIYOR; mağaza yüzeyi açık kalmıştı → operatör tıklıyor
+         * ve 400 alıyordu. Bu projede "tıklanıp hata veren düğme, hiç sunulmayandan kötüdür".
+         *
+         * ÇIKARIMIN SINIRI (bilinçli): panelin red ölçütü ÜRÜNÜN `usage_mode` alanıdır, KALEMİN
+         * kapasitesi değil — ama `siteAdminView` yanıtı `usageMode` DÖNDÜRMEZ (yalnız `maxUses` +
+         * `useCount` gelir). Elde olan en yakın sinyal `maxUses > 1`:
+         *   - Yanlış-negatif YOK: multi ürünlerde kapasite her zaman >1 (ürün oluşturmada
+         *     `multi ⇒ maxUses>1` refine'ı + stok import guard'ı) → MAK atamaları KESİN yakalanır.
+         *   - Yanlış-pozitif teorik olarak mümkün: tek-kullanımlık bir üründe `max_uses>1` taşıyan
+         *     bir kalem bulunursa düğme gereksiz kapanır. Yön BİLEREK güvenli tarafta seçildi
+         *     (çalışabilecek bir düğmeyi gizlemek, garantili 400 veren düğme sunmaktan iyidir).
+         * Panel `siteAdminView`'a `usageMode` eklerse ölçüt DOĞRUDAN o alana taşınmalıdır.
+         */
+        $max_uses     = isset($a['maxUses']) ? (int) $a['maxUses'] : 1;
+        $is_multi_key = $max_uses > 1;
+
         echo '<li class="wpteslimat-asg-row wpt-key" data-assignment="' . esc_attr($aid) . '">';
 
         // Sol blok: değer + durum pill + meta çipleri.
@@ -412,7 +436,7 @@ class Wpteslimat_Admin_Metabox {
                 . sprintf(esc_html__('Bu siparişte %d kullanım hakkı', 'wpteslimat'), $units)
                 . '</span>';
         }
-        if (!empty($a['maxUses']) && (int) $a['maxUses'] > 1) {
+        if ($is_multi_key) {
             // O11: bu sayaç ANAHTARIN GENELİDİR (tüm siparişler/müşteriler toplamı), bu
             // siparişin harcaması DEĞİL. Etiketsiz "12/500 kullanım" çipi "bu müşteri 12
             // kullanım harcadı" diye okunuyordu → anlamı çipin İÇİNE yazıldı.
@@ -422,7 +446,7 @@ class Wpteslimat_Admin_Metabox {
                 . sprintf(
                     esc_html__('Anahtar geneli: %1$d/%2$d kullanım', 'wpteslimat'),
                     (int) ($a['useCount'] ?? 0),
-                    (int) $a['maxUses']
+                    $max_uses
                 )
                 . '</span>';
         }
@@ -438,8 +462,17 @@ class Wpteslimat_Admin_Metabox {
                 . '<span class="dashicons dashicons-visibility"></span><span class="wpt-btn__label">' . esc_html__('Göster', 'wpteslimat') . '</span></button>';
         }
         if ($can_op && $is_active) {
-            echo '<button type="button" class="wpteslimat-op wpt-btn wpt-btn--replace" data-op="replace" title="' . esc_attr__('Bu anahtarı taze biriyle değiştir', 'wpteslimat') . '">'
-                . '<span class="dashicons dashicons-update"></span><span class="wpt-btn__label">' . esc_html__('Değiştir', 'wpteslimat') . '</span></button>';
+            if ($is_multi_key) {
+                // MAK: düğme SEBEBİYLE kapalı (yukarıdaki gerekçe). `wpteslimat-op` sınıfı YOK →
+                // JS işleyicisi bu düğmeyi hiç görmez; `disabled` ile klavye/fare de erişemez.
+                echo '<button type="button" class="wpt-btn wpt-btn--replace" disabled title="'
+                    . esc_attr__('Çok kullanımlı (MAK) anahtarda otomatik değişim yapılamaz: geri alınan kullanım hakkı aynı paylaşımlı anahtara döner. Panelden elle işleyin.', 'wpteslimat') . '">'
+                    . '<span class="dashicons dashicons-update"></span><span class="wpt-btn__label">'
+                    . esc_html__('Değiştir', 'wpteslimat') . '</span></button>';
+            } else {
+                echo '<button type="button" class="wpteslimat-op wpt-btn wpt-btn--replace" data-op="replace" title="' . esc_attr__('Bu anahtarı taze biriyle değiştir', 'wpteslimat') . '">'
+                    . '<span class="dashicons dashicons-update"></span><span class="wpt-btn__label">' . esc_html__('Değiştir', 'wpteslimat') . '</span></button>';
+            }
         }
         if ($can_op && ($is_active || $is_suspended)) {
             $sv = $is_suspended ? '0' : '1';

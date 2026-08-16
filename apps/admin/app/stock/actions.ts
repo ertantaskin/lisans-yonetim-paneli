@@ -68,6 +68,14 @@ export interface ImportState {
     autoCompleted: number;
     /** Inline cap'i aşan bekleyen satırlar arka plan kuyruğuna atıldı mı. */
     autoCompleteQueued?: boolean;
+    /**
+     * Stok YAZILDI ama bekleyen sipariş taraması koşamadı (kısmi başarı).
+     *
+     * SESSİZ KALAMAZ: bu alan yokken ekran "N kayıt girildi" diye YEŞİL rapor veriyordu ve
+     * bekleyen siparişler stok VARKEN teslim edilmemiş kalıyordu — operatörün bunu "zaten
+     * bekleyen talep yoktu"dan ayırt etmesinin yolu yoktu (tek iz sunucu logu).
+     */
+    autoCompleteFailed?: boolean;
     /** Kuru çalıştırma (§7): true ise hiçbir şey kaydedilmedi (yalnız önizleme). */
     dryRun?: boolean;
     /** Kuru çalıştırma tahmini: dedupe sonrası girilecek satır sayısı. */

@@ -16,6 +16,7 @@ import { OwnerGuard } from '../auth/owner.guard';
 import { AdminActor } from '../auth/admin-actor.decorator';
 import { AdminRole, canRevealPlaintext } from '../auth/admin-role.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
+import { MAX_USES_CAP } from '../products/limits';
 import { LICENSE_ITEM_STATUSES, StockService } from './stock.service';
 
 /**
@@ -174,6 +175,20 @@ const RotateCredentialsBody = z.object({
 type RotateCredentialsBody = z.infer<typeof RotateCredentialsBody>;
 
 /**
+ * Çok kullanımlık (MAK) kalemin KAPASİTE düzeltmesi.
+ *
+ * `remainingUses` = düzeltmeden SONRA kalması istenen kullanım hakkı; servis `max_uses`ı
+ * `use_count + remainingUses` diye türetir (operatör "kalan"ı bilir, tavanı değil).
+ * Üst sınır ürün formundakiyle AYNI sabittir (`MAX_USES_CAP`) — iki ayrı tavan tutmak, bu
+ * ucun ürün formunun reddedeceği bir kapasiteyi kabul etmesi demekti.
+ */
+const AdjustCapacityBody = z.object({
+  remainingUses: z.number().int().min(0).max(MAX_USES_CAP),
+  reason: z.string().trim().min(3).max(500),
+});
+type AdjustCapacityBody = z.infer<typeof AdjustCapacityBody>;
+
+/**
  * Admin: şifreli stok import + lisans envanteri (§12/§13).
  * Prefix bilerek 'admin': stok yolları 'admin/stock/*' olarak KORUNUR (mevcut sözleşme
  * değişmez), lisans envanteri ise kaynak-adına uygun 'admin/license-items' altında durur.
@@ -309,5 +324,22 @@ export class StockController {
     @AdminActor() actor: string,
   ) {
     return this.stock.rotateAccountCredentials(id, body, actor);
+  }
+
+  /**
+   * Çok kullanımlık (MAK) kalemin kalan kullanım hakkını YENİDEN AYARLAR.
+   *
+   * OWNER-ONLY: satılabilir stok miktarını (Σ max_uses − use_count) doğrudan değiştirir —
+   * yani `rotate-credentials` ile aynı sınıf, "rakama müdahale" eden bir işlemdir.
+   * `use_count` ASLA değişmez (bkz. servis jsdoc'u: §2 sessiz aşırı-satış).
+   */
+  @UseGuards(OwnerGuard)
+  @Post('license-items/:id/capacity')
+  adjustCapacity(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodBody(AdjustCapacityBody)) body: AdjustCapacityBody,
+    @AdminActor() actor: string,
+  ) {
+    return this.stock.adjustMultiUseCapacity(id, body, actor);
   }
 }

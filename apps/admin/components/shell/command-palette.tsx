@@ -35,6 +35,8 @@ export function CommandPalette() {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [results, setResults] = React.useState<SearchResult>(EMPTY);
+  /** Arama ÇALIŞTIRILAMADIYSA sebep — "sonuç yok" ile karıştırılmaz (bkz. fetch bloğu). */
+  const [searchError, setSearchError] = React.useState<string | null>(null);
   const router = useRouter();
 
   React.useEffect(() => {
@@ -62,6 +64,7 @@ export function CommandPalette() {
     if (!open) {
       setQuery('');
       setResults(EMPTY);
+      setSearchError(null);
     }
   }, [open]);
 
@@ -70,15 +73,34 @@ export function CommandPalette() {
     const q = query.trim();
     if (q.length < 2) {
       setResults(EMPTY);
+      setSearchError(null);
       return;
     }
     const ctrl = new AbortController();
     const t = setTimeout(() => {
+      /*
+       * HATA "SONUÇ YOK"A DÖNÜŞMEZ (denetim): proxy artık non-2xx durumu KORUYARAK döner
+       * (`app/api/search/route.ts`). Başarısız aramayı boş sonuç gibi göstermek operatöre
+       * "aradığın sipariş/anahtar YOK" dedirtirdi — bu panelde sessiz boş listenin daha
+       * önce ürettiği yanılgının aynısı. Palet yine kırılmaz: sonuçlar boş kalır, sebebi
+       * boş-durum bloğunda yazılır. AbortError (yeni tuş vuruşu) hata DEĞİLDİR.
+       */
       fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: ctrl.signal })
-        .then((r) => (r.ok ? (r.json() as Promise<SearchResult>) : EMPTY))
-        .then((data) => setResults(data ?? EMPTY))
-        .catch(() => {
-          /* iptal/hata: paleti kırma */
+        .then(async (r) => {
+          if (!r.ok) {
+            const body = (await r.json().catch(() => null)) as { message?: string } | null;
+            throw new Error(body?.message || `Arama başarısız (sunucu ${r.status})`);
+          }
+          return (await r.json()) as SearchResult;
+        })
+        .then((data) => {
+          setResults(data ?? EMPTY);
+          setSearchError(null);
+        })
+        .catch((e: unknown) => {
+          if (ctrl.signal.aborted) return;
+          setResults(EMPTY);
+          setSearchError(e instanceof Error ? e.message : 'Arama yapılamadı');
         });
     }, 220);
     return () => {
@@ -145,6 +167,22 @@ export function CommandPalette() {
               almıyordu → "bu anahtar panelde kayıtlı değil" yanılgısı. Kısıt artık boş
               durumda yazılı (kod kapısına dokunulmadı).
             */}
+            {/*
+              HATA BANDI — `Command.Empty` İÇİNE KONULAMAZ: cmdk onu yalnız HİÇ öğe
+              render edilmediğinde gösterir; sorgu bir sayfa adıyla eşleştiğinde (çok sık)
+              liste dolu olur ve hata GİZLENİRDİ. Bu yüzden ayrı, koşulsuz bir satır.
+            */}
+            {searchError && (
+              <div
+                role="status"
+                className="mb-1 rounded-sm border border-destructive/40 bg-destructive/10 px-2.5 py-2 text-xs text-destructive"
+              >
+                <strong className="font-medium">Sipariş/anahtar araması yapılamadı:</strong>{' '}
+                {searchError} — aşağıdaki sayfa listesi çalışmaya devam ediyor. Sonuç
+                görünmemesi, aradığınız kaydın OLMADIĞI anlamına gelmez.
+              </div>
+            )}
+
             <Command.Empty className="space-y-1 py-6 text-center text-sm text-muted-foreground">
               <p>Sonuç yok.</p>
               <p className="text-xs">

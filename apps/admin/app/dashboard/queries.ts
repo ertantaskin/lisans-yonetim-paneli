@@ -18,6 +18,14 @@ export interface DashboardRecentOrder {
 
 export interface DashboardSummary {
   pendingLines: number;
+  /**
+   * Mağaza ürünü panel ürününe bağlı OLMADIĞI için bekleyen satır sayısı.
+   *
+   * API bunu ZATEN döndürüyordu (`summary()` → `counters.unmappedLines`) ama bu tipte
+   * yoktu; canlı şerit düştüğünde sunucu özetinde hazır duran sayaç okunamıyordu.
+   * OPSİYONEL: eski API sürümünde alan gelmeyebilir → okuyan `?? null` uygular.
+   */
+  unmappedLines?: number;
   todayOrders: number;
   lowStockCount: number;
   openReplacements: number;

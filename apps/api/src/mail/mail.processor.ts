@@ -2,26 +2,10 @@ import { Inject, Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import type { Job } from 'bullmq';
-import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { type Transporter } from 'nodemailer';
-import {
-  AccountPayloadSchema,
-  buildGuideMailBlock,
-  parseAccountPayload,
-  type ProductGuide,
-} from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
-import { CryptoService } from '../crypto/crypto.service';
-import {
-  assignments,
-  emailLog,
-  licenseItems,
-  orderLines,
-  orders,
-  productGuides,
-  products,
-  sites,
-} from '../db/schema';
+import { emailLog } from '../db/schema';
 import {
   MAIL_DELIVERY_JOB,
   MAIL_NOTICE_JOB,
@@ -31,99 +15,10 @@ import {
   type ReplacementNoticeJob,
 } from './mail.service';
 import { createMailTransport } from './mail.transport';
-import { TemplatesService, render } from './templates.service';
+import { DeliveryMailBuilder } from './delivery-mail.builder';
 
 /** Kuyruktan gelebilecek iş gövdeleri (iş adına göre ayrışır — bkz. process). */
 type MailJobData = DeliveryJob | ReplacementNoticeJob;
-
-/**
- * Yerel saat dilimi etiketi (ör. `UTC+03:00`) — o ANDAKİ ofset (yaz saati dahil doğru).
- *
- * ICU'ya (`timeZoneName`) BİLEREK dayanmaz: çıktı Node/ICU sürümüne göre "GMT+3" / "+3" gibi
- * değişebilirdi ve bu değer hem maile hem şablon önizlemesine giriyor — iki yüzeyin ayrışmaması
- * için biçim deterministik olmalı.
- */
-function localUtcOffsetLabel(d: Date): string {
-  const minutes = -d.getTimezoneOffset();
-  const sign = minutes < 0 ? '-' : '+';
-  const abs = Math.abs(minutes);
-  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
-  const mm = String(abs % 60).padStart(2, '0');
-  return `UTC${sign}${hh}:${mm}`;
-}
-
-/**
- * Geçerlilik bitişini müşteriye gösterilecek YEREL tarih-SAATE çevirir (§11 süreli hesap).
- *
- * NEDEN SAAT ve SAAT DİLİMİ VAR (ölçülmüş sapma): burası yalnız GÜN yazıyordu ve gün, API
- * konteynerinin saat dilimine göre hesaplanıyordu; müşteri sayfası/.txt ise MAĞAZANIN saat
- * diliminde ve SAATLİ gösteriyordu. İkisini bağlayan hiçbir kod yoktu. Somut sonuç:
- * `valid_until = 2026-08-16T22:30Z` + mağaza UTC ise mail "17.08.2026", sayfa "16.08.2026 22:30"
- * diyordu — süreli hesap müşterisi bir günü olduğunu (ya da olmadığını) sanıyordu. Belirsizlik
- * en kötü seçenektir: hangi dilimde gösterildiği artık METİNDE yazılıdır ve makine-okunur
- * karşılığı `{{valid_until_iso}}` ile ayrıca sunulur.
- *
- * Boş/geçersiz değer → '' (şablon token'ı boş kalır, mail bozulmaz — kritik olmayan bir alan
- * yüzünden teslimat maili ASLA düşmemeli). Saat dilimi konteynerden gelir (docker-compose:
- * TZ=Europe/Istanbul) → panelin gösterdiği gün sınırıyla aynı.
- */
-export function formatValidUntil(value: Date | string | null | undefined): string {
-  if (!value) return '';
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
-  const date = d.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  // Saat ELLE biçimlenir: `toLocaleTimeString` bazı ICU sürümlerinde gece yarısını '24:00'
-  // yazar ve hour12/hourCycle davranışı sürüme göre değişir — tarih zaten kritik bir alan.
-  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  return `${date} ${time} (${localUtcOffsetLabel(d)})`;
-}
-
-/**
- * Aynı değerin HAM ISO 8601 (UTC) karşılığı — `{{valid_until_iso}}`.
- *
- * Yerel biçim insan içindir ve saat dilimi etiketiyle birlikte okunmalıdır; ISO ise
- * yoruma kapalıdır. Mağazanın kendi yüzeyi (sayfa/.txt) tarihi zaten UTC anlık değerinden
- * üretir → operatör şablonunda ikisini yan yana kullanarak iki yüzeyi birebir eşleyebilir.
- */
-export function formatValidUntilIso(value: Date | string | null | undefined): string {
-  if (!value) return '';
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString();
-}
-
-/** Şablon gövdesinde `{{guides}}` token'ı geçiyor mu (boşluklu yazım da sayılır). */
-const GUIDES_TOKEN_RE = /\{\{\s*guides\s*\}\}/;
-
-/**
- * Rehber bloğunu maile YERLEŞTİRİR — şablonda `{{guides}}` yoksa SONA EKLER.
- *
- * NEDEN FALLBACK VAR (sessiz kayıp koruması): rehber özelliği eklendiğinde operatörlerin
- * veritabanında ZATEN kayıtlı şablonları vardır ve hiçbiri bu token'ı içermez. Yalnız
- * token'a güvenilseydi, panelde rehber tanımlayan operatör onun maile girdiğini SANIR ama
- * müşteri hiçbir zaman göremezdi — üstelik hata da alınmazdı. (Şablon editörü ayrıca
- * "desteklenen değişken" listesini gösterir; token'ı bilerek yerleştirmek isteyen operatör
- * konumu kendisi seçebilir, o durumda bu ek çalışmaz.)
- *
- * @param rendered Token'ları değiştirilmiş nihai gövde.
- * @param template Ham şablon (token aranan yer — render sonrası metinde token kalmaz).
- * @param guides   Rehber bloğu; boşsa hiçbir şey eklenmez.
- */
-export function withGuides(rendered: string, template: string, guides: string): string {
-  if (!guides) return rendered;
-  if (GUIDES_TOKEN_RE.test(template)) return rendered;
-  return `${rendered.replace(/\s+$/, '')}\n\n${guides}\n`;
-}
-
-/** Kalemler arasındaki EN YAKIN (en erken) geçerlilik bitişi; hiç yoksa null. */
-export function earliestValidUntil(values: Array<Date | null | undefined>): Date | null {
-  let min: Date | null = null;
-  for (const v of values) {
-    if (!v) continue;
-    if (min === null || v.getTime() < min.getTime()) min = v;
-  }
-  return min;
-}
 
 /**
  * BullMQ worker — 'mail' kuyruğunun TEK tüketicisi (§6). Redis kuyruğundan asenkron.
@@ -147,10 +42,11 @@ export class MailProcessor extends WorkerHost {
 
   constructor(
     @Inject(DB) private readonly db: Database,
-    private readonly crypto: CryptoService,
-    private readonly templates: TemplatesService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
+    // Gövde üretimi (şablon + payload çözümü + rehber + sandbox) TEK KAYNAKTAN gelir; aynı
+    // sınıfı panel önizlemesi de kullanır → iki yüzey ASLA ayrışamaz (bkz. delivery-mail.builder).
+    private readonly builder: DeliveryMailBuilder,
   ) {
     super();
   }
@@ -212,180 +108,27 @@ export class MailProcessor extends WorkerHost {
     if (existing?.status === 'sent') return;
 
     try {
-      const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId)).limit(1);
-      if (!order) throw new Error('Sipariş bulunamadı');
-
-      const [site] = await this.db.select().from(sites).where(eq(sites.id, order.siteId)).limit(1);
-
       /*
-       * Maile girecek atamaların KAPSAMI — TEK KAYNAK.
+       * Gövde ÜRETİMİ tek kaynaktan (DeliveryMailBuilder): şablon çözümü (§6 ürün+site
+       * önceliği), payload çözme, kalem sırası, `{{guides}}` yerleşimi ve sandbox
+       * yönlendirmesi burada DEĞİL, builder'da tanımlıdır. Panel önizlemesi AYNI metodu
+       * çağırır → operatörün gördüğü metin ile müşteriye giden metin ayrışamaz.
        *
-       * Aynı yüklem hem anahtar satırlarını hem rehber sorgusunu süzer; iki yerde ayrı ayrı
-       * yazılsaydı biri güncellenip diğeri unutulduğunda mail, teslim edilmeyen (ya da
-       * süresi geçmiş) bir ürünün rehberini taşırdı.
+       * reveal: true — müşteri kendi lisansını maskeli alamaz (maskeleme yalnız panel
+       * yüzeyinin owner-olmayan admin görünümü içindir).
        */
-      const deliveredScope = and(
-        eq(assignments.orderId, orderId),
-        eq(assignments.status, 'active'),
-        // #7 denetim (yarış savunması) — getDeliveries ile SİMETRİK: iptal/iade edilmiş
-        // satırın (canceled) ataması ASLA maile girmez. getDeliveries bu yüklemi AÇIK bir
-        // savunma olarak taşıyordu, mail `orderLines`'ı join ettiği hâlde KOYMUYORDU →
-        // stray aktif atama kalırsa My Account anahtarı gizlerken "Tekrar Mail" AYNI
-        // anahtarı DÜZ METİN e-postayla gönderiyordu (okuma yolu yazma yolundan iyi korunuyordu).
-        eq(orderLines.canceled, false),
-        // Savunma amaçlı süre filtresi (getDeliveries ile birebir aynı invaryant):
-        // expiry job gecikse bile onExpiry='hide' ürünün süresi geçmiş payload'ı
-        // mail gövdesine KONULMAZ (düz metin parola sızmaz). 'keep' ürün süre
-        // sonrası da teslim edilir.
-        or(
-          isNull(assignments.validUntil),
-          gt(assignments.validUntil, sql`now()`),
-          eq(products.onExpiry, 'keep'),
-        ),
-      );
-
-      /*
-       * §7 kurulum rehberleri AYRI sorguda (rows'a bağlı DEĞİL → aynı Promise.all'da paralel,
-       * ek round-trip yok). getDeliveries'te de bu desen kullanılır ve gerekçesi aynıdır:
-       * rehber gövdesi atama satırlarının LEFT JOIN'inde taşınırsa SATIR BAŞINA tekrarlanır
-       * (50 anahtarlı siparişte 4.000 karakterlik metin 50 kez DB'den taşınır). `distinct`
-       * şart: aynı rehbere bağlı birden çok satır (çok kalemli sipariş) tekrar üretirdi.
-       */
-      const [rows, guideRows] = await Promise.all([
-        this.db
-          .select({
-            units: assignments.units,
-            // Geçerlilik bitişi (süreli hesap ürünü, §11). Süzgeçte KULLANILIYORDU ama
-            // SEÇİLMİYORDU → şablona `{{valid_until}}` yazan operatör sessizce boş string
-            // alıyordu; müşteri geçerlilik tarihini My Account'ta görüyor, MAİLDE göremiyordu.
-            validUntil: assignments.validUntil,
-            payloadEnc: licenseItems.payloadEnc,
-            licenseItemId: licenseItems.id,
-            productName: products.name,
-            productId: orderLines.productId,
-            productKind: products.kind,
-            payloadSchema: products.payloadSchema,
-          })
-          .from(assignments)
-          .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
-          .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-          .leftJoin(products, eq(orderLines.productId, products.id))
-          .where(deliveredScope)
-          // SIRA: mail gövdesindeki anahtarlar da stoğa giriş sırasında (getDeliveries ile
-          // AYNI yön). ORDER BY yoktu → müşteriye giden mailde sıra rastgeleydi ve panelde
-          // görünen sırayla tutmuyordu.
-          .orderBy(licenseItems.seq),
-        /*
-         * §7 kurulum rehberi — anahtarla BİRLİKTE gitmeli. Müşteri "Office 365'e nasıl
-         * giriş yaparım" cevabını mailde bulamazsa destek talebi açıyor.
-         *
-         * Kapsam yukarıdaki `deliveredScope` ile AYNI: yalnız bu maile GİREN ürünlerin
-         * rehberi gider (henüz teslim edilmemiş kalemin rehberi mailde yer almaz — kısmi
-         * teslimat bu panelde birinci sınıf akıştır). `products` INNER: rehber bir ürüne
-         * bağlıdır, ürünsüz satırın rehberi de olamaz.
-         */
-        this.db
-          .selectDistinct({
-            id: productGuides.id,
-            title: productGuides.title,
-            body: productGuides.body,
-          })
-          .from(assignments)
-          .innerJoin(orderLines, eq(assignments.lineId, orderLines.id))
-          .innerJoin(products, eq(orderLines.productId, products.id))
-          .innerJoin(productGuides, eq(products.guideId, productGuides.id))
-          .where(deliveredScope),
-      ]);
-
-      // Aktif atama yoksa (ör. tümü revoke edildikten sonra resend) BOŞ mail gönderme.
-      if (rows.length === 0) {
+      const built = await this.builder.build(orderId, { reveal: true });
+      if (!built.ok) {
+        // Aktif atama yok (ör. tümü revoke edildikten sonra 'Tekrar Mail') → BOŞ mail gönderme.
         await this.setStatus(emailLogId, 'skipped', 'aktif atama yok');
         return;
       }
 
-      const itemsBlock = rows
-        .map((r) => {
-          const plain = this.crypto.decrypt(
-            r.payloadEnc,
-            CryptoService.licenseItemAad(r.licenseItemId),
-          );
-          const label = r.productName ?? 'Ürün';
-          const qty = r.units > 1 ? ` (${r.units} adet)` : '';
-          // Geçerlilik bitişi kaleme YAZILIR: süreli hesap ürününde tarih müşterinin en çok
-          // ihtiyaç duyduğu bilgidir ve çok kalemli siparişte kalemler FARKLI tarihler taşır
-          // → tek bir {{valid_until}} değişkeni bunu doğru anlatamaz (o değişken yalnız en
-          // yakın tarihi verir, aşağıya bkz.).
-          const until = formatValidUntil(r.validUntil);
-          const untilLine = until ? `\n    Geçerlilik bitişi: ${until}` : '';
-          // Hesap ürünü: alan-alan render (Kullanıcı adı: x / Parola: y).
-          const schema =
-            r.productKind === 'account' ? AccountPayloadSchema.safeParse(r.payloadSchema) : null;
-          if (schema?.success) {
-            const fields = parseAccountPayload(schema.data, plain)
-              .map((f) => `    ${f.label}: ${f.value}`)
-              .join('\n');
-            return `• ${label}${qty}:\n${fields}${untilLine}`;
-          }
-          return `• ${label}${qty}: ${plain}${untilLine}`;
-        })
-        .join('\n');
-
-      /*
-       * §7 kurulum/etkinleştirme rehberleri — TEKRARSIZ (`selectDistinct` sağlar; uygulama
-       * tarafındaki elle tekilleştirme artık gereksiz).
-       *
-       * SIRA BAŞLIĞA GÖRE — getDeliveries KANONİKTİR ve o da böyle sıralar. Burada sıra
-       * satırların sırasından (licenseItems.seq) türetiliyordu: çok rehberli siparişte mail
-       * ile müşteri sayfası FARKLI sıra gösteriyordu (aynı bilgi iki yüzeyde ayrışıyordu —
-       * bu projede tekrarlayan hata sınıfı). Ayrıca `selectDistinct` sıra GARANTİ ETMEZ
-       * (Postgres hash-aggregate kullanabilir) → açık sıralama zaten şarttır.
-       *
-       * Adet/boyut tavanları `buildGuideMailBlock` içinde ve TEK kaynaktan gelir
-       * (packages/shared): sayılar e-posta istemcisinin kırpma eşiğinden geriye doğru
-       * hesaplanmıştır ve sınıra takılan rehber SESSİZCE düşürülmez.
-       */
-      const guideList: ProductGuide[] = guideRows
-        .map((g) => ({ id: g.id, title: g.title, body: g.body }))
-        .sort((a, b) => a.title.localeCompare(b.title, 'tr'));
-      const guideBlock = buildGuideMailBlock(guideList);
-
-      // Şablon: ilk satırın ürününe göre (site override > ürün > varsayılan, §6).
-      const tpl = await this.templates.resolve(rows[0]!.productId, order.siteId);
-      // Siparişteki EN YAKIN bitiş — iki değişkenin (yerel biçim + ISO) AYNI anı anlatması
-      // için tek kez hesaplanır (iki ayrı çağrı, aralarında sweep koşarsa ayrışabilirdi).
-      const earliest = earliestValidUntil(rows.map((r) => r.validUntil));
-      const vars = {
-        order_no: order.remoteOrderId,
-        site_name: site?.domain ?? 'Mağaza',
-        product_name: rows[0]!.productName ?? '',
-        units: String(rows.reduce((s, r) => s + r.units, 0)),
-        customer_email: order.customerEmail,
-        items: itemsBlock,
-        // Süreli hesap (§11) geçerlilik bitişi. Siparişteki EN YAKIN tarih seçilir: birden çok
-        // kalem farklı tarihler taşıyabilir ve tek değişkene sığmaz; "en erken biten" müşteri
-        // için en güvenli özettir (kalem kalem doğru tarih zaten `{{items}}` bloğunda yazılıdır).
-        // Süresiz üründe BOŞ string (şablon token'ı sessizce kaybolur — mevcut render davranışı).
-        valid_until: formatValidUntil(earliest),
-        // Aynı anın yoruma kapalı ISO karşılığı: yerel biçim ile mağaza sayfasının gösterdiği
-        // tarih FARKLI GÜN olabildiği için (bkz. formatValidUntil gerekçesi) makine-okunur
-        // değer de sunulur — operatör şablonda ikisini eşleyebilir.
-        valid_until_iso: formatValidUntilIso(earliest),
-        // §7 kurulum/etkinleştirme rehberi bloğu. Rehbersiz siparişte BOŞ string → token
-        // sessizce kaybolur (mevcut render davranışı), mailde boşluk bırakmaz.
-        guides: guideBlock.text,
-      };
-
-      // Sandbox (test modu, §14): site.sandbox=true ise gerçek müşteriye mail GİTMEZ —
-      // alıcı yöneticiye (MAIL_FROM) yönlendirilir + konu başına '[TEST MODU] ' eklenir.
-      const mailFrom = this.config.getOrThrow<string>('MAIL_FROM');
-      const sandbox = site?.sandbox === true;
-      const subject = render(tpl.subject, vars);
-
       const info = await this.mailer().sendMail({
-        from: mailFrom,
-        to: sandbox ? mailFrom : order.customerEmail,
-        subject: sandbox ? `[TEST MODU] ${subject}` : subject,
-        text: withGuides(render(tpl.body, vars), tpl.body, guideBlock.text),
+        from: this.config.getOrThrow<string>('MAIL_FROM'),
+        to: built.content.to,
+        subject: built.content.subject,
+        text: built.content.text,
       });
 
       /*

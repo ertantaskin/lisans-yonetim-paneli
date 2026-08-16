@@ -12,9 +12,21 @@ import {
   Wallet,
   Layers,
   TriangleAlert,
+  // Kusur karnesi (§12) — ölü kalem / bildirilmemiş / fiş / yanıt kırılımı.
+  ShieldAlert,
+  PackageX,
+  FileClock,
+  RefreshCw,
+  Ban,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '../../../components/ui/alert';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../../components/ui/card';
 import { StatStrip } from '../../../components/ui/stat-tile';
 import { Badge, SupplyStatusBadge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -59,6 +71,14 @@ function formatCost(cents: number, currency: string): string {
 const RECALL_THRESHOLD = 0.1;
 
 /**
+ * Yüksek KUSUR oranı işareti — `RECALL_THRESHOLD` ile aynı eşik ama farklı düzey:
+ * geri-çekilme PARTİ, kusur KALEM düzeyindedir. Rozet, oran anlamlı bir tabana dayanmadan
+ * basılmaz (2 kalemin 1'i ölüyse "%50" bir kalite sinyali değil gürültüdür).
+ */
+const DEFECT_THRESHOLD = 0.1;
+const DEFECT_MIN_ITEMS = 20;
+
+/**
  * Parti listesinin KAPSAMI — savunmacı okunur.
  *
  * NEDEN: karne partileri sunucuda artık bir üst sınırla çekiliyor (uzun ömürlü tedarikçide
@@ -70,21 +90,21 @@ const RECALL_THRESHOLD = 0.1;
  * Bu yüzden sayaç ÖNCELİKLE API'nin bildirdiği gerçek sayımdan (`batchCount`) okunur; alan
  * yoksa (eski api dağıtımı) liste uzunluğuna düşer ve kırpma varsa "N+" ile dürüstçe yazılır.
  *
- * Alanlar `SupplierScorecard` tipinde YOK (tip `app/suppliers/queries.ts`'te ve bu partide
- * o dosyaya dokunulmuyor) → dar bir cast ile okunur; gelmezse bugünkü davranış aynen korunur.
+ * Alanlar artık `SupplierScorecard` tipinde (queries.ts) — ama OPSİYONEL: admin, API'den ÖNCE
+ * dağıtılabilir. Bu yüzden okuma savunmacı kalır; gelmezse bugünkü davranış aynen korunur
+ * (cast kalktı, tip artık gerçeği anlatıyor).
  */
 function batchScope(data: SupplierScorecard): {
   count: number;
   exact: boolean;
   truncated: boolean;
 } {
-  const d = data as unknown as { batchCount?: unknown; batchesTruncated?: unknown };
-  const raw = Number(d.batchCount);
+  const raw = Number(data.batchCount);
   const exact = Number.isFinite(raw) && raw >= 0;
   return {
     count: exact ? Math.trunc(raw) : data.batches.length,
     exact,
-    truncated: d.batchesTruncated === true,
+    truncated: data.batchesTruncated === true,
   };
 }
 
@@ -123,6 +143,17 @@ export default async function SupplierScorecardPage({
   const scope = batchScope(data);
   const highRecall = data.recallRate > RECALL_THRESHOLD && scope.count > 0;
 
+  /*
+   * KUSUR KARNESİ — API bu bloğu hesaplayıp döndürüyordu ama panel hiç okumuyordu; "hangi
+   * tedarikçi bozuk anahtar gönderiyor" sorusunun cevabı ekranda YOKTU. Blok opsiyoneldir
+   * (eski API imajı göndermez) → gelmezse bölüm hiç çizilmez, sayfa aynen çalışır.
+   */
+  const defects = data.defects;
+  const highDefect =
+    defects != null &&
+    defects.totalItems >= DEFECT_MIN_ITEMS &&
+    defects.defectRate > DEFECT_THRESHOLD;
+
   return (
     <div className="space-y-6">
       {/* Başlık */}
@@ -149,12 +180,22 @@ export default async function SupplierScorecardPage({
               <p className="mt-1 text-sm text-muted-foreground">{supplier.contact}</p>
             )}
           </div>
-          {highRecall && (
-            <Badge variant="danger" className="mt-1">
-              <RotateCcw />
-              Yüksek geri-çekilme
-            </Badge>
-          )}
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {highRecall && (
+              <Badge variant="danger">
+                <RotateCcw />
+                Yüksek geri-çekilme
+              </Badge>
+            )}
+            {/* Kalem düzeyi kalite sinyali — parti düzeyindeki geri-çekilmeden AYRI okunur
+                (bir parti hiç geri çekilmeden içinden tek tek bozuk anahtar çıkabilir). */}
+            {highDefect && (
+              <Badge variant="danger">
+                <ShieldAlert />
+                Yüksek kusur oranı
+              </Badge>
+            )}
+          </div>
         </div>
         {supplier.notes && (
           <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{supplier.notes}</p>
@@ -222,6 +263,86 @@ export default async function SupplierScorecardPage({
           </div>
         )}
       </div>
+
+      {/* Kusur karnesi — "bu tedarikçiden gelen anahtarların kaçı öldü" (§12).
+          API bunu ZATEN hesaplıyordu; panel okumadığı için ekranda hiç görünmüyordu. */}
+      {defects && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert className="size-4 text-muted-foreground" /> Kusur Karnesi
+            </CardTitle>
+            <CardDescription>
+              Bu tedarikçiden gelip ÖLEN (karantinaya düşen ya da geçersiz kılınan) lisans
+              kalemleri. Yukarıdaki geri-çekilme oranı PARTİ düzeyindedir; bu blok KALEM
+              düzeyindedir — bir parti hiç geri çekilmeden içinden tek tek bozuk kalem çıkabilir.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            <StatStrip
+              items={[
+                {
+                  icon: PackageX,
+                  label: 'Kusur Oranı',
+                  // ORAN + HAM SAYAÇ BİRLİKTE: yüzde tek başına tabanı gizler ("%50" 2 kalemde
+                  // de 2000 kalemde de aynı görünür ve yanlış karar verdirir).
+                  value: ratePct(defects.defectRate),
+                  hint: `${defects.deadItems.toLocaleString('tr-TR')}/${defects.totalItems.toLocaleString('tr-TR')} kalem`,
+                  tone: highDefect ? 'danger' : undefined,
+                },
+                {
+                  icon: TriangleAlert,
+                  label: 'Bildirilmemiş',
+                  value: defects.unclaimedItems,
+                  tone: defects.unclaimedItems > 0 ? 'warning' : undefined,
+                  hint: defects.unclaimedItems > 0 ? 'fişe girmedi' : undefined,
+                },
+                { icon: FileClock, label: 'Açık Fiş', value: defects.openClaims },
+                {
+                  icon: Timer,
+                  label: 'Ort. Çözülme',
+                  // null ≠ 0: "veri yok" ile "aynı gün çözülüyor" taban tabana zıt sinyaller.
+                  value: defects.avgResolutionDays == null ? '—' : `${defects.avgResolutionDays} gün`,
+                  hint: defects.avgResolutionDays == null ? 'kapanmış fiş yok' : undefined,
+                },
+                { icon: RefreshCw, label: 'Yenilenen', value: defects.replacedItems },
+                {
+                  icon: Ban,
+                  label: 'Kabul Edilmeyen',
+                  value: defects.rejectedItems,
+                  tone: defects.rejectedItems > 0 ? 'warning' : undefined,
+                },
+              ]}
+            />
+            {defects.unclaimedItems > 0 && (
+              <Alert variant="warning">
+                <TriangleAlert />
+                <div className="min-w-0 flex-1">
+                  <AlertTitle>
+                    {defects.unclaimedItems.toLocaleString('tr-TR')} kusurlu kalem tedarikçiye
+                    bildirilmedi
+                  </AlertTitle>
+                  <AlertDescription>
+                    Bu kalemler henüz hiçbir değişim fişine girmedi — tedarikçi bunlardan haberdar
+                    değil ve değişim süreci başlamadı.{' '}
+                    {/* Derin bağlantı PARAMETRESİZ: /quarantine adres çubuğundan tedarikçi
+                        süzgecini OKUMUYOR (yalnız durum/tarih/arama). Çalışmayan bir parametre
+                        eklemek "süzdüm sandım ama süzülmedi" yanılgısı üretirdi; hedef ekran
+                        zaten "Bildirilecekler" sekmesinde tedarikçi→parti gruplu listeliyor. */}
+                    <Link
+                      href="/quarantine"
+                      className="font-medium underline underline-offset-4"
+                    >
+                      Kusurlu Stok
+                    </Link>{' '}
+                    ekranının “Bildirilecekler” sekmesinde bu tedarikçiyi seçip fiş kesin.
+                  </AlertDescription>
+                </div>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Partiler */}
       <Card>

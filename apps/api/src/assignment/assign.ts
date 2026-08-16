@@ -77,9 +77,29 @@ export async function assignAvailableSingleUse(
   productId: string,
   qty: number,
 ): Promise<string[]> {
+  /*
+   * ── CTE ŞART: `IN (alt sorgu ... LIMIT n FOR UPDATE SKIP LOCKED)` AŞIRI TESLİMAT ÜRETİR ──
+   *
+   * Eski hâli `UPDATE license_items WHERE id IN (SELECT ... LIMIT n FOR UPDATE SKIP LOCKED)`
+   * idi ve ÖLÇÜLDÜ (entegrasyon paketinde ~3 koşumda 1, izole PostgreSQL'de, tek süreçte):
+   * `qty=6` istenirken sorgu **20** satır (o ürünün TÜM stoğu) döndürdü ve hepsi tek sipariş
+   * satırına atandı — motorun kendi olayı `+20 atandı (20/6)` yazdı. Yani sistemin kalbindeki
+   * "istenen kadar ata" sözü bazen tutulmuyordu: müşteriye bedava lisans, envanterden sessiz
+   * yanma. Aralıklı olduğu için aylarca "testler bazen kırmızı" gürültüsü sanılmıştı.
+   *
+   * NEDEN: READ COMMITTED'da UPDATE hedef satırı eşzamanlı değiştirilmiş bulursa satırın YENİ
+   * sürümü üzerinde WHERE'i yeniden değerlendirir (EvalPlanQual) ve `IN (...)` alt sorgusu
+   * YENİDEN KOŞAR. Alt sorgu her koşuda "ilk n"i baştan seçer; `SKIP LOCKED` ile o an kilitli
+   * olanlar atlandığı için farklı bir küme döner ve BİRLEŞİMİ güncellenir → LIMIT fiilen
+   * kalkar. Kuyruk desenlerinde bilinen tuzak budur; doğrusu alt sorguyu BİR KEZ maddeleştiren
+   * CTE'dir. Bu dosyadaki MAK yolu (`consumeMultiUseCapacity`) zaten bu doğru deseni kullanıyor
+   * — tek-kullanımlık yol geride kalmıştı.
+   *
+   * `MATERIALIZED` AÇIKÇA yazılır: tek kez referans edilen bir CTE'yi planlayıcı satır içine
+   * alabilir (inline) ve tuzak geri gelirdi.
+   */
   const rows = await rawRows<{ id: string }>(db, sql`
-    UPDATE license_items SET status = 'assigned', assigned_at = now()
-    WHERE id IN (
+    WITH picked AS MATERIALIZED (
       SELECT id FROM license_items
       WHERE product_id = ${productId} AND status = 'available'
         AND ${notExpiredCond()}
@@ -87,11 +107,27 @@ export async function assignAvailableSingleUse(
       LIMIT ${qty}
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING id;
+    UPDATE license_items li SET status = 'assigned', assigned_at = now()
+    FROM picked p
+    WHERE li.id = p.id
+    RETURNING li.id;
   `);
 
   // postgres-js sürücüsünde execute() satır dizisi döner.
-  return rows.map((r) => r.id);
+  const ids = rows.map((r) => r.id);
+
+  /*
+   * FAIL-CLOSED KALKAN: istenenden ÇOK satır dönmesi imkânsız olmalı; olursa bu sessizce
+   * bedava lisans demektir. Transaction'ı patlatmak (rollback) yanlış teslimattan İYİDİR —
+   * yukarıdaki arıza sınıfı tam da "sessiz" olduğu için uzun süre fark edilmemişti.
+   */
+  if (ids.length > qty) {
+    throw new Error(
+      `Atama invaryantı ihlali: ${qty} birim istendi, ${ids.length} kalem atandı ` +
+        `(ürün ${productId}). İşlem geri alındı.`,
+    );
+  }
+  return ids;
 }
 
 /**

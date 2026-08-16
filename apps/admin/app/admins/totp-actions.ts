@@ -118,11 +118,30 @@ export async function resetTotpAction(formData: FormData): Promise<AdminActionSt
   return { ok: true };
 }
 
-/** Owner: başka bir yöneticinin TOTP'sini kapat (kurtarmanın hafif hâli; oturumlar düşmez). */
+/**
+ * Owner: BAŞKA bir yöneticinin TOTP'sini kapat (kurtarmanın hafif hâli; oturumlar düşmez).
+ *
+ * KENDİ HESABI BU YOLDAN GEÇEMEZ (denetim): API "kendi hesabı" işleminde parola + GEÇERLİ
+ * KOD ister — rolden bağımsız olarak, çünkü çalınmış bir oturum çerezi tek başına ikinci
+ * faktörü sökmemeli. Bu aksiyon gövdesiz (`{}`) çağırır → 401 döner VE başarısızlık sayacı
+ * GİRİŞ İLE AYNI kovaya yazılır: birkaç deneme operatörün kendi hesabını 15 dakika kilitler
+ * ve `admin_totp_failed` KRİTİK güvenlik olayı üretir. Yani "işe yaramayan" değil, ZARARLI
+ * bir çağrı. İstek API'ye HİÇ gönderilmez; doğru araç `/admins/security` (parola + kod).
+ * UI kapısı (`totp-admin-list` kendi satırında düğme göstermez) tek başına yeterli DEĞİL:
+ * sunucu aksiyonu bir uç noktadır ve dışarıdan serileştirilmiş argümanla çağrılabilir.
+ */
 export async function disableTotpForUserAction(formData: FormData): Promise<AdminActionState> {
   if (!(await isOwner())) return { error: 'Bu işlem için owner yetkisi gerekir.' };
   const id = String(formData.get('id') ?? '').trim();
   if (!isUuid(id)) return { error: 'Yönetici bulunamadı (geçersiz kayıt kimliği).' };
+  const self = await selfId();
+  if (self && id === self) {
+    return {
+      error:
+        'Kendi iki faktörlü doğrulamanızı buradan kapatamazsınız (parola ve güncel kod gerekir). ' +
+        '“Kendi hesabımı ayarla” (/admins/security) ekranını kullanın.',
+    };
+  }
   try {
     await apiPost(`/v1/admin/users/${id}/totp/disable`, {});
   } catch (e) {

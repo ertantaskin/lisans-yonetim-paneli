@@ -605,17 +605,28 @@ define('WPTESLIMAT_HMAC_SECRET', '...');</pre>
             ]),
         ]);
 
+        // Hata metinleri TEK KAYNAKTAN (`Wpteslimat_Admin_Metabox::error_message`) üretilir —
+        // sipariş kutusu ve eşleme kutusuyla aynı desen. Eski kod `$data['error']` okuyordu; o
+        // alan HAM ENUM'dur ("Not Found", "validation_error") ve operatöre İngilizce/teknik metin
+        // olarak çıkıyordu (okunur açıklama `message` alanındadır, doğrulama hatasında `issues`
+        // içindedir). Ağ hatasında da WP_Error'ın ham İngilizce metni basılıyordu.
         if (is_wp_error($res)) {
-            self::redirect_settings('error', $res->get_error_message());
+            self::redirect_settings('error', Wpteslimat_Admin_Metabox::error_message(0, []));
         }
 
         $http = (int) wp_remote_retrieve_response_code($res);
         $data = json_decode(wp_remote_retrieve_body($res), true);
 
-        if ($http < 200 || $http >= 300 || !is_array($data) ||
-            empty($data['apiKey']) || empty($data['hmacSecret'])) {
-            $err = is_array($data) && !empty($data['error']) ? (string) $data['error'] : '';
-            self::redirect_settings('error', $err);
+        if ($http < 200 || $http >= 300) {
+            self::redirect_settings('error', Wpteslimat_Admin_Metabox::error_message(
+                $http,
+                is_array($data) ? $data : []
+            ));
+        }
+        // 2xx ama beklenen kimlik alanları yok: `error_message()` bu kodda anlamlı bir karşılık
+        // üretemez (kod<400 → jenerik metin) → arızayı ADIYLA söyle.
+        if (!is_array($data) || empty($data['apiKey']) || empty($data['hmacSecret'])) {
+            self::redirect_settings('error', __('Panel beklenen kimlik bilgilerini döndürmedi (yanıt eksik). Yeni bir bağlan kodu üretip tekrar deneyin.', 'wpteslimat'));
         }
 
         update_option('wpteslimat_panel_url', $panel);

@@ -708,8 +708,8 @@ export default function GuidePage() {
           Onay için stok gerekir — <strong>tek şart bu değildir</strong>: çok kullanımlı (MAK)
           ürünlerde stok olsa bile otomatik değişim yapılamaz (aşağıdaki maddeye bakın).</li>
           <li><strong>Garanti penceresi kararı size aittir:</strong> panel her talebe &quot;Garanti içi / Garanti dışı&quot; rozetini bilgi olarak basar (teslim tarihi + ürünün garanti gün sayısı; lisansın geçerlilik süresi dolmuşsa garanti içi sayılmaz). Bu rozet onayı <em>engellemez</em> — garanti dışı bir talebi de onaylayabilirsiniz. İlke aynı: <strong>&quot;sistem önerir, insan onaylar.&quot;</strong></li>
-          <li><strong>Proaktif değişim:</strong> müşteri beklemeden, sipariş detayında bir atamayı <strong>&quot;Değiştir&quot;</strong> ile aynı üründen taze bir key ile değiştirebilirsiniz. Eski key karantinaya alınır, değişim geçmişi tutulur.</li>
-          <li><strong>Hesap ürününde parola değiştiyse &quot;Değiştir&quot; kullanmayın.</strong> Değişim müşteriye <em>başka bir hesap</em> verir; eski hesap müşterinin elinde çalışmaya devam eder (bilgileri zaten kopyalamıştır) ve müşterinin o hesapta biriktirdiği veri kaybolur. Doğru araç: envanterde (ürün detayı → Envanter) o kalemin satırındaki <strong>&quot;Kimlik bilgilerini güncelle&quot;</strong>. Aynı hesap, aynı atama, yeni bilgiler — sebep denetim kaydına ve siparişin zaman çizelgesine yazılır. <strong>Owner yetkisi gerekir</strong> ve müşteri yeni bilgileri otomatik görmez: güncelleme sonrası siparişten <R href="/orders">teslimat mailini yeniden gönderin</R>.</li>
+          <li><strong>Proaktif değişim:</strong> müşteri beklemeden, sipariş detayında bir atamayı <strong>&quot;Değiştir&quot;</strong> ile aynı üründen taze bir key ile değiştirebilirsiniz. Eski key karantinaya alınır, değişim geçmişi tutulur. <strong>Değişim YALNIZ sipariş detayından yapılır</strong> — lisans envanteri (ürün detayı → Envanter, <R href="/stock">Stok</R> → &quot;Son Eklenen Lisanslar&quot;, parti detayı) bir <em>stok</em> ekranıdır ve müşteriye dokunan işlem sunmaz; teslim edilmiş satır orada &quot;Siparişe git&quot; kısayolu gösterir.</li>
+          <li><strong>Hesap ürününde parola değiştiyse &quot;Değiştir&quot; kullanmayın.</strong> Değişim müşteriye <em>başka bir hesap</em> verir; eski hesap müşterinin elinde çalışmaya devam eder (bilgileri zaten kopyalamıştır) ve müşterinin o hesapta biriktirdiği veri kaybolur. Doğru araç: <strong>sipariş detayında</strong> o lisansın satırındaki <strong>&quot;Kimlik bilgilerini güncelle&quot;</strong> (envanterden buraya taşındı — müşteriye dokunan her işlem sipariş bağlamındadır). Aynı hesap, aynı atama, yeni bilgiler — sebep denetim kaydına ve siparişin zaman çizelgesine yazılır. <strong>Owner yetkisi gerekir</strong> ve müşteri yeni bilgileri otomatik görmez: güncelleme sonrası siparişten <R href="/orders">teslimat mailini yeniden gönderin</R>.</li>
           <li>
             <strong>Çok kullanımlı (MAK) lisansta otomatik değişim YOKTUR.</strong> Panel bunu
             bilerek reddeder: MAK&apos;ta bir anahtar birden çok aktivasyon taşır, geri alınan
@@ -780,7 +780,7 @@ export default function GuidePage() {
             <em>tamamı</em> teslim alındığında dolar — kısmi teslim almalarda boş kalır; her
             sevkiyatın kendi tarihi aynı sayfadaki parti listesinde durur.
           </li>
-          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi kalem hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> kalemler geçersiz kılınır. <strong>Müşterilerdekiler KORUNUR</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni “Yenisiyle değiştir” ile yenilersiniz; hepsini birden yenilemek isterseniz <strong>Toplu Değiştir</strong> vardır. Aday kümesi iki durumu <em>dışlar</em>: <strong>askıya alınmış atamalar</strong> (askıyı bilerek koydunuz, değişim onu sessizce geri açardı) ve <strong>çok kullanımlı (MAK) ürünler</strong> (geri alınan kapasite aynı paylaşımlı anahtara döneceği için yeni atama yine kusurlu anahtarı seçerdi). İkisi de elle işlenir — bu yüzden &quot;Toplu Değiştir&quot; sayacı, partideki müşteri sayısından küçük olabilir.</li>
+          <li><strong><R href="/batches">Partiler</R>:</strong> stok partileri — hangi kalem hangi tedarikçiden, ne zaman geldi. Bir parti sorunluysa <strong>geri çekin</strong> (recall): yalnız <em>stoktaki</em> kalemler geçersiz kılınır. <strong>Müşterilerdekiler KORUNUR</strong> — bir kısmı çalışıyor olabilir, otomatik iptal etmek müşteriyi lisanssız bırakırdı. Onları parti detayındaki <strong>“Müşterilerdeki lisanslar”</strong> listesinden tek tek inceleyip gerekeni satırdaki <strong>“Siparişe git”</strong> ile açar ve sipariş detayındaki <strong>“Değiştir”</strong> ile yenilersiniz (değişim kararı sipariş bağlamı ister: hangi müşteri, hangi satır, garanti penceresi — bu yüzden envanter listesinden yapılmaz); hepsini birden yenilemek isterseniz Partiler listesindeki satır menüsünde <strong>Toplu Değiştir</strong> vardır. Aday kümesi iki durumu <em>dışlar</em>: <strong>askıya alınmış atamalar</strong> (askıyı bilerek koydunuz, değişim onu sessizce geri açardı) ve <strong>çok kullanımlı (MAK) ürünler</strong> (geri alınan kapasite aynı paylaşımlı anahtara döneceği için yeni atama yine kusurlu anahtarı seçerdi). İkisi de elle işlenir — bu yüzden &quot;Toplu Değiştir&quot; sayacı, partideki müşteri sayısından küçük olabilir.</li>
         </Bullets>
 
         <p className="font-medium text-foreground">Kusurlu stok → tedarikçiye değişim fişi:</p>
@@ -879,6 +879,24 @@ export default function GuidePage() {
           önler). Sonuç kutusu kaç kalemin düşüldüğünü, kaçının atlandığını dürüstçe yazar — yeşil
           onay yalnız istediğiniz her kalem işlendiyse çıkar.
         </Tip>
+
+        <p className="font-medium text-foreground">
+          1b) Çok kullanımlı (MAK) bir anahtarın kapasitesini düzeltmek:
+        </p>
+        <p>
+          Tedarikçi bir MAK anahtarına sonradan aktivasyon tanımlayabilir (&quot;1000 haklıydı,
+          900 kalmıştı, tekrar 1000 yaptılar&quot;). Envanterde o satırdaki{' '}
+          <strong>&quot;Kapasite&quot;</strong> düğmesiyle <strong>kalan kullanım hakkını</strong>{' '}
+          yazarsınız; panel toplam kapasiteyi <em>kullanılan + kalan</em> diye hesaplar ve kaydetmeden
+          önce yeni toplamı gösterir. <strong>Kullanılan hak asla sıfırlanmaz</strong> — o sayı
+          müşterilerin elindeki gerçek aktivasyonları temsil eder; düşürmek aynı aktivasyonları
+          ikinci kez satılabilir gösterir ve mutabakatta kalıcı alarm üretirdi. Kapasitesi tükenmiş
+          (<strong>&quot;Tükendi&quot;</strong>) bir anahtar kapasite verildiğinde otomatik olarak
+          yeniden <strong>&quot;Stokta&quot;</strong> olur. Kapasiteyi <em>düşürmek</em> de
+          mümkündür (tedarikçi hakkı geri aldıysa) ama tabanı kullanılan haktır ve ekran görünür
+          uyarı basar. <strong>Owner yetkisi gerekir</strong>; sebep zorunludur ve eski/yeni
+          kapasiteyle birlikte <R href="/audit">Denetim İzi</R>ne yazılır.
+        </p>
 
         <p className="font-medium text-foreground">2) Yalnız deftere not yazmak:</p>
         <p>

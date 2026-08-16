@@ -47,7 +47,8 @@ export default async function QuarantinePage({
     // "gün sonunda son raporun tarihini göreyim"). API'de tek-satır ucu yok; liste zaten
     // `createdAt desc` sıralı ve snapshot taşımaz (hafif) — yalnız `rows[0]` okunur.
     fetchClaims(),
-    // Fiş kesme Sheet'inin tedarikçi seçicisi.
+    // Fiş kesme Sheet'inin tedarikçi seçicisi. Hata YUTULMAZ: boş liste ile "alınamadı"
+    // ayrı gösterilir (ön-seçili tedarikçi combobox'ta görünmediğinde sebebi yazılı olsun).
     fetchSuppliersLite(),
   ]);
 
@@ -73,7 +74,8 @@ export default async function QuarantinePage({
       ) : (
         <PendingClaimsPanel
           rows={rows}
-          suppliers={suppliers}
+          suppliers={suppliers.rows}
+          suppliersError={suppliers.error}
           lastClaim={claims.rows[0] ?? null}
           serverFiltered={serverFiltered}
           truncated={truncated}

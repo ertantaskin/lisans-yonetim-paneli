@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ShieldAlert, ShieldCheck, UserPlus } from 'lucide-react';
 import { apiGet, type AdminUser } from '../../lib/api';
-import { isOwner } from '../../lib/session';
+import { getSessionUser, isOwner } from '../../lib/session';
 import { PageHeader, EmptyState } from '../../components/ui/page-header';
 import { CollapsiblePanel } from '@/components/ui/collapsible-panel';
 import { Card, CardContent } from '../../components/ui/card';
@@ -44,6 +44,20 @@ export default async function AdminsPage() {
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
+
+  /*
+   * KENDİ SATIRI: owner bu listede kendini de görür ama KENDİ ikinci faktörünü buradan
+   * kapatamaz — API "kendi hesabı" işleminde parola + GEÇERLİ KOD ister (çalınmış çerez tek
+   * başına 2FA'yı sökmesin, rolden bağımsız). Bu liste ikisini de göndermediği için istek
+   * 401 döner VE başarısızlık sayacı GİRİŞ İLE AYNI kovaya (ACCOUNT_FAIL_KEY) yazılır →
+   * birkaç denemede operatör kendi hesabını 15 dakika kilitler + `admin_totp_failed`
+   * kritik güvenlik olayı üretir. Bu yüzden kendi satırında düğme yerine doğru araca
+   * (`/admins/security`) yönlendirilir.
+   *
+   * Auth KAPALIYKEN oturum (dolayısıyla kimlik) yoktur → `null`; hiçbir satır "kendi" sayılmaz.
+   * Doğru davranış budur: o modda API de parola/kod istemez, düğme çalışır.
+   */
+  const selfId = (await getSessionUser())?.sub ?? null;
 
   return (
     <div>
@@ -94,6 +108,7 @@ export default async function AdminsPage() {
               </Link>
             </div>
             <TotpAdminList
+              selfId={selfId}
               admins={admins.map((a) => ({
                 id: a.id,
                 name: a.name,

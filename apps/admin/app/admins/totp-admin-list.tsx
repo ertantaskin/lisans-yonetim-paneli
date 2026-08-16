@@ -1,6 +1,7 @@
 'use client';
 import * as React from 'react';
-import { RotateCcw, ShieldCheck, ShieldOff } from 'lucide-react';
+import Link from 'next/link';
+import { RotateCcw, Settings2, ShieldCheck, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,8 +33,21 @@ export interface TotpAdminRow {
  * Sıfırlama, cihazını kaybeden kullanıcı içindir: TOTP silinir VE `token_version` artar →
  * hesabın açık tüm oturumları düşer (parola sıfırlama deseniyle aynı). Kapatma ise daha
  * hafif: yalnız ikinci faktörü söker, oturumlara dokunmaz.
+ *
+ * KENDİ SATIRI İSTİSNASI: buradaki aksiyonlar BAŞKASI için tasarlanmıştır (parola sorulmaz).
+ * Kendi hesabında API parola + geçerli kod ister → bu liste onları göndermediği için istek
+ * 401'ler ve giriş kilidiyle AYNI sayaç artar (ayrıntı `app/admins/page.tsx` `selfId`
+ * yorumunda). Bu yüzden operatör kendi satırında düğme değil, doğru aracın (`/admins/security`)
+ * bağlantısını görür — "tıklanıp hata veren düğme hiç sunulmayandan kötüdür" kuralı.
  */
-export function TotpAdminList({ admins }: { admins: TotpAdminRow[] }) {
+export function TotpAdminList({
+  admins,
+  selfId = null,
+}: {
+  admins: TotpAdminRow[];
+  /** Oturumdaki adminin kimliği; auth kapalıyken null (kimlik kavramı yok → istisna uygulanmaz). */
+  selfId?: string | null;
+}) {
   const { confirm, dialog } = useConfirm();
 
   const reset = async (row: TotpAdminRow) => {
@@ -83,10 +97,17 @@ export function TotpAdminList({ admins }: { admins: TotpAdminRow[] }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {admins.map((row) => (
+          {admins.map((row) => {
+            const isSelf = selfId !== null && row.id === selfId;
+            return (
             <TableRow key={row.id}>
               <TableCell>
-                <div className="font-medium">{row.name}</div>
+                <div className="font-medium">
+                  {row.name}
+                  {isSelf && (
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">(siz)</span>
+                  )}
+                </div>
                 <div className="text-xs text-muted-foreground">{row.email}</div>
               </TableCell>
               <TableCell>
@@ -101,7 +122,14 @@ export function TotpAdminList({ admins }: { admins: TotpAdminRow[] }) {
                 )}
               </TableCell>
               <TableCell className="text-right">
-                {row.totpEnabled ? (
+                {isSelf ? (
+                  // Kendi hesabı: kurma/kapatma tek yerden — parola + kod isteyen kendi ekranı.
+                  <Button asChild variant="outline" size="sm">
+                    <Link href="/admins/security">
+                      <Settings2 /> Kendi hesabımı ayarla
+                    </Link>
+                  </Button>
+                ) : row.totpEnabled ? (
                   <div className="flex justify-end gap-2">
                     <Button variant="outline" size="sm" onClick={() => disable(row)}>
                       <ShieldOff /> Kapat
@@ -117,7 +145,8 @@ export function TotpAdminList({ admins }: { admins: TotpAdminRow[] }) {
                 )}
               </TableCell>
             </TableRow>
-          ))}
+            );
+          })}
         </TableBody>
       </Table>
       {dialog}

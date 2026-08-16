@@ -35,6 +35,7 @@ import {
 import { DeployForm } from './deploy-form';
 import { BackupForm } from './backup-form';
 import { DeploymentsAutoRefresh } from './auto-refresh';
+import { DEPLOYMENTS_WINDOW } from '../../lib/deployment-jobs';
 
 export const dynamic = 'force-dynamic';
 
@@ -179,9 +180,12 @@ export default async function DeploymentsPage() {
     getBackupSummary().catch(() => null),
   ]);
   let rows: DeploymentRow[] = [];
+  let truncated = false;
   let error: string | null = null;
   try {
-    rows = await getDeployments();
+    const res = await getDeployments();
+    rows = res.rows;
+    truncated = res.truncated;
   } catch (e) {
     error = e instanceof Error ? e.message : 'Bağlantı hatası';
   }
@@ -401,6 +405,15 @@ export default async function DeploymentsPage() {
                 })}
               </TableBody>
             </Table>
+          )}
+          {/* SESSİZ KIRPMA YOK: uç sabit bir pencere döndürür (süzgeç/sayfalama almaz) ve
+              gecelik yedek işleri bu pencereyi hızla doldurur → "geçmişin tamamı bu" sanısı
+              oluşurdu. Sınır yazılır; gerekçe + TODO(api) `lib/deployment-jobs.ts`'te. */}
+          {truncated && (
+            <p className="px-5 pb-4 pt-3 text-xs text-muted-foreground">
+              Yalnız son {DEPLOYMENTS_WINDOW} kayıt gösteriliyor (dağıtım, eklenti yayını ve yedek
+              işleri AYNI kuyruğu paylaşır) — daha eskiler bu listede yok.
+            </p>
           )}
         </CardContent>
       </Card>

@@ -79,10 +79,17 @@ type SyncCatalogBody = z.infer<typeof SyncCatalogBody>;
 export class SiteMappingsController {
   constructor(private readonly products: ProductsService) {}
 
-  /** Eşleme kutusu ürün seçici — hafif panel ürün kataloğu (ad/sku/tip; sır yok). */
+  /**
+   * Eşleme kutusu ürün seçici — hafif panel ürün kataloğu (ad/sku/tip; sır yok).
+   *
+   * `?meta=1` OPT-IN: verilirse gövde `{ items, truncated, limit }` zarfına döner (liste
+   * tavana dayandıysa eklenti operatöre "liste eksik" diyebilsin). Parametre YOKSA gövde
+   * DÜZ DİZİ kalır — sahadaki eski eklenti sürümleri gövdeyi `foreach` ile geziyor ve
+   * zarf koşulsuz değişseydi dropdown SESSİZCE boşalırdı (hata bile alınmazdı).
+   */
   @Get('products')
-  catalog() {
-    return this.products.listForCatalog();
+  catalog(@Query('meta') meta?: string) {
+    return this.products.listForCatalog({ meta: meta === '1' || meta === 'true' });
   }
 
   /** Bu sitenin eşlemeleri (opsiyonel ?remoteProductId= ile tek Woo ürünü). */

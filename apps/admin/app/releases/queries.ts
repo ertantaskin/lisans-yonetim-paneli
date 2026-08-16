@@ -1,5 +1,6 @@
 import 'server-only';
 import { apiGet } from '../../lib/api';
+import { DEPLOYMENTS_WINDOW, pickJobsByTarget, type TargetJobs } from '../../lib/deployment-jobs';
 
 /**
  * Yayınlanmış eklenti sürümü (GET /v1/admin/updates/plugin yanıtı). Zip GÖVDESİ dönmez —
@@ -35,11 +36,20 @@ export interface PluginJobRow {
   finishedAt: string | null;
 }
 
-/** Son eklenti yayın işleri (en yeni önce, en çok 5). */
-export async function getPluginJobs(): Promise<PluginJobRow[]> {
+/** Yayın işi kartında gösterilen en fazla satır. */
+export const PLUGIN_JOB_TAKE = 5;
+
+/**
+ * Son eklenti yayın işleri (en yeni önce, en çok 5) + PENCERE DÜRÜSTLÜĞÜ.
+ *
+ * Uç `target` süzgeci almaz ve sabit 50 satır döndürür; süzme burada yapılır. Pencere
+ * dolduysa (gecelik `backup` işleri onu tek başına doldurabilir) bu KIRPMA ekranda
+ * söylenir — gerekçe ve TODO(api) notu `lib/deployment-jobs.ts`'te.
+ */
+export async function getPluginJobs(): Promise<TargetJobs<PluginJobRow>> {
   const data = await apiGet<PluginJobRow[] | { items: PluginJobRow[] }>('/v1/admin/deployments');
   const rows = Array.isArray(data) ? data : (data?.items ?? []);
-  return rows.filter((r) => r.target === 'plugin').slice(0, 5);
+  return pickJobsByTarget(rows, 'plugin', PLUGIN_JOB_TAKE, DEPLOYMENTS_WINDOW);
 }
 
 /**

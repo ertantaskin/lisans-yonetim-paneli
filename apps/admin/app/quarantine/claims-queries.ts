@@ -36,6 +36,14 @@ export interface ClaimRow {
    * sonradan owner açsa da maskeli kalır; (b) fişi OKUYAN owner değil → yanıt maskeli döner.
    * Her iki durumda indirilen rapor tedarikçiye işe yaramaz bir liste olarak gider →
    * ekranda uyarılır. Eski API sürümü bu alanı döndürmez (savunmacı: `=== true` kontrolü).
+   *
+   * DİKKAT — KAYNAK: bu alan API'nin SATIRINDA GELMEZ. `supplier-claims.service.detail()`
+   * onu ZARFIN ÜST DÜZEYİNDE döndürür (`{ claim, items, masked }`) ve `list()` hiç
+   * döndürmez. Alanı satırda okumak (`claim.masked`) bayrağı KALICI `undefined` bırakıyor,
+   * yani maskeli rapor uyarısı HİÇ çıkmıyordu → owner-olmayanın kestiği `••••••1234`
+   * listesi tedarikçiye sessizce gidiyordu. `fetchClaim` zarftaki değeri satıra TAŞIR;
+   * `fetchClaims` (liste) bu alanı DOLDURMAZ ve dolduramaz — liste ekranında maske uyarısı
+   * verilecekse önce API'nin listesi bu bayrağı döndürmelidir.
    */
   masked?: boolean;
 }
@@ -90,27 +98,57 @@ export async function fetchClaims(): Promise<ClaimsData> {
   }
 }
 
-/** Tek fiş + kalemleri (detay ekranı). 404'te null döner → sayfa notFound(). */
-export async function fetchClaim(
-  id: string,
-): Promise<{ claim: ClaimRow; items: ClaimItemRow[] } | null> {
-  try {
-    return await apiGet<{ claim: ClaimRow; items: ClaimItemRow[] }>(
-      `/v1/admin/supplier-claims/${id}`,
-    );
-  } catch {
-    return null;
-  }
+export interface ClaimDetailData {
+  claim: ClaimRow;
+  items: ClaimItemRow[];
 }
 
-/** Tedarikçi seçici için (fiş kesme sihirbazı). Pasif tedarikçiler de listelenir (geçmiş fiş). */
-export async function fetchSuppliersLite(): Promise<Array<{ id: string; name: string }>> {
+/**
+ * Tek fiş + kalemleri (detay ekranı).
+ *
+ * HATA YUTULMAZ (denetim): eskiden `catch { return null }` ile HER hata `notFound()`'a
+ * dönüşüyordu → API askıda (504), token bozuk (401) ya da 500 verdiğinde operatöre "fiş
+ * bulunamadı" deniyordu; yani var olan bir fiş SİLİNMİŞ gibi okunuyordu. Kardeş detay
+ * sayfalarının deseni (products / suppliers / purchase-orders / templates): sorgu FIRLATIR,
+ * sayfa `ApiError.status === 404` dalında `notFound()` der, diğer hataları banner'a basar.
+ *
+ * `masked` bayrağı ZARFTAN satıra taşınır — gerekçe `ClaimRow.masked` jsdoc'unda.
+ * Beklenmedik gövde (claim yok) `null` döner → sayfa `notFound()` (uydurma satır render edilmez).
+ */
+export async function fetchClaim(id: string): Promise<ClaimDetailData | null> {
+  const raw = await apiGet<{ claim?: ClaimRow; items?: ClaimItemRow[]; masked?: boolean }>(
+    `/v1/admin/supplier-claims/${id}`,
+  );
+  if (!raw?.claim) return null;
+  return {
+    claim: { ...raw.claim, masked: raw.masked },
+    // Savunmacı: eski/kısmi yanıtta alan gelmezse tablo boş listeyle çizilir, sayfa çökmez.
+    items: Array.isArray(raw.items) ? raw.items : [],
+  };
+}
+
+export interface SuppliersLiteData {
+  rows: Array<{ id: string; name: string }>;
+  error: string | null;
+}
+
+/**
+ * Tedarikçi seçici için (fiş kesme sihirbazı). Pasif tedarikçiler de listelenir (geçmiş fiş).
+ *
+ * HATA GÖRÜNÜR (denetim): eskiden `catch → []` idi. Sonuç sessizdi ama zararsız değildi —
+ * panelden "Fiş oluştur" denince tedarikçi ÖN-SEÇİLİ gelir; liste boş olduğunda combobox
+ * hâlâ "Tedarikçi seçin…" yazar ve operatör seçimin kaybolduğunu sanıp yanlış tedarikçi
+ * arar. "Veri yok" ile "veri alınamadı" AYRI gösterilmeli (bkz. `api/saved-views/route.ts`).
+ */
+export async function fetchSuppliersLite(): Promise<SuppliersLiteData> {
   try {
     const raw = await apiGet<Array<{ id: string; name: string; active?: boolean }>>(
       '/v1/admin/suppliers',
     );
-    return (Array.isArray(raw) ? raw : []).map((s) => ({ id: s.id, name: s.name }));
-  } catch {
-    return [];
+    const rows = (Array.isArray(raw) ? raw : []).map((s) => ({ id: s.id, name: s.name }));
+    return { rows, error: null };
+  } catch (e) {
+    // `ApiError` de Error'dan türer → `.message` (API'nin Türkçe gövdesi ya da 504 metni) korunur.
+    return { rows: [], error: e instanceof Error ? e.message : 'Bağlantı hatası' };
   }
 }

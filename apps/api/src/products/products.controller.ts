@@ -18,7 +18,8 @@ import { ZodBody } from '../common/zod-validation.pipe';
 import { ProductsService } from './products.service';
 import { ProductCategoriesService } from './product-categories.service';
 import { ProductGuidesService } from './product-guides.service';
-import { KEY_FORMAT_MAX_LENGTH, checkKeyFormatSafety } from '../stock/stock.service';
+import { checkKeyFormatSafety } from '../stock/stock.service';
+import { KEY_FORMAT_MAX_LENGTH, MAX_USES_CAP } from './limits';
 
 /**
  * `keyFormat` = operatörün yazdığı SERBEST düzenli ifade; stok girişinde 10.000'e kadar
@@ -61,12 +62,11 @@ const KeyFormatPattern = z
  * Date'tir, yani yukarıdaki gecikmeli arıza sınıfı tamamen kapanır.
  */
 const MAX_DAYS = 3650;
-/**
- * Anahtar başına kullanım hakkı (MAK). Gerçek MAK anahtarları birkaç bin aktivasyon taşır;
- * 100.000 fazlasıyla pay bırakır ama "1 anahtar = 2 milyar birim" gibi tek satırla tüm stok
- * sayaçlarını (Σ max_uses − use_count) anlamsızlaştıran girdiyi engeller.
- */
-const MAX_USES_CAP = 100_000;
+// MAX_USES_CAP `products/limits.ts`'e TAŞINDI (yaprak modül): burada tanımlıyken
+// stock.service/controller onu buradan, bu dosya da stock.service'ten sabit import ediyordu →
+// CommonJS döngüsünde sabit `undefined` gelebiliyor ve zod `.max(undefined)` sınırı SESSİZCE
+// uygulamıyordu. Gerekçenin tamamı limits.ts içinde. Eski ithalatçılar kırılmasın diye
+// buradan yeniden ihraç EDİLMEZ — döngüyü geri getirirdi; çağıranlar limits.ts'i kullanır.
 /**
  * Düşük stok eşiği + benzeri adet alanları. Stok girişi tavanıyla (stock.controller count
  * max 1.000.000) hizalı: erişilebilecek en yüksek stok adedinden büyük bir eşik zaten

@@ -39,6 +39,9 @@ import {
   type Product,
 } from '../db/schema';
 import { notExpiredCond } from '../assignment/assign';
+// TEK KAYNAK: anahtar başına kullanım hakkı tavanı ürün formuyla AYNI olmalı — iki ayrı sabit
+// tutmak, kapasite düzeltmesinin ürün formunun reddettiği bir değeri kabul etmesine yol açardı.
+import { KEY_FORMAT_MAX_LENGTH, MAX_USES_CAP } from '../products/limits';
 import { ProductsService } from '../products/products.service';
 import { FulfillmentService } from '../orders/fulfillment.service';
 import { buildStoreAdminUrl } from '../orders/store-admin-url';
@@ -148,6 +151,14 @@ export interface ImportResult {
    * yine başarılı döner (yalnız inline tamamlananla), bu bayrak false kalır.
    */
   autoCompleteQueued?: boolean;
+  /**
+   * Stok YAZILDI ama tamamlama motoru koşturulamadı (kısmi başarı).
+   *
+   * Eskiden bu durum HTTP 500'e dönüşüyordu ve operatör "giriş yapılmadı" sanıp tekrarlıyordu —
+   * oysa satırlar commit edilmişti. Artık import başarılı döner, bu bayrak yüzeye çıkar ve
+   * bekleyen satırlar elle "Kalanları Ata" ile sürdürülebilir.
+   */
+  autoCompleteFailed?: boolean;
   /** Kuru çalıştırma (§7): true ise HİÇBİR şey commit edilmedi (yalnız doğrulama). */
   dryRun?: boolean;
   /** Kuru çalıştırma tahmini: doğrulamayı geçip (dedupe sonrası) GİRİLECEK satır sayısı. */
@@ -247,7 +258,9 @@ export type LicenseItemStatus = (typeof LICENSE_ITEM_STATUSES)[number];
  *    bilerek TEMKİNLİ tarafta durur. Yanlış-pozitifte sessiz reddetme YOK — operatör ne
  *    yapacağını söyleyen Türkçe mesaj görür (aşağıdaki iki sabit).
  */
-export const KEY_FORMAT_MAX_LENGTH = 200;
+// Tanım `products/limits.ts`'e taşındı (döngüsel import kırıldı); mevcut ithalatçılar
+// kırılmasın diye buradan yeniden ihraç edilir — bu yön döngü ÜRETMEZ (limits yapraktır).
+export { KEY_FORMAT_MAX_LENGTH } from '../products/limits';
 
 /**
  * Desenin test edilebileceği EN UZUN payload. `UpdateLicenseItemBody.value` zaten
@@ -659,6 +672,20 @@ export interface UpdateLicenseItemInput {
   reason: string;
 }
 
+/**
+ * Çok kullanımlık (MAK) kalemin KAPASİTE düzeltmesi gövdesi.
+ *
+ * Operatör "kalan kullanım hakkı"nı girer (mental modeli budur: "1000 haktan 900 kaldı,
+ * tekrar 1000 yapayım"); servis `max_uses = use_count + remainingUses` diye TÜRETİR.
+ * `maxUses` DOĞRUDAN alınmaz — operatörün ekranda gördüğü sayı "kalan"dır ve iki kavramın
+ * karıştırılması sessizce kapasiteyi `use_count` kadar eksik/fazla yazardı.
+ */
+export interface AdjustCapacityInput {
+  /** Bu düzeltmeden SONRA kalması istenen kullanım hakkı (0 = kapasiteyi tüket). */
+  remainingUses: number;
+  reason: string;
+}
+
 /** Tek sorguluk envanter satırının HAM (snake_case) şekli. */
 interface LicenseItemRawRow {
   id: string;
@@ -1046,30 +1073,12 @@ export class StockService {
     // Davranış: küçük backlog → eski hızlı deneyim; büyük backlog → import HIZLI döner + kalan arkada.
     let autoCompleted = 0;
     let autoCompleteQueued = false;
+    let autoCompleteFailed = false;
     if (inserted > 0) {
-      const cap = this.inlineCap();
-      const inline = await this.fulfillment.autoCompleteProduct(productId, cap);
-      autoCompleted = inline.completed;
-      if (inline.hasMore) {
-        // Kalanı arka plana at — best-effort (createOrder'daki mail/webhook enqueue deseni):
-        // enqueue patlarsa (Redis erişilemez vb.) import YİNE BAŞARILI döner, yalnız inline
-        // tamamlananla; operatör sonraki import ya da elle "Kalanları Ata" ile devam edebilir.
-        // jobId=productId → aynı ürün için kuyrukta zaten iş varsa BullMQ ikinciyi eklemez (dedupe).
-        try {
-          await this.autocompleteQueue.add(
-            AUTOCOMPLETE_JOB,
-            { productId } satisfies AutocompleteJob,
-            { jobId: productId, ...AUTOCOMPLETE_JOB_OPTS },
-          );
-          autoCompleteQueued = true;
-        } catch (err) {
-          this.logger.warn(
-            `Stok tamamlama backlog'u kuyruğa alınamadı (product ${productId}): ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
+      const res = await this.triggerAutoComplete(productId);
+      autoCompleted = res.completed;
+      autoCompleteQueued = res.queued;
+      autoCompleteFailed = res.failed;
     }
 
     return {
@@ -1080,6 +1089,7 @@ export class StockService {
       rejections,
       autoCompleted,
       autoCompleteQueued,
+      autoCompleteFailed,
       newBatch: outcome,
       // Yapıştırılan satır sayısı ile kaydedilen adet ayrıştıysa görünür kıl (emir GERÇEK
       // adetle açıldı; operatör "100 girdim ama 97 kaydedildi" bilgisini kaybetmesin).
@@ -2630,6 +2640,282 @@ export class StockService {
         })),
       };
     });
+  }
+
+  /**
+   * Çok kullanımlık (MAK/multi) bir kalemin KAPASİTESİNİ düzeltir (§12).
+   *
+   * NEDEN VAR (kullanıcı ihtiyacı): tedarikçi bir MAK anahtarına sonradan ek aktivasyon
+   * tanımlayabilir ("1000 haklı anahtarın 900'ü kalmıştı, tekrar 1000'e çıkardılar").
+   * Panelde bunun aracı yoktu: ürün seviyesindeki `maxUses` YALNIZ YENİ girilen kalemlere
+   * uygulanır, mevcut satırın `max_uses` değerini hiçbir uç değiştirmiyordu. Kapasitesi
+   * tükenmiş (`depleted`) anahtar da hiçbir şekilde geri döndürülemiyordu.
+   *
+   * ── TASARIM KARARI: `use_count` ASLA DÜŞÜRÜLMEZ/SIFIRLANMAZ ──
+   * `use_count` "bu anahtardan GERÇEKTEN teslim edilmiş aktivasyon" sayısıdır; karşılığı
+   * müşterilerin elindedir ve `reconcile` (a) invaryantı bunu denetler (`use_count ≤ max_uses`,
+   * ayrıca Σ atanan birim ile karşılaştırılır). Düşürmek/sıfırlamak:
+   *   · mutabakatta KALICI kritik alarm üretir,
+   *   · aynı aktivasyonları ikinci kez satılabilir gösterir (sessiz aşırı-satış, §2).
+   * Bu yüzden düzeltme YALNIZ tavanı (`max_uses`) hareket ettirir. Gerçek dünya karşılığı da
+   * budur: değişen şey "kaç aktivasyon tanımlı", "kaç tanesi kullanıldı" değil.
+   *
+   * ── DURUM CANLANDIRMA ──
+   * `consumeMultiUseCapacity` kapasite bitince satırı `depleted` yapar. Tavan yükseltilip
+   * durum `available`a çevrilmezse kapasite artar ama kalem hiçbir atama sorgusuna GİRMEZ
+   * (sessiz no-op). Durum bu yüzden kapasiteden TÜRETİLİR: `use_count < max_uses ⇒ available`,
+   * aksi halde `depleted` (tavanı tam `use_count`a indirme yolu da böylece doğru çalışır).
+   *
+   * ── DÜŞÜRME ──
+   * İzinlidir (tedarikçi hakkı geri alabilir) ama TABANI `use_count`tur: altına inmek
+   * "teslim edilmiş aktivasyonu yok saymak" demek olur ve yukarıdaki invaryantı kırar.
+   * Arayüz düşürmede ayrıca görünür uyarı basar.
+   *
+   * ── İZ ──
+   * `audit_log` (`action='adjust'`, `meta.op='capacity_bump'`): eski/yeni tavan, kalan,
+   * sebep, aktör. `stock_adjustments`e BİLEREK YAZILMAZ: o defterin `qty` alanı her okuyanda
+   * (costs.wastage, karantina sebep aramasi, ürün "Hareketler" sekmesindeki
+   * "Stoktan düşüldü/Yalnız kayıt" ayrımı) "STOKTAN DÜŞÜLEN adet" anlamına gelir; kapasite
+   * ARTIRIMI oraya yazılsaydı ya negatif/ters işaretli bir satır ya da "stok değişmedi" diye
+   * YANLIŞ etiketlenen bir kayıt üretirdi. Kapasite değişimi bir zayi değildir.
+   *
+   * OWNER-ONLY (controller): satılabilir stok miktarını doğrudan değiştiren bir müdahaledir.
+   */
+  /**
+   * Taze stok görünür olduğunda tamamlama motorunu tetikler (§5 partial-auto FIFO).
+   *
+   * TEK KAYNAK: stok girişi ve MAK kapasite düzeltmesi AYNI yolu kullanır. İkisi de "bu üründe
+   * artık atanabilir birim var" demektir; ayrı ayrı yazılsalardı biri (bu projede tekrarlayan
+   * sınıf) sessizce geride kalırdı — nitekim kapasite düzeltmesi ilk hâlinde HİÇ tetiklemiyordu:
+   * tükenmiş anahtar `available`'a döner, bekleyen satırlar öylece bekler, hiçbir alarm çıkmaz.
+   *
+   * ÇAĞIRAN TRANSACTION'DAN SONRA çağrılmalı: `autoCompleteProduct` kendi transaction'ını açar ve
+   * SKIP LOCKED ile commit EDİLMEMİŞ satırları göremez (tx içinde çağrılsaydı hep 0 tamamlardı).
+   */
+  private async triggerAutoComplete(productId: string) {
+    const cap = this.inlineCap();
+
+    /*
+     * COMMIT SONRASI YAN ETKİ → ÇAĞIRANI DÜŞÜRMEZ (createOrder'daki mail/webhook deseni).
+     *
+     * Buraya gelindiğinde asıl yazım (stok satırları / yeni tavan) ÇOKTAN commit edilmiştir.
+     * Sarmalanmasaydı süpürmedeki bir hata HTTP 500'e dönüşür ve operatör "giriş yapılmadı" /
+     * "kapasite değişmedi" sanıp işlemi tekrarlardı — oysa veri yazılmıştır. Yanıltıcı bir
+     * başarısızlık, dürüst bir kısmi başarıdan kötüdür: sonuç `failed` ile GERİ DÖNER ve
+     * çağıran bunu operatöre söyler ("… ancak bekleyen sipariş taraması yapılamadı").
+     */
+    let inline: { completed: number; hasMore: boolean };
+    try {
+      inline = await this.fulfillment.autoCompleteProduct(productId, cap);
+    } catch (err) {
+      this.logger.error(
+        `Tamamlama motoru koşturulamadı (product ${productId}) — asıl yazım commit EDİLDİ, yalnız ` +
+          `bekleyen satır taraması atlandı; elle "Kalanları Ata" ile sürdürülebilir: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+      );
+      return { completed: 0, queued: false, failed: true };
+    }
+
+    let queued = false;
+    if (inline.hasMore) {
+      // Best-effort (createOrder'daki mail/webhook enqueue deseni): enqueue patlarsa (Redis
+      // erişilemez vb.) çağıran işlem YİNE BAŞARILI döner, yalnız inline tamamlananla; operatör
+      // sonraki stok girişi ya da elle "Kalanları Ata" ile devam edebilir.
+      // jobId=productId → aynı ürün için kuyrukta zaten iş varsa BullMQ ikinciyi eklemez (dedupe).
+      try {
+        await this.autocompleteQueue.add(
+          AUTOCOMPLETE_JOB,
+          { productId } satisfies AutocompleteJob,
+          { jobId: productId, ...AUTOCOMPLETE_JOB_OPTS },
+        );
+        queued = true;
+      } catch (err) {
+        this.logger.warn(
+          `Stok tamamlama backlog'u kuyruğa alınamadı (product ${productId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return { completed: inline.completed, queued, failed: false };
+  }
+
+  async adjustMultiUseCapacity(id: string, input: AdjustCapacityInput, actor: string) {
+    const reason = (input.reason ?? '').trim();
+    if (reason.length < 3) {
+      throw new BadRequestException('Sebep zorunludur (en az 3 karakter).');
+    }
+    const remaining = Number(input.remainingUses);
+    if (!Number.isInteger(remaining) || remaining < 0) {
+      throw new BadRequestException('Kalan kullanım hakkı 0 veya daha büyük bir tam sayı olmalı.');
+    }
+
+    const result = await this.db.transaction(async (tx) => {
+      // İki eşzamanlı KAPASİTE DÜZELTMESİNİ serileştirir (çift tık / iki operatör).
+      // NOT: atama motoru (consumeMultiUseCapacity) advisory lock ALMAZ — ona karşı koruma
+      // aşağıdaki `FOR UPDATE OF li` satır kilidinden gelir (o taraf SKIP LOCKED ile aynı satırı
+      // kilitler). Yorum bilerek açık: bu kod tabanında yanlış bir kilit gerekçesi, sonraki
+      // denetimde GERÇEK korumanın kaldırılmasına yol açmıştı.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'license_item:' + id}))`);
+
+      const [row] = await rawRows<{
+        id: string;
+        product_id: string;
+        status: string;
+        max_uses: number;
+        use_count: number;
+        usage_mode: string;
+      }>(tx, sql`
+        SELECT li.id, li.product_id, li.status::text AS status, li.max_uses, li.use_count,
+               p.usage_mode::text AS usage_mode
+        FROM license_items li
+        JOIN products p ON p.id = li.product_id
+        WHERE li.id = ${id} LIMIT 1 FOR UPDATE OF li;
+      `);
+      if (!row) throw new NotFoundException('Lisans bulunamadı.');
+
+      /*
+       * ÜRÜNÜ DE KİLİTLE (FOR SHARE) — stok girişindeki `fresh` deseninin aynısı.
+       *
+       * Yukarıdaki JOIN `usage_mode`'u KİLİTSİZ okur. Eşzamanlı `products.update` bu kalemi
+       * göremez: kapasite guard'ı (`products.service`) yalnız `use_count < max_uses` olan
+       * kalemleri sayar, yani TÜKENMİŞ (`depleted`) kalem "canlı" sayılmaz ve `multi → single`
+       * geçişi izin alır. Sonuç: ürün 'single' olurken bu uç bayat 'multi' okuyup `max_uses`i
+       * yükseltir ve satırı 'available' yapar → `allocate()` tek-kullanım dalına girip anahtarın
+       * TAMAMINI 'assigned' eder, yüzlerce aktivasyon SESSİZCE yanar.
+       *
+       * Bu yol tam da bu uçla açıldı: öncesinde `depleted` bir kalem asla 'available'a dönemiyordu.
+       * FOR SHARE, update'in FOR UPDATE'i ile çakışır → hangi taraf önce alırsa alsın sonuç doğru.
+       */
+      const [freshProduct] = await tx
+        .select({ usageMode: products.usageMode })
+        .from(products)
+        .where(eq(products.id, row.product_id))
+        .limit(1)
+        .for('share');
+      if (!freshProduct) throw new NotFoundException('Ürün bulunamadı.');
+      if (freshProduct.usageMode !== row.usage_mode) {
+        throw new ConflictException(
+          'Ürün bu sırada değiştirildi (kullanım tipi). Sayfayı yenileyip tekrar deneyin.',
+        );
+      }
+
+      if (row.usage_mode !== 'multi') {
+        throw new BadRequestException(
+          'Kapasite yalnız çok kullanımlı (MAK) ürünlerde düzenlenebilir. Tek kullanımlık ' +
+            'lisansta kapasite her zaman 1’dir; yanlış girilmiş bir kaydı düzeltmek için ' +
+            '“Değiştir”, stoktan düşürmek için “Sil” kullanın.',
+        );
+      }
+
+      // Yalnız YAŞAYAN kalem: 'voided'/'quarantined'/'replaced'/'revoked'/'expired' terminal
+      // durumlardır ve kapasite vermek onları satılabilir hale GETİRMEZ (durum türetmesi
+      // yalnız available↔depleted arasında çalışır) → sessiz no-op yerine açık hata.
+      if (row.status !== 'available' && row.status !== 'depleted') {
+        throw new ConflictException(
+          `Bu kalem ${row.status} durumunda — kapasite yalnız stokta bekleyen (available) ya da ` +
+            'kapasitesi tükenmiş (depleted) kalemlerde düzenlenebilir.',
+        );
+      }
+
+      const oldMax = Number(row.max_uses);
+      const useCount = Number(row.use_count);
+      const newMax = useCount + remaining;
+
+      // Taban: teslim edilmiş aktivasyon sayısı (yukarıdaki invaryant). `remaining >= 0`
+      // olduğu için bu koşul zaten sağlanır; guard yine de AÇIK yazılır — türetme formülü
+      // ileride değişirse invaryant sessizce kaybolmasın.
+      if (newMax < useCount) {
+        throw new BadRequestException(
+          `Kapasite teslim edilmiş aktivasyon sayısının (${useCount}) altına indirilemez.`,
+        );
+      }
+      if (newMax < 1) {
+        throw new BadRequestException('Kapasite en az 1 olmalı.');
+      }
+      // Ürün seviyesindeki `maxUses` ile AYNI tavan (products.controller MAX_USES_CAP):
+      // tek satırla "1 anahtar = 2 milyar birim" yazıp Σ(max_uses − use_count) tabanlı TÜM
+      // stok sayaçlarını anlamsızlaştırmak mümkün olmamalı.
+      if (newMax > MAX_USES_CAP) {
+        throw new BadRequestException(
+          `Kapasite en çok ${MAX_USES_CAP.toLocaleString('tr-TR')} olabilir (kullanılan ` +
+            `${useCount} + kalan ${remaining} = ${newMax} istendi).`,
+        );
+      }
+      if (newMax === oldMax) {
+        throw new BadRequestException(
+          'Kapasite zaten bu değerde — değişiklik yapılmadı (gereksiz denetim kaydı yazılmaz).',
+        );
+      }
+
+      // Koşullu UPDATE: satır zaten FOR UPDATE + advisory-lock altında, ama re-check bedava
+      // bir savunma katmanıdır (okuduğumuz sayılar hâlâ geçerli mi?).
+      const [updated] = await rawRows<{ max_uses: number; use_count: number; status: string }>(
+        tx,
+        sql`
+        UPDATE license_items
+        SET max_uses = ${newMax},
+            -- CAST ŞART: dal sonuçları text üretir, kolon ise license_item_status enum'udur →
+            -- cast'siz Postgres 42804 ile REDDEDER (uç tamamen kırıktı; entegrasyon testi yakaladı,
+            -- typecheck/birim testler ham SQL'in tip uyumunu göremez).
+            -- (Bu blokta TERS TIRNAK YASAK: sql şablonunu erken kapatır — projede 10. tekrar.)
+            status = (CASE WHEN use_count < ${newMax} THEN 'available' ELSE 'depleted' END)::license_item_status
+        WHERE id = ${id} AND max_uses = ${oldMax} AND use_count = ${useCount}
+        RETURNING max_uses, use_count, status::text AS status;
+      `,
+      );
+      if (!updated) {
+        throw new ConflictException(
+          'Kapasite bu sırada başka bir işlemle değişti — listeyi yenileyip tekrar deneyin.',
+        );
+      }
+
+      await tx.insert(auditLog).values({
+        action: 'adjust',
+        actor,
+        targetType: 'license_item',
+        targetId: id,
+        meta: {
+          op: 'capacity_bump',
+          reason,
+          oldMaxUses: oldMax,
+          newMaxUses: newMax,
+          useCount,
+          remainingBefore: oldMax - useCount,
+          remainingAfter: newMax - useCount,
+          previousStatus: row.status,
+          newStatus: updated.status,
+          source: 'license_inventory',
+        },
+      });
+
+      return {
+        id,
+        productId: row.product_id,
+        maxUses: Number(updated.max_uses),
+        useCount: Number(updated.use_count),
+        remainingUses: Number(updated.max_uses) - Number(updated.use_count),
+        status: updated.status,
+        previousMaxUses: oldMax,
+      };
+    });
+
+    // Kapasite ARTTIYSA ürün gerçekten satılabilir birim kazandı (tükenmiş anahtar `available`'a
+    // döner) → stok girişiyle AYNI tamamlama yolu koşar; aksi halde bekleyen siparişler, stok
+    // varken, bir sonraki girişe/elle "Kalanları Ata"ya kadar sessizce beklerdi.
+    // Kapasite DÜŞÜRÜLDÜYSE yeni birim yok → tetiklenmez (gereksiz sweep).
+    let autoCompleted = 0;
+    let autoCompleteQueued = false;
+    let autoCompleteFailed = false;
+    if (result.status === 'available' && result.maxUses > result.previousMaxUses) {
+      const auto = await this.triggerAutoComplete(result.productId);
+      autoCompleted = auto.completed;
+      autoCompleteQueued = auto.queued;
+      autoCompleteFailed = auto.failed;
+    }
+
+    return { ...result, autoCompleted, autoCompleteQueued, autoCompleteFailed };
   }
 }
 

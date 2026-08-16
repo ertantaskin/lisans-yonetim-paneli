@@ -547,6 +547,13 @@ const AUDIT_TARGET_TYPE: Record<string, string> = {
   batch: 'Parti',
   quarantine: 'Kusurlu stok listesi',
   customer: 'Müşteri',
+  /*
+   * `/ops` replay'i denetim satırını `target_type='dead_letter'` ile yazar (ops.service).
+   * Sözlükte olmadığı için `/audit` ekranında HAM `dead_letter` görünüyordu. Etiket o ekranın
+   * kendi adıyla ("Başarısız İşler") hizalı: aynı şeyin iki farklı adı operatörü ikinci bir
+   * kavram aramaya iter.
+   */
+  dead_letter: 'Başarısız iş',
 };
 /** Boş/null hedef türü için BOŞ dize döner (bilinmeyen anahtarda ham değere düşer). */
 export const auditTargetTypeLabel = (t: string | null | undefined): string =>

@@ -9,6 +9,7 @@ import { OrdersService } from './orders.service';
 import { AdminOrdersController } from './admin-orders.controller';
 import { AdminOrdersService } from './admin-orders.service';
 import { FulfillmentService } from './fulfillment.service';
+import { MailPreviewService } from './mail-preview.service';
 import { PendingLinesController } from './pending-lines.controller';
 import { PendingLinesService } from './pending-lines.service';
 import { SalesQuotaGuard } from './sales-quota.guard';
@@ -25,6 +26,9 @@ import { SalesQuotaGuard } from './sales-quota.guard';
     FulfillmentService,
     PendingLinesService,
     SalesQuotaGuard,
+    // Sipariş detayındaki mail önizlemesi. Gövdeyi MailModule'ün dışa açtığı
+    // DeliveryMailBuilder üretir (gerçek gönderimle TEK kaynak) — MailModule zaten import edili.
+    MailPreviewService,
   ],
   exports: [OrdersService, AdminOrdersService, FulfillmentService, PendingLinesService],
 })

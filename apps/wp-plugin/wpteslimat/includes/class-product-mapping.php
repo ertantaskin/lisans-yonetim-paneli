@@ -22,7 +22,8 @@ class Wpteslimat_Product_Mapping {
      * Her ürün düzenleme ekranı açılışında panele ikinci senkron çağrı (5sn blok) yapılmasını önler.
      * "Cache yok — sır" kuralı yalnız gizli payload içindir; katalog metası için geçerli değildir.
      */
-    const CATALOG_CACHE_KEY = 'wpteslimat_catalog';
+    /** Zarf değiştiği için `_v2`: eski anahtarda düz dizi vardı, yeni kod onu okuyamazdı. */
+    const CATALOG_CACHE_KEY = 'wpteslimat_catalog_v2';
     const CATALOG_CACHE_TTL = 90; // saniye
 
     public static function instance() {
@@ -64,6 +65,18 @@ class Wpteslimat_Product_Mapping {
         return current_user_can('manage_woocommerce');
     }
 
+    /**
+     * Panelin `active` alanı — teslimatta kullanılıp kullanılmadığının TEK ölçütü.
+     *
+     * Alan HİÇ gelmiyorsa (alanı döndürmeyen ESKİ panel sürümü) AKTİF varsayılır: o sürümlerde
+     * pasifleştirme özelliği zaten yoktu, yokluğu "pasif" saymak mevcut kurulumlarda yanlış
+     * alarm üretirdi. Alan gelip false ise KESİN pasiftir.
+     */
+    private static function is_active($mapping) {
+        if (!is_array($mapping)) return false;
+        return !array_key_exists('active', $mapping) || !empty($mapping['active']);
+    }
+
     public function render($post) {
         if (!$post || !isset($post->ID)) return;
 
@@ -85,25 +98,57 @@ class Wpteslimat_Product_Mapping {
 
         $remote_product_id = (int) $post->ID;
 
-        // 1) Bu Woo ürünü için MEVCUT eşleme (ürün-seviyesi = varyasyonsuz tercih edilir).
+        // 1) Bu Woo ürünü için panelde KAYITLI TÜM eşlemeler (ürün-seviyesi + varyasyon-özel).
         //    Sayfa render'ı içinde senkron: 5sn timeout (panel yavaşsa ürün ekranı asılmasın).
         $map_res = Wpteslimat_Panel_Client::get(
             '/v1/site-mappings?remoteProductId=' . rawurlencode((string) $remote_product_id),
             5
         );
         $map_ok  = isset($map_res['code']) && $map_res['code'] >= 200 && $map_res['code'] < 300;
-        $current = null;
+
+        /*
+         * PANELİN YETKİLİ ALANLARI (eklenti ince istemcidir → yeniden TÜRETMEZ, olduğu gibi okur):
+         *
+         * [a] `active` — teslimat çözümlemesi PASİF eşlemeyi YOK SAYAR: `products.service`
+         *     `resolveMapping` her iki dalında da `active = true` şartını taşır. Bu kutu eskiden
+         *     alanı HİÇ okumuyor ve koşulsuz "Eşli: X" basıyordu → operatör panelden eşlemeyi
+         *     pasifleştirdiğinde mağaza ekranı hâlâ "eşli" diyor, gelen siparişler ise eşlenmemiş
+         *     (pending) kalıyordu; mağaza tarafında SIFIR sinyal vardı.
+         *
+         * [b] `remoteVariationId` — çözümlemede varyasyon-özel eşleme ürün-seviyesinden
+         *     ÖNCELİKLİDİR (`resolveMapping` 1. dal varyasyon, 2. dal fallback). Bu kutu ürün
+         *     düzenleme ekranındadır ve YALNIZ ürün-seviyesi (varyasyonsuz) satırı yazar/siler —
+         *     `ajax_save`/`ajax_delete` bilerek `remoteVariationId` GÖNDERMEZ.
+         *
+         *     Eski davranış sessiz YANLIŞ TESLİMAT üretiyordu: ürün-seviyesi satır yokken listedeki
+         *     İLK VARYASYON satırı "mevcut eşleme" gibi gösteriliyordu; operatör seçimi değiştirip
+         *     kaydedince panel AYRI bir ürün-seviyesi satır açıyor, varyasyon satırı olduğu gibi
+         *     kalıyordu → kutu yeni ürünü gösterirken o varyasyonun siparişleri hâlâ ESKİ ürünü
+         *     teslim ediyordu. "Kaldır" da yalnız varyasyonsuz satırı sildiği için sessiz no-op oluyordu.
+         *
+         *     KARAR (kapsam): varyasyon-özel eşlemeler burada SALT OKUNUR listelenir. Bu ekran
+         *     WooCommerce varyasyon listesini taşımaz (varyasyonlar ayrı sekmede, ayrı ID'lerle) ve
+         *     dar yan kutuda varyasyon başına yazma arayüzü kurmak, panelin /mappings ekranının
+         *     (site kataloğu + varyasyon satırları + tek-tık eşleme) işini EKSİK kopyalamak olurdu.
+         *     Kutu bunun yerine ne GÖSTERDİĞİNİ ve neyi DEĞİŞTİRDİĞİNİ açıkça söyler; varyasyon
+         *     yönetimi panele yönlendirilir.
+         */
+        $level_map      = null; // ürün-seviyesi (varyasyonsuz) eşleme — bu kutunun yönettiği TEK satır
+        $variation_maps = [];   // varyasyon-özel eşlemeler — salt okunur (yukarıdaki [b] kararı)
         if ($map_ok && isset($map_res['body']) && is_array($map_res['body'])) {
             foreach ($map_res['body'] as $m) {
                 if (!is_array($m) || empty($m['productId'])) continue;
-                $var = isset($m['remoteVariationId']) ? $m['remoteVariationId'] : null;
-                // Ürün-seviyesi (varyasyonsuz) eşlemeyi seç.
-                if ($var === null || $var === '' || (int) $var === 0) {
-                    $current = $m;
-                    break;
+                $var = (isset($m['remoteVariationId']) && is_scalar($m['remoteVariationId']))
+                    ? trim((string) $m['remoteVariationId'])
+                    : '';
+                // '0'/boş = "varyasyon yok" — panelin `resolveMapping` normalizasyonuyla BİREBİR aynı.
+                if ($var === '' || $var === '0') {
+                    // Panel listeyi (remoteProductId, id) sırasında döndürür; `resolveMapping` de
+                    // (createdAt, id) ile "en eski"i seçer → İLK satır teslimatta kullanılan satırdır.
+                    if ($level_map === null) $level_map = $m;
+                } else {
+                    $variation_maps[] = $m;
                 }
-                // İlk (varyasyonlu olsa da) eşlemeyi gösterim için yedekte tut.
-                if ($current === null) $current = $m;
             }
         }
 
@@ -112,31 +157,71 @@ class Wpteslimat_Product_Mapping {
         //    ikinci senkron panel çağrısı (5sn blok) yapılmaz. Mevcut-eşleme sorgusu (yukarıda,
         //    ürüne ÖZEL) önbeklenmez. Önbellek yoksa panelden çek; başarıysa cache'le. Panel
         //    erişilemezken önbellek de yoksa null → "Panel görünümü alınamadı" (mevcut graceful davranış).
-        $catalog = get_transient(self::CATALOG_CACHE_KEY);
-        if (!is_array($catalog)) {
-            $cat_res = Wpteslimat_Panel_Client::get('/v1/site-mappings/products', 5);
+        /*
+         * `?meta=1` — KIRPMA SİNYALİ (panel denetim bulgusu). Panel katalog listesini 500 ürünle
+         * sınırlıyor ve eskiden bunu SÖYLEMİYORDU: 500'den fazla panel ürünü olan bir kurulumda
+         * aradığı ürünü dropdown'da bulamayan operatör hiçbir uyarı görmüyor, "panelde yok"
+         * sanıyordu. Zarf OPT-IN (`{items, truncated, limit}`); eski düz-dizi biçimi de
+         * okunmaya devam eder → panel ile eklenti farklı sürümlerde olsa da liste boşalmaz.
+         *
+         * ÖNBELLEK ANAHTARI DEĞİŞTİ (`_v2`): eski anahtar düz diziyi tutuyordu; yeni kod onu
+         * okusaydı `items` bulunamaz ve liste SESSİZCE boşalırdı (bu projede tekrarlayan
+         * "zarf değişti, okuyucu güncellenmedi" sınıfı).
+         */
+        $cached = get_transient(self::CATALOG_CACHE_KEY);
+        $catalog = null;
+        $truncated = false;
+        if (is_array($cached) && isset($cached['items']) && is_array($cached['items'])) {
+            $catalog = $cached['items'];
+            $truncated = !empty($cached['truncated']);
+        } else {
+            $cat_res = Wpteslimat_Panel_Client::get('/v1/site-mappings/products?meta=1', 5);
             $cat_ok  = isset($cat_res['code']) && $cat_res['code'] >= 200 && $cat_res['code'] < 300;
-            $catalog = ($cat_ok && isset($cat_res['body']) && is_array($cat_res['body'])) ? $cat_res['body'] : null;
+            $body    = ($cat_ok && isset($cat_res['body'])) ? $cat_res['body'] : null;
+            if (is_array($body) && isset($body['items']) && is_array($body['items'])) {
+                $catalog   = $body['items'];
+                $truncated = !empty($body['truncated']);
+            } elseif (is_array($body)) {
+                // Zarfı bilmeyen eski panel sürümü: düz dizi. Kırpma bilgisi YOK → iddia etme.
+                $catalog = $body;
+            }
             if (is_array($catalog)) {
-                set_transient(self::CATALOG_CACHE_KEY, $catalog, self::CATALOG_CACHE_TTL);
+                set_transient(
+                    self::CATALOG_CACHE_KEY,
+                    array('items' => $catalog, 'truncated' => $truncated),
+                    self::CATALOG_CACHE_TTL
+                );
             }
         }
 
-        $current_pid = ($current && isset($current['productId'])) ? (string) $current['productId'] : '';
-        $current_qty = ($current && isset($current['bundleQty'])) ? (int) $current['bundleQty'] : 1;
+        $current_pid = ($level_map && isset($level_map['productId'])) ? (string) $level_map['productId'] : '';
+        $current_qty = ($level_map && isset($level_map['bundleQty'])) ? (int) $level_map['bundleQty'] : 1;
         if ($current_qty < 1) $current_qty = 1;
+        $level_active = $level_map ? self::is_active($level_map) : false;
 
         $nonce = wp_create_nonce('wpteslimat_map');
 
         echo '<div class="wpteslimat-map" data-remote-product="' . esc_attr($remote_product_id)
             . '" data-nonce="' . esc_attr($nonce) . '">';
 
-        // Mevcut eşleme özeti.
-        if ($current) {
-            $pname = isset($current['productName']) ? (string) $current['productName'] : '';
-            $psku  = isset($current['productSku']) ? (string) $current['productSku'] : '';
-            echo '<p style="margin:0 0 8px"><strong>' . esc_html__('Eşli:', 'wpteslimat') . '</strong> '
-                . esc_html($pname);
+        // Mevcut ürün-seviyesi eşleme özeti.
+        if (!$map_ok) {
+            // DÜRÜSTLÜK: eşleme sorgusu başarısızken "Henüz eşlenmedi." basmak YANLIŞTI — panelde
+            // eşleme DURUYOR olabilir; operatör "yok" sanıp ikinci bir eşleme kurabilir ya da
+            // gerçekten eksik olan eşlemeyi fark etmez. Bilinmiyorsa bilinmiyor denir.
+            echo '<p style="margin:0 0 8px"><em>'
+                . esc_html__('Panel eşleme durumu alınamadı — mevcut eşleme gösterilemiyor.', 'wpteslimat')
+                . '</em></p>';
+        } elseif ($level_map) {
+            $pname = isset($level_map['productName']) ? (string) $level_map['productName'] : '';
+            $psku  = isset($level_map['productSku']) ? (string) $level_map['productSku'] : '';
+            echo '<p style="margin:0 0 4px">';
+            if ($level_active) {
+                echo '<strong>' . esc_html__('Eşli:', 'wpteslimat') . '</strong> ';
+            } else {
+                echo '<strong style="color:#b32d2e">' . esc_html__('Eşleme PASİF:', 'wpteslimat') . '</strong> ';
+            }
+            echo esc_html($pname);
             if ($psku !== '') echo ' (' . esc_html($psku) . ')';
             // Terminoloji (§ sunum): panel yalnız "key" satmıyor (hesap/kod/özel ürün de var) ve
             // ham İngilizce sözcük operatöre çıkmamalı. Çeviri fonksiyonundan geçen tek metin.
@@ -145,8 +230,41 @@ class Wpteslimat_Product_Mapping {
                 _n('%d kalem', '%d kalem', $current_qty, 'wpteslimat'),
                 $current_qty
             )) . '</p>';
+            if (!$level_active) {
+                echo '<p style="margin:0 0 8px;color:#8a6d0b"><em>'
+                    . esc_html__('Pasif eşleme teslimatta KULLANILMAZ — bu üründen gelen siparişler "eşlenmemiş" kalır. Aşağıdan "Kaydet" demek eşlemeyi yeniden etkinleştirir.', 'wpteslimat')
+                    . '</em></p>';
+            }
         } else {
-            echo '<p style="margin:0 0 8px"><em>' . esc_html__('Henüz eşlenmedi.', 'wpteslimat') . '</em></p>';
+            echo '<p style="margin:0 0 8px"><em>'
+                . esc_html__('Ürün seviyesinde henüz eşlenmedi.', 'wpteslimat') . '</em></p>';
+        }
+
+        // Varyasyon-özel eşlemeler — SALT OKUNUR. Kutu bunları yazmaz/silmez ama teslimatta
+        // ÖNCELİKLİ oldukları için gizlemek yanıltıcı olurdu (bkz. yukarıdaki [b] kararı).
+        if (!empty($variation_maps)) {
+            echo '<div style="margin:0 0 8px;padding:6px 8px;background:#fcf6e6;border:1px solid #f0dfa8;border-radius:3px">';
+            echo '<p style="margin:0 0 4px"><strong>'
+                . esc_html__('Varyasyon-özel eşlemeler (öncelikli)', 'wpteslimat') . '</strong></p>';
+            echo '<ul style="margin:0 0 4px 18px;list-style:disc">';
+            foreach ($variation_maps as $m) {
+                $vid   = (isset($m['remoteVariationId']) && is_scalar($m['remoteVariationId']))
+                    ? trim((string) $m['remoteVariationId'])
+                    : '';
+                $vname = isset($m['productName']) ? (string) $m['productName'] : '';
+                $vsku  = isset($m['productSku']) ? (string) $m['productSku'] : '';
+                echo '<li>#' . esc_html($vid) . ' → ' . esc_html($vname);
+                if ($vsku !== '') echo ' (' . esc_html($vsku) . ')';
+                if (!self::is_active($m)) {
+                    echo ' — <span style="color:#b32d2e">' . esc_html__('pasif', 'wpteslimat') . '</span>';
+                }
+                echo '</li>';
+            }
+            echo '</ul>';
+            echo '<p style="margin:0"><em>'
+                . esc_html__('Bu kutu YALNIZ ürün seviyesi eşlemeyi değiştirir. Varyasyon-özel eşlemesi olan varyasyonun siparişleri o eşlemeyle teslim edilir; değiştirmek/kaldırmak için panelde "Ürün Eşleştirme" ekranını kullanın.', 'wpteslimat')
+                . '</em></p>';
+            echo '</div>';
         }
 
         if ($catalog === null) {
@@ -156,9 +274,22 @@ class Wpteslimat_Product_Mapping {
             return;
         }
 
-        // Panel ürünü seçimi.
-        echo '<p><label for="wpteslimat-map-pid"><strong>' . esc_html__('Panel ürünü', 'wpteslimat')
+        // Panel ürünü seçimi. Etiket AÇIKÇA "ürün seviyesi" der: kaydetme yolu varyasyon
+        // GÖNDERMEZ (ajax_save), yani buradaki seçim varyasyon-özel eşlemeleri DEĞİŞTİRMEZ.
+        echo '<p><label for="wpteslimat-map-pid"><strong>'
+            . esc_html__('Panel ürünü (ürün seviyesi)', 'wpteslimat')
             . '</strong></label><br>';
+        if ($truncated) {
+            // SESSİZ KIRPMA YASAK: liste eksikse operatör "ürün panelde yok" sanmamalı.
+            echo '<p style="color:#8a6d00;margin:.25em 0 .5em"><strong>'
+                . esc_html__('Uyarı:', 'wpteslimat') . '</strong> '
+                . esc_html__(
+                    'Panelde bu listeye sığmayacak kadar çok ürün var — aşağıdaki liste EKSİK. '
+                        . 'Aradığınız ürün görünmüyorsa eşlemeyi panelin Ürün Eşleştirme ekranından yapın.',
+                    'wpteslimat'
+                )
+                . '</p>';
+        }
         echo '<select id="wpteslimat-map-pid" class="wpteslimat-map-pid" style="width:100%">';
         echo '<option value="">' . esc_html__('— Seçin —', 'wpteslimat') . '</option>';
         foreach ($catalog as $p) {
@@ -184,13 +315,16 @@ class Wpteslimat_Product_Mapping {
         echo '<br><small>' . esc_html__('Mağazadaki 1 adet, panelde kaç kaleme (anahtar/hesap/kod) denk gelir (varsayılan 1).', 'wpteslimat')
             . '</small></p>';
 
-        // Butonlar.
+        // Butonlar. "Kaldır" YALNIZ ürün-seviyesi satır GERÇEKTEN varsa gösterilir: silme çağrısı
+        // varyasyon göndermediği için varyasyon satırı varken basılan düğme sessiz no-op olurdu
+        // (panel 200 döner, hiçbir şey silinmez → operatör "kaldırdım" sanır).
         echo '<p style="margin-bottom:0">';
         echo '<button type="button" class="button button-primary wpteslimat-map-save">'
             . esc_html__('Kaydet', 'wpteslimat') . '</button>';
-        if ($current) {
-            echo ' <button type="button" class="button wpteslimat-map-delete">'
-                . esc_html__('Kaldır', 'wpteslimat') . '</button>';
+        if ($level_map) {
+            echo ' <button type="button" class="button wpteslimat-map-delete" title="'
+                . esc_attr__('Yalnız ürün seviyesi eşlemeyi kaldırır; varyasyon-özel eşlemeler etkilenmez.', 'wpteslimat')
+                . '">' . esc_html__('Kaldır', 'wpteslimat') . '</button>';
         }
         echo '</p>';
 
@@ -250,7 +384,7 @@ class Wpteslimat_Product_Mapping {
                 if (delBtn) {
                     e.preventDefault();
                     if (delBtn.disabled) return;
-                    if (!window.confirm('Bu ürünün panel eşlemesi kaldırılsın mı?')) return;
+                    if (!window.confirm('Bu ürünün ÜRÜN SEVİYESİ panel eşlemesi kaldırılsın mı? Varyasyon-özel eşlemeler etkilenmez.')) return;
                     delBtn.disabled = true;
                     post('wpteslimat_map_delete', {}, function (j) {
                         if (!j || !j.success) { delBtn.disabled = false; return fail(j); }
@@ -317,6 +451,10 @@ class Wpteslimat_Product_Mapping {
         if ($product_id === '') {
             wp_send_json_error(['message' => 'Panel ürünü seçilmedi.'], 400);
         }
+        // BİLİNÇLİ: `remoteVariationId` GÖNDERİLMEZ → panel varyasyonsuz (ürün-seviyesi) satırda
+        // upsert eder ve o satırı `active=true` yapar (pasifleştirilmiş eşleme yeniden etkinleşir).
+        // Varyasyon-özel eşlemeler bu çağrıdan ETKİLENMEZ ve teslimatta ÖNCELİKLİ kalır — kutu
+        // bunu artık ekranda da söyler (render()'daki [b] kararı).
         $res = Wpteslimat_Panel_Client::post('/v1/site-mappings', [
             'remoteProductId' => $rpid,
             'productId'       => $product_id,
@@ -327,6 +465,8 @@ class Wpteslimat_Product_Mapping {
 
     public function ajax_delete() {
         $rpid = $this->guard();
+        // BİLİNÇLİ: varyasyon göndermez → YALNIZ ürün-seviyesi satır silinir. Düğme de yalnız o
+        // satır varken gösterilir (aksi halde panel 200 döner ama hiçbir şey silinmez).
         $res = Wpteslimat_Panel_Client::post('/v1/site-mappings/delete', [
             'remoteProductId' => $rpid,
         ]);

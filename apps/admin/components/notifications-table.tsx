@@ -55,20 +55,16 @@ type ReadState = keyof typeof READ_STATE;
 const readState = (n: NotificationRow): ReadState => (n.readAt ? 'read' : 'unread');
 
 /**
- * Bu ekrana ÖZEL yerel tür sözlüğü. `notificationTypeLabel` (labels.ts) bu iki türü henüz
- * tanımıyor ve bilinmeyen anahtarda HAM değeri döndürüyor → operatöre en KRİTİK iki alarm
- * `mail_config` / `sweep_failed` diye ham İngilizce çıkıyordu. Öncelik: labels.ts biliyorsa o
- * kazanır (tek kaynak korunur; sözlüğe eklenirse burası kendiliğinden devre dışı kalır).
+ * Tür etiketi — TEK KAYNAK `lib/labels.ts`.
+ *
+ * Burada bir dönem yerel bir sözlük vardı (`mail_config` / `sweep_failed` labels.ts'te
+ * tanımlı olmadığı için operatöre ham İngilizce çıkıyordu). İkisi de labels.ts'e eklendi;
+ * yerel sözlük ÖLÜ kaldı ve yorumu artık YANLIŞ bilgi veriyordu ("labels.ts bu iki türü
+ * henüz tanımıyor"). Aynı ekranda iki sözlük tutmak bu kod tabanında çelişen etiket üretmiş
+ * bir hata sınıfıdır (`SupplyStatusBadge`) → geriye tek çağrı kaldı. Bilinmeyen anahtarda
+ * `lookup` ham değeri döndürür (bilinçli geri düşüş).
  */
-const LOCAL_TYPE: Record<string, string> = {
-  mail_config: 'Mail yapılandırması',
-  sweep_failed: 'Bakım işi başarısız',
-};
-
-function typeLabel(type: string): string {
-  const known = notificationTypeLabel(type);
-  return known !== type ? known : (LOCAL_TYPE[type] ?? type);
-}
+const typeLabel = notificationTypeLabel;
 
 /** UUID (v4 dahil, gevşek) — meta'dan gelen id ancak doğrulandıktan sonra bağlantıya çevrilir. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

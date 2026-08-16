@@ -340,12 +340,20 @@ export async function updateLicenseItemAction(input: {
  *
  * OWNER-ONLY: uç düz metin kimlik bilgisi kabul eder ve müşteride ÇALIŞAN bir lisansı
  * değiştirir. API'de de `OwnerGuard` vardır (savunma-derinliği); birincil kapı buradadır.
+ *
+ * NEDEN HÂLÂ BU DOSYADA (kullanıcı kararı sonrası): işlemin BİRİNCİL yeri artık SİPARİŞ
+ * DETAYIDIR (müşteriye dokunan her aksiyon orada), ama hedefi bir `license_items` kaydıdır
+ * ve uç `/v1/admin/license-items/:id/…` altındadır — yani bu modülün konusudur. Ayrıca ürün
+ * detayındaki envanter de (şema orada bilinir) aynı aksiyonu çağırır; siparişe taşımak
+ * ikinci bir kopya doğururdu. `orderId` verilirse sipariş detayı da yeniden doğrulanır.
  */
 export async function rotateAccountCredentialsAction(input: {
   id: string;
   fields: Record<string, string>;
   reason: string;
   productId?: string;
+  /** Sipariş detayından çağrıldıysa o sayfa da tazelenir (yalnız uuid ise). */
+  orderId?: string;
 }): Promise<LicenseMutationResult & { orderIds?: string[] }> {
   if (!(await isOwner())) {
     return {
@@ -372,6 +380,10 @@ export async function rotateAccountCredentialsAction(input: {
       await getActor(),
     )) as { orderIds?: string[] } | null;
     revalidateInventory(input?.productId);
+    // Sipariş detayı: müşterinin gördüğü hesap alanları BURADA da render ediliyor →
+    // tazelenmezse operatör güncellemeden sonra ESKİ parolayı görmeye devam ederdi.
+    const orderId = String(input?.orderId ?? '').trim();
+    if (UUID_RE.test(orderId)) revalidatePath(`/orders/${orderId}`);
     return { ok: true, orderIds: res?.orderIds ?? [] };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
@@ -436,46 +448,118 @@ export async function bulkAdjustLicenseItemsAction(input: {
   }
 }
 
-/**
- * TESLİM EDİLMİŞ bir anahtarı müşteride YENİSİYLE değiştir (§4 proaktif değişim).
+/*
+ * KALDIRILDI: `replaceDeliveredLicenseAction` (müşterideki anahtarı yenisiyle değiştirme).
  *
- * NEDEN ENVANTERDEN: bir tedarikçi partisi geri çekildiğinde stoktakiler geçersiz kılınır ama
- * müşterilerdeki anahtarlara DOKUNULMAZ — bir kısmı çalışıyor olabilir. Operatörün ihtiyacı
- * "hangileri hâlâ müşterilerde" listesini görüp SATIR SATIR karar vermek. Bugüne dek tek yol
- * her anahtar için ilgili siparişi tek tek açmaktı; artık aynı işlem listeden yapılır.
+ * KULLANICI KARARI: "son eklenen lisanslar kısmında müşterinin lisansını yenilemem
+ * değiştirebilmem saçma; bunu sadece o siparişin içerisine girip yapabilmem daha sağlıklı."
+ * Envanter ekranının işi (a) stoktakileri görmek ve (b) YANLIŞ GİRİLMİŞ kaydı düzeltmektir;
+ * müşteride CANLI bir lisansı değiştirmek sipariş bağlamı (hangi müşteri, hangi satır, hangi
+ * garanti penceresi) gerektirir ve o bağlam yalnız sipariş detayında vardır.
  *
- * AYNI UÇ, YENİ YÜZEY: `POST /v1/admin/assignments/:id/replace` (sipariş detayındakiyle
- * BİREBİR aynı) → stok ön-kontrolü, tek transaction (added=0 ⇒ rollback ⇒ eski anahtar CANLI
- * kalır), eski anahtar karantinaya, soyağacı `assignment_history`'ye yazılır. Burada iş kuralı
- * TEKRARLANMAZ; MAK/çok-kullanımlı ürün API'de 400 ile reddedilir ve mesaj aynen gösterilir.
+ * Aksiyon SİLİNDİ, "kullanılmıyor" diye bırakılmadı: bir sunucu aksiyonu, hiçbir bileşen
+ * çağırmasa bile çağrılabilir bir uçtur (bu projede ölü `revealAction` tam da bu yüzden
+ * kaldırılmıştı). İşin kendisi kaybolmadı — AYNI uç (`POST /v1/admin/assignments/:id/replace`)
+ * sipariş detayındaki "Değiştir" düğmesinden çalışmaya devam ediyor; envanter satırı da o
+ * siparişe bağlantı verir.
  */
-export async function replaceDeliveredLicenseAction(input: {
-  assignmentId: string;
+
+/**
+ * Çok kullanımlık (MAK) bir kalemin KALAN KULLANIM HAKKINI yeniden ayarlar.
+ *
+ * NEDEN VAR (kullanıcı ihtiyacı): "1000 kullanım hakkı vardı, 900 kalmış; bunu manuel olarak
+ * tekrar 1000'e çıkartabilmeliyim." Tedarikçi bir MAK anahtarına sonradan aktivasyon
+ * tanımlayabilir; panelde bunun aracı yoktu (ürün seviyesindeki `maxUses` yalnız YENİ girilen
+ * kalemlere uygulanır) ve kapasitesi tükenen anahtar hiçbir şekilde geri döndürülemiyordu.
+ *
+ * İŞ KURALI SUNUCUDA: `use_count` (teslim edilmiş aktivasyon) ASLA düşürülmez — yalnız tavan
+ * (`max_uses = use_count + remainingUses`) hareket eder, aksi halde aynı aktivasyonlar ikinci
+ * kez satılabilir görünürdü (§2 sessiz aşırı-satış + mutabakat alarmı).
+ *
+ * OWNER-ONLY: satılabilir stok miktarını doğrudan değiştirir. API'de de `OwnerGuard` vardır
+ * (savunma-derinliği); birincil kapı buradadır — tıklanıp 403 veren düğme sunulmasın.
+ */
+export async function adjustLicenseCapacityAction(input: {
+  id: string;
+  remainingUses: number;
   reason: string;
   productId?: string;
-  orderId?: string;
-}): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
-  const assignmentId = String(input?.assignmentId ?? '').trim();
-  if (!UUID_RE.test(assignmentId)) return { ok: false, error: 'Geçersiz atama kaydı.' };
+}): Promise<
+  | {
+      ok: true;
+      maxUses: number;
+      useCount: number;
+      remainingUses: number;
+      status: string;
+      /** Bu düzeltmenin AÇTIĞI kapasiteyle hemen teslim edilen bekleyen sipariş satırı sayısı. */
+      autoCompleted: number;
+      /** Kalan backlog arka plana atıldı mı (büyük kuyruk). */
+      autoCompleteQueued: boolean;
+      /** Kapasite YAZILDI ama bekleyen sipariş taraması koşamadı (kısmi başarı — sessiz kalmaz). */
+      autoCompleteFailed: boolean;
+    }
+  | { ok: false; error: string }
+> {
+  if (!(await isOwner())) {
+    return {
+      ok: false,
+      error:
+        'Bu işlem için owner yetkisi gerekir — satılabilir stok miktarını doğrudan değiştirir.',
+    };
+  }
+  const id = String(input?.id ?? '').trim();
+  if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz lisans kaydı.' };
+
+  const remainingUses = Number(input?.remainingUses);
+  if (!Number.isInteger(remainingUses) || remainingUses < 0) {
+    return { ok: false, error: 'Kalan kullanım hakkı 0 veya daha büyük bir tam sayı olmalı.' };
+  }
+
   const reason = String(input?.reason ?? '').trim();
-  if (!reason) return { ok: false, error: 'Değişim sebebi zorunludur (denetim kaydına yazılır).' };
+  if (reason.length < 3) return { ok: false, error: 'Sebep zorunludur (en az 3 karakter).' };
 
   try {
-    await apiPost(
-      `/v1/admin/assignments/${assignmentId}/replace`,
-      { reason: reason.slice(0, 500) },
+    const res = (await apiPost(
+      `/v1/admin/license-items/${id}/capacity`,
+      { remainingUses, reason: reason.slice(0, 500) },
       await getActor(),
-    );
+    )) as {
+      maxUses?: number;
+      useCount?: number;
+      remainingUses?: number;
+      status?: string;
+      autoCompleted?: number;
+      autoCompleteQueued?: boolean;
+      autoCompleteFailed?: boolean;
+    } | null;
     revalidateInventory(input?.productId);
-    // Değiştirilen (ölü) anahtar havuza ve deftere düşer — ikisi ayrı rota (bkz. yukarıdaki not).
-    revalidatePath('/quarantine');
-    revalidatePath('/quarantine/records');
+    // Kapasite artışı `depleted` kalemi `available` yapabilir → parti sayaçları (Stokta /
+    // Müşterilerde / Düşmüş) ve parti listesi değişir. Parti detayı dinamik segment olduğu
+    // için sayfa ŞABLONUYLA tazelenir.
     revalidatePath('/batches');
-    // Parti detayı dinamik segment → sayfa şablonuyla tazelenir (sayaçlar güncellensin).
     revalidatePath('/batches/[id]', 'page');
-    if (input?.orderId && UUID_RE.test(input.orderId)) revalidatePath(`/orders/${input.orderId}`);
-    return { ok: true, message: 'Yeni kalem atandı — eskisi karantinaya alındı.' };
+
+    // Açılan kapasite bekleyen satırları TESLİM ETMİŞ olabilir (API kapasite artışında stok
+    // girişiyle aynı tamamlama yolunu koşar) → sipariş yüzeyleri bayat kalmasın. Yalnız gerçekten
+    // teslimat olduysa tazelenir (her kapasite düzenlemesinde tüm sipariş ekranlarını atmak yerine).
+    const autoCompleted = Number(res?.autoCompleted ?? 0);
+    if (autoCompleted > 0) {
+      revalidatePath('/pending');
+      revalidatePath('/orders');
+      revalidatePath('/dashboard');
+    }
+
+    return {
+      ok: true,
+      maxUses: Number(res?.maxUses ?? 0),
+      useCount: Number(res?.useCount ?? 0),
+      remainingUses: Number(res?.remainingUses ?? 0),
+      status: String(res?.status ?? ''),
+      autoCompleted,
+      autoCompleteQueued: Boolean(res?.autoCompleteQueued),
+      autoCompleteFailed: Boolean(res?.autoCompleteFailed),
+    };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Değişim başarısız.' };
+    return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
   }
 }

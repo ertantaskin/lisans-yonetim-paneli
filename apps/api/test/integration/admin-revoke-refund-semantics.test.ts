@@ -57,7 +57,14 @@ describe('Admin iade/iptal semantiği (C2 + C4)', () => {
     const products = new ProductsService(db as never);
     const fulfillment = new FulfillmentService(db as never, products, mailFake, webhookFake);
     admin = new AdminOrdersService(db as never, redisFake, crypto, mailFake, fulfillment);
-    controller = new AdminOrdersController(admin, fulfillment);
+    // 3. arg = MailPreviewService (mail önizleme ucu). Bu test YALNIZ revoke semantiğini
+    // koşturur ve önizleme yoluna hiç girmez → sahte bir nesne yeterlidir (gerçeğini kurmak
+    // DeliveryMailBuilder + şablon + SMTP yapılandırması gerektirirdi, hiçbiri bu testin konusu değil).
+    controller = new AdminOrdersController(admin, fulfillment, {
+      previewDelivery: () => {
+        throw new Error('Bu testte mail önizleme çağrılmamalı');
+      },
+    } as never);
     site = await createSite(db, crypto, { tag });
   });
 

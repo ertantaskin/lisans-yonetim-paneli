@@ -62,15 +62,27 @@ export function BatchLicensePanels({
               Bu partiden çıkmış ve <strong>şu anda müşterilerin elinde olan</strong>{' '}
               {itemCount(customerCount, kind)}. {recalled ? 'Parti geri çekildi ama b' : 'B'}
               unlar çalışmaya devam ediyor ve müşteri görmeye devam ediyor — otomatik iptal
-              edilmezler. Sorunlu olanı satırdaki{' '}
-              <strong>“Yenisiyle değiştir”</strong> ile yenileyin: müşteriye stoktaki uygun ilk
-              kalem atanır, eskisi karantinaya gider ve bu listeden düşer. Uygun stok yoksa işlem
-              yapılmaz, müşteri boşta kalmaz.
-              {!recalled && (
+              edilmezler. Sorunlu olanı satırdaki <strong>“Siparişe git”</strong> ile açıp orada{' '}
+              <strong>“Değiştir”</strong> deyin: müşteriye stoktaki uygun ilk kalem atanır, eskisi
+              karantinaya gider ve bu listeden düşer. Uygun stok yoksa işlem yapılmaz, müşteri
+              boşta kalmaz.
+              {/*
+                TOPLU DEĞİŞTİRME ŞARTA BAĞLI (denetim bulgusu): bu cümle koşulsuz yazılıyordu ve
+                menü öğesi YALNIZ geri çekilmiş partide var (API de `status='recalled'` değilse
+                reddediyor). Aktif partide operatör listeye gidip aradığını bulamıyordu.
+              */}
+              {recalled ? (
+                <>
+                  {' '}
+                  Tümünü birden yenilemek için <strong>Partiler</strong> listesindeki satır
+                  menüsünde <strong>“Toplu Değiştir (satılanları)”</strong> vardır.
+                </>
+              ) : (
                 <>
                   {' '}
                   Parti henüz geri çekilmediği için <strong>aynı partiden</strong> bir kalem
-                  atanabilir — kusur partinin tamamındaysa önce partiyi geri çekin.
+                  atanabilir — kusur partinin tamamındaysa önce partiyi <strong>geri çekin</strong>;
+                  toplu değiştirme yalnız geri çekilmiş partide açılır.
                 </>
               )}
             </CardDescription>

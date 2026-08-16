@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DELIVERY_TEMPLATE_SAMPLE_VARS } from '@lisans/shared';
-import { earliestValidUntil, formatValidUntil, formatValidUntilIso } from './mail.processor';
+import { earliestValidUntil, formatValidUntil, formatValidUntilIso } from './mail-render';
 
 /**
  * Teslimat mailinde geçerlilik bitişi (§11 süreli hesap) — denetim D3.

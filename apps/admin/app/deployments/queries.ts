@@ -1,5 +1,6 @@
 import 'server-only';
 import { apiGet, apiRaw } from '../../lib/api';
+import { DEPLOYMENTS_WINDOW } from '../../lib/deployment-jobs';
 
 /** Dağıtım kaydı (GET /v1/admin/deployments). */
 export interface DeploymentRow {
@@ -15,10 +16,21 @@ export interface DeploymentRow {
   finishedAt: string | null;
 }
 
+export interface DeploymentsData {
+  rows: DeploymentRow[];
+  /**
+   * Yanıt sunucu penceresini DOLDURDU → daha eski dağıtım/yedek kayıtları bu listede YOK.
+   * Uç `?limit=`/`?target=` kabul etmediği için tek yapılabilecek bunu SÖYLEMEKTİR
+   * (gerekçe + TODO(api): `lib/deployment-jobs.ts`).
+   */
+  truncated: boolean;
+}
+
 /** Dağıtım geçmişi (en yeni önce). Dizi veya {items} şekline dayanıklı. */
-export async function getDeployments(): Promise<DeploymentRow[]> {
+export async function getDeployments(): Promise<DeploymentsData> {
   const data = await apiGet<DeploymentRow[] | { items: DeploymentRow[] }>('/v1/admin/deployments');
-  return Array.isArray(data) ? data : (data?.items ?? []);
+  const rows = Array.isArray(data) ? data : (data?.items ?? []);
+  return { rows, truncated: rows.length >= DEPLOYMENTS_WINDOW };
 }
 
 /** Canlı sistem sağlığı + sürümü (GET /v1/health). Degraded'da 503 döner → apiRaw ile tolere edilir. */

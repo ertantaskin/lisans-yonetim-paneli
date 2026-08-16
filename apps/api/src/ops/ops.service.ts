@@ -274,7 +274,27 @@ export class OpsService {
       await this.db.insert(auditLog).values({
         action: 'resend',
         actor: 'panel:admin',
-        targetType: `dead_letter:${kind}`,
+        /*
+         * TEK BİÇİM `dead_letter` (eskiden `dead_letter:${kind}`).
+         *
+         * NEDEN: kod tabanındaki DİĞER TÜM `targetType` değerleri düz snake_case tek
+         * sözcüktür (order / assignment / license_item / batch / supplier_claim …) ve
+         * `/audit` süzgeci de bu sözleşmeye göre yazılmış (`^[a-z_]{1,64}$`). İki nokta
+         * taşıyan bu TEK istisna, süzgecin doğrulamasına takılıyordu → bu satırlar
+         * `/audit` ekranından HİÇ süzülemiyordu ve etiket sözlüğünde karşılığı olmadığı
+         * için ham değer olarak görünüyordu.
+         *
+         * BİLGİ KAYBI YOK: ayrım (`email` | `webhook`) zaten `meta.kind` içinde duruyor —
+         * yani hedef tipini sadeleştirmek hiçbir veriyi silmiyor, yalnız kimlik alanını
+         * sözleşmeye döndürüyor. Alternatif (regex'i `:` kabul edecek şekilde genişletmek)
+         * hem başka hiçbir yazarın üretmediği bir şekli meşrulaştırır hem de sözlüğe
+         * KALICI iki ayrı etiket anahtarı eklemeyi gerektirirdi.
+         *
+         * GERİYE DÖNÜK: mevcut `dead_letter:email`/`dead_letter:webhook` satırları olduğu
+         * gibi kalır (audit izi DEĞİŞTİRİLMEZ). Onlar bugün de süzülemiyordu → regresyon
+         * yok; `action=resend` + `targetId` ile hâlâ bulunabilirler.
+         */
+        targetType: 'dead_letter',
         targetId: id,
         meta: { op: 'replay', kind },
       });

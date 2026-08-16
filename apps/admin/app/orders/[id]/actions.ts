@@ -2,6 +2,10 @@
 import { revalidatePath } from 'next/cache';
 import { ApiError, apiGet, apiPost, isUuid } from '../../../lib/api';
 import { getActor } from '../../../lib/session';
+// TİP-ONLY (çalışma anında import EDİLMEZ, tsc siler): 'use server' dosyası tip export edemez,
+// bu yüzden sözleşme önizleme bileşeninde tanımlıdır ve buradan yalnız okunur → iki yerde iki
+// ayrı şekil tanımı (ve sessiz ayrışma) olmaz.
+import type { DeliveryMailPreview } from './mail-preview';
 
 /**
  * SEC-1 — YOL ENJEKSİYONU (bu dosya bulgunun ÖRNEĞİYDİ):
@@ -252,6 +256,35 @@ export async function resendAction(orderId: string): Promise<MutationState> {
       return { ok: false, error: 'Çok sık denendi — 60 sn bekleyip tekrar deneyin.' };
     }
     return { ok: false, error: 'Mail gönderilemedi.' };
+  }
+}
+
+/**
+ * Teslimat mailinin ÖNİZLEMESİ (kullanıcı isteği: "içeriği tekrar göndermeden teyit etmek").
+ *
+ * GÖNDERMEZ, kuyruğa ALMAZ — salt okuma. Sipariş sayfası SUNUCUDA render edildiği için
+ * önizleme sayfa yüklenirken DEĞİL, operatör ikona bastığında istenir (gövde büyük olabilir
+ * ve düz metin sır taşır → yalnız gerçekten bakılan sipariş için üretilir; ayrıca her sayfa
+ * açılışı gereksiz bir `reveal` denetim kaydı yazmaz).
+ *
+ * `apiGet` oturumun aktörünü ve ROLÜNÜ iletir → API owner'a düz metin, owner-OLMAYAN admine
+ * MASKELİ gövde döndürür (denetim A1). Karar SUNUCUDA verilir; bu aksiyon rol taşımaz.
+ */
+export async function previewDeliveryMailAction(
+  orderId: string,
+): Promise<{ ok: true; preview: DeliveryMailPreview } | { ok: false; error: string }> {
+  if (!isUuid(orderId)) return { ok: false, error: INVALID_ID };
+  try {
+    const preview = await apiGet<DeliveryMailPreview>(`/v1/admin/orders/${orderId}/mail-preview`);
+    return { ok: true, preview };
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) {
+      return { ok: false, error: 'Sipariş bulunamadı.' };
+    }
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Mail önizlemesi alınamadı.',
+    };
   }
 }
 

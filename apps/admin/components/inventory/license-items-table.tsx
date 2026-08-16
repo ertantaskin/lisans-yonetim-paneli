@@ -53,7 +53,7 @@ const PAGE_SIZES = LICENSE_PAGE_SIZES;
  *
  * NEDEN: bu tablo dokuz kolonlu; 1024-1280 bandında menü açıkken kap 652px'e iniyor ve tablo
  * kendi kabında yatay kayıyor (proje sözleşmesi: geniş tablo kabında kayar). Kayan kısmın EN
- * SAĞI ise eylem sütunu → "Değiştir/Sil/Yenisiyle değiştir" ekranın dışında kalıyordu
+ * SAĞI ise eylem sütunu → "Değiştir/Sil/Kapasite/Siparişe git" ekranın dışında kalıyordu
  * (kullanıcı ekran görüntüsüyle bildirdi; 1369px'te 15px, 1030px'te 107px ölçüldü). Bir satırı
  * OKUYAMAMAK kaydırmayla çözülür, ama üzerinde İŞLEM YAPAMAMAK kabul edilemez.
  *

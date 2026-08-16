@@ -58,6 +58,15 @@ export interface LineDiagnosis {
   productId: string | null;
   productName: string | null;
   qty: number;
+  /**
+   * Panelden KALICI iptal edilmiş birim (`order_lines.canceled_units`). Tanı ucu bunu ZATEN
+   * döndürüyor; panel okumadığı için "gereken" sayısını `qty − fulfilledQty` ile türetiyor ve
+   * API'nin kendi cümlesiyle (`message`) çelişebiliyordu.
+   *
+   * OPSİYONEL (dağıtım sapması): eski API imajı alanı göndermezse `?? 0` ile hedef = qty olur
+   * ve ekran bugünkü davranışını aynen sürdürür.
+   */
+  canceledUnits?: number;
   fulfilledQty: number;
   status: string;
   canceled: boolean;
@@ -240,6 +249,13 @@ export function LineDiagnosisStrip({
   const meta = REASON_META[diagnosis.reason] ?? REASON_META.unmapped;
   const Icon = meta.icon;
 
+  // Doldurma hedefi — `apps/api/src/orders/fill-target.ts` ile BİREBİR: max(0, qty − iptal).
+  // "Gereken" sayısı bundan türer; ham qty ile hesaplamak iptalli satırda stok tükenmişken
+  // olduğundan FAZLA birim istendiğini gösteriyordu.
+  const canceledUnits = Math.min(Math.max(diagnosis.canceledUnits ?? 0, 0), diagnosis.qty);
+  const target = Math.max(diagnosis.qty - canceledUnits, 0);
+  const needed = Math.max(target - diagnosis.fulfilledQty, 0);
+
   return (
     <div
       className={cn(
@@ -256,7 +272,15 @@ export function LineDiagnosisStrip({
         {diagnosis.availableStock != null && diagnosis.reason === 'out-of-stock' && (
           <p className="text-xs tabular-nums text-muted-foreground">
             Kullanılabilir stok: <strong>{diagnosis.availableStock}</strong> · gereken:{' '}
-            <strong>{Math.max(diagnosis.qty - diagnosis.fulfilledQty, 0)}</strong>
+            <strong>{needed}</strong>
+          </p>
+        )}
+        {/* İptal edilen birim: hedefin neden qty'den küçük olduğunu söyleyen TEK cümle.
+            Yazılmazsa operatör "3 adet sipariş, 1 gereken" çelişkisini çözemez. */}
+        {canceledUnits > 0 && (
+          <p className="text-xs tabular-nums text-muted-foreground">
+            {diagnosis.qty} adetten <strong>{canceledUnits}</strong> birim iptal edildi → teslim
+            hedefi <strong>{target}</strong>.
           </p>
         )}
       </div>

@@ -16,7 +16,8 @@ import {
   Gift,
   UserRound,
 } from 'lucide-react';
-import { apiGet, ApiError, type OrderDetail } from '../../../lib/api';
+import { apiGet, ApiError, type OrderDetail, type PayloadFieldDef } from '../../../lib/api';
+import { isOwner } from '../../../lib/session';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatusBadge, Badge } from '../../../components/ui/badge';
 import { Button } from '../../../components/ui/button';
@@ -30,6 +31,7 @@ import {
   TableRow,
 } from '../../../components/ui/table';
 import { AssignmentLicenseCell } from '../../../components/assignment-license-cell';
+import { RotateCredentialsControl } from '../../../components/rotate-credentials-control';
 import {
   assignmentStatusLabel,
   auditActionLabel,
@@ -39,6 +41,7 @@ import {
   siteTypeLabel,
 } from '../../../lib/labels';
 import { CompleteLineButton, AssignmentActions, ResendButton } from './order-actions';
+import { MailPreviewButton } from './mail-preview';
 import { OrderReplacements } from './order-replacements';
 import {
   LineDiagnosisStrip,
@@ -66,6 +69,16 @@ type Line = OrderDetail['lines'][number] & {
   pendingReason?: string | null;
   productSku?: string | null;
   productKind?: string | null;
+  /**
+   * Panelden KALICI iptal edilmiş birim sayısı (`order_lines.canceled_units`, migration 0036).
+   * DOLDURMA HEDEFİNİN ikinci yarısıdır — bkz. `apps/api/src/orders/fill-target.ts`:
+   * hedef = `qty − canceledUnits`. `qty` MAĞAZA GERÇEĞİDİR ve re-push'ta yeniden yazılır;
+   * iptaller ayrı defterde birikir.
+   *
+   * OPSİYONEL (dağıtım sapması): admin, API'den ÖNCE dağıtılırsa alan gelmez → `?? 0` ile
+   * eski davranışa (hedef = qty) düşülür.
+   */
+  canceledUnits?: number | null;
 };
 
 type Assignment = OrderDetail['assignments'][number] & {
@@ -80,6 +93,17 @@ type Assignment = OrderDetail['assignments'][number] & {
    * alanı döndürmezse `undefined` gelir ve gate uygulanmaz (mevcut davranış korunur).
    */
   usageMode?: string | null;
+  /**
+   * `license_items.id` — "Kimlik bilgilerini güncelle" ucu ATAMA değil, LİSANS KALEMİ
+   * kimliğiyle çalışır (`/v1/admin/license-items/:id/rotate-credentials`).
+   */
+  licenseItemId?: string | null;
+  /**
+   * Hesap ürününün alan şeması (key/label/secret/required — SIR İÇERMEZ). Kimlik bilgisi
+   * güncelleme formunun alanlarını kurar. Eski API imajı bu alanı döndürmezse düğme
+   * sebebiyle KAPALI sunulur (form kurulamaz) — sessizce yanlış form açılmaz.
+   */
+  payloadSchema?: PayloadFieldDef[] | null;
 };
 
 type HistoryRow = OrderDetail['history'][number] & {
@@ -107,10 +131,18 @@ type Replacement = OrderDetail['replacements'][number] & {
   usageMode?: string | null;
 };
 
+/**
+ * Gönderim izi satırı. `isDelivery` backend'in EKLEMELİ alanıdır (teslimat maili mi, yoksa
+ * durum bildirimi mi — tek kaynak `isDeliverySubject`). Eski API imajı bu alanı döndürmezse
+ * `undefined` gelir ve önizleme düğmesi eskisi gibi tüm satırlarda sunulur.
+ */
+type EmailRow = OrderDetail['emails'][number] & { isDelivery?: boolean };
+
 type Detail = Omit<
   OrderDetail,
-  'order' | 'lines' | 'assignments' | 'history' | 'auditTrail' | 'replacements'
+  'order' | 'lines' | 'assignments' | 'history' | 'auditTrail' | 'replacements' | 'emails'
 > & {
+  emails: EmailRow[];
   replacements: Replacement[];
   order: OrderDetail['order'] & {
     /** Mağaza yönetim panelinde siparişi açan link (SALT LİNK — panel mağazaya bağlanmaz). */
@@ -136,6 +168,27 @@ function fmtValidUntil(iso: string | null): { text: string; expired: boolean } {
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' });
 
+/**
+ * Bir sipariş kaleminin DOLDURMA HEDEFİ — `apps/api/src/orders/fill-target.ts` `fillTarget()`
+ * ile BİREBİR aynı kural: `max(0, qty − canceledUnits)`.
+ *
+ * NEDEN: panel bugüne kadar ilerlemeyi `qty − fulfilledQty` ile türetiyordu. qty=3'lük bir
+ * satırda operatör kardeş bir atamayı iptal ettiğinde (canceledUnits=1, fulfilled=2) AYNI
+ * KUTUDA hem "2/3 teslim · bekliyor" hem API'nin hesapladığı `status='fulfilled'` rozeti
+ * görünüyordu. Aynı kavramın iki yüklemi bu projede tekrarlayan "sessiz yalan" sınıfıdır →
+ * sunum artık API ile TEK deftere bakar.
+ *
+ * Alan gelmezse (eski API imajı) hedef = qty olur, yani bugünkü davranış aynen korunur.
+ */
+function fillTargetOf(l: { qty: number; canceledUnits?: number | null }): number {
+  return Math.max(0, l.qty - (l.canceledUnits ?? 0));
+}
+
+/** Hedefe göre iptal edilmiş birim (negatif/artık değer taşımaz — savunmacı). */
+function canceledUnitsOf(l: { qty: number; canceledUnits?: number | null }): number {
+  return Math.min(Math.max(l.canceledUnits ?? 0, 0), l.qty);
+}
+
 /** Zaman çizelgesi etiketleri — TEK KAYNAK `lib/labels.ts` (ham enum operatöre çıkmaz). */
 const eventTitle = (t: string) => eventTypeLabel(t);
 
@@ -150,15 +203,21 @@ const auditTitle = (a: AuditRow) =>
  * `siblingActiveCount`: AYNI sipariş kalemindeki DİĞER canlı (aktif|askıda) atama sayısı —
  * iptal onay metni buna göre dallanır (kardeş varsa satır terminal yapılmaz). Bu sayfa
  * atamaları zaten satır bazında grupluyor; ekstra istek yok.
+ *
+ * `owner`: oturum owner mı (SUNUCUDA `isOwner()` ile hesaplanır, istemciye yalnız boolean
+ * geçer). Hesap ürünündeki "Kimlik bilgilerini güncelle" owner-only bir uçtur → owner
+ * değilse düğme sebebiyle KAPALI sunulur (tıklanıp 403 alan düğme sunulmaz).
  */
 function LicenseRow({
   a,
   orderId,
   siblingActiveCount,
+  owner,
 }: {
   a: Assignment;
   orderId: string;
   siblingActiveCount: number;
+  owner: boolean;
 }) {
   const vu = fmtValidUntil(a.validUntil);
   const isMulti = a.maxUses > 1;
@@ -179,7 +238,38 @@ function LicenseRow({
           {vu.expired ? ' (doldu)' : ''}
         </span>
       )}
-      <div className="ml-auto">
+      <div className="ml-auto flex flex-wrap items-start justify-end gap-1.5">
+        {/*
+          HESAP ürününde kimlik bilgisi tazeleme (sağlayıcıda parola değişti). Envanterden
+          BURAYA taşındı: müşterinin elindeki lisansa dokunan her işlem sipariş bağlamında
+          yapılır (kullanıcı kararı).
+
+          NEDEN "Değiştir" bunun yerine geçmez: replace müşteriye BAŞKA bir hesap verir —
+          eski hesap müşterinin elinde çalışmaya devam eder ve o hesaptaki verisi kaybolur.
+          Bu akış AYNI kalemi ve AYNI atamayı korur.
+
+          `kind` gate'i bileşenin İÇİNDE (account dışında hiç render edilmez); burada yalnız
+          canlı satırda çağrılır — terminal atamalar zaten "Geçmiş" bölümünde ve orada bu
+          düğme yok (uç canlı atama ister, aksi halde 409 döner).
+
+          "CANLI" = active VEYA suspended — servisteki guard ile BİREBİR aynı küme
+          (`stock.rotateAccountCredentials`: `a.status IN ('active','suspended')`) ve
+          envanterdeki eski davranışın aynısı. Askıdakini burada kapatmak, API'nin KABUL
+          ettiği bir işlemi yasakmış gibi gösterir (panelin kendi kuralı hakkında yalan
+          söylemesi) ve operatörden mevcut bir yeteneği alırdı.
+        */}
+        <RotateCredentialsControl
+          kind={a.kind}
+          ownerBlocked={!owner}
+          target={{
+            licenseItemId: a.licenseItemId ?? '',
+            productName: a.productName ?? 'Lisans',
+            // SIR GÖSTERMEZ: yalnız secret-OLMAYAN ilk alan (ör. kullanıcı adı) önizlenir.
+            preview: (a.fields ?? []).find((f) => !f.secret)?.value ?? null,
+            payloadSchema: a.payloadSchema,
+            orderId,
+          }}
+        />
         <AssignmentActions
           assignmentId={a.id}
           orderId={orderId}
@@ -199,10 +289,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
   // Detay + "neden bekliyor" tanısı PARALEL. Tanı OPSİYONEL katmandır: uç hata verirse
   // (eski API imajı, geçici hata) sayfa eski davranışıyla tam çalışmaya devam eder.
-  const [detailRes, diagRes] = await Promise.allSettled([
+  // `owner`: hesap kimlik-bilgisi güncellemesi owner-only (API `OwnerGuard` + sunucu
+  // aksiyonundaki `isOwner()`). Karar SUNUCUDA verilir, istemciye yalnız boolean geçer —
+  // fonksiyon prop'u serileştirilemez ve rol istemcide taşınmamalı.
+  const [detailRes, diagRes, ownerRes] = await Promise.allSettled([
     apiGet<Detail>(`/v1/admin/orders/${id}`),
     apiGet<OrderDiagnosis>(`/v1/admin/pending-lines/diagnose/${id}`),
+    isOwner(),
   ]);
+  // Hata → owner DEĞİL varsayılır (fail-safe yön: düğme sebebiyle kapalı görünür).
+  const owner = ownerRes.status === 'fulfilled' ? ownerRes.value : false;
 
   let data: Detail | null = null;
   let error: string | null = null;
@@ -288,10 +384,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       `${a.productName ?? 'Lisans'}${tail} — ${assignmentStatusLabel(a.status)}`;
   }
 
-  const totalQty = lines.reduce((s, l) => s + l.qty, 0);
+  // ÖZET ŞERİDİ: payda artık ham `qty` toplamı DEĞİL, doldurma HEDEFİ toplamı
+  // (`qty − canceledUnits`) — API'nin satır durumunu hesapladığı kuralın aynısı. Aksi halde
+  // iptalli siparişte şerit sonsuza dek "kısmi/bekliyor" derken satırlar "Teslim edildi"
+  // rozeti taşıyordu.
+  const totalQty = lines.reduce((s, l) => s + fillTargetOf(l), 0);
   const totalFulfilled = lines.reduce((s, l) => s + l.fulfilledQty, 0);
+  // İptal edilen birim toplamı: paydanın neden küçüldüğünü SÖYLEMEZSEK operatör "adet
+  // yanlış" sanar (sessiz düşüş bu panelde yasak).
+  const totalCanceledUnits = lines.reduce((s, l) => s + canceledUnitsOf(l), 0);
   const activeCount = assignments.filter(isActive).length;
   const fullyDelivered = totalFulfilled >= totalQty && totalQty > 0;
+  // Hedefin TAMAMI iptal edildiyse "0/0 kısmi/bekliyor" demek yanlış: bekleyen bir iş yok.
+  // Ton da uyarı DEĞİL nötr (kapanmış kayıt — panelin TON KURALI).
+  const allCanceled = totalQty === 0 && totalCanceledUnits > 0;
   const createdAt = fmtDateTime(order.createdAt);
 
   // Zaman çizelgesi: teslimat olayları + "kim yaptı" denetim izi TEK kronolojik akışta
@@ -391,13 +497,26 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             aynı sayfadaki Card'ların yanında farklı bir kart yüzeyi çiziyordu. */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-xl border border-border bg-card px-4 py-2.5 text-sm shadow-xs">
           <span className="inline-flex items-center gap-1.5">
-            <PackageCheck className={`size-4 ${fullyDelivered ? 'text-success' : 'text-warning'}`} />
+            <PackageCheck
+              className={`size-4 ${
+                fullyDelivered
+                  ? 'text-success'
+                  : allCanceled
+                    ? 'text-muted-foreground'
+                    : 'text-warning'
+              }`}
+            />
             <span className="text-muted-foreground">Teslim</span>
             <strong className="tabular-nums text-foreground">
               {totalFulfilled}/{totalQty}
             </strong>
             <span className="text-xs text-muted-foreground">
-              {fullyDelivered ? 'tamamlandı' : 'kısmi/bekliyor'}
+              {allCanceled ? 'tamamı iptal edildi' : fullyDelivered ? 'tamamlandı' : 'kısmi/bekliyor'}
+              {/* Hedef küçüldüyse SEBEBİ hemen yanında: "3 adet sipariş ama 2/2 tamamlandı"
+                  ancak iptalin görünmesiyle anlaşılır. */}
+              {totalCanceledUnits > 0 && (
+                <> · {totalCanceledUnits} birim iptal edildi</>
+              )}
             </span>
           </span>
           <span className="inline-flex items-center gap-1.5">
@@ -465,6 +584,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               const bonus = isBonusLine(l);
               const accent = lineAccent.get(l.id);
               const diag = diagByLine.get(l.id) ?? null;
+              // Doldurma hedefi (qty − iptal edilen birim) — API'nin `status` hesabıyla aynı
+              // defter. İlerleme metni bundan türer; ham `qty` yalnız "mağazada kaç adet
+              // satıldı" bilgisidir ve iptalden sonra hedefi ANLATMAZ.
+              const lineTarget = fillTargetOf(l);
+              const lineCanceledUnits = canceledUnitsOf(l);
               // "Kalanları Ata" yalnız gerçekten eksik + işlenebilir satırda (held/canceled/bonus hariç).
               const incomplete =
                 l.status !== 'fulfilled' && !l.canceled && !order.heldForReview && !bonus;
@@ -531,13 +655,24 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                         {bonus
                           ? 'Bonus lisans (ek teslimat — mağazada karşılığı yok)'
                           : `kalem #${l.remoteLineId} · ${l.qty} adet`}
+                        {/* Mağaza adedi ile teslim hedefi AYRIŞTIYSA farkı burada söyle:
+                            "3 adet" yazıp payda 2 göstermek tek başına okunamaz. */}
+                        {!bonus && lineCanceledUnits > 0 && (
+                          <>
+                            {' '}
+                            · <strong className="text-foreground">{lineCanceledUnits}</strong> birim
+                            iptal edildi → hedef {lineTarget}
+                          </>
+                        )}
                       </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm tabular-nums text-muted-foreground">
+                        {/* Payda HEDEF (qty − iptal), ham qty DEĞİL — API'nin durum rozetiyle
+                            çelişmesin (aynı kutuda "2/3 bekliyor" + "Teslim edildi" hatası). */}
                         <strong className="text-foreground">
-                          {l.fulfilledQty}/{l.qty}
+                          {l.fulfilledQty}/{lineTarget}
                         </strong>{' '}
                         teslim
                       </span>
@@ -585,6 +720,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                           orderId={order.id}
                           // "Diğer" canlı kalem sayısı: kendisi hariç (iptal onayı metni buna dallanır).
                           siblingActiveCount={activeLine.length - 1}
+                          owner={owner}
                         />
                       ))
                     )}
@@ -769,12 +905,35 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               ) : (
                 <ul className="space-y-2.5 text-sm">
                   {emails.map((m) => (
-                    <li key={m.id} className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 flex-1 truncate text-foreground">{m.subject}</span>
+                    <li key={m.id} className="flex items-center justify-between gap-1">
+                      <span className="min-w-0 flex-1 truncate text-foreground" title={m.subject}>
+                        {m.subject}
+                      </span>
                       <StatusBadge status={m.status} />
+                      {/*
+                        Önizleme YALNIZ teslimat maillerinde: durum bildirimlerinin ("Değişim
+                        talebiniz…") gövdesi enqueue anında üretilir ve teslimat şablonundan
+                        GELMEZ → orada bu düğme, hiç gönderilmemiş bir metni "gönderilen mail"
+                        gibi gösterirdi. `isDelivery` gelmezse (eski API imajı) düğme sunulur;
+                        modal zaten içeriğin TESLİMAT maili olduğunu ve yeniden üretildiğini yazar.
+                      */}
+                      {m.isDelivery !== false && (
+                        <MailPreviewButton
+                          orderId={order.id}
+                          subject={m.subject}
+                          status={m.status}
+                          toEmail={m.toEmail}
+                        />
+                      )}
                     </li>
                   ))}
                 </ul>
+              )}
+              {emails.length > 0 && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Göz ikonu mail içeriğini gönderMEDEN gösterir. İçerik saklanmadığı için
+                  siparişin güncel verisiyle yeniden üretilir.
+                </p>
               )}
             </CardContent>
           </Card>

@@ -88,6 +88,9 @@ export const licenseItems = pgTable(
     // `assignAvailableSingleUse` / `consumeMultiUseCapacity` şu sırayla seçer:
     //   WHERE product_id=? AND status='available' AND (expires_at IS NULL OR expires_at>now())
     //   ORDER BY expires_at ASC NULLS LAST, created_at, seq  LIMIT n  FOR UPDATE SKIP LOCKED
+    // (Bu seçim İKİ yolda da MATERIALIZED bir CTE içinde durur: `IN (alt sorgu … LIMIT n)`
+    //  biçimi READ COMMITTED'da yeniden değerlendirilip LIMIT'i fiilen kaldırıyordu — ölçüldü,
+    //  aşırı teslimat üretti. Gerekçenin tamamı `assignment/assign.ts` içinde.)
     // Eski `_fefo_idx` yalnız (product_id, expires_at) taşıyordu; `created_at`/`seq` indekste
     // OLMADIĞI için sıralama anahtarlarını okumak üzere her aday satır için heap'e gidiliyordu.
     // Üstelik kalemlerin ezici çoğunluğunda `expires_at IS NULL` olduğundan presorted prefix

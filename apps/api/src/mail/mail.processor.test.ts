@@ -1,15 +1,15 @@
 import type { ConfigService } from '@nestjs/config';
 import { describe, expect, it } from 'vitest';
-import { MailProcessor, withGuides } from './mail.processor';
+import { MailProcessor } from './mail.processor';
+import { withGuides } from './mail-render';
 import {
   MAIL_DELIVERY_JOB,
   MAIL_NOTICE_JOB,
   type MailService,
   type ReplacementNoticeJob,
 } from './mail.service';
-import type { CryptoService } from '../crypto/crypto.service';
 import type { Database } from '../db/db.module';
-import type { TemplatesService } from './templates.service';
+import type { DeliveryMailBuilder } from './delivery-mail.builder';
 
 /**
  * MailProcessor iş-adı DALLANMASI birim testi (regresyon kilidi).
@@ -22,7 +22,7 @@ import type { TemplatesService } from './templates.service';
  *   2) bilinmeyen iş adı → HATA (sessiz 'completed' yok; kuyruk retry/dead-letter görsün),
  *   3) teslimat işi → teslimat yolu (bildirim dalına sapmaz).
  *
- * PG/Redis GEREKMEZ: db, crypto, templates, config ve MailService sahte verilir.
+ * PG/Redis GEREKMEZ: db, config, MailService ve gövde üreticisi (DeliveryMailBuilder) sahte verilir.
  */
 
 /** select().from().where().limit(1) zincirini taklit eden minimal sahte db + yazma sayacı. */
@@ -73,16 +73,15 @@ function fakeMail(): { mail: MailService; calls: ReplacementNoticeJob[] } {
 }
 
 /**
- * Teslimat yoluna sapmayı ANINDA yakalayan sahte crypto: bildirim/bilinmeyen dalında
- * payload çözümü ÇAĞRILMAMALIDIR (sır sızıntısı koruması).
+ * Teslimat yoluna sapmayı ANINDA yakalayan sahte gövde üreticisi: bildirim/bilinmeyen dalında
+ * teslimat gövdesi (payload çözümü + şablon) ÜRETİLMEMELİDİR (sır sızıntısı koruması).
  */
-const explodingCrypto = {
-  decrypt: () => {
-    throw new Error('Teslimat yolu çağrılmamalıydı (payload çözümü)');
+const explodingBuilder = {
+  build: () => {
+    throw new Error('Teslimat yolu çağrılmamalıydı (gövde üretimi)');
   },
-} as unknown as CryptoService;
+} as unknown as DeliveryMailBuilder;
 
-const noTemplates = {} as unknown as TemplatesService;
 const noConfig = {} as unknown as ConfigService;
 
 /** process()'in beklediği Job tipini kaynaktan türet (imza değişirse test derlenmez). */
@@ -95,7 +94,7 @@ describe('MailProcessor: kuyruk işi adına göre dallanma', () => {
   it('bildirim işini (MAIL_NOTICE_JOB) sendNoticeJob dalına yönlendirir, teslimat yoluna GİRMEZ', async () => {
     const { db, selectCalls } = fakeDb();
     const { mail, calls } = fakeMail();
-    const processor = new MailProcessor(db, explodingCrypto, noTemplates, noConfig, mail);
+    const processor = new MailProcessor(db, noConfig, mail, explodingBuilder);
 
     const data: ReplacementNoticeJob = {
       emailLogId: 'log-1',
@@ -113,7 +112,7 @@ describe('MailProcessor: kuyruk işi adına göre dallanma', () => {
   it('bilinmeyen iş adında SESSİZCE geçmez — hata fırlatır ve email_log kaydını failed işaretler', async () => {
     const { db, updates } = fakeDb();
     const { mail, calls } = fakeMail();
-    const processor = new MailProcessor(db, explodingCrypto, noTemplates, noConfig, mail);
+    const processor = new MailProcessor(db, noConfig, mail, explodingBuilder);
 
     await expect(
       processor.process(fakeJob('bilinmeyen-is-adi', { emailLogId: 'log-2' })),
@@ -129,7 +128,7 @@ describe('MailProcessor: kuyruk işi adına göre dallanma', () => {
     // email_log zaten 'sent' → teslimat dalının idempotency kısa devresi; SMTP/şablon gerekmez.
     const { db, selectCalls } = fakeDb([{ status: 'sent' }]);
     const { mail, calls } = fakeMail();
-    const processor = new MailProcessor(db, explodingCrypto, noTemplates, noConfig, mail);
+    const processor = new MailProcessor(db, noConfig, mail, explodingBuilder);
 
     await processor.process(fakeJob(MAIL_DELIVERY_JOB, { orderId: 'o-1', emailLogId: 'log-3' }));
 

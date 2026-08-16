@@ -1757,6 +1757,25 @@ function ResultPanel({
             </span>
           </p>
         )}
+        {!dry && result.autoCompleteFailed && (
+          /*
+           * KISMİ BAŞARI — stok girdi, tarama koşmadı. Yeşil "N kayıt girildi" tek başına
+           * yanıltıcıdır: bekleyen siparişler stok VARKEN teslim edilmeden kalır ve operatör
+           * bunu "zaten bekleyen yoktu"dan ayırt edemez. Kardeş kapasite yolu bunu zaten
+           * uyarıyla söylüyor; ana içe aktarma yolu geride kalmıştı.
+           */
+          <p className="flex items-start gap-1.5 text-warning">
+            <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              Kayıtlar envantere girdi, ancak bekleyen sipariş taraması yapılamadı. Bekleyen
+              satırlar için sipariş detayındaki{' '}
+              <strong>&quot;Kalanları Ata&quot;</strong> ile devam edebilirsiniz.{' '}
+              <Link href="/pending" className="underline underline-offset-4">
+                Bekleyen teslimatlar
+              </Link>
+            </span>
+          </p>
+        )}
         {!dry && result.autoCompleteQueued && (
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />

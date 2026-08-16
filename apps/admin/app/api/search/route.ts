@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { apiGet } from '@/lib/api';
+import { ApiError, apiGet } from '@/lib/api';
 
 /**
  * Global arama proxy (§13, Ctrl+K). Komut paleti bir CLIENT bileşen olduğundan
@@ -32,8 +32,16 @@ export async function GET(req: NextRequest) {
   try {
     const data = await apiGet<SearchResult>(`/v1/admin/search?q=${encodeURIComponent(q)}`);
     return NextResponse.json(data);
-  } catch {
-    // Arama hatası paleti kırmamalı — boş sonuç döndür.
-    return NextResponse.json({ orders: [], keys: [] } satisfies SearchResult);
+  } catch (e) {
+    /*
+     * "SONUÇ YOK" İLE "ARAMA YAPILAMADI" AYRI (denetim; kardeş `api/saved-views/route.ts`
+     * bu bulguyu çoktan düzeltmiş ve gerekçesini yazmış): hata BOŞ SONUÇ'a çevrilirse palet
+     * "Sonuç yok." der ve operatör aradığı siparişin/anahtarın VAR OLMADIĞI sonucuna varır.
+     * Bu panelde sessiz boş liste daha önce "o kayıt yok" yanılgısı üretmişti. Palet yine
+     * kırılmaz — istemci durum kodunu okuyup dürüst mesaj basar.
+     */
+    const status = e instanceof ApiError ? e.status : 502;
+    const message = e instanceof Error ? e.message : 'Bağlantı hatası';
+    return NextResponse.json({ message }, { status });
   }
 }

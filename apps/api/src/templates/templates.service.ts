@@ -4,25 +4,26 @@ import { desc, eq } from 'drizzle-orm';
 import { type Transporter } from 'nodemailer';
 import { DB, type Database } from '../db/db.module';
 import { deliveryTemplates, emailLog, products, sites } from '../db/schema';
-import { DELIVERY_TEMPLATE_SAMPLE_VARS } from '@lisans/shared';
+import {
+  DELIVERY_TEMPLATE_SAMPLE_VARS,
+  extractTemplateVars,
+  renderTemplateVars,
+} from '@lisans/shared';
 import { createMailTransport } from '../mail/mail.transport';
 
 /**
- * {{degisken}} token değişimi (§6). mail/templates.service.ts'teki render ile birebir
- * aynı davranış — bu modül mail modülünü DÜZENLEMEZ, kendi kopyasını tutar (bağımsız).
+ * {{degisken}} token değişimi (§6).
+ *
+ * ARTIK KENDİ KOPYASI YOK: kalıp + davranış `@lisans/shared` (template-vars) TEK
+ * kaynağından gelir. Eski yorum "kendi kopyasını tutar (bağımsız)" diyordu; sonuç,
+ * AYNI kalıbın üç ayrı yazımıydı (burası · mail/templates.service · admin editörü) →
+ * biri değişirse önizleme ile GERÇEK gönderim sessizce ayrışır. Ad KORUNUYOR (mevcut
+ * çağıranlar ve testler bu isimden okuyor).
  */
-export function renderTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => vars[k] ?? '');
-}
+export const renderTemplate = renderTemplateVars;
 
 /** Şablonda kullanılan benzersiz {{degisken}} adlarını çıkarır (uyarı/doğrulama için). */
-export function usedTemplateVars(template: string): string[] {
-  const set = new Set<string>();
-  for (const m of template.matchAll(/\{\{\s*(\w+)\s*\}\}/g)) {
-    if (m[1]) set.add(m[1]);
-  }
-  return [...set];
-}
+export const usedTemplateVars = extractTemplateVars;
 
 /**
  * Önizleme/test için varsayılan örnek değişkenler (§6 token seti).

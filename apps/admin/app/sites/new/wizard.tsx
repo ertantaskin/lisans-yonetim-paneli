@@ -274,7 +274,14 @@ export function Wizard() {
               <Field
                 label="Geri kanal webhook URL (opsiyonel)"
                 htmlFor="wz-webhook"
-                hint="Panelin sipariş durum bildirimlerini göndereceği WP eklenti adresi. Boş bırakırsanız 'Panele Bağlan' akışı bunu otomatik ayarlar."
+                /*
+                 * "Boş bırakırsanız otomatik ayarlar" YANLIŞTI (denetim bulgusu): `connect/claim`
+                 * yolunda tek koşul host eşleşmesidir — alan DOLUYSA DA eklentinin bildirdiği
+                 * adresle EZİLİR ("yalnız boşsa yaz" diye bir kontrol yok). Kardeş alan
+                 * (mağaza yönetim URL şablonu) elle girileni koruyan `manual` bayrağı taşır;
+                 * webhook'ta öyle bir bayrak yok. Metin gerçeği söylüyor.
+                 */
+                hint="Panelin sipariş durum bildirimlerini göndereceği WP eklenti adresi. Boş bırakabilirsiniz: 'Panele Bağlan' akışı bunu eklentinin bildirdiği adresle doldurur — elle girseniz bile o akış çalıştığında ÜZERİNE YAZILIR."
               >
                 <Input
                   id="wz-webhook"

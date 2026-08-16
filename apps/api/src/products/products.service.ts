@@ -255,6 +255,12 @@ export function productCapacityChange(
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
 
+  /**
+   * WP eşleme kutusu ürün seçicisinin üst sınırı (bkz. `listForCatalog`). Kırpma SESSİZ
+   * DEĞİLDİR: `?meta=1` isteyen istemci `truncated` alır (DETAIL_LIST_LIMIT deseni).
+   */
+  private static readonly CATALOG_LIMIT = 500;
+
   constructor(@Inject(DB) private readonly db: Database) {}
 
   /**
@@ -1467,9 +1473,33 @@ export class ProductsService {
   // eşleme CRUD. SIR YOK (yalnız ürün adı/sku/tip; fiyat/lisans DÖNMEZ). Tüm yazma/okuma
   // ÇAĞIRAN SİTEYE scope'lu (controller CurrentSite.id geçirir) → başka sitenin eşlemesine dokunulmaz.
 
-  /** Eşleme kutusu ürün seçici: hafif katalog listesi (sır yok). */
-  async listForCatalog() {
-    return this.db
+  /**
+   * Eşleme kutusu ürün seçici: hafif katalog listesi (sır yok).
+   *
+   * ── SESSİZ KIRPMA KAPANDI (denetim) ────────────────────────────────────────────────
+   * Eskiden düz `LIMIT 500` + `ORDER BY name ASC` idi ve İKİ kusur taşıyordu:
+   *
+   *  1. TIE-BREAK YOK: `products.name` UNIQUE DEĞİL (unique olan `sku`). Aynı adı taşıyan
+   *     iki ürün varsa 500. sıradaki kesim noktası KEYFİ olur — WP kutusu iki açılışta
+   *     FARKLI listeyi gösterebilir. Proje kuralı: LIMIT'li her ORDER BY'ın benzersiz bir
+   *     son anahtarı olmalı (`id`). Yön AYNA: birincil ASC → tie-break de ASC.
+   *  2. KIRPMA SİNYALİ YOK: 500'den fazla ürünü olan kurulumda operatör aradığı ürünü
+   *     dropdown'da bulamıyor ve HİÇBİR uyarı almıyor — "o ürün panelde yok" sanıyor.
+   *     Bu projede sessiz LIMIT daha önce tam olarak bu yanlış sonucu üretmişti
+   *     (`/customers` LIMIT'i bu yüzden kaldırılmıştı).
+   *
+   * Tespit deseni proje standardı: TAVAN+1 çek, JS'te kırp, `n > TAVAN` ile KESİN sinyal
+   * (`n >= TAVAN` tam tavanda YANLIŞ ALARM verirdi).
+   *
+   * ── ZARF NEDEN OPT-IN (`meta`) ─────────────────────────────────────────────────────
+   * Uç site-facing'dir; tüketicisi SAHADAKİ WP eklentisidir ve gövdeyi DÜZ DİZİ olarak
+   * `foreach` ile geziyor. Zarfı koşulsuz `{items,truncated}` yapsaydık, henüz güncellenmemiş
+   * her mağazada dropdown SESSİZCE BOŞALIRDI (PHP tarafı `$p['id']` bulamayıp her satırı
+   * atlar — hata da vermez). Bu yüzden `reconcileOrder`'ın `fullSync` bayrağıyla AYNI desen:
+   * bayrak YOKSA eski (güvenli) gövde aynen sürer; yeni eklenti `?meta=1` ile zarfı ister.
+   */
+  async listForCatalog(opts: { meta?: boolean } = {}) {
+    const rows = await this.db
       .select({
         id: products.id,
         name: products.name,
@@ -1478,8 +1508,13 @@ export class ProductsService {
         usageMode: products.usageMode,
       })
       .from(products)
-      .orderBy(asc(products.name))
-      .limit(500);
+      .orderBy(asc(products.name), asc(products.id))
+      .limit(ProductsService.CATALOG_LIMIT + 1);
+
+    const truncated = rows.length > ProductsService.CATALOG_LIMIT;
+    // Tespit için çekilen fazladan satır YANITA GİRMEZ (sözleşme: en fazla TAVAN kadar).
+    const items = rows.slice(0, ProductsService.CATALOG_LIMIT);
+    return opts.meta ? { items, truncated, limit: ProductsService.CATALOG_LIMIT } : items;
   }
 
   /** Bu sitenin eşlemeleri (ürün adıyla); opsiyonel remoteProductId filtresi (o Woo ürünü). */

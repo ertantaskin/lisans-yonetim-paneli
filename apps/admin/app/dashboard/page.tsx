@@ -24,7 +24,7 @@ import {
   LiveStatus,
   LiveSupportCard,
 } from '../../components/live/live-feed';
-import type { LivePayload } from '../../lib/live-types';
+import type { LivePayload, LiveStats } from '../../lib/live-types';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,6 +110,40 @@ export default async function DashboardOverviewPage() {
    */
   const unmappedCatalogProducts =
     readCount(data?.unmappedCatalogProducts) ?? readCount(snapshot?.stats?.unmappedCatalogProducts);
+
+  /**
+   * KPI ŞERİDİ İÇİN SUNUCU ÖZETİNDEN TOHUM.
+   *
+   * `/live` düştüğünde şerit tüm hücreleri "—" gösteriyordu; oysa `getDashboard()`
+   * başarılıysa AYNI sayaçlar zaten elimizde. `unmappedOrders` için bu geri düşüş
+   * yukarıda (bant) ZATEN vardı, diğer metriklere uygulanmamıştı.
+   *
+   * EŞLEME GÜVENLİ — "aynı kavramın iki tanımı" DEĞİL: API bu sayaçların ikisini de TEK
+   * kaynaktan üretir (`dashboard.service`: `summary()` ve `live()` aynı `liveCounters()`
+   * sorgusunu ve aynı `lowStockCountCached()` önbelleğini paylaşır; kodda "canlı ile ortak"
+   * diye yazılı). Yani `openReplacements === stats.openSupport` ve
+   * `lowStockCount === stats.lowStockProducts` tanım gereği aynıdır.
+   *
+   * `heldOrders` BİLEREK EKSİK: sunucu özeti onu döndürmez → uydurulmaz, hücre "—" kalır
+   * (yanlış "0" göstermek "inceleme kuyruğu boş" demek olurdu).
+   *
+   * Canlı yanıt geldiği anda `LiveKpiStrip` zaten kendi verisine geçer (bu tohum yalnız
+   * ilk boyama/`/live` erişilemez hâli içindir); snapshot varsa onun değerleri kazanır.
+   */
+  const summarySeed: Partial<LiveStats> = {};
+  if (data) {
+    const seed = (key: keyof LiveStats, v: unknown) => {
+      const n = readCount(v);
+      if (n !== null) summarySeed[key] = n;
+    };
+    seed('pendingLines', data.pendingLines);
+    seed('unmappedLines', data.unmappedLines);
+    seed('openSupport', data.openReplacements);
+    seed('lowStockProducts', data.lowStockCount);
+    seed('unmappedOrders', data.unmappedOrders);
+    seed('unmappedCatalogProducts', data.unmappedCatalogProducts);
+  }
+  const kpiSeed: Partial<LiveStats> = { ...summarySeed, ...(snapshot?.stats ?? {}) };
 
   // Yavaş metrik şeridi: sunucu özeti gelmediyse o üç hücre düşer, bilgi sayacı (varsa) kalır.
   const stripItems: StatStripItem[] = [];
@@ -201,8 +235,9 @@ export default async function DashboardOverviewPage() {
         </Alert>
       )}
 
-      {/* Canlı iş kuyrukları: her hücre ilgili çalışma ekranına bağlantı */}
-      <LiveKpiStrip initialStats={snapshot?.stats} />
+      {/* Canlı iş kuyrukları: her hücre ilgili çalışma ekranına bağlantı.
+          Tohum: canlı anlık görüntü + (o düştüyse) sunucu özetinden türetilen sayaçlar. */}
+      <LiveKpiStrip initialStats={kpiSeed} />
 
       {/* Ana akış: solda siparişler, sağda destek talepleri.
           Kartlar arası boşluk sözleşme gereği 24px (gap-6) — 16px'te iki kart sıkışık duruyordu. */}

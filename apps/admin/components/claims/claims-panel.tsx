@@ -128,6 +128,7 @@ function groupBySupplier(rows: QuarantineItem[]): SupplierGroup[] {
 export function PendingClaimsPanel({
   rows,
   suppliers,
+  suppliersError = null,
   lastClaim,
   serverFiltered = false,
   truncated = false,
@@ -135,6 +136,12 @@ export function PendingClaimsPanel({
 }: {
   rows: QuarantineItem[];
   suppliers: Array<{ id: string; name: string }>;
+  /**
+   * Tedarikçi listesi ALINAMADIYSA sebebi (yoksa null). Boş liste ile hata AYRI şeylerdir:
+   * hata durumunda seçici boş görünür ama ön-seçili tedarikçi aslında GEÇERLİDİR — sebebi
+   * yazılmazsa operatör seçimin kaybolduğunu sanar (sessiz boş liste yasağı).
+   */
+  suppliersError?: string | null;
   lastClaim: ClaimRow | null;
   /** URL'de bir sunucu süzgeci taşınıyorsa (derin bağlantı) bu liste de daralmıştır — söylenir. */
   serverFiltered?: boolean;
@@ -274,6 +281,7 @@ export function PendingClaimsPanel({
         open={open}
         onOpenChange={setOpen}
         suppliers={suppliers}
+        suppliersError={suppliersError}
         presetSupplierId={preset}
       />
     </div>
@@ -370,11 +378,13 @@ function CreateClaimSheet({
   open,
   onOpenChange,
   suppliers,
+  suppliersError = null,
   presetSupplierId,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   suppliers: Array<{ id: string; name: string }>;
+  suppliersError?: string | null;
   presetSupplierId: string;
 }) {
   const router = useRouter();
@@ -480,6 +490,19 @@ function CreateClaimSheet({
             Eskiden gövde hiç dolgusuz ve kaydırmasızdı → uzun formda kenardan taşıyordu (kullanıcı
             "fiş oluşturma ekranı bozuk" dedi). */}
         <div className="space-y-4 p-4 pt-0">
+          {/* Seçici BOŞ ama sebebi var: fişin kime kesildiği bu ekranın en kritik kararı,
+              sessiz boş bir liste "bu tedarikçi silinmiş" gibi okunurdu. Fiş kesme
+              ENGELLENMEZ (ön-seçili id geçerlidir, adaylar yüklenir) — yalnız söylenir. */}
+          {suppliersError && (
+            <Alert variant="warning">
+              <AlertDescription>
+                Tedarikçi listesi alınamadı: {suppliersError} — seçicide isimler görünmeyebilir.
+                Panelden “Fiş oluştur” ile geldiyseniz tedarikçi zaten seçilidir; emin değilseniz
+                sayfayı yenileyin.
+              </AlertDescription>
+            </Alert>
+          )}
+
           <Field label="Tedarikçi" htmlFor="claim-supplier" hint="Fiş tek bir tedarikçiye kesilir.">
             <Combobox
               id="claim-supplier"

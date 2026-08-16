@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, isNull, type SQL } from 'drizzle-orm';
+import { renderTemplateVars } from '@lisans/shared';
 import { DB, type Database } from '../db/db.module';
 import { deliveryTemplates } from '../db/schema';
 
@@ -32,10 +33,15 @@ lisans bilgileriniz talebe otomatik olarak eklenir.
 İyi günler,
 {{site_name}}`;
 
-/** {{degisken}} token değişimi (§6). */
-export function render(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => vars[k] ?? '');
-}
+/**
+ * {{degisken}} token değişimi (§6) — kalıp `@lisans/shared` TEK kaynağından.
+ *
+ * NEDEN DELEGE: bu fonksiyon GERÇEK gönderim yolunda (delivery-mail.builder), kardeşi
+ * `templates/templates.service.renderTemplate` ise ÖNİZLEME/uyarı yolunda kullanılıyordu
+ * ve ikisi kalıbın ayrı kopyalarını taşıyordu. Kalıp ayrışsaydı panel "bu token geçerli"
+ * derken gönderilen mailde ham `{{...}}` kalırdı (ya da tersi). Ad KORUNUYOR.
+ */
+export const render = renderTemplateVars;
 
 @Injectable()
 export class TemplatesService {

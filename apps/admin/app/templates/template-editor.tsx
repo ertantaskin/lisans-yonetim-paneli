@@ -144,9 +144,19 @@ export function TemplateEditor({
             </div>
           </div>
 
+          {/*
+            ÖNCELİK METNİ KODLA HİZALI OLMALI (denetim bulgusu): burada "site override > ürün
+            şablonu" yazıyordu — GERÇEĞİN TERSİ. `templates.service.resolve` sırayla dener ve
+            ilk bulduğu kazanır: (ürün+site) → (ürün) → (site) → (genel). Yani ÜRÜN şablonu,
+            site-geneli şablonu YENER. Yanlış metin somut zarar veriyordu: bir mağazaya özel
+            teslimat maili isteyen operatör site-geneli şablon yazıp ürün şablonuna
+            dokunmuyor, mailler eskisi gibi gidiyor ve hiçbir uyarı çıkmıyordu. Bir mağazayı
+            gerçekten ayırmak için o mağaza + ürün ikilisiyle şablon açılmalıdır.
+          */}
           <p className="text-xs text-muted-foreground">
-            Öncelik: site override &gt; ürün şablonu &gt; genel varsayılan. Kullanılabilir
-            değişkenler:{' '}
+            Öncelik: ürün+site &gt; ürün &gt; site &gt; genel varsayılan. Yalnız bir mağazayı
+            ayırmak için o mağaza <strong>ve</strong> ürünü birlikte seçin — yalnız site
+            seçilen şablon, o ürünün kendi şablonunu geçemez. Kullanılabilir değişkenler:{' '}
             {TOKENS.map((t) => (
               <code
                 key={t}

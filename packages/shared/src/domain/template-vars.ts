@@ -51,3 +51,38 @@ export const DELIVERY_TEMPLATE_SAMPLE_VARS: Record<string, string> = {
 
 /** Şablonda kullanılabilecek değişken ADLARI (editörün uyarı listesi bundan türetilir). */
 export const DELIVERY_TEMPLATE_TOKENS = Object.keys(DELIVERY_TEMPLATE_SAMPLE_VARS);
+
+/**
+ * `{{degisken}}` token kalıbı — TEK KAYNAK.
+ *
+ * NEDEN BURADA: aynı kalıp ÜÇ yerde ayrı ayrı yazılıydı (`mail/templates.service.render`,
+ * `templates/templates.service.renderTemplate|usedTemplateVars`, admin şablon editörü).
+ * Bu dosyanın kendi docstring'i tam olarak bu sapmanın hikâyesini anlatıyor: değişken
+ * LİSTESİ iki yerde tutulduğu için ayrışmış ve panel aynı token'a iki farklı cevap
+ * vermişti. Kalıbın kendisi de aynı riski taşır — biri `\w+` yazıp diğeri `[a-z_]+`
+ * yazsaydı, editörün "desteklenmiyor" uyarısı ile gönderimde GERÇEKTEN değişen token
+ * kümesi ayrışır ve müşteriye ham `{{...}}` giderdi.
+ *
+ * Global (`g`) bayrağı ŞART (`matchAll` non-global regex'te TypeError atar; `replace`
+ * tüm tekrarları değiştirsin diye gerekli). `.test()` ile KULLANMAYIN — global regex'te
+ * `lastIndex` durumu taşınır ve ardışık çağrılar dönüşümlü olarak false döner.
+ */
+export const TEMPLATE_TOKEN_RE = /\{\{\s*(\w+)\s*\}\}/g;
+
+/**
+ * `{{degisken}}` token değişimi (§6). Sözlükte OLMAYAN token SESSİZCE '' olur —
+ * bu bilinçli (mail asla ham `{{...}}` göstermez); operatör uyarısı `extractTemplateVars`
+ * + `DELIVERY_TEMPLATE_TOKENS` farkından üretilir.
+ */
+export function renderTemplateVars(template: string, vars: Record<string, string>): string {
+  return template.replace(TEMPLATE_TOKEN_RE, (_, k: string) => vars[k] ?? '');
+}
+
+/** Şablonda kullanılan BENZERSİZ token adları (uyarı/doğrulama için; sıra: ilk görülme). */
+export function extractTemplateVars(template: string): string[] {
+  const set = new Set<string>();
+  for (const m of template.matchAll(TEMPLATE_TOKEN_RE)) {
+    if (m[1]) set.add(m[1]);
+  }
+  return [...set];
+}

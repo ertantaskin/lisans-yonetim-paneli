@@ -137,6 +137,13 @@ export interface LineDiagnosis {
   productId: string | null;
   productName: string | null;
   qty: number;
+  /**
+   * Panelden KALICI iptal edilmiş birim (fill-target.ts). Hedef = `qty − canceledUnits`;
+   * tanının içindeki `remaining` bu deftere göre hesaplanıyordu ama alan yanıta GİRMİYORDU →
+   * istemci aynı satır için `qty − fulfilledQty` ile FARKLI bir "kalan" üretiyordu.
+   * Kardeş yüzey `admin-orders.detail()` ile aynı gerekçe: hedefin girdisi tek deftere bağlı olmalı.
+   */
+  canceledUnits: number;
   fulfilledQty: number;
   status: string;
   canceled: boolean;
@@ -597,6 +604,9 @@ export class PendingLinesService {
         productId: r.product_id,
         productName: r.product_name,
         qty: Number(r.qty),
+        // Hedefin ikinci girdisi (yukarıdaki `remaining` bunu zaten kullanıyor) — sunum
+        // "kalan"ı aynı defterden türetsin diye yanıta da girer.
+        canceledUnits: Number(r.canceled_units ?? 0),
         fulfilledQty: Number(r.fulfilled_qty),
         status: r.status,
         canceled: Boolean(r.canceled),

@@ -201,7 +201,37 @@ export function SupportThread({
         {/* Sonuç canlı bölgede: inline metin tek başına ekran okuyucuya duyurulmaz (WCAG 4.1.3). */}
         <div role="status" aria-live="polite">
           {state.error && <p className="text-xs text-destructive">{state.error}</p>}
-          {state.sent && <p className="text-xs text-success">Mesaj kaydedildi.</p>}
+          {/*
+            SONUÇ DÜRÜST RAPORLANIR (denetim): "kaydedildi" ile "müşteriye bildirildi" AYRI
+            şeylerdir. Bildirim kuyruğa alınamadıysa yeşil bir onay göstermek operatörü
+            müşteriye yanıt verdiğine inandırırdı; asıl iş (müşteriye ulaşmak) yapılmamış olur.
+            Kuyruğa alınmış olması da TESLİMAT garantisi değildir — bu yüzden dil "bildirim
+            kuyruğa alındı" (gerçek sonuç /ops › Başarısız İşler'de).
+          */}
+          {state.sent && state.internal && (
+            <p className="text-xs text-success">İç not kaydedildi — müşteriye gönderilmez.</p>
+          )}
+          {state.sent && !state.internal && state.notificationQueued === true && (
+            <p className="text-xs text-success">
+              Yanıt kaydedildi, müşteri bildirimi kuyruğa alındı.
+            </p>
+          )}
+          {state.sent && !state.internal && state.notificationQueued === false && (
+            <p className="flex items-start gap-1.5 text-xs text-destructive">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span>
+                Yanıt kaydedildi ama <strong>müşteri bildirimi gönderilemedi</strong>
+                {state.notificationError ? ` (${state.notificationError})` : ''} — müşteri bu
+                mesajdan haberdar DEĞİL. Başka bir yoldan ulaşın.
+              </span>
+            </p>
+          )}
+          {state.sent && !state.internal && state.notificationQueued === undefined && (
+            <p className="text-xs text-warning">
+              Yanıt kaydedildi. Müşteriye bildirim gidip gitmediği okunamadı — doğrulamak için
+              Başarısız İşler (/ops) ekranına bakın.
+            </p>
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
           Mesaj yazmak talebin durumunu değiştirmez — değişim için “Onayla”, kapatmak için

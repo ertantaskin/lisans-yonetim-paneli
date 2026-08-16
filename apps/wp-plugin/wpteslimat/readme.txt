@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.1.3
+Stable tag: 1.1.4
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,19 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.1.4 =
+* EŞLEME KUTUSU DÜRÜSTLEŞTİ: panelde PASİF edilmiş bir eşleme artık "Eşli" diye gösterilmiyor —
+  ayrı bir uyarıyla belirtiliyor (pasif eşleme teslimatta kullanılmaz, siparişler eşlenmemiş kalır).
+* Varyasyonlu ürünlerde kutu artık ürün-seviyesi ile varyasyon-özel eşlemeleri AYIRIYOR. Önceden
+  varyasyona ait eşlemeyi "mevcut eşleme" gibi gösterip değiştirdiğinizi sandırıyor, gerçekte ayrı
+  bir kayıt yazıyordu; o varyasyonun siparişleri eski ürünü teslim etmeye devam ediyordu.
+* Panel ürün listesi eksik geldiğinde (çok ürünlü kurulum) görünür uyarı — aradığınız ürün listede
+  yoksa "panelde yok" sanılmıyor.
+* Çok kullanımlı (MAK) lisanslarda sipariş ekranındaki "Değiştir" düğmesi sebebiyle kapalı geliyor;
+  eskiden tıklanıyor ve panel her seferinde hata döndürüyordu.
+* Panel hata mesajları artık okunabilir Türkçe cümle olarak gösteriliyor (ham "Not Found" /
+  "validation_error" yerine).
 
 = 1.1.3 =
 * DESTEK YAZIŞMASI (kapalı döngü): müşteri açtığı talebi sipariş sayfasında görür, destek ekibinin

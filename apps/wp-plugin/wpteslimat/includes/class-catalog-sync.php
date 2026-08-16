@@ -302,10 +302,16 @@ class Wpteslimat_Catalog_Sync {
                 count($products)
             ));
         }
-        $err = (isset($res['body']['error']) && $res['body']['error'] !== '')
-            ? (string) $res['body']['error']
-            : sprintf(__('HTTP %d', 'wpteslimat'), $code);
-        self::redirect('error', $err);
+        // Hata metni TEK KAYNAKTAN (`Wpteslimat_Admin_Metabox::error_message`) üretilir.
+        // Buradaki eski kopya `body['error']` okuyordu; o alan HAM ENUM'dur ("Not Found",
+        // "validation_error") ve operatöre İngilizce/teknik metin olarak çıkıyordu. Okunur bilgi
+        // `message` alanındadır (Nest'te dizi de olabilir) ya da doğrulama hatasında `issues`
+        // içindedir; ağ hatasında (code=0) gövde panelden HİÇ gelmez. Ortak fonksiyon üçünü de
+        // doğru ele alır ve kod bazlı Türkçe karşılıklara düşer.
+        self::redirect('error', Wpteslimat_Admin_Metabox::error_message(
+            $code,
+            (isset($res['body']) && is_array($res['body'])) ? $res['body'] : []
+        ));
     }
 
     /**

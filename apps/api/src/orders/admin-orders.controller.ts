@@ -16,6 +16,7 @@ import { AdminRole, canRevealPlaintext } from '../auth/admin-role.decorator';
 import { ZodBody } from '../common/zod-validation.pipe';
 import { AdminOrdersService } from './admin-orders.service';
 import { FulfillmentService } from './fulfillment.service';
+import { MailPreviewService } from './mail-preview.service';
 
 const RevokeBody = z.object({ reason: z.string().min(1) });
 
@@ -76,6 +77,7 @@ export class AdminOrdersController {
   constructor(
     private readonly adminOrders: AdminOrdersService,
     private readonly fulfillment: FulfillmentService,
+    private readonly preview: MailPreviewService,
   ) {}
 
   @Get('orders')
@@ -163,6 +165,29 @@ export class AdminOrdersController {
     @AdminActor() actor: string,
   ) {
     return this.adminOrders.suspend(id, false, actor, body.reason);
+  }
+
+  /**
+   * Teslimat mailinin ÖNİZLEMESİ — gönderMEZ, kuyruğa ALMAZ (kullanıcı isteği: "içeriği
+   * tekrar göndermeden güvenle teyit edebilmek").
+   *
+   * NEDEN BU CONTROLLER (templates.controller DEĞİL): `/admin/templates/:id/preview` bir
+   * ŞABLONU ÖRNEK (sahte) değişkenlerle render eder — sipariş bağlamı, gerçek atamalar,
+   * gerçek rehberler ve sandbox yönlendirmesi orada YOKTUR. Bu uç ise BU siparişin gövdesini
+   * gerçek veriyle üretir; kaynağı `orders/:id` ve kardeşi `orders/:id/resend` ile aynı
+   * kapsamdadır (aynı 404/idempotency/rol semantiği).
+   *
+   * ROL FARKINDA (denetim A1): owner (veya auth KAPALI) düz metin görür ve bu görüntüleme
+   * `reveal` denetim kaydına düşer; owner-OLMAYAN 'admin' MASKELİ gövde alır ve kayıt yazılmaz.
+   * GET olması güvenlidir: yan etkisi yalnız denetim kaydıdır (detail() ile aynı desen).
+   */
+  @Get('orders/:id/mail-preview')
+  mailPreview(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @AdminActor() actor: string,
+    @AdminRole() role: string,
+  ) {
+    return this.preview.previewDelivery(id, actor, canRevealPlaintext(role));
   }
 
   /** Teslimat mailini tekrar gönder (60sn debounce). Kim tetikledi audit'e düşer. */

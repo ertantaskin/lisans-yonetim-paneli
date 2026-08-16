@@ -58,6 +58,19 @@ interface Valuation {
   valuedCents: number;
   valuedUnits: number;
   uncoveredUnits: number;
+  /**
+   * `status='available'` AMA stok ömrü (expires_at) dolmuş kapasite — ATAMA sorgusu bunları
+   * ZATEN dışlar, yani satılamaz. Bu yüzden `valuedUnits`/`uncoveredUnits`'e GİRMEZ ve
+   * "Stok Değeri" kartında görünmez.
+   *
+   * NEDEN YÜZEYE ÇIKIYOR: uç bu iki alanı döndürüyor ama ekran okumuyordu → bugün rafta duran
+   * ama teslim EDİLEMEYECEK sermaye panelde hiçbir yerde görünmüyordu (fiilen zayi).
+   *
+   * OPSİYONEL (dağıtım sapması): eski API imajında alan gelmez → bant hiç çizilmez.
+   */
+  expiredUnits?: number;
+  /** `expiredUnits`'in oranlanmış parasal karşılığı (yalnız maliyeti bağlanabilenler için). */
+  expiredCents?: number;
 }
 interface Wastage {
   currency: string;
@@ -398,6 +411,23 @@ export function CostsView({ data }: { data: CostReport }) {
   const uncoveredUnits = data.valuation.reduce((s, v) => s + v.uncoveredUnits, 0);
   const uncoveredEvents = data.wastage.reduce((s, w) => s + w.uncoveredEvents, 0);
 
+  /*
+   * ÖMRÜ DOLMUŞ (atanamaz) stok — para birimi başına AYRI satır.
+   *
+   * `uncovered` ile TOPLANMAZ: ikisi FARKLI kümedir. "Kapsanamayan" = maliyeti bilinmeyen ama
+   * SATILABİLİR kapasite; "ömrü dolmuş" = maliyeti bilinse de SATILAMAZ kapasite. Tek sayıda
+   * birleştirmek iki farklı operasyonel eylemi (maliyet gir ↔ zayi yaz) aynı satıra yıkardı.
+   * Parasal karşılık da toplanmaz — para birimleri karışır (panel invaryantı).
+   */
+  const expiredRows = data.valuation
+    .map((v) => ({
+      currency: v.currency,
+      units: v.expiredUnits ?? 0,
+      cents: v.expiredCents ?? 0,
+    }))
+    .filter((r) => r.units > 0);
+  const expiredUnitsTotal = expiredRows.reduce((s, r) => s + r.units, 0);
+
   // Teslim edilen COGS (§12, D17) — para birimi başına ayrı; '' kova = maliyet snapshot'ı
   // olmayan (partiye/PO'ya bağlanamayan) teslimatlar (AYRI uncovered uyarısı).
   const deliveredCogs = data.deliveredCogs ?? [];
@@ -515,6 +545,38 @@ export function CostsView({ data }: { data: CostReport }) {
               {uncoveredEvents > 0 && <>{fmtNum(uncoveredEvents)} fire olayı</>} bir satın alma
               emrine (PO) bağlanamadı. Bu kayıtların birim maliyeti bilinmediğinden yukarıdaki
               toplamlar OLDUĞUNDAN DÜŞÜK görünebilir.
+            </AlertDescription>
+          </div>
+        </Alert>
+      )}
+
+      {/* Ömrü dolmuş (atanamaz) stok — AYRI bant. Yukarıdaki "kapsanamayan" ile birleştirilmez:
+          o küme satılabilir ama maliyeti bilinmiyor, bu küme maliyeti bilinse de satılamıyor. */}
+      {expiredRows.length > 0 && (
+        <Alert variant="warning">
+          <TriangleAlert />
+          <div>
+            <AlertTitle>
+              {fmtNum(expiredUnitsTotal)} birim ömrü dolmuş — atanamaz
+            </AlertTitle>
+            <AlertDescription>
+              <p>
+                Stokta duruyor (<code>available</code>) ama stok ömrü geçtiği için teslimatta
+                ASLA seçilmez. Bu birimler yukarıdaki “Stok Değeri” kartına DAHİL DEĞİLDİR;
+                fiilen zayidir — Kusurlu Stok akışında geçersiz kılınması gerekir.
+              </p>
+              <ul className="mt-1.5 space-y-0.5">
+                {expiredRows.map((r) => (
+                  <li key={`expired-${r.currency || 'unknown'}`} className="tabular-nums">
+                    {/* Para birimi başına AYRI satır; farklı para birimleri toplanmaz. Boş
+                        kod = maliyeti bir PO'ya bağlanamayan kova → parasal karşılığı yok. */}
+                    <strong>{fmtNum(r.units)} birim</strong>
+                    {r.currency === ''
+                      ? ' (maliyeti bağlanamayan)'
+                      : ` · ${r.currency} — yaklaşık ${money(r.cents, r.currency)} maliyet`}
+                  </li>
+                ))}
+              </ul>
             </AlertDescription>
           </div>
         </Alert>

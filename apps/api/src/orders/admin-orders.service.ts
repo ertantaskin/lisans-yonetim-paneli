@@ -60,7 +60,7 @@ import {
 import { CryptoService } from '../crypto/crypto.service';
 import { notExpiredCond } from '../assignment/assign';
 import { REDIS } from '../redis/redis.module';
-import { MailService } from '../mail/mail.service';
+import { MailService, isDeliverySubject } from '../mail/mail.service';
 
 /**
  * Payload'ı maskeler — SABİT genişlikli gövde + yalnız son 4 hane (reveal ayrı/loglu iş).
@@ -946,6 +946,19 @@ export class AdminOrdersService {
           id: l.id,
           remoteLineId: l.remoteLineId,
           qty: l.qty,
+          /*
+           * DOLDURMA HEDEFİNİN İKİNCİ YARISI (fill-target.ts: hedef = qty − canceled_units).
+           *
+           * NEDEN EKLENDİ: bu alan sorguda ZATEN seçiliyor ve `pendingReason` onu KULLANIYOR,
+           * ama yanıta hiç girmiyordu → istemci "kalan"ı yalnız `qty − fulfilledQty` ile
+           * türetebiliyordu. qty=3'lük satırda bir kardeş atama iptal edildiğinde (canceled_units=1,
+           * fulfilled=2) AYNI KUTUDA hem "Teslim 2/3 · bekliyor" hem API'nin `pendingReason=null`
+           * ("Teslim edildi") cümlesi görünüyordu. İki tanım = sessiz yalan (bu projenin
+           * tekrarlayan hata sınıfı) → hedefin girdisi de yüzeye çıkar, sunum TEK deftere bakar.
+           *
+           * EKLEMELİ alan: mevcut alan adları/tipleri değişmedi.
+           */
+          canceledUnits: l.canceledUnits ?? 0,
           fulfilledQty: l.fulfilledQty,
           status: l.status,
           productId: l.productId,
@@ -977,7 +990,17 @@ export class AdminOrdersService {
           }),
         };
       }),
-      emails,
+      /*
+       * Gönderim izi (§9). EKLEMELİ alan `isDelivery`: satır TESLİMAT maili mi, yoksa durum
+       * BİLDİRİMİ mi ("Değişim talebiniz…", "Siparişiniz hakkında…", "[TEST]")?
+       *
+       * NEDEN GEREKLİ: sipariş ekranındaki "mail önizleme" TESLİMAT gövdesini yeniden üretir
+       * (email_log gövdeyi SAKLAMAZ — bkz. previewDelivery). Bir bildirim satırının yanında
+       * o düğmeyi sunmak, operatöre asla gönderilmemiş bir metni "bu gönderildi" diye
+       * gösterirdi. Ayrım TEK KAYNAKTAN (`isDeliverySubject`) gelir — /ops replay'i de mail
+       * türünü aynı fonksiyonla ayırt eder, iki yüzey ayrışamaz.
+       */
+      emails: emails.map((m) => ({ ...m, isDelivery: isDeliverySubject(m.subject) })),
       // O8: destek/değişim talepleri — "Onayla (değiştir)" AYNI değişim makinesini çalıştırır ve
       // MAK (multi) üründe 400 ile reddeder. Karar UI'da verilebilsin diye talebe ürünün
       // `usageMode`'u EKLENİR (eklemeli alan; mevcut alan adları korunur).
@@ -1098,6 +1121,21 @@ export class AdminOrdersService {
           // O8: 'multi' ise otomatik değişim ucu 400 döner → UI düğmeyi hiç sunmasın
           // ("tıklanıp hata veren düğme, hiç sunulmayandan kötüdür").
           usageMode: a.usageMode,
+          /*
+           * HESAP ALAN ŞEMASI (EKLEMELİ alan) — "Kimlik bilgilerini güncelle" formunun
+           * alanlarını kurar (`POST /v1/admin/license-items/:id/rotate-credentials`).
+           *
+           * NEDEN BURADA: sağlayıcı parolayı döndürdüğünde doğru işlem AYNI hesabı yerinde
+           * güncellemektir ("Değiştir" BAŞKA bir hesap atar, eskisi müşterinin elinde
+           * çalışmaya devam eder). Bu işlem artık sipariş detayından yapılıyor, dolayısıyla
+           * şema da orada gerekli — zaten SEÇİLİYORDU (maske kararı için), yalnız yanıta
+           * konmamıştı.
+           *
+           * SIR İÇERMEZ: yalnız alan TANIMLARI (key/label/secret/required) — değer yok.
+           * `products.list` ve `/products/:id/detail` bu alanı zaten aynı şekilde döndürüyor.
+           * key/code/custom ürününde null.
+           */
+          payloadSchema: a.productKind === 'account' ? (a.payloadSchema ?? null) : null,
         };
       }),
       events,

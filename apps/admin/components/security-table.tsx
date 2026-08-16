@@ -25,7 +25,11 @@ import {
 import type { SecurityEventRow } from '../app/security/queries';
 import { fmtDateTime } from '../lib/utils';
 import { securityTypeLabel, severityLabel } from '../lib/labels';
-import { scanSecurityAction, anonymizeCustomerAction } from '../app/security/actions';
+import {
+  scanSecurityAction,
+  anonymizeCustomerAction,
+  type AnonymizeCounts,
+} from '../app/security/actions';
 import { Badge, type BadgeProps } from './ui/badge';
 import { Button } from './ui/button';
 import { useConfirm } from './ui/confirm';
@@ -235,7 +239,8 @@ function AnonymizeForm({
   /** Oturum owner mı — SUNUCUDAN serileştirilebilir boolean olarak gelir (fonksiyon prop'u YOK). */
   canOwner: boolean;
   onError: (m: string) => void;
-  onDone: (orders: number, replacements: number) => void;
+  /** TÜM sayaçlar tek nesne olarak geçer (eskiden yalnız 2 sayı taşınıyordu). */
+  onDone: (result: AnonymizeCounts) => void;
 }) {
   const [email, setEmail] = React.useState('');
   const [localError, setLocalError] = React.useState<string | null>(null);
@@ -262,7 +267,7 @@ function AnonymizeForm({
       const res = await anonymizeCustomerAction(trimmed);
       if (res.ok) {
         setEmail('');
-        onDone(res.anonymizedOrders ?? 0, res.anonymizedReplacements ?? 0);
+        onDone(res);
       } else {
         onError(res.error ?? 'Anonimleştirme başarısız');
       }
@@ -325,6 +330,58 @@ function AnonymizeForm({
   );
 }
 
+/**
+ * Anonimleştirme sonucunun DÜRÜST raporu.
+ *
+ * Uç YEDİ kasa sayar (sipariş · değişim talebi · destek mesajı · mail kaydı · güvenlik olayı ·
+ * kayıtlı görünüm) ama panel yalnız ikisini yazıyordu → siparişi olmayan bir müşteride ekran
+ * "0 sipariş, 0 talep" diyor, operatör işlemin çalışmadığını sanıyordu. Artık API'nin
+ * döndürdüğü HER kasa satır satır listelenir; hiç eşleşme yoksa bu da AÇIKÇA söylenir
+ * (sessiz "başarılı" mesajı, işlemin bir şey yapıp yapmadığını gizler).
+ */
+const ANON_BUCKETS: Array<{ key: keyof AnonymizeCounts; label: string }> = [
+  { key: 'anonymizedOrders', label: 'sipariş' },
+  { key: 'anonymizedReplacements', label: 'değişim talebi' },
+  { key: 'anonymizedMessages', label: 'destek mesajı' },
+  { key: 'anonymizedEmails', label: 'mail kaydı' },
+  { key: 'anonymizedSecurityEvents', label: 'güvenlik olayı' },
+  { key: 'anonymizedSavedViews', label: 'kayıtlı görünüm' },
+];
+
+function AnonymizeReport({ result }: { result: AnonymizeCounts }) {
+  // Yalnız API'nin GERÇEKTEN döndürdüğü kasalar listelenir: alan gelmediyse (eski API imajı)
+  // "0" yazmak "bu kasa tarandı ve boştu" YALANINI söylerdi.
+  const rows = ANON_BUCKETS.map((b) => ({ ...b, value: result[b.key] })).filter(
+    (r): r is { key: keyof AnonymizeCounts; label: string; value: number } =>
+      typeof r.value === 'number',
+  );
+  const total = rows.reduce((s, r) => s + r.value, 0);
+
+  return (
+    <div className="space-y-1.5">
+      <p>
+        {total > 0
+          ? 'Kişisel veri aşağıdaki kayıtlarda maskelendi:'
+          : 'Bu e-postayla eşleşen kayıt bulunamadı — maskelenecek kişisel veri yoktu (müşteri profili varsa silindi).'}
+      </p>
+      {rows.length > 0 && (
+        <ul className="space-y-0.5">
+          {rows.map((r) => (
+            <li key={r.key} className="tabular-nums">
+              <strong>{r.value.toLocaleString('tr-TR')}</strong> {r.label}
+            </li>
+          ))}
+        </ul>
+      )}
+      {result.redactedEmail && (
+        <p className="text-xs text-muted-foreground">
+          Kayıtlarda yerine yazılan takma adres: <code>{result.redactedEmail}</code>
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** Kapatılabilir bildirim (başarı/hata) satırı. */
 function Notice({
   variant,
@@ -334,7 +391,8 @@ function Notice({
 }: {
   variant: 'success' | 'destructive';
   title: string;
-  message: string;
+  /** ReactNode: anonimleştirme raporu çok satırlı bir listedir (düz metne sığmıyordu). */
+  message: React.ReactNode;
   onClose: () => void;
 }) {
   return (
@@ -375,7 +433,8 @@ export function SecurityTable({
   canOwner?: boolean;
 }) {
   const [error, setError] = React.useState<string | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
+  // ReactNode: anonimleştirme raporu çok satırlı (7 kasa) — tek cümleye sıkıştırılamıyordu.
+  const [notice, setNotice] = React.useState<React.ReactNode | null>(null);
 
   const handleError = React.useCallback((message: string) => {
     setNotice(null);
@@ -387,11 +446,9 @@ export function SecurityTable({
       n > 0 ? `Tarama tamamlandı — ${n} yeni olay kaydedildi.` : 'Tarama tamamlandı — yeni olay yok.',
     );
   }, []);
-  const handleAnonDone = React.useCallback((orders: number, replacements: number) => {
+  const handleAnonDone = React.useCallback((result: AnonymizeCounts) => {
     setError(null);
-    setNotice(
-      `Anonimleştirme tamamlandı — ${orders} sipariş, ${replacements} değişim talebi maskelendi.`,
-    );
+    setNotice(<AnonymizeReport result={result} />);
   }, []);
 
   return (
@@ -404,7 +461,7 @@ export function SecurityTable({
           onClose={() => setError(null)}
         />
       )}
-      {notice && (
+      {notice !== null && (
         <Notice
           variant="success"
           title="Tamamlandı"

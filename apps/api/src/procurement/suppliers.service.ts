@@ -298,12 +298,18 @@ export class SuppliersService {
         coalesce(sum(i.replaced_c), 0)::int AS replaced_items,
         coalesce(sum(i.rejected_c), 0)::int AS rejected_items
       FROM supplier_claims sc
-      LEFT JOIN (
-        SELECT claim_id,
+      -- LATERAL (gruplu alt-sorgu DEĞİL): dış yüklem (sc.supplier_id = $1) gruplu bir alt-sorguya
+      -- İTİLEMEZ → eski biçim TEK tedarikçinin karnesi açılırken bile TÜM supplier_claim_items
+      -- tablosunu baştan agregeliyordu. O tablo kusurlu kalem başına bir satır alır ve retention
+      -- kapsamında DEĞİLDİR (sürekli büyür). LATERAL'de koşul içeri iner ve
+      -- supplier_claim_items_claim_idx kullanılabilir. AYNI düzeltme kardeş yüzeyde
+      -- (supplier-claims.service listClaims/detay) zaten yapılmıştı — bu çağıran atlanmıştı.
+      LEFT JOIN LATERAL (
+        SELECT
           count(*) FILTER (WHERE outcome = 'replaced') AS replaced_c,
           count(*) FILTER (WHERE outcome = 'rejected') AS rejected_c
-        FROM supplier_claim_items GROUP BY claim_id
-      ) i ON i.claim_id = sc.id
+        FROM supplier_claim_items sci WHERE sci.claim_id = sc.id
+      ) i ON TRUE
       WHERE sc.supplier_id = ${id};
     `);
     const cAgg = claimAgg[0] ?? {

@@ -28,11 +28,30 @@ export async function scanSecurityAction(): Promise<ScanState> {
   }
 }
 
-export interface AnonymizeState {
-  ok: boolean;
-  error?: string;
+/**
+ * Anonimleştirme sayaçları (API `AnonymizeResult` ile BİREBİR — apps/api/src/security/
+ * compliance.service.ts). Uç YEDİ alan döndürüyor; panel yalnız İKİSİNİ okuyordu.
+ *
+ * NEDEN ÖNEMLİ: siparişi olmayan ama destek yazışması / güvenlik olayı / kayıtlı görünüm
+ * kaydı bulunan bir müşteride ekran "0 sipariş, 0 talep maskelendi" diyordu → operatör
+ * işlemin ÇALIŞMADIĞINI sanıp tekrar deniyordu (oysa PII gerçekten maskelenmişti).
+ *
+ * Alanlar OPSİYONEL: eski API imajı yalnız ilk ikisini döndürebilir → rapor o satırları atlar.
+ */
+export interface AnonymizeCounts {
   anonymizedOrders?: number;
   anonymizedReplacements?: number;
+  anonymizedEmails?: number;
+  anonymizedSecurityEvents?: number;
+  anonymizedMessages?: number;
+  anonymizedSavedViews?: number;
+  /** Kayıtlarda yerine yazılan takma e-posta (`anon-<hash>@redacted.invalid`). */
+  redactedEmail?: string;
+}
+
+export interface AnonymizeState extends AnonymizeCounts {
+  ok: boolean;
+  error?: string;
 }
 
 /**
@@ -47,16 +66,23 @@ export async function anonymizeCustomerAction(email: string): Promise<AnonymizeS
   if (!trimmed) return { ok: false, error: 'E-posta zorunlu' };
   try {
     const actor = await getActor();
-    const res = await apiPost<{ anonymizedOrders: number; anonymizedReplacements: number }>(
+    const res = await apiPost<AnonymizeCounts>(
       '/v1/admin/compliance/anonymize',
       { email: trimmed },
       actor,
     );
     revalidatePath('/security');
+    // TÜM sayaçlar taşınır (eskiden 2/7 okunuyordu). Alan gelmezse `undefined` kalır ve
+    // rapor o satırı hiç yazmaz — "0" yazmak "bu kasa taranmadı"yı gizlerdi.
     return {
       ok: true,
       anonymizedOrders: res.anonymizedOrders,
       anonymizedReplacements: res.anonymizedReplacements,
+      anonymizedEmails: res.anonymizedEmails,
+      anonymizedSecurityEvents: res.anonymizedSecurityEvents,
+      anonymizedMessages: res.anonymizedMessages,
+      anonymizedSavedViews: res.anonymizedSavedViews,
+      redactedEmail: res.redactedEmail,
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Anonimleştirme başarısız' };

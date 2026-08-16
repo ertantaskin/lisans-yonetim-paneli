@@ -95,18 +95,56 @@ export async function releaseAction(orderId: string): Promise<ActionState> {
 /**
  * Reddet → sipariş kapatılır, müşteriye key GİTMEZ. Sebep zorunlu (min 1).
  * POST /v1/admin/orders/:id/reject body { reason } — audit'e düşer (actor).
+ *
+ * API YANITI OKUNUR (denetim; `releaseAction` ile simetri): `rejectHeld` İDEMPOTENTTİR —
+ * advisory-lock altında sipariş artık `held` değilse hiçbir şey yapmadan
+ * `{ rejected:false, alreadyClosed:true }` döner. Eskiden yanıt yutuluyor ve KOŞULSUZ
+ * "müşteriye lisans gitmedi" deniyordu; oysa iki operatör yarıştığında A "Onayla" ile
+ * teslimatı çalıştırmış olabilir → B'nin ekranı "lisans gitmedi" derken müşterinin elinde
+ * CANLI lisans olur. Ret gerçekten uygulandıysa bu cümle doğrudur, uygulanmadıysa DEĞİL.
  */
 export async function rejectAction(orderId: string, reason: string): Promise<ActionState> {
   if (!isUuid(orderId)) return { ok: false, error: INVALID_ORDER_ID };
   if (!reason.trim()) return { ok: false, error: 'Sebep zorunlu' };
   try {
-    await apiPost(`/v1/admin/orders/${orderId}/reject`, { reason: reason.trim() }, await getActor());
+    const res = await apiPost<{
+      orderId?: string;
+      rejected?: boolean;
+      status?: string;
+      alreadyClosed?: boolean;
+    }>(`/v1/admin/orders/${orderId}/reject`, { reason: reason.trim() }, await getActor());
     revalidatePath('/review');
     revalidatePath('/pending');
+
+    // SAVUNMACI: alan gelmemişse (api/admin sürüm sapması) sonuç UYDURULMAZ → "doğrula" denir.
+    const status = typeof res?.status === 'string' ? res.status : null;
+
+    if (res?.rejected === true) {
+      return {
+        ok: true,
+        status,
+        tone: 'info',
+        message: 'Sipariş reddedildi — satırlar iptal edildi, müşteriye lisans gitmedi.',
+      };
+    }
+    if (res?.rejected === false) {
+      return {
+        ok: true,
+        status,
+        tone: 'warning',
+        message:
+          'Sipariş zaten inceleme dışındaydı — bu ret HİÇBİR ŞEY değiştirmedi. Başka bir ' +
+          'operatör (ya da iade akışı) siparişi çoktan kapatmış olabilir; ONAYLANMIŞSA ' +
+          'müşteride canlı lisans vardır. Sipariş detayını açıp gerçek durumu doğrulayın' +
+          `${status ? ` (şu anki durum: ${status})` : ''}.`,
+      };
+    }
     return {
       ok: true,
+      status,
       tone: 'info',
-      message: 'Sipariş reddedildi — satırlar iptal edildi, müşteriye lisans gitmedi.',
+      message:
+        'İstek gönderildi ama sonucu okunamadı — siparişi açıp gerçekten reddedildiğini doğrulayın.',
     };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Reddedilemedi' };
