@@ -735,6 +735,31 @@ class Wpteslimat_Order_Sync {
     }
 
     /**
+     * Panel durumunu İKİ meta'ya birden yazar — sipariş ekranı ile sipariş LİSTESİ ayrışmasın.
+     *
+     * NEDEN (dev testinde ÖLÇÜLDÜ): aynı kavramın iki anahtarı var —
+     *   · `_wpteslimat_status`       → metabox / müşteri hesabı / rozetler,
+     *   · `_wpteslimat_panel_status` → sipariş LİSTESİ kolonu ve "panel durumu" FİLTRESİ.
+     * İkincisini yalnız geri-kanal webhook'u (ve manuel toplu yoklama) yazıyordu. Panel iade için
+     * webhook ÜRETMEZ; dolayısıyla tam iade edilen bir sipariş panelde 'revoked' iken mağaza
+     * listesinde "Teslim edildi" olarak kalıyordu (gerçek sipariş #76'da görüldü) — panel durumuna
+     * göre süzen operatör iade edilmiş siparişi teslim edilmiş sanıyordu.
+     *
+     * Sayaç meta'ları da SİLİNİR: webhook yolundaki gerekçenin aynısı — "Teslim edildi (2/5)" gibi
+     * bayat bir sayaç yeni durumla çelişir (sayaç yoksa kolon hiç göstermez).
+     *
+     * Kaydetmez (`save()`), çağıranın mevcut kayıt akışına karışmaz.
+     */
+    private static function set_panel_status($order, $status) {
+        $status = sanitize_text_field((string) $status);
+        if ($status === '') return;
+        $order->update_meta_data('_wpteslimat_status', $status);
+        $order->update_meta_data('_wpteslimat_panel_status', $status);
+        $order->delete_meta_data('_wpteslimat_panel_fulfilled');
+        $order->delete_meta_data('_wpteslimat_panel_total');
+    }
+
+    /**
      * (F2) Kilitli giriş noktası — imza DEĞİŞMEDİ (AS/retry hook'ları ve senkron fallback aynen çağırır).
      * Dönüş değeri yalnız satır-içi koşum için anlamlıdır (true = gövde çalıştı → AS ikizi düşürülür);
      * WP hook'ları dönüşü yok sayar.
@@ -787,7 +812,7 @@ class Wpteslimat_Order_Sync {
                 $order->update_meta_data('_wpteslimat_order_id', $res['body']['orderId']);
             }
             if (!empty($res['body']['status'])) {
-                $order->update_meta_data('_wpteslimat_status', $res['body']['status']);
+                self::set_panel_status($order, $res['body']['status']);
             }
             // (§8 dinamik satış kotası) Panel siparişi KABUL etti ama dinamik kota eşiği
             // aşıldığından teslimatı yönetici incelemesine aldı (202 + body.held=true). Sipariş
@@ -924,7 +949,7 @@ class Wpteslimat_Order_Sync {
             // 200/201/207/202 → panel güncel adetlerle uzlaştı; durum meta'sını tazele.
             if (in_array($res['code'], [200, 201, 202, 207], true)) {
                 if (!empty($res['body']['status'])) {
-                    $order->update_meta_data('_wpteslimat_status', $res['body']['status']);
+                    self::set_panel_status($order, $res['body']['status']);
                     $order->save();
                 }
                 $this->mark_success($order, 'resync');
@@ -983,7 +1008,7 @@ class Wpteslimat_Order_Sync {
             // iade/iptal edilen sipariş 'revoked'dır ve varsa "İnceleme bekliyor" işareti artık
             // geçersizdir → idempotent temizle. Aksi halde refund edilen bir held siparişin bayat
             // held meta'sı my-account/metabox'ta asılı kalırdı.
-            $order->update_meta_data('_wpteslimat_status', 'revoked');
+            self::set_panel_status($order, 'revoked');
             if ($order->get_meta('_wpteslimat_held_for_review') === 'yes') {
                 $order->delete_meta_data('_wpteslimat_held_for_review');
             }
