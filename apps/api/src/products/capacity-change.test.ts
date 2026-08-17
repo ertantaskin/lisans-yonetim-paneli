@@ -9,8 +9,12 @@ import { productCapacityChange } from './products.service';
  * veya max_uses değişemez" diyordu; bu FAZLA GENİŞTİ ve mevcut stoğu ETKİLEMEYEN meşru
  * düzenlemeleri de blokluyordu (en belirgini: MAK ürününde kapasiteyi ARTIRMAK).
  * `license_items.max_uses` import anında yazılan bir ANLIK GÖRÜNTÜdür — ürün satırını
- * güncellemek mevcut kalemlerin kapasitesini değiştirmez; dolayısıyla yalnız kapasite
- * DÜŞÜRME (multi→single dahil) veri bozar.
+ * güncellemek mevcut kalemlerin kapasitesini değiştirmez.
+ *
+ * GÜNCEL KURAL (kapasite artık anahtar başına verilebiliyor): ürün alanı bir VARSAYILANDIR,
+ * bağlayıcı tavan değil → sayıyı düşürmek de artırmak da mevcut anahtarları etkilemez.
+ * Veri bozan TEK geçiş **multi → single**'dır: `allocate()` tek-kullanım dalına düşer ve
+ * anahtarın TAMAMINI tek birim sayar (anahtar başına N−1 kullanım kalıcı kaybolur).
  *
  * `reduced=false` → guard hiç çalışmaz (stok sorgusu bile yapılmaz);
  * `reduced=true`  → yalnız o zaman "kapasitesi kaybolacak canlı kalem var mı" bakılır.
@@ -46,12 +50,19 @@ describe('products: productCapacityChange (kapasite guard karar fonksiyonu)', ()
     expect(c).toEqual({ currentCapacity: 1, nextCapacity: 500, reduced: false });
   });
 
-  it('MAK kapasitesini DÜŞÜRMEK veri bozan geçiştir (500 → 100)', () => {
+  it('MAK VARSAYILANINI düşürmek serbesttir (500 → 100) — satırlar kendi kapasitesini taşır', () => {
+    /*
+     * DAVRANIŞ DEĞİŞİKLİĞİ (kullanıcı isteğiyle): kapasite artık stok girişinde ANAHTAR
+     * BAŞINA verilebiliyor, ürün alanı yalnız VARSAYILAN. `license_items.max_uses` satırın
+     * kendi değeridir ve atama/stok/rapor yollarının hepsi ORADAN okur → ürün varsayılanını
+     * düşürmek mevcut anahtarların kalan hakkını YOK ETMEZ, yalnız sonraki girişleri etkiler.
+     * Eskiden bu 409'lanıyordu ve 50'lik lot almaya başlayan operatörü kilitliyordu.
+     */
     const c = productCapacityChange(
       { usageMode: 'multi', maxUses: 500 },
       { usageMode: 'multi', maxUses: 100 },
     );
-    expect(c).toEqual({ currentCapacity: 500, nextCapacity: 100, reduced: true });
+    expect(c).toEqual({ currentCapacity: 500, nextCapacity: 100, reduced: false });
   });
 
   it('multi → single veri bozan geçiştir (maxUses gönderilmese bile)', () => {
@@ -62,12 +73,12 @@ describe('products: productCapacityChange (kapasite guard karar fonksiyonu)', ()
     expect(c).toEqual({ currentCapacity: 500, nextCapacity: 1, reduced: true });
   });
 
-  it('multi ürünün kapasitesi açıkça null yapılırsa kapasite 1e düşer (veri bozan)', () => {
-    const c = productCapacityChange(
-      { usageMode: 'multi', maxUses: 500 },
-      { maxUses: null },
-    );
-    expect(c).toEqual({ currentCapacity: 500, nextCapacity: 1, reduced: true });
+  it('multi kalırken kapasite null yapılsa bile mevcut anahtarlar bozulmaz (import guard ayrı korur)', () => {
+    // Mod DEĞİŞMİYOR → allocate() hâlâ multi dalında ve satırın kendi max_uses'ini kullanıyor.
+    // Ürünü kapasitesiz bırakmak yalnız YENİ girişleri engeller (stock.import 400 verir),
+    // stoktaki anahtarların hakkını yok etmez → veri bozan geçiş DEĞİLDİR.
+    const c = productCapacityChange({ usageMode: 'multi', maxUses: 500 }, { maxUses: null });
+    expect(c).toEqual({ currentCapacity: 500, nextCapacity: 1, reduced: false });
   });
 
   it('single → single (maxUses 1 gönderilse bile) kapasite değişmez', () => {

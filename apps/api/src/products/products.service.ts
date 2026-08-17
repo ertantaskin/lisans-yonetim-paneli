@@ -248,7 +248,24 @@ export function productCapacityChange(
 
   const currentCapacity = capacityOf(current.usageMode, current.maxUses);
   const nextCapacity = capacityOf(nextUsageMode, nextMaxUses);
-  return { currentCapacity, nextCapacity, reduced: nextCapacity < currentCapacity };
+
+  /*
+   * VERİ KAYBI YALNIZ ÇOK KULLANIMLIKTAN ÇIKARKEN OLUR (multi → single).
+   *
+   * Bu alan artık bir VARSAYILANDIR: stok girişinde her anahtarın kapasitesi ayrıca
+   * verilebilir ve `license_items.max_uses` satırın KENDİ değeridir. Atama motoru
+   * (`consumeMultiUseCapacity`), stok toplamları, raporlar — hepsi SATIRDAN okur; ürün
+   * satırını güncellemek mevcut anahtarlara DOKUNMAZ. Dolayısıyla `multi 500 → multi 50`
+   * hiçbir kapasiteyi yok etmez; yalnız BUNDAN SONRAKİ girişlerin varsayılanını değiştirir.
+   * Eskiden bu da 409'lanıyordu ve tam da kullanıcının ihtiyacını (50'lik lot almaya başlayınca
+   * varsayılanı düşürmek) engelliyordu.
+   *
+   * `multi → single` ise GERÇEKTEN yıkıcıdır: `allocate()` tek-kullanım dalına düşer ve
+   * anahtarın TAMAMINI tek birim sayar → anahtar başına N−1 kullanım KALICI kaybolur.
+   * Bu yüzden ölçüt kapasite sayısı değil MOD GEÇİŞİDİR.
+   */
+  const reduced = current.usageMode === 'multi' && nextUsageMode !== 'multi';
+  return { currentCapacity, nextCapacity, reduced };
 }
 
 @Injectable()
@@ -343,12 +360,16 @@ export class ProductsService {
         const live = Number(row?.n ?? 0);
         if (live > 0) {
           const maxCap = Number(row?.max_cap ?? 0);
+          // Bu dal ARTIK yalnız `multi → single` geçişinde koşar (bkz. productCapacityChange):
+          // varsayılanı düşürmek mevcut anahtarlara dokunmaz, ama modu değiştirmek onların
+          // kalan haklarını temsil edilemez hâle getirir. Mesaj da bu gerçeği anlatmalı.
           throw new ConflictException(
-            `Stokta kapasitesi ${change.nextCapacity} üstünde olan ${live} canlı lisans kaydı var ` +
-              `(en yükseği ${maxCap} kullanım); kapasiteyi ${change.currentCapacity} → ` +
-              `${change.nextCapacity} düşürmek bu anahtarların kalan kullanım hakkını yok eder. ` +
-              'Kapasiteyi ARTIRMAK serbesttir. Düşürmek için: önce bu kalemleri tüketin ya da ' +
-              'Envanter ekranından iptal edin; alternatif olarak yeni kapasiteyle YENİ bir ürün ' +
+            `Stokta hâlâ kullanım hakkı olan ${live} çok kullanımlık lisans kaydı var ` +
+              `(en yükseği ${maxCap} kullanım). Ürünü TEK KULLANIMLIĞA çevirmek bu anahtarların ` +
+              'kalan haklarını yok eder: teslimat motoru anahtarın tamamını tek birim sayar. ' +
+              'Anahtar kapasitesini (varsayılanı) değiştirmek serbesttir — mevcut anahtarlar ' +
+              'kendi kapasitelerini korur. Modu değiştirmek için: önce bu kalemleri tüketin ya da ' +
+              'Envanter ekranından iptal edin; alternatif olarak tek kullanımlık YENİ bir ürün ' +
               'açıp site eşlemesini ona taşıyın.',
           );
         }

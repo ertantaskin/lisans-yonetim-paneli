@@ -176,7 +176,24 @@ export interface ImportResult {
   qtyMismatch?: { declared: number; imported: number };
 }
 
-export type ImportItem = { payload: string | Record<string, unknown>; expiresAt?: string };
+export type ImportItem = {
+  payload: string | Record<string, unknown>;
+  expiresAt?: string;
+  /**
+   * ÇOK KULLANIMLIK (MAK) ÜRÜNDE BU ANAHTARIN KAPASİTESİ — verilmezse ürünün varsayılanı.
+   *
+   * NEDEN SATIR BAZINDA (kullanıcı isteği): MAK anahtarları tedarikçiden PARTİ PARTİ gelir ve
+   * her partinin aktivasyon sayısı farklı olabilir (50'lik bir lot, 500'lük bir lot; hatta
+   * kalanı satılmış "5 aktivasyonu kalmış" tek bir anahtar). Kapasite yalnız ÜRÜN ayarında
+   * durduğu sürece operatör her farklı lot için ya ürünü geçici olarak değiştirmek (ve o sırada
+   * giren her şeyi bozmak) ya da yanlış kapasiteyle girmek zorundaydı — ikincisi SESSİZ aşırı
+   * satış demektir (panel 500 hak sanar, anahtar 50'de biter).
+   *
+   * Şema ZATEN satır bazındaydı (`license_items.max_uses`); import onu ürün ayarından
+   * KOPYALIYORDU. Migration gerekmez — yalnız değeri istekten alıyoruz.
+   */
+  maxUses?: number;
+};
 
 /** "Onayla ve Dağıt" önizleme (§13): girilecek stok bekleyen talebi ne kadar karşılar. */
 export interface StockPreview {
@@ -791,7 +808,12 @@ export class StockService {
         "usageMode='multi' ürün için max_uses > 1 tanımlı olmalı — import reddedildi.",
       );
     }
-    const maxUses = product.usageMode === 'multi' ? product.maxUses! : 1;
+    const defaultMaxUses = product.usageMode === 'multi' ? product.maxUses! : 1;
+    /**
+     * Satır bazında kapasite kullanıldı mı? Aşağıdaki kilitli yeniden-doğrulamada işe yarar:
+     * ürünün VARSAYILANI değiştiyse yalnız varsayılana DAYANAN satırlar geçersizdir.
+     */
+    let usedProductDefault = false;
 
     // Hesap ürünü için alan şemasını çöz (import doğrulaması + kanonik serialize).
     const accountSchema = this.resolveAccountSchema(product);
@@ -800,6 +822,18 @@ export class StockService {
     const rejections: ImportRejection[] = [];
     const values: NewLicenseItem[] = [];
 
+    /*
+     * TEK KULLANIMLIK ÜRÜNDE SATIR KAPASİTESİ ANLAMSIZDIR — sessizce yok saymak yerine 400.
+     * (Panel bu alanı yalnız `multi` üründe gösterir; buraya gelen istek programatiktir ve
+     * "girdim ama uygulanmadı" sessiz kaybı bu projenin tekrarlayan hata sınıfıdır.)
+     */
+    if (product.usageMode !== 'multi' && items.some((it) => it.maxUses != null && it.maxUses !== 1)) {
+      throw new BadRequestException(
+        'Anahtar başına kapasite yalnız çok kullanımlık (MAK) üründe tanımlanabilir — ' +
+          'bu ürün tek kullanımlık.',
+      );
+    }
+
     items.forEach((it, index) => {
       let plaintext: string;
       try {
@@ -807,6 +841,32 @@ export class StockService {
       } catch (err) {
         rejections.push({ index, reason: err instanceof Error ? err.message : String(err) });
         return;
+      }
+
+      /*
+       * BU ANAHTARIN KAPASİTESİ.
+       *
+       * Alt sınır MAK'ta **1**'dir — ürün seviyesindeki `> 1` kuralından BİLEREK farklı:
+       *   · ürün ayarı bir VARSAYILANDIR ve 1 olması "bu MAK ürününün her anahtarı tek satışta
+       *     tükenir" demektir (sessiz misconfig) → orada > 1 zorunlu kalır;
+       *   · tek bir ANAHTARIN gerçekten 1 aktivasyonu kalmış olabilir (tedarikçiden kalan lot).
+       *     Bunu reddetmek operatörü yanlış sayı girmeye zorlardı ve panel gerçekte olmayan
+       *     kapasiteyi satılabilir gösterirdi — yani tam da önlemek istediğimiz şey olurdu.
+       * Üst sınır ürün ayarıyla AYNI (`MAX_USES_CAP`): tek kaynak, int4 taşması yok.
+       */
+      let itemMaxUses = defaultMaxUses;
+      if (product.usageMode === 'multi') {
+        if (it.maxUses == null) {
+          usedProductDefault = true;
+        } else if (!Number.isInteger(it.maxUses) || it.maxUses < 1 || it.maxUses > MAX_USES_CAP) {
+          rejections.push({
+            index,
+            reason: `Kapasite 1 ile ${MAX_USES_CAP} arasında bir tam sayı olmalı (girilen: ${it.maxUses}).`,
+          });
+          return;
+        } else {
+          itemMaxUses = it.maxUses;
+        }
       }
       // id'yi uygulamada üretiyoruz ki payload'ı bu satıra AAD ile bağlayabilelim
       // (satır-taşıma engeli, §8). insert bu id ile yapılır.
@@ -828,7 +888,7 @@ export class StockService {
         // hem işe yaramaz hem de zayıf bir parmak izidir. NULL bırakmak dürüst olandır; arama
         // ipucu metni de hesap ürününde bu aramanın geçerli olmadığını söyler.
         payloadSuffixHash: accountSchema ? null : this.crypto.payloadSuffixHash(plaintext),
-        maxUses,
+        maxUses: itemMaxUses,
         expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
         status: 'available',
         unitCostCents: null,
@@ -955,7 +1015,9 @@ export class StockService {
       const freshMaxUses = fresh.usageMode === 'multi' ? fresh.maxUses : 1;
       const contractChanged =
         fresh.usageMode !== product.usageMode ||
-        freshMaxUses !== maxUses ||
+        // Ürün VARSAYILANININ değişmesi yalnız ona DAYANAN satırları geçersizleştirir; kapasitesi
+        // satırda açıkça verilmiş bir girişi ürün ayarı yüzünden reddetmek gereksiz olurdu.
+        (usedProductDefault && freshMaxUses !== defaultMaxUses) ||
         fresh.kind !== product.kind ||
         JSON.stringify(fresh.payloadSchema ?? null) !== JSON.stringify(product.payloadSchema ?? null);
       if (contractChanged) {

@@ -64,6 +64,13 @@ const ImportBody = z
           // yolunda HİÇ sınır yoktu → tek istekle ~1 MB payload şifrelenip saklanabiliyordu.
           payload: z.union([z.string().min(1).max(4000), z.record(z.string(), z.unknown())]),
           expiresAt: z.string().datetime().optional(),
+          /*
+           * ANAHTAR BAŞINA KAPASİTE (yalnız çok kullanımlık/MAK ürün) — verilmezse ürünün
+           * varsayılanı uygulanır. Alt sınır 1: tedarikçiden "1 aktivasyonu kalmış" bir anahtar
+           * gelebilir; reddetmek operatörü yanlış sayı girmeye zorlar (bkz. stock.service).
+           * Üst sınır ürün ayarıyla AYNI tek kaynaktan (`MAX_USES_CAP`).
+           */
+          maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
         }),
       )
       .min(1)

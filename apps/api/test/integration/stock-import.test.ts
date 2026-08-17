@@ -231,4 +231,103 @@ describe('StockService.import (envelope AAD + doğrulama/dedupe/dryRun)', () => 
       );
     expect(avail).toHaveLength(0);
   });
+
+  /*
+   * ── (f) ANAHTAR BAŞINA KAPASİTE (kullanıcı isteği) ────────────────────────────────────
+   *
+   * MAK anahtarları tedarikçiden PARTİ PARTİ gelir ve her partinin aktivasyon sayısı farklıdır.
+   * Kapasite yalnız ÜRÜN ayarında dururken operatör ya ürünü her lot için değiştirmek (ve o
+   * sırada giren her şeyi bozmak) ya da yanlış kapasiteyle girmek zorundaydı — ikincisi SESSİZ
+   * aşırı satıştır (panel 500 hak sanar, anahtar 50'de biter).
+   *
+   * Şema ZATEN satır bazındaydı (`license_items.max_uses`); import onu ürün ayarından
+   * kopyalıyordu. Bu testler yeni sözleşmeyi kilitler.
+   */
+
+  /** Ürünün kalemlerini (payload uzunluğu değil) kapasiteleriyle okur. */
+  async function capacities(productId: string): Promise<number[]> {
+    const rows = await db
+      .select({ maxUses: schema.licenseItems.maxUses })
+      .from(schema.licenseItems)
+      .where(eq(schema.licenseItems.productId, productId));
+    return rows.map((r) => r.maxUses).sort((a, b) => a - b);
+  }
+
+  it('(f1) satır kapasitesi verilirse ONA yazılır; verilmeyen satır ürün varsayılanını alır', async () => {
+    const product = await createProduct(db, {
+      tag,
+      kind: 'key',
+      usageMode: 'multi',
+      maxUses: 100, // ürün VARSAYILANI
+    });
+
+    const res = await stock.import(product.id, [
+      { payload: `CAP-${tag}-A`, maxUses: 50 }, // 50'lik lot
+      { payload: `CAP-${tag}-B`, maxUses: 500 }, // 500'lük lot
+      { payload: `CAP-${tag}-C` }, // varsayılan → 100
+    ]);
+
+    expect(res.imported).toBe(3);
+    expect(res.rejected).toBe(0);
+    expect(await capacities(product.id)).toEqual([50, 100, 500]);
+  });
+
+  it('(f2) kapasite 1 KABUL edilir (tedarikçiden kalan tek aktivasyonluk anahtar)', async () => {
+    // Ürün seviyesindeki kural `> 1`dir (varsayılan 1 olursa HER anahtar tek satışta tükenir =
+    // sessiz misconfig). Ama TEK BİR ANAHTARIN gerçekten 1 hakkı kalmış olabilir; reddetmek
+    // operatörü yanlış sayı girmeye ve paneli olmayan kapasiteyi satılabilir göstermeye zorlardı.
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'multi', maxUses: 10 });
+
+    const res = await stock.import(product.id, [{ payload: `CAP1-${tag}`, maxUses: 1 }]);
+
+    expect(res.imported).toBe(1);
+    expect(await capacities(product.id)).toEqual([1]);
+  });
+
+  it('(f3) geçersiz kapasite YALNIZ o satırı reddeder (diğerleri girer, sessiz yutma yok)', async () => {
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'multi', maxUses: 10 });
+
+    const res = await stock.import(product.id, [
+      { payload: `BAD-${tag}-A`, maxUses: 0 }, // aralık dışı
+      { payload: `BAD-${tag}-B`, maxUses: 7.5 }, // tam sayı değil
+      { payload: `OK-${tag}-C`, maxUses: 25 },
+    ]);
+
+    expect(res.imported).toBe(1);
+    expect(res.rejected).toBe(2);
+    // Rapor SATIRI işaret eder (operatör hangi satırı düzelteceğini bilmeli).
+    expect(res.rejections.map((r) => r.index).sort()).toEqual([0, 1]);
+    expect(res.rejections[0]!.reason).toMatch(/[Kk]apasite/);
+    expect(await capacities(product.id)).toEqual([25]);
+  });
+
+  it('(f4) TEK KULLANIMLIK üründe kapasite gönderilirse TÜM istek reddedilir (sessizce yok sayılmaz)', async () => {
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
+
+    await expect(
+      stock.import(product.id, [{ payload: `SU-${tag}`, maxUses: 5 }]),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(await itemCount(product.id)).toBe(0);
+
+    // maxUses=1 anlamlıdır (tek kullanımlığın zaten kapasitesi) → kabul edilir.
+    const ok = await stock.import(product.id, [{ payload: `SU-OK-${tag}`, maxUses: 1 }]);
+    expect(ok.imported).toBe(1);
+    expect(await capacities(product.id)).toEqual([1]);
+  });
+
+  it('(f5) kuru çalıştırma kapasiteyi de doğrular ve HİÇBİR şey yazmaz', async () => {
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'multi', maxUses: 10 });
+
+    const res = await stock.import(
+      product.id,
+      [{ payload: `DRYCAP-${tag}-A`, maxUses: 30 }, { payload: `DRYCAP-${tag}-B`, maxUses: -3 }],
+      undefined,
+      true, // dryRun
+    );
+
+    expect(res.dryRun).toBe(true);
+    expect(res.wouldImport).toBe(1);
+    expect(res.rejected).toBe(1);
+    expect(await itemCount(product.id)).toBe(0);
+  });
 });

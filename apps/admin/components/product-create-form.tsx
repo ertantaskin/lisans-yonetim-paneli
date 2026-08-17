@@ -225,12 +225,20 @@ export function ProductFormFields({
           </select>
         </Field>
 
-        {/* multi → maxUses zorunlu */}
+        {/*
+          multi → maxUses zorunlu.
+
+          BU ALAN BİR VARSAYILANDIR, bağlayıcı bir tavan DEĞİL: stok girişinde her anahtarın
+          kapasitesi ayrıca belirtilebilir (MAK anahtarları tedarikçiden farklı aktivasyon
+          sayılarıyla gelir — 50'lik lot, 500'lük lot). Etiket bunu SÖYLEMEK zorunda; aksi hâlde
+          operatör burayı "ürünün tavanı" sanıp her lot için ürünü değiştirmeye kalkar (ve o
+          sırada giren her şeyin kapasitesini bozar).
+        */}
         {usageMode === 'multi' && (
           <Field
-            label="Maksimum kullanım (kapasite)"
+            label="Anahtar kapasitesi (varsayılan)"
             htmlFor="p-max-uses"
-            hint="1 key kaç müşteriye teslim edilebilir (>1)."
+            hint="Bir anahtarın kaç kez kullanılabileceği (>1). Stok girişinde anahtar başına değiştirilebilir."
             required
           >
             <Input
