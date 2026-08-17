@@ -91,7 +91,14 @@ const ON_EXPIRY: Record<string, string> = {
 };
 export const onExpiryLabel = (v: string) => lookup(ON_EXPIRY, v);
 
-/** Ürün tip özeti (products-table + detay başlığı ortak dili): tip · MAK×N · Ng. */
+/**
+ * Ürün tip özeti (products-table + detay başlığı ortak dili): tip · MAK (varsayılan N) · Ng.
+ *
+ * "MAK×5" YAZMIYORUZ (kullanıcı geri bildirimi sınıfı: sayının ne olduğu belli olmalı). O sayı
+ * ürünün VARSAYILAN anahtar kapasitesidir — bağlayıcı bir tavan değil: stok girişinde her anahtara
+ * ayrı kapasite verilebilir ve gerçek bir üründe aynı anda 5, 3 ve 1001 kapasiteli anahtarlar
+ * bulunabilir. "×5" bunu "her anahtar 5 taşır" diye okutuyordu.
+ */
 export function productTypeSummary(p: {
   kind: string;
   usageMode?: string | null;
@@ -99,7 +106,9 @@ export function productTypeSummary(p: {
   validityDays?: number | null;
 }): string {
   const parts: string[] = [productKindLabel(p.kind)];
-  if (p.usageMode === 'multi') parts.push(`MAK×${p.maxUses ?? '?'}`);
+  if (p.usageMode === 'multi') {
+    parts.push(p.maxUses ? `MAK (varsayılan ${p.maxUses} kullanım)` : 'MAK');
+  }
   if (p.validityDays) parts.push(`${p.validityDays} gün`);
   return parts.join(' · ');
 }

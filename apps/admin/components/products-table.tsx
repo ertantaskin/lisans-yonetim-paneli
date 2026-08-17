@@ -155,12 +155,21 @@ const buildColumns = (
               byDesign && s === 0
                 ? 'Stoksuz / ön sipariş ürünü — stok 0 tasarım gereğidir'
                 : row.original.usageMode === 'multi'
-                  ? 'Kalan kapasite (Σ maksimum kullanım − kullanılan)'
-                  : 'Satılabilir stok'
+                  ? 'Satılabilir KULLANIM HAKKI toplamı (anahtar sayısı değil): çok kullanımlık ' +
+                    'üründe bir anahtar birden çok hak taşır ve her anahtarın kapasitesi farklı olabilir.'
+                  : 'Satılabilir stok (anahtar/hesap sayısı)'
             }
           >
             {s}
           </span>
+          {/*
+            BİRİM ETİKETİ — aynı kolon iki farklı şeyi sayıyor: tek kullanımlıkta ANAHTAR,
+            MAK'ta KULLANIM HAKKI (1 anahtar × N hak). Çıplak sayı yan yana listelendiğinde
+            "bu üründen 1002 anahtar var" diye okunuyordu. İpucu metni yetmez (görünmez).
+          */}
+          {row.original.usageMode === 'multi' && (
+            <span className="text-xs text-muted-foreground">hak</span>
+          )}
           {/* Tasarım gereği boş üründe "düşük" uyarısı da yanlış alarmdır. */}
           {low && !(byDesign && s === 0) && (
             // Badge primitifi (eskiden elle yazılmış rozet): zorunlu `ring-inset` saç teli ve

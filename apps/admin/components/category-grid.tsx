@@ -75,7 +75,16 @@ export function CategoryGrid({ categories }: { categories: CategoryRow[] }) {
                   <span className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                     <span className="tabular-nums">{c.productCount} ürün</span>
                     <span aria-hidden className="text-border">·</span>
-                    <span className="tabular-nums">
+                    {/*
+                      "stok" burada SATILABİLİR KULLANIM HAKKI toplamıdır: çok kullanımlık (MAK)
+                      ürünlerde bir anahtar birden çok hak taşır, dolayısıyla sayı anahtar sayısı
+                      DEĞİLDİR. Kartın dar alanında birim yazamıyoruz → anlam ipucuna konur
+                      (aynı sayının anlamı ürün listesinde de "hak" etiketiyle söyleniyor).
+                    */}
+                    <span
+                      className="tabular-nums"
+                      title="Satılabilir kullanım hakkı toplamı — çok kullanımlık (MAK) üründe bir anahtar birden çok hak taşır, bu sayı anahtar sayısı değildir."
+                    >
                       {c.availableStock.toLocaleString('tr-TR')} stok
                     </span>
                     {c.lowStockCount > 0 && (
