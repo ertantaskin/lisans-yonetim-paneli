@@ -2,7 +2,7 @@
 Requires at least: 6.0
 Requires PHP: 7.4
 WC requires at least: 7.0
-Stable tag: 1.1.4
+Stable tag: 1.1.5
 
 WooCommerce siparişlerini merkezi lisans teslimat paneline iletir; teslimatı müşteriye gösterir.
 Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağıdır (ince istemci).
@@ -30,6 +30,16 @@ Lisans verisi WordPress veritabanında TUTULMAZ — panel tek doğruluk kaynağ�
 * Değiştir / tekrar mail / iptal gibi yönetim işlemleri panel arayüzünde yapılır.
 
 == Değişiklikler ==
+
+= 1.1.5 =
+* ÇOK KULLANIMLI (MAK) LİSANSTA "KAÇ ETKİNLEŞTİRME HAKKIM VAR" ARTIK HER ZAMAN YAZIYOR.
+  Önceden bu bilgi yalnız birim sayısı 1'den büyükken basılıyordu; bir siparişe bir anahtardan
+  yalnız 1 hak düştüğünde satır açıklamasız kalıyor ve müşteri paylaşımlı anahtarın tamamının
+  kendisine ait olduğunu sanıyordu. Artık ürün çok kullanımlıysa "1" de yazılır.
+* Sipariş ekranı ve müşteri hesabı özetlerinde toplam kullanım hakkı, MAK siparişlerinde
+  koşulsuz gösteriliyor (eskiden toplam ile kayıt sayısı eşitse hiç görünmüyordu).
+* "Değiştir" düğmesinin MAK kapısı artık panelin bildirdiği ürün kipine bakıyor (anahtar
+  kapasitesinden çıkarım yapmıyor) — gereksiz kapanan düğme kalmadı.
 
 = 1.1.4 =
 * EŞLEME KUTUSU DÜRÜSTLEŞTİ: panelde PASİF edilmiş bir eşleme artık "Eşli" diye gösterilmiyor —

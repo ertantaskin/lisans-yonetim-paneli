@@ -889,6 +889,13 @@ class Wpteslimat_My_Account {
      */
     private static function units_note($d, $is_account) {
         $units = isset($d['units']) ? max(1, (int) $d['units']) : 1;
+        // Panel AÇIKÇA 'single' diyorsa metin BASILMAZ — ürünün modu yetkilidir, `units`
+        // sayısı değil. (Panelin mail tarafındaki `unitLabel` kuralıyla BİREBİR aynı: iki
+        // yüzey aynı kalemi farklı anlatamaz.) Tek kullanımlıkta units zaten daima 1'dir;
+        // bir gün olmazsa da müşteriye "anahtar paylaşımlıdır" demek YANLIŞ olurdu.
+        if (isset($d['usageMode']) && $d['usageMode'] === 'single') {
+            return '';
+        }
         if (!self::is_multi_usage($d) && $units < 2) {
             return '';
         }
