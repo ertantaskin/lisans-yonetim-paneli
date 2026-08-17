@@ -120,7 +120,7 @@ mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddeler (aşağıda)
 | Servisler | PostgreSQL 17 · Redis 7 · API (Nest/Fastify) · Admin (Next 15) · Caddy · Mailpit |
 | Migration | **0000-0045** (`__drizzle_migrations` izleme 46) |
 | WP eklentisi | **v1.1.7** — panelden yayınlanır, müşteri siteleri updater ile alır |
-| Test | birim 68+184+165 · **entegrasyon 429 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
+| Test | birim 68+184+170 · **entegrasyon 436 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
 
 **Zincir kanıtlandı (gerçek WooCommerce):** sipariş → HMAC push → atomik atama (SKIP LOCKED) →
 My Account'ta çözülmüş anahtar → geri-kanal webhook. Tek/çok kullanımlık (MAK), hesap, süreli
@@ -133,7 +133,7 @@ hesap, kod, stoksuz; kısmi teslimat, ya-hep-ya-hiç, iade/kısmi iade, değişi
   `stock/` (import/envanter/düzeltme). Yan alanlar: replacements · supplier-claims · suppliers ·
   purchase-orders · batches · customers · security · notifications · maintenance (retention/
   reconcile/expiry) · deployments · updates · ai (varsayılan KAPALI) · admin-users (2FA).
-- **Admin** (`apps/admin/app`): 36 rota. Sözlükler **tek kaynak** `lib/labels.ts`; rozet ton
+- **Admin** (`apps/admin/app`): 38 sayfa rotası (duman testi 36 tarar — `/` ve `/login` hariç). Sözlükler **tek kaynak** `lib/labels.ts`; rozet ton
   kuralı `components/ui/badge.tsx`; tema tek kaynak `app/globals.css`.
 - **Eklenti** (`apps/wp-plugin/wpteslimat`): ince istemci. Lisans verisi WP'de DURMAZ.
 - **Paylaşılan** (`packages/shared/src`): payload kontratı, maskeleme, rehber render, risk skoru
@@ -206,6 +206,15 @@ yakalanmış bir arızadır. Ayrıntılı vaka anlatımları [docs/GECMIS.md](do
 20. **Doğrulama tarayıcısının sınırları:** klavye olayları ve CSS animasyonları çalışmıyor,
     Radix sekmeleri programatik `.click()` ile değişmiyor, `loading.tsx` olan rotalar ilk
     yüklemede iskelette kalıyor. Buradaki bir "ölçümü" canlı hata saymadan önce kontrol denemesi yap.
+21. **Kodda duran bir `TODO` çoğu zaman "yapılmadı" değil, ÇALIŞAN BİR ARIZAdır.** İki örnek
+    aynı turda çıktı: dağıtım listesi süzgeci (~50 günde `/releases` "yayın yok" diyordu) ve
+    haftalık TAM mutabakat (kod "ayrı bir cron tetiklemeli" diyordu, hiçbir şey tetiklemiyordu).
+    İkisinde de teşhis DOĞRU yazılmıştı; eksik olan çözümdü — yorumun ikna ediciliği, işin
+    yapılmış olduğu izlenimini veriyordu.
+22. **Bir yardımcının "tekillik" sözleşmesi, sonraki ihtiyacı SESSİZCE imkânsız kılabilir.**
+    `upsertSoleJobScheduler` ("bu kuyrukta tam olarak bir zamanlayıcı") aynı kuyruğa ikinci
+    tekrarlı iş eklemeyi engelliyordu: her çağrı diğerini yetim sayıp siliyor, geriye yalnız
+    bir `warn` kalıyordu. Bir invaryantı zorlarken, onu GENİŞLETME yolunu da bırak.
 
 ## Doğrulama
 
@@ -215,7 +224,7 @@ yakalanmış bir arızadır. Ayrıntılı vaka anlatımları [docs/GECMIS.md](do
 | `pnpm test` | Birim (shared + api + admin) |
 | `pnpm test:iso` | **Entegrasyon + yarış, izole PG17/Redis7 konteynerleriyle** (yalnız `docker` ister) |
 | `pnpm build` | Üç paket derlemesi (admin production build dahil) |
-| `bash scripts/smoke-routes.sh <url>` | 36 admin rotası — HTTP koduna DEĞİL, gövdedeki `error.tsx` imzasına bakar |
+| `bash scripts/smoke-routes.sh <url>` | 36 admin rotası (`/` ve `/login` hariç; liste app/ ağacıyla otomatik karşılaştırılır) — HTTP koduna DEĞİL, gövdedeki `error.tsx` imzasına bakar |
 
 Şema sapması: `pnpm db:generate` **"No schema changes"** demeli. WP: `php -l` + `php
 apps/wp-plugin/tests/run.php`. CI (`.github/workflows/ci.yml`) hepsini koşar — dosya bir kez

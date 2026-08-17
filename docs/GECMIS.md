@@ -12,6 +12,60 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**KALAN İKİ EKSİK + KENDİ KAPIMIN KAÇAĞI (commit 2651ce4, migration YOK):**
+Kullanıcı *"geri kalan tüm eksikleri tamamla, projeyi daha iyi hale getir, mimariyi/projeyi
+daha düzenli derli toplu hale getir"* dedi. Kod tabanında duran `TODO`lar tarandı: **üç tane**
+vardı ve ikisi "henüz yapılmadı" değil, **çalışan bir arıza** anlatıyordu.
+
+- **[SESSİZ KIRPMA — `TODO(api)`] `GET /v1/admin/deployments` hedef süzgeci KABUL ETMİYORDU.**
+  Panel dağıtımı (`api`/`admin`), eklenti yayını (`plugin`) ve DR işleri (`backup`,
+  `backup-drill`) AYNI kuyrukta durur; uç sabit 50 satır döndürüyor, `/releases` ise o 50
+  satırın içinden `plugin` olanları ayıklıyordu. Gecelik yedek cron'u her gün en az bir satır
+  yazdığı için pencere **~50 günde tamamen yedek kayıtlarıyla dolar** → ekran, geçmişte
+  GERÇEKTEN yapılmış yayınlar dururken "Henüz yayın işi yok" derdi. Kod bunu BİLİYORDU
+  (yorumda tam teşhis + `TODO(api)`) ve istemcide yalnız "pencere doldu" uyarısı veriyordu —
+  doğru teşhis, eksik çözüm. Artık `?target=` (virgülle çoklu, whitelist dışı **400**) +
+  `?limit=` (1..200) SUNUCUDA süzer; geçersiz hedef **fail-closed** (boş liste — sessizce
+  "hepsi"ne düşmek yanlış veriyi doğru sandırırdı). Parametresiz çağrı eski davranışı korur.
+- **[H1 REFLEKSİ — süzmeyi BİLEREK yapmadığım yer]** `/deployments` ekranının listesi hedefe
+  göre daraltılmadı: o satırlar `hasActiveDeployment` guard'ını besliyor ve "aynı anda tek
+  aktif iş" güvencesi HEDEFTEN BAĞIMSIZ (çalışan bir `backup` işi de yeni dağıtımı 409 ile
+  reddeder). Süzseydim geçmiş okunur olurdu ama çalışan yedek GÖRÜNMEZ olur, dağıtım düğmesi
+  açık kalır ve operatör 409 yerdi. Bir kümeyi daraltmak, o kümeyi okuyan HER yolu etkiler.
+  Onun yerine pencere 50→150 büyütüldü + kırpma uyarısı gerçek satır sayısını söylüyor.
+- **[`TODO(ops)`] Haftalık TAM mutabakat HİÇ ZAMANLANMAMIŞTI.** 15 dakikalık sweep yalnız son
+  `RECONCILE_WINDOW_DAYS` günü (varsayılan 30) tarar — bilinçli bir ölçek kararı. Ama kod
+  "haftalık tam koşu ayrı bir cron ile tetiklenmeli" derken HİÇBİR ŞEY tetiklemiyordu →
+  sıcak pencereden çıkmış bir çifte satış (her iki atama da eskiyse) BİR DAHA HİÇ
+  raporlanmıyordu. `reconcile-full` zamanlayıcısı (varsayılan Pazar 04:15,
+  `RECONCILE_FULL_CRON`) + `reconcile(full)` + `POST …/reconcile?full=true`.
+- **[GİZLİ ENGEL] `sole-scheduler` ikinci zamanlayıcıyı SESSİZCE İMKÂNSIZ kılıyordu.**
+  Yardımcının sözleşmesi "bu kuyrukta TAM OLARAK BİR zamanlayıcı" idi: her `onModuleInit`
+  çağrısı beklenen kimlik DIŞINDAKİ her şeyi siler. Aynı kuyruğa ikinci tekrarlı iş eklemek
+  bu yüzden boot sırasına göre birini yok ederdi ve geriye YALNIZ bir `warn` kalırdı.
+  `upsertJobSchedulers` (çoğul) eklendi: beklenen kimlik KÜMESİ verilir, temizlik kuralı
+  aynen korunur. Kısmi başarıda temizlik KOŞMAZ (bir kardeş kurulamadıysa, onun önceki
+  boot'tan kalan meşru kaydını silmek hatayı büyütürdü). 4 entegrasyon testi — biri
+  "tek çağrıda verilmezse ikincisi birincisini siler" sınırını da kilitler.
+- **[KENDİ KAPIM — bir önceki turda yazdığım `check-docs` fiilen hiçbir şey doğrulamıyordu]**
+  Uç denetimi yalnız İLK yol segmentine bakıyordu; kod tabanında çıplak bir
+  `@Controller('admin')` olduğu için `/v1/admin/ne-olursa-olsun` uydurması SESSİZCE geçiyordu
+  — panel uçlarının neredeyse hepsi `admin/...` altında olduğundan denetim kapsamının
+  neredeyse tamamı boştu. **Kontrol denemesiyle ÖLÇÜLDÜ** (uydurma uç yeşil geçti), metot
+  yolları da toplanacak şekilde düzeltildi, tekrar kontrol denemesi yapıldı → **KIRMIZI**.
+  Anılan uç sayısı 8 → 13 (alt yollar artık gerçekten çözülüyor). Tuzak #11 birebir tekrar
+  etti: kapıyı yazmak yetmiyor, kapının KAPATTIĞINI görmek gerekiyor.
+- **[YAN DÜZELTME] `ZodBody` dönüştüren şemayı pipe'a hiç sokamıyordu** (`ZodSchema<T>` =
+  girdi ve çıktı AYNI tip). Query string her zaman METİN taşır (`?limit=5`, `?target=a,b`) →
+  sayıya/diziye çeviren şemalar bu ucun doğal ihtiyacı; eski imza doğrulamayı elle `if`
+  yığınlarına itiyordu. Girdi tipi `unknown`a genişletildi; çalışma-anı davranışı DEĞİŞMEDİ.
+- **[KAPI YAKALADI] `RECONCILE_FULL_CRON` compose'dan geçmiyordu** → `check-env-passthrough`
+  hemen kırmızı verdi (tuzak #12: `.env`'e yazmak sessizce etkisiz kalırdı). Eklendi.
+- **Doğrulama:** typecheck 4/4 + altı kapı · birim 68+184+**170** (+5 `targetQuery`) ·
+  **VPS izole PG17+Redis7: entegrasyon 436/436** (429 → +7: 4 çoklu-zamanlayıcı, 2 dağıtım
+  süzgeci, 1 TAM mutabakat) **+ yarış 3/3** · build 3/3.
+
+---
 **ŞARTNAME GERÇEĞE HİZALANDI + `check-docs` KAPISI (commit 6fd5581→effa00e, migration YOK):**
 Kullanıcı *"kontrolleri sağla, kalan eksikleri tamamla, projeyi daha düzenli bir hale getir,
 rehberleri mimariyi karışıklığın önüne geç tamamıyla"* dedi. Doğrulama temeli önce ÖLÇÜLDÜ

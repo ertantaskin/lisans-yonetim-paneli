@@ -14,6 +14,54 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Kalan iki eksik kapatıldı + `check-docs` kapısının kendi kaçağı (migration YOK)
+
+Kod tabanında iki `TODO` duruyordu; ikisi de "yapılmadı" değil, **arıza üretiyordu**.
+
+**1) Sessiz kırpma — `GET /v1/admin/deployments` hedef süzgeci kabul etmiyordu.**
+Panel dağıtımı (`api`/`admin`), eklenti yayını (`plugin`) ve DR işleri (`backup`,
+`backup-drill`) **AYNI kuyrukta** durur ve uç sabit 50 satır döndürüyordu. Gecelik yedek
+cron'u her gün en az bir satır yazdığı için pencere **~50 günde tamamen yedek kayıtlarıyla**
+dolar → `/releases` ekranı, geçmişte GERÇEKTEN yapılmış yayınlar dururken **"Henüz yayın işi
+yok"** derdi. Kod bunu biliyordu (`TODO(api)`) ve istemci tarafında yalnız "pencere doldu"
+uyarısı veriyordu — yani doğru teşhis, eksik çözüm.
+
+Artık `?target=` (virgülle çoklu; whitelist dışı değer **400**) + `?limit=` (1..200)
+**sunucuda** süzer, pencere hedef BAŞINA dolar. Geçersiz hedef **fail-closed** (boş liste —
+sessizce "hepsi"ne düşmek, yanlış veriyi doğru sandırırdı; `claimNext` ile aynı gerekçe).
+Parametresiz çağrı eski davranışı korur → eski admin imajı kırılmaz.
+
+**`/deployments` ekranı bilerek SÜZMEZ:** o liste `hasActiveDeployment` guard'ını besliyor ve
+"aynı anda tek aktif iş" güvencesi **hedeften bağımsızdır** — çalışan bir `backup` işi de yeni
+dağıtımı 409 ile reddeder. Süzseydik çalışan yedek görünmez olur, dağıtım düğmesi açık kalır ve
+operatör 409 yerdi. (Bir kümeyi daraltmak, o kümeyi okuyan HER yolu etkiler — H1 sınıfı tuzak.)
+Onun yerine pencere 50 → 150 büyütüldü ve kırpma uyarısı gerçek satır sayısını söylüyor.
+
+**2) `TODO(ops)` — haftalık TAM mutabakat HİÇ zamanlanmamıştı.**
+15 dakikalık sweep yalnız son `RECONCILE_WINDOW_DAYS` günü (varsayılan 30) tarar. Kod
+"haftalık tam koşu ayrı bir cron ile tetiklenmeli" diyordu ve **hiçbir şey tetiklemiyordu** →
+sıcak pencereden çıkmış bir çifte satış (her iki atama da eskiyse) **bir daha hiç**
+raporlanmıyordu. Artık `reconcile-full` zamanlayıcısı haftalık koşuyor (varsayılan Pazar 04:15,
+`RECONCILE_FULL_CRON`); elle: `POST /v1/admin/maintenance/reconcile?full=true`.
+
+Bunun için `sole-scheduler` çoğul sürüme genelleştirildi (`upsertJobSchedulers`): tekil
+sürümle aynı kuyruğa ikinci bir zamanlayıcı eklemek **sessizce imkânsızdı** — her `onModuleInit`
+çağrısı diğerinin kaydını "yetim" sayıp siliyor, boot sırasına göre biri hep kayboluyor ve
+geriye yalnız bir `warn` kalıyordu. Yetim temizliği kuralı KORUNDU (kümede olmayan silinir).
+
+**3) Kendi kapımın kaçağı — `check-docs` fiilen hiçbir şey doğrulamıyordu.**
+Bir önceki turda eklenen uç denetimi yalnız **ilk yol segmentine** bakıyordu; kod tabanında
+çıplak bir `@Controller('admin')` olduğu için `/v1/admin/ne-olursa-olsun` uydurması SESSİZCE
+geçiyordu — ve panel uçlarının neredeyse hepsi `admin/...` altında. Kontrol denemesiyle
+ölçüldü, metot yolları da toplanacak şekilde düzeltildi ve uydurma uç artık **kırmızı**.
+Ders (tuzak #11): az denetleyen bir denetleyici, denetleyici yokluğundan beterdir.
+
+`ZodBody` girdi tipi `unknown`a genişletildi: query string her zaman metin taşır (`?limit=5`,
+`?target=a,b`) ama eski imza (girdi = çıktı tipi) dönüştüren hiçbir şemayı pipe'a sokamıyordu →
+doğrulama elle `if` yığınlarına itiliyordu. Çalışma-anı davranışı değişmedi.
+
+**Doğrulama:** typecheck 4/4 + altı kapı · birim 68+184+**170** · **entegrasyon 436/436**
+(429 → +7) + yarış 3/3 · build 3/3.
 ### Şartname gerçeğe hizalandı + `check-docs` kapısı (6. kapı, migration YOK)
 
 **Ölçüldü (tahmin değil):** `docs/MIMARI.md` projenin şartnamesi ve "her önemli kararda önce
