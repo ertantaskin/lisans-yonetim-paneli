@@ -28,7 +28,7 @@ dağıtım yapacaksa bu adımları izler. Amaç: her seferinde aynı, güvenli, 
 
 1. **Geliştir** (yerel veya izole dev). Değişikliği test et:
    ```bash
-   pnpm typecheck && pnpm build          # tip + BEŞ kapı (use-server/DI/env/workflow/tx-havuz)
+   pnpm typecheck && pnpm build          # tip + ALTI kapı (use-server/DI/env/workflow/tx-havuz/docs)
    pnpm test                             # birim (shared + api + admin)
    pnpm test:iso                         # davranış değiştiyse: entegrasyon + yarış (izole PG/Redis)
    ```

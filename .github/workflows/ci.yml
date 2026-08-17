@@ -71,6 +71,13 @@ jobs:
       - name: Transaction/bağlantı havuzu denetimi
         run: pnpm check:tx-pool
 
+      # BELGE ↔ KOD SAPMASI: docs/MIMARI.md projenin şartnamesi ve "her önemli kararda önce
+      # buna bak" deniyor. Ölçüldüğünde 32 tablonun 15'i belgede hiç geçmiyor, 4 UYDURMA tablo
+      # anlatılıyor ve 38 admin rotasının 36'sı anılmıyordu — yani şartnameye güvenip kod yazan
+      # biri var olmayan bir tabloya yazabilirdi. Elle güncelleme disiplini engellemedi.
+      - name: Şartname ↔ kod sapma denetimi
+        run: pnpm check:docs
+
       - name: Build
         run: pnpm build
 

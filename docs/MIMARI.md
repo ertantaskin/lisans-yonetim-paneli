@@ -1,6 +1,20 @@
 # Lisans Yönetim Paneli — Merkezi Lisans Dağıtım Paneli Mimarisi
 
-**v2.6 · Temmuz 2026** · Görsel kopya: https://claude.ai/code/artifact/4adb7a2c-ba7d-4379-b0ee-2f7b07b56b7c
+**v2.7 · Ağustos 2026** — *bu dosya mimarinin TEK YETKİLİ tanımıdır.*
+
+> **Üç şey karıştırılmasın:**
+> · **Bu dosya** = şartname (ne, neden, hangi kural). Veri modeli (§3), rota haritası (§13.1) ve
+>   API tablosu (§4) artık **`pnpm check:docs` ile kod tarafından denetlenir** — şemaya tablo,
+>   panele ekran eklenip burası güncellenmezse CI kırılır. Kapı, belgenin bir dönem 15 tabloyu
+>   hiç anmadığı ve **4 uydurma tablo** anlattığı ölçüldüğü için eklendi.
+> · **`mimari-gorsel.html`** = aynı belgenin ELLE hazırlanmış görsel kopyası, **2026-07-27
+>   tarihli anlık görüntü**. Denetim kapsamında DEĞİL ve geride kalabilir; çelişki varsa
+>   **bu dosya geçerlidir**. (Aynı içeriğin iki elle sürdürülen kopyası, bu projede
+>   tekrarlayan bir arıza sınıfıdır — bkz. CLAUDE.md → Tekrarlayan tuzaklar #4.)
+> · **`docs/GECMIS.md`** = ne zaman ne yapıldığı (tur günlüğü); şartname değil.
+>
+> Kolon/parametre düzeyinde tek doğruluk kaynağı her zaman **koddur**
+> (`apps/api/src/db/schema/`, controller'lar).
 
 WooCommerce siteleri yalnızca vitrin + sipariş + ödeme olur; stok, atama,
 teslimat, değişim/iade ve çoklu site dağıtımı ayrı sunucudaki merkezi panelde
@@ -66,38 +80,80 @@ RETURNING id;
 
 ---
 
-## 3. Veri modeli (ana tablolar)
+## 3. Veri modeli (32 tablo — TAMAMI)
 
-- **sites** — `type(woocommerce|marketplace|reseller)`, domain, api_key_hash,
-  hmac_secret_enc, sender_email, sender_domain_verified, status
+> **Bu liste kod tarafından denetlenir.** `pnpm check:docs` şemadaki her `pgTable` adının
+> burada geçtiğini doğrular; yeni tablo eklenip bu bölüm güncellenmezse **CI kırılır**.
+> Kapı bu yüzden var: liste bir dönem elle sürdürüldü ve sessizce 15 tablo eksik, 4 tablo
+> **uydurma** hâle geldi (`stock_batches`/`customer_tags`/`panel_users`/`blocklist` — hiçbiri
+> hiç var olmadı) — şartnameye güvenip kod yazan biri var olmayan bir tabloya yazardı.
+> Kolon ayrıntısı için tek doğruluk kaynağı `apps/api/src/db/schema/`.
+
+**Çekirdek satış/teslimat**
+
+- **sites** — `type(woocommerce|marketplace|reseller)`, domain, api_key_hash (+`_prev` rotasyon
+  aynası), hmac_secret_enc (+`_prev`), webhook_url, sales_daily_quota, dynamic_quota_enabled,
+  review_multiplier, sandbox, admin_order_url_template(+`_manual`), plugin_version, last_seen_at
 - **products** — sku, name, `kind(key|account|custom|code)`, payload_schema(JSONB),
-  `usage_mode(single|multi)`, `validity_days`+`on_expiry(hide|keep)`,
+  `usage_mode(single|multi)` + max_uses, `validity_days`+`on_expiry(hide|keep)`,
   `stockless`+`release_at`, `fulfillment_policy(partial-auto|partial-approval|all-or-nothing)`,
-  warranty_days, key_format(regex), low_stock_threshold
-- **site_product_mappings** — site_id, product_id, remote_product_id,
-  remote_variation_id, bundle_qty (1 Woo adedi=N key), remote_sku,
-  template_override_id, active
-- **suppliers** — name, contact, import_profile(JSONB kolon eşleme), active
-- **purchase_orders** — supplier_id, product_id, qty_ordered, qty_received,
-  unit_cost, expected_at, `status(ordered|partially_received|received|cancelled)`
-- **stock_batches** — supplier_id, po_id, unit_cost, currency, imported_by
-- **license_items** — product_id, batch_id, payload_enc(AES-256-GCM),
-  payload_hash(UNIQUE, mükerrer engeli), payload_suffix_hash(son 5 hane arama),
-  expires_at(FEFO), max_uses+use_count, status, assigned_at
-- **orders** — site_id, remote_order_id, customer_email, status, idempotency_key(UNIQUE)
-- **order_lines** — qty, fulfilled_qty, `status(fulfilled|partial|pending)`,
-  policy_override, priority
-- **assignments** — order_id, line_item_id, license_item_id, units, valid_until,
+  warranty_days, key_format(regex), low_stock_threshold, category_id, guide_id
+- **product_categories** — ad/açıklama/sabitleme sırası; ürün silinmez, `ON DELETE SET NULL`
+- **product_guides** — kurulum/etkinleştirme rehberi (mağaza sayfası + mail + `.txt`, tek render)
+- **site_product_mappings** — (site, remote_product_id[, variation]) → product_id + bundle_qty.
+  **Eşleme yalnız ELLE kurulur** (otomatik eşleştirme YOK — §7)
+- **site_remote_products** — mağaza ürün katalog SNAPSHOT'ı (ad/sku/tip/varyasyon; SIR YOK).
+  Eşlemeler ayrı tabloda → katalog yenilense de kopmaz
+- **license_items** — product_id, batch_id, payload_enc(AES-256-GCM + AAD), payload_hash(UNIQUE,
+  mükerrer engeli), payload_suffix_hash(son 5 hane arama), expires_at(FEFO), **max_uses (ANAHTAR
+  BAŞINA)** + use_count, unit_cost_cents(snapshot), status, assigned_at, **seq**(giriş sırası)
+- **orders** — site_id, remote_order_id, customer_email, status, idempotency_key(UNIQUE),
+  held_for_review + held_at/held_reason (§8 inceleme kuyruğu)
+- **order_lines** — qty (MAĞAZA gerçeği, dokunulmaz), fulfilled_qty, **canceled_units** (iptal
+  defteri; hedef = `qty − canceled_units`), canceled(terminal), bundle_qty(teslimat-anı snapshot),
+  remote_product_id/remote_variation_id/remote_name
+- **assignments** — order_id, line_id, license_item_id, units, valid_until,
   `status(active|suspended|replaced|revoked|expired)`, delivered_at
-- **assignment_history** — old/new license_item_id, reason, actor ("eski anahtarlar")
-- **fulfillment_events** — sipariş timeline'ı (panel + WP meta box'ta gösterilir)
-- **replacement_requests** — müşteri "Sorun Bildir" kuyruğu, in_warranty işareti
-- **customer_tags** — vip|wholesale|risky|blocked (e-posta bazlı, tüm siteler)
-- **delivery_templates, email_log, outbox_events, audit_log(append-only),
-  blocklist, panel_users**(argon2id + TOTP, RBAC)
+- **assignment_history** — eski/yeni license_item_id, reason, actor (değişim soyağacı)
+- **fulfillment_events** — sipariş zaman çizelgesi + **seq** (aynı tx'te yazılan olaylar aynı
+  damgayı taşır; sıra `created_at, seq`)
 
-**Performans:** partial index `WHERE status='available'` (10M satırda bile küçük index);
-log tabloları aylık partition (milyonlu satıra yaklaşınca devreye, şema hazır yazılır).
+**Tedarik & envanter**
+
+- **suppliers** · **purchase_orders** (qty_ordered/qty_received, unit_cost_cents, ordered_at
+  NULL = otomatik giriş, `status(ordered|partially_received|received|cancelled)`) ·
+  **batches** (parti; supplier_id, po_id, unit_cost, received_at, recalled)
+- **stock_adjustments** — sebepli düzeltme/void/zayi (kalem başına satır; karantina sebebi buradan)
+- **supplier_claims** + **supplier_claim_items** — kusurlu kalemin tedarikçiye bildirim fişi.
+  Kalem alanları SNAPSHOT; `license_item_id` FK'siz (kalem silinse de fiş izi kalır)
+
+**Müşteri & destek**
+
+- **customers** — e-posta bazlı GLOBAL kayıt (etiket/not); site boyutu yalnız SUNUMDA
+- **replacement_requests** — "Sorun Bildir" kuyruğu, garanti penceresi işareti
+- **replacement_messages** — iki yönlü yazışma (iç notlar müşteriye gitmez)
+
+**Operasyon & güvenlik**
+
+- **admin_users** — **scrypt** (argon2 DEĞİL) + role + token_version (anlık iptal) +
+  totp_secret_enc/totp_enabled (RFC 6238, sıfır bağımlılık)
+- **site_connect_tokens** — tek kullanımlık bağlan kodu (15dk TTL, atomik claim, şifreli kimlik)
+- **security_events** — velocity/anomaly/quota_exceeded/quota_review + yönetici oturum olayları
+- **notifications** — düşük stok · günlük özet · mutabakat ihlali · süpürme/yedek/mail alarmları
+- **audit_log** — append-only (reveal/revoke/import/anonymize/…)
+- **saved_views** — aktör-kapsamlı kayıtlı liste görünümleri
+
+**Mail & dış kanal**
+
+- **delivery_templates** (ürün+site > ürün > site > genel öncelik) · **email_log** ·
+  **outbox_events** (geri-kanal webhook, monoton `seq`)
+- **plugin_releases** — WP eklentisi sürümleri (zip DB'de; §16 kararı) ·
+  **deployments** — panelden dağıtım/yayın/yedek kuyruğu (istek ↔ runner ayrımı)
+
+**Performans:** sıcak yollar kısmi index'lerle karşılanır (`WHERE status='available'`,
+`WHERE status='active' AND valid_until IS NOT NULL`, bekleyen satır FIFO…). LIMIT'li her
+sıralamanın benzersiz tie-break'i vardır ve **yön aynalı değildir** (ASC/DESC ayrı index).
+Saklama süpürmesi (`RetentionService`) log tablolarını günlük budar.
 
 ---
 
@@ -110,13 +166,26 @@ log tabloları aylık partition (milyonlu satıra yaklaşınca devreye, şema ha
 | `/v1/orders/bulk-status` | POST | Liste sayfası — N+1 önleme, key içermez |
 | `/v1/orders/:id/admin-view` | GET | Atamalar + history + mail durumu |
 | `/v1/orders/:id/timeline` | GET | fulfillment_events |
-| `/v1/assignments/:id/replace` | POST | reason zorunlu; farklı ürünle değişim olabilir |
-| `/v1/assignments/:id/suspend` \| `/unsuspend` | POST | Geri alınabilir gizleme |
-| `/v1/fulfillments/:lineId/complete` | POST | "Kalanları/N adet ata" |
+| `/v1/orders/:remoteOrderId/assignments/:aid/replace` | POST | Mağaza tarafı değişim; reason zorunlu (hedefin çağıran siteye ait olduğu ÖNCE doğrulanır) |
+| `/v1/orders/:remoteOrderId/assignments/:aid/suspend` · `/bonus` · `/reveal` | POST | Geri alınabilir gizleme · bonus birim · loglu gösterim |
+| `/v1/admin/assignments/:id/replace` · `/revoke` · `/suspend` · `/unsuspend` | POST | Panel tarafı (ADMIN_TOKEN + rol) |
+| `/v1/admin/fulfillments/:lineId/complete` | POST | "Kalanları/N adet ata" |
 | `/v1/orders/:id/resend` | POST | 60 sn debounce |
 | `/v1/orders/:id/revoke` | POST | İade/iptal → müşteri görünümü kapanır |
-| `/v1/replacement-requests` | POST/GET | Müşteri "Sorun Bildir" |
-| `/v1/products/mapped` · `/v1/health` | GET | Anlık stok · bağlantı testi |
+| `/v1/replacements` | POST/GET | Müşteri "Sorun Bildir" (+ `/:id/messages` iki yönlü yazışma) |
+| `/v1/site-mappings` | GET/POST/PATCH/DELETE | Mağazanın kendi eşlemeleri + `/catalog` snapshot push |
+| `/v1/catalog` | GET | Bayi/kanal stok durumu — **fiyat DÖNMEZ** (§10) |
+| `/v1/connect/claim` | POST | **PUBLIC** — tek kullanımlık bağlan kodu → kimlik (§14) |
+| `/v1/updates/plugin/info` · `/download/:v` | GET | **PUBLIC** — eklenti güncelleyici (IP hız sınırlı) |
+| `/v1/health` | GET | Sağlık; degrade durumda **503** |
+
+> Uç adları bir dönem şartnamede yanlış yazılıydı: "replacement-requests" (gerçeği
+> `/v1/replacements`), "products/mapped" (hiç var olmadı; gerçeği `/v1/catalog`) ve
+> atama/tamamlama uçları önekleri olmadan. `pnpm check:docs` artık burada anılan her `/v1/...`
+> ucunun gerçek bir controller önekine oturduğunu doğrular — hayalet uç CI'ı kırar.
+>
+> **Panel uçları `/v1/admin/...` altındadır** (ADMIN_TOKEN + rol); yukarıdaki önek taşımayan
+> satırlar mağaza tarafıdır (site HMAC). İkisini karıştırmak yetki kararını da karıştırır.
 
 **HMAC imza:** `X-Api-Key` + `X-Timestamp`(±300sn) + `X-Nonce`(Redis 10dk) +
 `X-Signature = HMAC-SHA256(secret, METHOD\nPATH\nTS\nNONCE\nSHA256(body))`.
@@ -269,6 +338,26 @@ kimliğiyle mail, raporda "manuel". Kanal bazlı efektif marj raporu.
   (Kalanları Ata / Onayla-Değiştir butonları), şablon önizleme + test maili.
 - **Self-servis:** müşteri "Sorun Bildir" → destek kuyruğu (Onayla/Reddet/Bilgi İste),
   garanti süresi, müşteri 360 + etiketler, suistimal (değişim oranı) tespiti.
+
+### 13.1 Panel ekranları — rota haritası (38 rota)
+
+> **Bu liste de kod tarafından denetlenir** (`pnpm check:docs`): `apps/admin/app` altındaki her
+> sayfa burada geçmelidir. Şartname bir dönem 38 rotanın 36'sını hiç anmıyordu — panelde bir
+> ekranın var olup olmadığı ancak kodu okuyarak öğrenilebiliyordu.
+
+| Grup | Rotalar |
+|---|---|
+| **Operasyon** | `/dashboard` (genel bakış + canlı akış) · `/pending` (Bekleyen Teslimatlar) · `/orders` → `/orders/[id]` · `/review` (inceleme kuyruğu) · `/support` (destek/değişim) |
+| **Envanter** | `/stock` (kategori kartları → ürün listesi) · `/stock/import` (stok girişi) · `/products/[id]` (ürün detayı — `/products` → `/stock` yönlendirir) · `/categories` · `/guides` (kurulum rehberleri) · `/inventory` (lisans envanteri) · `/quarantine` (Kusurlu Stok) → `/quarantine/records`, `/quarantine/claims/[id]` |
+| **Tedarik** | `/suppliers` → `/suppliers/[id]` · `/purchase-orders` · `/batches` → `/batches/[id]` |
+| **Müşteri** | `/customers` (mağaza → müşteri hiyerarşisi) → `/customers/[email]` |
+| **Rapor** | `/reports` · `/reports/costs` · `/reports/sla` · `/reports/reorder` |
+| **Mağaza bağlantısı** | `/sites` → `/sites/[id]`, `/sites/new` (bağlan sihirbazı) · `/mappings` (ürün eşleştirme + eşleme bekleyen satırlar) |
+| **Yapılandırma** | `/templates` → `/templates/new` · `/settings` · `/notifications` · `/guide` (kullanım rehberi) |
+| **Sistem** | `/security` · `/audit` (denetim izi) · `/ops` (başarısız işler/outbox) · `/ai` (varsayılan KAPALI) · `/admins` → `/admins/security` (2FA) · `/releases` (eklenti sürümleri) · `/deployments` (dağıtım + yedek) · `/login` |
+
+`bash scripts/smoke-routes.sh <url>` bu ekranların hepsini gezer ve **HTTP koduna değil**,
+gövdedeki hata-sınırı imzasına bakar (Next hata sınırı 200 döndürür).
 
 ---
 

@@ -5,8 +5,10 @@ ayrık, çoklu site destekli merkezi stok/teslimat paneli.
 
 ## Bu repoda ne var
 
-- **[docs/MIMARI.md](docs/MIMARI.md)** — tam mimari şartname (v2.6, Markdown)
-- **docs/mimari-gorsel.html** — aynı dokümanın görsel/tasarımlı hali (tarayıcıda aç)
+- **[docs/MIMARI.md](docs/MIMARI.md)** — tam mimari şartname (v2.7). **Tek yetkili tanım**;
+  veri modeli + rota haritası + API tablosu `pnpm check:docs` ile kod tarafından denetlenir.
+- **docs/mimari-gorsel.html** — aynı belgenin elle hazırlanmış görsel kopyası (tarayıcıda aç).
+  **2026-07-27 tarihli anlık görüntü, denetim kapsamı dışında** — çelişkide MIMARI.md geçerlidir.
 - **CLAUDE.md** — karar özeti + değişmez kurallar + **tekrarlayan tuzaklar** (kısa tutulur;
   her oturumda okunur)
 - **[docs/GECMIS.md](docs/GECMIS.md)** — tur-tur çalışma günlüğü (hangi şikâyet, kök neden,

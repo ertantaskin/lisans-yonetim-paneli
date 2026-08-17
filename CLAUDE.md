@@ -1,9 +1,13 @@
 # Lisans Yönetim Paneli — Merkezi Lisans Dağıtım Paneli
 
 Dijital lisans satışı (Windows/Office key, hesaplar, kodlar) için WooCommerce'ten
-ayrık merkezi stok/teslimat paneli. Tam mimari şartname: `docs/MIMARI.md`
-(v2.6, 23 bölüm — HER önemli kararda önce bu dokümana bak).
-Canlı görsel kopya: https://claude.ai/code/artifact/4adb7a2c-ba7d-4379-b0ee-2f7b07b56b7c
+ayrık merkezi stok/teslimat paneli.
+
+**Tam mimari şartname: [`docs/MIMARI.md`](docs/MIMARI.md)** (v2.7, 18 bölüm — HER önemli
+kararda önce bu dokümana bak). Veri modeli, rota haritası ve API tablosu `pnpm check:docs`
+ile **kod tarafından denetlenir**; şartname artık sessizce geride kalamaz.
+`docs/mimari-gorsel.html` aynı belgenin ELLE hazırlanmış görsel kopyasıdır ve **2026-07-27
+tarihli anlık görüntüdür** — çelişki varsa `MIMARI.md` geçerlidir.
 
 ## Yığın (kesinleşti)
 
@@ -207,7 +211,7 @@ yakalanmış bir arızadır. Ayrıntılı vaka anlatımları [docs/GECMIS.md](do
 
 | Komut | Kapsam |
 |---|---|
-| `pnpm typecheck` | 4 paket tipi **+ beş kapı**: use-server · nest-wiring · env · workflows · tx-pool |
+| `pnpm typecheck` | 4 paket tipi **+ altı kapı**: use-server · nest-wiring · env · workflows · tx-pool · **docs** (şartname↔kod) |
 | `pnpm test` | Birim (shared + api + admin) |
 | `pnpm test:iso` | **Entegrasyon + yarış, izole PG17/Redis7 konteynerleriyle** (yalnız `docker` ister) |
 | `pnpm build` | Üç paket derlemesi (admin production build dahil) |
