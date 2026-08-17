@@ -223,6 +223,13 @@ export function cleanHiddenChars(value: string): string {
  * yapıştırılan Excel hücresi böyle gelir). Ondalık KABUL EDİLMEZ — aktivasyon adedi tam
  * sayıdır ve "1,5" gibi bir değeri 1'e ya da 2'ye yuvarlamak sessiz veri uydurmaktır.
  *
+ * AYRAÇ KURALI (SESSİZ 10× HATASINI KAPATIR): nokta/boşluk yalnız ARDINDAN TAM 3 RAKAM
+ * geliyorsa binlik ayracıdır. Kural eskiden yoktu — ayraçlar KOŞULSUZ atılıyordu, dolayısıyla
+ * sayı biçimli bir Excel hücresinden gelen "500.0" sessizce **5000** oluyordu. Bu, tam da bu
+ * özelliğin ÖNLEMEK için yazıldığı sessiz aşırı-satıştır (panel 5.000 hak sanar, anahtar
+ * 500'de biter) ve hiçbir katmanda hata üretmez: 5000 geçerli bir tam sayıdır, API kabul eder,
+ * onay modalinde yalnız TOPLAM görünür. Artık "500.0" REDDEDİLİR → operatör satırı görür.
+ *
  * BOŞ GİRDİ de `null` döner: çağıran "boş" ile "geçersiz" ayrımını KENDİSİ yapmalıdır
  * (boş = varsayılanı uygula, geçersiz = operatöre göster). İkisi burada birleştirilseydi
  * yanlış yazılmış bir kapasite sessizce varsayılana düşerdi.
@@ -230,8 +237,12 @@ export function cleanHiddenChars(value: string): string {
 export function parseMaxUses(raw: string): number | null {
   // cleanHiddenChars: NBSP/sıfır-genişlik → normal boşluk/atılır + uçlar kırpılır. Yapıştırılan
   // hücrelerde bunlar olağandır ve tek başına `Number()` bunlara takılıp NaN üretir.
-  const s = cleanHiddenChars(raw).replace(/[.\s]/g, '');
-  if (!/^\d+$/.test(s)) return null;
+  const cleaned = cleanHiddenChars(raw);
+  // Ya ayraçsız tam sayı, ya da tamamı 3'lük gruplara bölünmüş bir sayı. Karışık/eksik gruplama
+  // ("500.0", "1.23", "12.3456") ondalık ya da yazım hatasıdır → sessizce yorumlanmaz.
+  const grouped = /^\d{1,3}([.\s]\d{3})+$/.test(cleaned);
+  if (!grouped && !/^\d+$/.test(cleaned)) return null;
+  const s = grouped ? cleaned.replace(/[.\s]/g, '') : cleaned;
   const n = Number(s);
   if (!Number.isSafeInteger(n) || n < MAX_USES_MIN || n > MAX_USES_CAP) return null;
   return n;
@@ -302,8 +313,14 @@ export function parseKeyCapacityRows(text: string): {
  * doğrudan kuruş giriyordu — "12" yazan operatör 12,00 ₺ sanıp 0,12 ₺ kaydediyordu.
  * Burada arayüz lira alır, dönüşüm TEK yerde yapılır.
  *
- * Kabul edilen biçimler: "12", "12,5", "12.50", "1.234,56", "1 234,56".
- * Geçersiz/negatif giriş → `null` (çağıran hata gösterir; sessizce 0 kaydetmez).
+ * Kabul edilen biçimler: "12", "12,5", "12.50", "1.234,56", "1 234,56", "1.234" (bkz. aşağıdaki
+ * kural). Geçersiz/negatif giriş → `null` (çağıran hata gösterir; sessizce 0 kaydetmez).
+ *
+ * YALNIZ NOKTA VARSA (virgül yok): nokta, ardından TAM 3 rakam geliyorsa binlik ayracıdır.
+ * Eskiden koşulsuz ONDALIK sayılıyordu → tr-TR yazımıyla "1.234" giren operatör 1234 ₺ sanıp
+ * **1,23 ₺** kaydediyordu (1000× eksik maliyet; `unit_cost_cents` her lisansa snapshot'lanır ve
+ * maliyet raporu + tedarikçi karnesi bunu okur). Kural belirsizlik yaratmaz: para biriminde
+ * ÜÇ ondalık basamak yoktur — "12,50"/"12.50" iki basamaktır ve ondalık kalır.
  *
  * NOT: temizlenen sınıftaki NBSP kaçış diziyle (`\u00a0`) yazılır — ham U+00A0 kaynağa
  * gömülmez (gözle görülmez, düzenlemede sessizce bozulur; yukarıdaki görünmez-karakter
@@ -322,6 +339,10 @@ export function liraToCents(raw: string): number | null {
     normalized = s.split(thousand).join('').replace(decimal, '.');
   } else if (lastComma >= 0) {
     normalized = s.replace(',', '.');
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
+    // Yalnız nokta + tüm gruplar TAM 3 rakam → binlik ayracı ("1.234" = 1234 ₺, "1.234.567").
+    // Grup 3 rakam DEĞİLSE ("12.50", "12.5") dokunulmaz: ondalıktır.
+    normalized = s.split('.').join('');
   }
   if (!/^\d*\.?\d*$/.test(normalized) || normalized === '.' || normalized === '') return null;
   const value = Number(normalized);

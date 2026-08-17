@@ -29,6 +29,7 @@ import {
   liraToCents,
   padRow,
   parseGrid,
+  parseMaxUses,
   splitDelimited,
   splitLines,
 } from '../app/stock/import/parse';
@@ -213,6 +214,18 @@ describe('liraToCents', () => {
     expect(liraToCents('1 234,56')).toBe(123456);
   });
 
+  /**
+   * Yalnız nokta varken grup boyutu karar verir. Eskiden nokta KOŞULSUZ ondalıktı → tr-TR
+   * yazımıyla "1.234" giren operatör 1234 ₺ sanıp 1,23 ₺ kaydediyordu (1000× eksik maliyet,
+   * her lisansa snapshot'lanır). Parada üç ondalık basamak olmadığı için kural belirsiz değil.
+   */
+  it('yalnız nokta: 3 rakamlı grup BİNLİK, 1-2 rakam ONDALIK', () => {
+    expect(liraToCents('1.234')).toBe(123400);
+    expect(liraToCents('1.234.567')).toBe(123456700);
+    expect(liraToCents('12.50')).toBe(1250);
+    expect(liraToCents('12.5')).toBe(1250);
+  });
+
   it('₺ simgesi ve NBSP temizlenir', () => {
     expect(liraToCents('₺12,50')).toBe(1250);
     expect(liraToCents('12,50\u00a0₺')).toBe(1250);
@@ -304,5 +317,45 @@ describe('autoBatchLabel', () => {
   it('okunamayan tarih → boş dize (çağıran mevcut değeri KORUR)', () => {
     expect(autoBatchLabel('', [])).toBe('');
     expect(autoBatchLabel('13.08.2026', [])).toBe('');
+  });
+});
+
+describe('parseMaxUses', () => {
+  it('düz tam sayı', () => {
+    expect(parseMaxUses('500')).toBe(500);
+    expect(parseMaxUses(' 50 ')).toBe(50);
+  });
+
+  it('Türkçe binlik ayracı ve boşluk atılır (Excel hücresi)', () => {
+    expect(parseMaxUses('1.000')).toBe(1000);
+    expect(parseMaxUses('1 000')).toBe(1000);
+    expect(parseMaxUses('12.345')).toBe(12345);
+  });
+
+  /**
+   * SESSİZ 10× HATASI: nokta KOŞULSUZ atılıyordu → sayı biçimli bir Excel hücresinden gelen
+   * "500.0" 5000 oluyordu. Bu, özelliğin ÖNLEMEK için yazıldığı sessiz aşırı-satışın ta
+   * kendisidir (panel 5.000 hak sanar, anahtar 500'de biter) ve hiçbir yerde hata üretmez.
+   * Ayrım kuralı: nokta yalnız ARDINDAN TAM 3 RAKAM geliyorsa binlik ayracıdır.
+   */
+  it('ondalık nokta REDDEDİLİR (binlik ayracı sanılmaz)', () => {
+    expect(parseMaxUses('500.0')).toBeNull();
+    expect(parseMaxUses('500.00')).toBeNull();
+    expect(parseMaxUses('1.5')).toBeNull();
+    expect(parseMaxUses('1.0000')).toBeNull();
+  });
+
+  it('ondalık virgül REDDEDİLİR', () => {
+    expect(parseMaxUses('1,5')).toBeNull();
+    expect(parseMaxUses('500,0')).toBeNull();
+  });
+
+  it('boş / geçersiz / sınır dışı → null', () => {
+    expect(parseMaxUses('')).toBeNull();
+    expect(parseMaxUses('abc')).toBeNull();
+    expect(parseMaxUses('-5')).toBeNull();
+    expect(parseMaxUses('0')).toBeNull();
+    expect(parseMaxUses('100001')).toBeNull();
+    expect(parseMaxUses('100000')).toBe(100000);
   });
 });

@@ -92,8 +92,8 @@ export async function assignAvailableSingleUse(
    * YENİDEN KOŞAR. Alt sorgu her koşuda "ilk n"i baştan seçer; `SKIP LOCKED` ile o an kilitli
    * olanlar atlandığı için farklı bir küme döner ve BİRLEŞİMİ güncellenir → LIMIT fiilen
    * kalkar. Kuyruk desenlerinde bilinen tuzak budur; doğrusu alt sorguyu BİR KEZ maddeleştiren
-   * CTE'dir. Bu dosyadaki MAK yolu (`consumeMultiUseCapacity`) zaten bu doğru deseni kullanıyor
-   * — tek-kullanımlık yol geride kalmıştı.
+   * CTE'dir. MAK yolu (`consumeMultiUseCapacity`) CTE kullanıyordu ama `MATERIALIZED` DEMİYORDU
+   * — yani aynı kurala göre o da açıktaydı (sonradan düzeltildi; oradaki nota bak).
    *
    * `MATERIALIZED` AÇIKÇA yazılır: tek kez referans edilen bir CTE'yi planlayıcı satır içine
    * alabilir (inline) ve tuzak geri gelirdi.
@@ -257,8 +257,19 @@ export async function consumeMultiUseCapacity(
   want: number,
 ): Promise<MultiUseTake | null> {
   if (want <= 0) return null;
+  /*
+   * `MATERIALIZED` ŞART — tek-kullanımlık yoldaki aşırı teslimat hatasıyla AYNI SINIF.
+   * Bu CTE tam bir kez referans ediliyor; planlayıcı onu satır içine alabilir (inline) ve o
+   * durumda EvalPlanQual yeniden değerlendirmesinde `LIMIT 1` alt sorgusu TEKRAR koşar.
+   * Sonucu burada "tüm stok" değil ama daha sinsi olur: `taken`, GÜNCELLENMİŞ satırdan yeniden
+   * hesaplanabilir → tüketilen kapasite ile çağırana dönen birim sayısı AYRIŞIR (müşteriye N
+   * birim yazılırken anahtardan M düşer). Sessiz muhasebe hatasıdır.
+   *
+   * NOT: bu dosyanın üst tarafındaki açıklama bir dönem "MAK yolu zaten doğru deseni kullanıyor"
+   * diyordu; kod `MATERIALIZED` DEMİYORDU. Açıklamanın kendisi denetimi yanlış yönlendirdi.
+   */
   const list = await rawRows<{ id: string; taken: number }>(db, sql`
-    WITH picked AS (
+    WITH picked AS MATERIALIZED (
       -- Alınacak birim TEK anahtarın KALAN kapasitesiyle sınırlıdır: LEAST(istenen, kalan).
       -- Eski sürüm "hepsi ya da hiç" (use_count + want <= max_uses) idi ve çağıran her
       -- BİRİM için ayrı çağrı yapıyordu; artık kalan ne kadarsa o kadar alınır, dolayısıyla
@@ -296,5 +307,21 @@ export async function consumeMultiUseCapacity(
   `);
 
   const row = list[0];
-  return row ? { licenseItemId: row.id, taken: Number(row.taken) } : null;
+  if (!row) return null;
+  const taken = Number(row.taken);
+
+  /*
+   * FAIL-CLOSED KALKAN (tek-kullanımlık yoldakinin ikizi): `LIMIT 1` + `LEAST(want, kalan)`
+   * gereği tek satır ve 1..want arası birim dönmelidir. Aksi hâli sessizce ya aşırı teslimat
+   * (müşteri ödemediği aktivasyonu alır) ya da kayıp kapasite demektir; transaction'ı patlatmak
+   * ikisinden de İYİDİR. Kalkanın değeri ölçüldü: aynı sınıftaki tek-kullanımlık hata aylarca
+   * "testler bazen kırmızı" gürültüsü sanılmıştı — sessiz olduğu için.
+   */
+  if (list.length > 1 || !Number.isInteger(taken) || taken < 1 || taken > want) {
+    throw new Error(
+      `MAK kapasite invaryantı ihlali: ${want} birim istendi, ${list.length} satır / ` +
+        `${taken} birim döndü (ürün ${productId}). İşlem geri alındı.`,
+    );
+  }
+  return { licenseItemId: row.id, taken };
 }

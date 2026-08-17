@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { deployments, type Deployment } from '../db/schema/deployments';
@@ -283,24 +283,45 @@ export class DeploymentsService {
       if (allowed.length === 0) return null;
     }
 
-    // Alt sorgu iki varyantta AYRI yazıldı: boş `sql``` parçası gömmek yerine tam ifadeyi
-    // seçmek okunur ve drizzle'ın boş-chunk kenar durumlarına hiç girmez.
-    const pick = allowed
-      ? sql`(select id from deployments
-             where status = 'pending'
-               and target in (${sql.join(
-                 allowed.map((t) => sql`${t}`),
-                 sql`, `,
-               )})
-             order by created_at asc limit 1 for update skip locked)`
-      : sql`(select id from deployments where status = 'pending' order by created_at asc limit 1 for update skip locked)`;
+    /*
+     * SEÇ ve GÜNCELLE AYRI İFADEDİR — tek ifadede `WHERE id = (SELECT … LIMIT 1 FOR UPDATE
+     * SKIP LOCKED)` yazmak, atama motorunda ÖLÇÜLEN aşırı teslimat hatasıyla AYNI SINIFTIR:
+     * kilit yan etkisi taşıyan bir alt sorgu, dış taramanın her satırı için yeniden koşabilir
+     * (EvalPlanQual/volatile alt plan) ve her koşuda BİR SONRAKİ bekleyen satırı seçer →
+     * tek çağrıda birden çok istek 'running' olur. `.returning()` yalnız ilkini döndürdüğü
+     * için diğerleri SESSİZCE öksüz kalır: "aynı anda tek aktif iş" güvencesi yüzünden yeni
+     * istekler 409 alır ve kilit ancak zombi süpürmesiyle açılır.
+     *
+     * İki ifade tek transaction'da koşar → `FOR UPDATE` kilidi UPDATE'e kadar tutulur (iki
+     * runner aynı işi alamaz). Ek gidiş-dönüş cron tetiklemeli bir claim için önemsizdir.
+     * Not: transaction gövdesinde KÖK havuz (`this.db`) kullanılmaz — `tx` geçirilir
+     * (check-tx-pool kapısının denetlediği kural).
+     */
+    return this.db.transaction(async (tx) => {
+      const picked = await tx
+        .select({ id: deployments.id })
+        .from(deployments)
+        .where(
+          allowed
+            ? and(eq(deployments.status, 'pending'), inArray(deployments.target, allowed as DeployTarget[]))
+            : eq(deployments.status, 'pending'),
+        )
+        .orderBy(asc(deployments.createdAt))
+        .limit(1)
+        .for('update', { skipLocked: true });
 
-    const [row] = await this.db
-      .update(deployments)
-      .set({ status: 'running', startedAt: new Date() })
-      .where(eq(deployments.id, pick))
-      .returning();
-    return row ?? null;
+      const id = picked[0]?.id;
+      if (!id) return null;
+
+      const [row] = await tx
+        .update(deployments)
+        .set({ status: 'running', startedAt: new Date() })
+        // `status = 'pending'` koşulu KALIR: kilit satırı korur ama guard'ı ifadede tutmak
+        // durumu tek doğruluk kaynağı yapar (CAS deseni — `finish` de böyle yazılmıştır).
+        .where(and(eq(deployments.id, id), eq(deployments.status, 'pending')))
+        .returning();
+      return row ?? null;
+    });
   }
 
   /**

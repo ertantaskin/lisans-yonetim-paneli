@@ -82,4 +82,45 @@ describe('DeploymentsService (integration)', () => {
     await svc.claimNext();
     await svc.finish(d3.id, 'success', {});
   });
+
+  /**
+   * HANGİ REGRESYONU YAKALAR: tek bir claim ASLA birden çok isteği 'running' yapmamalı.
+   *
+   * `claimNext` bir dönem `UPDATE … WHERE id = (SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED)`
+   * yazımını kullanıyordu — atama motorunda ÖLÇÜLEN aşırı teslimat hatasıyla aynı sınıf:
+   * kilit yan etkisi taşıyan alt sorgu dış taramanın satırları için yeniden koşabilir ve her
+   * koşuda BİR SONRAKİ bekleyeni seçer. `.returning()` yalnız ilk satırı döndürdüğü için
+   * fazladan claim edilenler SESSİZCE öksüz 'running' kalır: "aynı anda tek aktif iş"
+   * güvencesi yüzünden panelden yeni dağıtım 409 alır ve kilit ancak zombi süpürmesiyle açılır.
+   *
+   * Birden çok bekleyen satır `request()` ile üretilemez (guard tek aktif işe izin verir) →
+   * durum doğrudan INSERT ile kurulur; ölçülen şey claim'in KENDİSİDİR.
+   */
+  it('birden çok bekleyen varken tek claim YALNIZ birini running yapar', async () => {
+    await db.execute(sql`DELETE FROM deployments WHERE status IN ('pending','running')`);
+    await db.execute(sql`
+      INSERT INTO deployments (target, status, requested_by, created_at) VALUES
+        ('api',       'pending', ${actor}, now() - interval '3 minutes'),
+        ('admin',     'pending', ${actor}, now() - interval '2 minutes'),
+        ('api admin', 'pending', ${actor}, now() - interval '1 minutes')
+    `);
+
+    const claimed = await svc.claimNext();
+    // En eski bekleyen alınır (FIFO).
+    expect(claimed?.target).toBe('api');
+    expect(claimed?.status).toBe('running');
+
+    const counts = await db.execute(sql`
+      SELECT status, count(*)::int AS n FROM deployments
+      WHERE requested_by = ${actor} AND status IN ('pending','running')
+      GROUP BY status
+    `);
+    const byStatus = Object.fromEntries(
+      (counts as unknown as { status: string; n: number }[]).map((r) => [r.status, r.n]),
+    );
+    expect(byStatus.running).toBe(1);
+    expect(byStatus.pending).toBe(2);
+
+    await db.execute(sql`DELETE FROM deployments WHERE requested_by = ${actor}`);
+  });
 });

@@ -78,6 +78,25 @@ Yönetim (VPS'te): `./scripts/dev-stack.sh up|wp|down|status|subdomains`.
 | `pnpm wp:down` | WordPress yığınını durdur |
 | `pnpm wp:cli <...>` | WP-CLI çalıştır (ör. `pnpm wp:cli plugin list`) |
 
+### Testler
+
+| Komut | İş | Gereksinim |
+|---|---|---|
+| `pnpm typecheck` | Tip denetimi **+ beş kapı** (use-server · Nest kablolama · env geçirme · iş akışı YAML · tx/havuz) | — |
+| `pnpm test` | Birim testleri (shared + api + admin) | — |
+| **`pnpm test:iso`** | **Entegrasyon + yarış paketi, izole PostgreSQL/Redis konteynerleriyle** | yalnız `docker` |
+| `pnpm test:integration` | Entegrasyon paketi (var olan bir DB'ye karşı) | `DATABASE_URL` + `REDIS_URL` + `MASTER_KEY` |
+| `pnpm test:race` | Yarış testi (100 sipariş × 50 stok → çifte atama = 0) | aynı |
+
+**`pnpm test:iso` neden var:** entegrasyon paketi gerçek PostgreSQL + Redis ister ve uzun süre
+elle kuruluyordu; elle kurulum üç kez sahte/eksik doğrulama üretti (`db:migrate` unutuldu →
+"tablo yok"; `REDIS_URL` verilmedi → yeni testler kapısız kaldı; **bayat `node_modules`** →
+paket lockfile'ın istediğinden eski vitest ile koştu). Betik kendi ağını + PG 17 + Redis 7
+konteynerlerini kurar, `--frozen-lockfile` ile kurulum yapar, migration'ları uygular, paketi
+koşar ve temizler. **Node/pnpm hostta gerekmez** (her şey `node:22` konteynerinde koşar) —
+VPS'te node PATH'te olmadığı için bu şart. Prod/dev yığınlarına dokunmaz, port yayınlamaz.
+Hata ayıklarken `KEEP=1 pnpm test:iso` konteynerleri bırakır.
+
 ## Eklenti geliştirme akışı
 
 `apps/wp-plugin/wpteslimat` klasörü WordPress container'ına **salt-okunur bind-mount**
