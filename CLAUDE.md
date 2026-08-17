@@ -241,11 +241,21 @@ DB dışa kapalıdır; host'tan erişim için `docker-compose.override.yml.examp
 
 Lokal Node 22 önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime imajları node:22.
 
-## Geçmiş
+## Belge haritası — hangisi geçerli
 
-Tur-tur ayrıntılı çalışma günlüğü (hangi şikâyet, kök neden, ölçüm, düzeltme, doğrulama):
-**[docs/GECMIS.md](docs/GECMIS.md)**. Bu dosyaya taşındı çünkü CLAUDE.md her oturumda bağlama
-yükleniyor ve 310 KB'a ulaşmıştı — kurallar, geçmiş anlatılarının arasında kayboluyordu.
-Yukarıdaki "Tekrarlayan tuzaklar" listesi o geçmişin damıtılmış hâlidir; bir maddenin ARDINDAKİ
-vakayı okumak istersen GECMIS.md'de ara. Sürüm bazlı özet: `CHANGELOG.md`. Dağıtım kaydı:
-`docs/DEPLOY-LOG.md`.
+Çelişki görürsen **daha yukarıdaki kazanır**. Bu sıra yazılı olmadığı için bir dönem README
+aylarca "Faz 1 MVP" dedi ve şartname var olmayan tabloları anlattı.
+
+| # | Belge | Ne söyler | Denetim |
+|---|---|---|---|
+| 1 | **Kod** (`apps/api/src/db/schema/`, controller'lar) | Kolon/parametre düzeyinde GERÇEK | — |
+| 2 | **[docs/MIMARI.md](docs/MIMARI.md)** | Şartname: ne, neden, hangi kural (v2.7) | `pnpm check:docs` (tablo · rota · uç) |
+| 3 | **Bu dosya (CLAUDE.md)** | Güncel durum özeti + değişmez kurallar + tekrarlayan tuzaklar | elle |
+| 4 | **Runbook'lar** (`RUNBOOK-RELEASE`, `RUNBOOK-DR`, `GELISTIRME`) | Nasıl yapılır (yayın/DR/yerel) | elle |
+| 5 | `CHANGELOG.md` · `docs/DEPLOY-LOG.md` | Sürüm ve dağıtım geçmişi | elle |
+| 6 | **[docs/GECMIS.md](docs/GECMIS.md)** | Tur-tur çalışma günlüğü — şartname DEĞİL | elle |
+| 7 | `docs/mimari-gorsel.html` | Şartnamenin **2026-07-27 tarihli** görsel anlık görüntüsü | **YOK** (geride kalabilir) |
+
+Panel içindeki **`/guide`** ekranı operatöre yöneliktir (bu dosyalar geliştiriciye). "Tekrarlayan
+tuzaklar" listesi GECMIS.md'nin damıtılmış hâlidir; bir maddenin ARDINDAKİ vakayı okumak
+istersen orada ara.

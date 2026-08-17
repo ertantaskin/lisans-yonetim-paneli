@@ -14,6 +14,41 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Şartname gerçeğe hizalandı + `check-docs` kapısı (6. kapı, migration YOK)
+
+**Ölçüldü (tahmin değil):** `docs/MIMARI.md` projenin şartnamesi ve "her önemli kararda önce
+buna bak" deniyor. Durum şuydu: şemadaki **32 tablonun 15'i belgede hiç geçmiyordu**, belge
+**4 uydurma tablo** anlatıyordu (`stock_batches`, `customer_tags`, `panel_users`, `blocklist` —
+hiçbiri hiç var olmadı; `panel_users` ayrıca "argon2id" diyordu, gerçek **scrypt**),
+**38 admin rotasının 36'sı** anılmıyordu ve API tablosunda var olmayan uçlar yazılıydı
+(`/v1/products/mapped` hiç olmadı). Yani şartnameye güvenip kod yazan biri var olmayan bir
+tabloya yazabilirdi.
+
+**En ağır bulgu §2'deydi:** "sistemin kalbi" başlığı altında **tam da üretimde aşırı teslimat
+üreten yazımı** öğretiyordu — `UPDATE … WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP LOCKED)`.
+Belgeyi okuyup uygulayan biri hatayı yeniden yazardı. Artık `MATERIALIZED` CTE + fail-closed
+kalkan + tie-break gerekçesi + MAK'ın gerçek davranışı (LEAST + tek anahtar tercihi +
+**anahtar başına** kapasite) yazıyor.
+
+Kapatılan diğer plan↔gerçek sapmaları (hepsi kodla doğrulandı): §1 Resend/SES → **SMTP-only**,
+pgBackRest/S3/WAL → `pg_dump`+cron+tatbikat (dış kopya bir **kanca**), Uptime Kuma kurulmadı,
+Sentry env-gated **varsayılan KAPALI** · §2.5 sağlayıcı `delivered/bounced` webhook'u **YOK** ·
+§8 libsodium değil (Node `crypto`), AAD ad alanı ayrımı, **anomali oto-askısı YOK** (yalnız
+`security_events`), Woo'ya geri doğrulama YOK, Tailscale/IP kısıtı YOK · §16 "RPO ≤ 5 dk"
+**hedef** olarak işaretlendi (PITR yok → gerçek RPO = son yedek anı; `RUNBOOK-DR` zaten
+doğrusunu söylüyordu, şartname onunla çelişiyordu) · §18 faz durumları (0/1/2/4 tamam,
+**3 düşürüldü**) · kapsam-dışı listesi tamamlandı.
+
+**Kapı:** `scripts/check-docs.js` — şemadaki her tablo, `apps/admin/app` altındaki her rota ve
+belgede anılan her `/v1/...` ucu doğrulanır; `pnpm typecheck` ve CI'a bağlı. Kontrol denemesi
+yapıldı: üç denetim de kırmızıya düştü. Kapsam bilerek dar — belgeyi kopya-şemaya çevirmek onu
+okunmaz yapar; denetlenen şey "bundan hiç bahsedilmemiş" hatasıdır.
+
+**Belge düzeni:** iki elle sürdürülen mimari belgesi vardı (`MIMARI.md` + `mimari-gorsel.html`,
+ikincisi 3 hafta geride). `MIMARI.md` **tek yetkili** ilan edildi; HTML'in kendi içine tarihli
+uyarı bandı kondu. CLAUDE.md'ye **belge yetki sırası tablosu** eklendi (kod > şartname >
+CLAUDE.md > runbook > geçmiş > görsel kopya) — bu sıra yazılı olmadığı için README aylarca
+"Faz 1 MVP" demeye devam etmişti; README artık durumu tekrarlamıyor, kaynağa yönlendiriyor.
 ### Sessiz sayı hataları · kilitli LIMIT deseni · belge düzeni (migration YOK)
 
 **Sessiz 10× kapasite hatası.** Stok girişinde anahtar başına kullanım hakkını çözümleyen

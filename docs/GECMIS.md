@@ -12,6 +12,58 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**ŞARTNAME GERÇEĞE HİZALANDI + `check-docs` KAPISI (commit 6fd5581→effa00e, migration YOK):**
+Kullanıcı *"kontrolleri sağla, kalan eksikleri tamamla, projeyi daha düzenli bir hale getir,
+rehberleri mimariyi karışıklığın önüne geç tamamıyla"* dedi. Doğrulama temeli önce ÖLÇÜLDÜ
+(typecheck + beş kapı, birim 411, ölü dosya 0) ve temizdi → aranan şey kodda değil BELGEDEYDİ.
+
+- **[EN AĞIR] Şartname, üretimde aşırı teslimat üreten yazımı ÖĞRETİYORDU.** §2 "Atomik stok
+  atama (sistemin kalbi)" başlığı altındaki örnek SQL tam olarak
+  `UPDATE … WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP LOCKED)` idi — yani bir önceki turda
+  düzeltilen, ÖLÇÜLMÜŞ (6 istenirken 20 satır) üretim hatasının ta kendisi. Belgeyi okuyup
+  uygulayan biri hatayı yeniden yazardı. Artık `MATERIALIZED` CTE + fail-closed kalkan +
+  tie-break gerekçesi (aynı tx'te yazılan satırların `created_at`'i BİREBİR aynıdır) + MAK'ın
+  gerçek davranışı (`LEAST(istenen, kalan)` + tek anahtar tercihi + **anahtar başına** kapasite)
+  yazıyor; üstte de "bu yazımı KULLANMAYIN" uyarısı var.
+- **[Veri modeli] 32 tablonun 15'i belgede HİÇ geçmiyordu; 4 tablo UYDURMAYDI.**
+  `stock_batches` / `customer_tags` / `panel_users` / `blocklist` — hiçbiri hiç var olmadı ve
+  `panel_users` ayrıca "argon2id" diyordu (gerçek: **scrypt**). Şartnameye güvenip kod yazan
+  biri var olmayan bir tabloya yazardı. §3 tamamen yeniden yazıldı (alt sistemlere gruplu).
+- **[Rota haritası] 38 admin rotasının 36'sı anılmıyordu** → yeni §13.1 (gruplu tablo). Panelde
+  bir ekranın var olup olmadığı ancak kod okunarak öğrenilebiliyordu.
+- **[API] Var olmayan uçlar yazılıydı:** `/v1/products/mapped` (hiç olmadı; gerçeği `/v1/catalog`),
+  `/v1/replacement-requests` (gerçeği `/v1/replacements`), atama/tamamlama uçları `/v1/admin/`
+  önekini taşımıyordu (yetki kararını da karıştıran bir hata). Site-facing/public uçlar eklendi.
+- **[KAPI] `scripts/check-docs.js` — 6. kapı** (`pnpm typecheck` + CI): şemadaki her `pgTable`,
+  `apps/admin/app` altındaki her rota ve belgede anılan her `/v1/...` ucu denetlenir.
+  **Kontrol denemesi yapıldı: üç denetim de kırmızıya düştü.** Kapsam BİLEREK dar — belgeyi
+  kopya-şemaya çevirmek onu okunmaz yapar ve her kolon değişikliğinde CI kırardı; denetlenen
+  şey "bundan hiç bahsedilmemiş" hatasıdır. (Kontrol denemesi sırasında `git checkout` ile
+  gerçek düzenlemeleri de geri aldım; yedekten dönüldü — ders: kapı denemesini AYRI kopyada yap.)
+- **[Plan↔gerçek sapmaları, hepsi kodla doğrulandı]** §1 Resend/SES → **SMTP-only** ·
+  pgBackRest/S3/WAL → `pg_dump`+cron+tatbikat (dış kopya bir KANCA) · Uptime Kuma kurulmadı ·
+  Sentry env-gated varsayılan KAPALI · §2.5 sağlayıcı `delivered/bounced` webhook'u YOK ·
+  §8 libsodium DEĞİL (Node `crypto`), **anomali oto-askısı YOK** (yalnız `security_events`),
+  "Woo'ya geri doğrulama" YOK, Tailscale/IP kısıtı YOK · §16 **"RPO ≤ 5 dk" HEDEF** olarak
+  işaretlendi (PITR yok → gerçek RPO = son yedek anı; `RUNBOOK-DR` zaten doğrusunu söylüyordu,
+  şartname onunla ÇELİŞİYORDU) · §18 faz durumları (0/1/2/4 ✅, **3 ❌ düşürüldü** — okuyan
+  "Faz 3 bekliyor mu?" diye düşünüyordu) · kapsam-DIŞI listesi tamamlandı.
+- **[Belge düzeni] İki elle sürdürülen mimari belgesi vardı** (`MIMARI.md` + `mimari-gorsel.html`,
+  ikincisi 3 hafta geride) — bu projede tekrarlayan "aynı kavramın iki tanımı" sınıfı.
+  `MIMARI.md` **tek yetkili** ilan edildi; HTML'in KENDİ İÇİNE tarihli uyarı bandı kondu
+  (tarayıcıda doğrulandı) — asıl karışıklık dosyayı doğrudan açan kişide oluyordu.
+  CLAUDE.md'ye **belge yetki sırası tablosu** eklendi (kod > şartname > CLAUDE.md > runbook >
+  geçmiş > görsel kopya). README kendi "Durum" listesini tutuyordu ve aylarca "Faz 1 MVP"
+  dedi → durumu tekrarlamayı bıraktı, kaynağa yönlendiriyor.
+- **Rehber/menü kapsamı ölçüldü:** panel içi `/guide` 38 rotanın tamamına değiniyor (yalnız
+  `/templates/new` alt sayfası anılmıyor, ebeveyni kapsıyor); sol menü eksiksiz (menüde
+  görünmeyenler ebeveyninden ulaşılan alt sayfalar).
+- **Doğrulama:** typecheck 4/4 + **altı kapı** · birim 68+184+165 · build 3/3 ·
+  **VPS izole PG17+Redis7: entegrasyon 429/429 + yarış 3/3** · PHP-lint + eklenti davranış
+  108/108 · prod/dev checkout'ları senkron, `/v1/health` 200 v1.1.0. Kod DEĞİŞMEDİ (belge +
+  kapı + README/CLAUDE düzeni) → panel yeniden dağıtımı gerekmedi.
+
+---
 **İNCELEME TURU: İKİ SESSİZ SAYI HATASI + KİLİTLİ `LIMIT` DESENİNİN İKİ KARDEŞİ + BELGE DÜZENİ
 (commit 91f1173→00647b3, CANLI prod+dev, migration YOK):** Kullanıcı *"gerekli dağıtımları yap ve
 incelemelere devam et sorunları gider projeyi derli toplu düzenli bir hale getir"* dedi. Prod ve dev
