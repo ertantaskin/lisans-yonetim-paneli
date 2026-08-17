@@ -14,6 +14,38 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### MAK teslimatı: "6 aldım ama 16 kullanım hakkı gitmiş" · tek anahtar tercihi · gerçek mail önizlemesi (migration YOK, eklenti 1.1.5)
+
+**Bildirilen sorun:** 6 adetlik bir MAK siparişinde panel iki anahtar gösteriyor ve yanlarında
+"10/10 kullanım" ile "6/10 kullanım" yazıyordu. Toplanınca 16 çıkıyor, sipariş ise 6 birimlik.
+
+**Ölçüldü — veri doğruydu, panel yanlış anlatıyordu.** O siparişin payı gerçekte 5 + 1 = 6'ydı;
+ekrandaki sayaçlar ise **anahtarın tüm siparişlerdeki toplamıydı** (kalan 10, önceki siparişlere
+aitti) ve bu hiçbir yerde yazmıyordu. Artık her lisans satırında önce **"bu siparişte N
+etkinleştirme"** (vurgulu), yanında etiketiyle **"anahtar geneli X/Y"** görünür; sipariş özetinde
+de toplam etkinleştirme hakkı yazar.
+
+**Teslimat şekli de düzeltildi (asıl istek).** Motor eskiden ilk anahtarın kalanını doldurup
+artanı sonrakine taşırıyordu; boş bir anahtar dururken 6 birimlik sipariş "5 + 1" diye
+bölünebiliyordu. Artık önce **talebin tamamını tek başına karşılayabilen anahtar** aranır → tipik
+sipariş **tek anahtar, tek atama** alır ("aynı anahtarı N kez etkinleştir"). Hiçbir anahtar
+yetmiyorsa eski doldur-taşır davranışı birebir korunur; küçük talepler yarım kalmış anahtarları
+önce kapatır (parça kapasite çürümez). Müşterinin eline geçen her fazladan MAK anahtarı fazladan
+aşırı-etkinleştirme yüzeyidir — bu yüzden hedef sipariş başına en az anahtardır.
+
+**Müşteri de artık ne aldığını görüyor.** Mail "(5 adet)" diyordu; bu "5 anahtar" gibi okunuyordu
+ve **1 birimlik anahtarda hiçbir şey yazmıyordu** — müşteri paylaşımlı anahtarın tamamının kendisine
+ait olduğunu sanıyordu. Artık çok kullanımlı üründe her satırda "(bu siparişte N etkinleştirme
+hakkı)" yazar, 1 olsa bile. Aynı cümle mağaza sayfasında, indirilen dosyada ve sipariş ekranında
+da görünür (eklenti 1.1.5).
+
+**Mail önizlemesi gerçeğe benzetildi.** Önizleme, panelin hata-ayıklama çıktısı gibi tek aralıklı
+bir metin kutusuydu. Gerçek mail tek parça düz metin gönderiliyor (ham kaynağıyla doğrulandı), bu
+yüzden önizleme artık bir **e-posta tıpkıbasımı**: zarf başlığı (Kimden / Kime / Konu / Tarih),
+mail istemcilerinin düz metni gösterdiği gibi orantılı yazı tipi, beyaz kâğıt yüzeyi (panel koyu
+temadayken bile — müşteri o görüntüyü asla görmez) ve gerçek istemciler gibi tıklanabilir
+bağlantılar. Uydurma bir gönderim tarihi basılmaz: tarih satırı açıkça "önizleme anı" der.
+
 ### Atama motorunda aşırı teslimat (bedava lisans) · MAK kapasitesi · mail önizleme · 33 denetim bulgusu (migration YOK, eklenti 1.1.4)
 
 **Sistemin kalbinde, üretimde canlı bir hata bulundu ve kapatıldı: bazı durumlarda bir sipariş
