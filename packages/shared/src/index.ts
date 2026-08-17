@@ -4,6 +4,7 @@ export * from './domain/guide';
 export * from './domain/payload';
 export * from './domain/procurement';
 export * from './domain/risk';
+export * from './domain/semver';
 export * from './domain/template-vars';
 export * from './domain/text';
 export * from './api/hmac';

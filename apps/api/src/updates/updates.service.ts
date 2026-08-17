@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { compareVersions } from '@lisans/shared';
 import { desc, eq } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 import { pluginReleases, type PluginRelease } from '../db/schema/pluginReleases';
@@ -94,25 +95,17 @@ export class UpdatesService {
   }
 }
 
-/** "major.minor.patch" → [maj, min, pat] sayısal üçlü; biçime uymuyorsa null (geçersiz). */
-function parseSemver(v: string): [number, number, number] | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(v.trim());
-  if (!m) return null;
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
-}
-
 /**
- * Semver karşılaştırma: a>b → +1, a<b → -1, eşit → 0. Geçersiz biçimli sürüm daima
- * daha düşük sayılır (en sona sıralanır); iki geçersizde 0 döner.
+ * Semver karşılaştırma `@lisans/shared` → `domain/semver.ts`'te YAŞAR; burada yalnız yeniden
+ * export edilir (mevcut çağıranlar — `retention.service` — kırılmasın).
+ *
+ * NEDEN PAYLAŞILDI: aynı kural admin `/releases` ekranında da karar veriyor ("En yeni" rozeti
+ * + düşük sürüm yayınlama kapısı) ve iki AYRI kopya duruyordu. Davranışları birebir aynıydı,
+ * yani sorun bugünkü sonuç değil YARINKİ SAPMAYDI: biri ön-sürüm desteği kazansa panel bir
+ * sürümü "en yeni" diye damgalarken müşteri siteleri BAŞKA paketi indirmeye devam ederdi ve
+ * bu hiçbir yerde hata üretmezdi.
+ *
+ * `export { … } from` DEĞİL, import + ayrı export: yeniden-export adı bu modülde YEREL olarak
+ * BAĞLAMAZ (bu kod tabanında daha önce yaşandı) — yukarıdaki `latest()` onu kullanıyor.
  */
-export function compareVersions(a: string, b: string): number {
-  const pa = parseSemver(a);
-  const pb = parseSemver(b);
-  if (!pa && !pb) return 0;
-  if (!pa) return -1;
-  if (!pb) return 1;
-  for (let i = 0; i < 3; i++) {
-    if (pa[i] !== pb[i]) return pa[i] > pb[i] ? 1 : -1;
-  }
-  return 0;
-}
+export { compareVersions };
