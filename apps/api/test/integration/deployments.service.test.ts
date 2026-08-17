@@ -95,6 +95,14 @@ describe('DeploymentsService (integration)', () => {
    *
    * Birden çok bekleyen satır `request()` ile üretilemez (guard tek aktif işe izin verir) →
    * durum doğrudan INSERT ile kurulur; ölçülen şey claim'in KENDİSİDİR.
+   *
+   * DÜRÜSTLÜK NOTU (testin gücü): bu bir İNVARYANT KİLİDİDİR, arızanın YENİDEN ÜRETİMİ değil.
+   * Eski yazımın kaçağı EvalPlanQual'a, yani araya giren EŞZAMANLI bir yazara bağlıdır; bu test
+   * eşzamanlılık kurmadığı için eski kodla da yeşil kalırdı (kontrol denemesi yapılmadı, çünkü
+   * sonucu belirleyen şey testin kendisi değil zamanlama). Düzeltmenin gerekçesi yapısaldır:
+   * kilit yan etkili alt sorgu bir `UPDATE`in WHERE'inde durmamalıdır — aynı sınıf, atama
+   * motorunda ÖLÇÜLMÜŞ bir üretim hatası üretmişti. Test, ileride birinin tek-ifade yazımına
+   * geri dönmesini engellemez; "bir claim = bir running" beklentisini belgeler ve FIFO'yu kilitler.
    */
   it('birden çok bekleyen varken tek claim YALNIZ birini running yapar', async () => {
     await db.execute(sql`DELETE FROM deployments WHERE status IN ('pending','running')`);

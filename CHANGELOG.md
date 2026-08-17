@@ -14,6 +14,69 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Sessiz sayı hataları · kilitli LIMIT deseni · belge düzeni (migration YOK)
+
+**Sessiz 10× kapasite hatası.** Stok girişinde anahtar başına kullanım hakkını çözümleyen
+`parseMaxUses` noktayı KOŞULSUZ atıyordu → sayı biçimli bir Excel hücresinden gelen `500.0`
+sessizce **5000** oluyordu. Bu, özelliğin ÖNLEMEK için yazıldığı aşırı satışın ta kendisidir
+(panel 5.000 hak sanar, anahtar 500’de biter) ve hiçbir katmanda hata üretmez: 5000 geçerli bir
+tam sayıdır, API kabul eder, onay modalinde yalnız TOPLAM görünür. Ayraç artık ancak ardından
+TAM 3 rakam geliyorsa binlik ayracıdır. Fonksiyonun hiç testi yoktu; hata, test yazılırken
+ortaya çıktı.
+
+**Sessiz 1000× maliyet hatası.** Aynı ekranın para alanında yalnız nokta varken değer KOŞULSUZ
+ondalık sayılıyordu → tr-TR yazımıyla `1.234` giren operatör 1234 ₺ sanıp **1,23 ₺**
+kaydediyordu. Birim maliyet her lisansa snapshot’lanır ve maliyet raporu + tedarikçi karnesi
+onu okur. Parada üç ondalık basamak olmadığı için kural belirsiz değil: grup boyutu karar verir.
+
+**Kilitli `LIMIT` deseni — atama motorundaki aşırı teslimat hatasının iki kardeşi.** MAK
+kapasite tüketimi CTE kullanıyordu ama `MATERIALIZED` DEMİYORDU; dosyanın kendi kuralı bunu
+şart koşuyor ve açıklaması "MAK yolu zaten doğru deseni kullanıyor" diye YANLIŞ bilgi veriyordu
+(açıklamanın kendisi denetimi yanlış yönlendirdi). Dağıtım kuyruğunun `claimNext`’i de
+`UPDATE … WHERE id = (SELECT … LIMIT 1 FOR UPDATE SKIP LOCKED)` yazıyordu: kilit yan etkili bir
+alt sorgu dış taramanın satırları için yeniden koşabilir ve her koşuda bir sonraki bekleyeni
+seçer → tek çağrıda birden çok istek `running` olur, `.returning()` yalnız ilkini döndürdüğü
+için diğerleri sessizce öksüz kalır ve "tek aktif iş" kilidi zombi süpürmesine kadar açılmaz.
+Seç/güncelle ayrı ifadeye alındı (tek transaction, kilit korunur) + MAK yoluna fail-closed
+kalkan eklendi.
+
+**Entegrasyon/yarış paketi için tekrarlanabilir giriş noktası** (`pnpm test:iso` →
+`scripts/test-integration.sh`): izole PostgreSQL 17 + Redis 7 konteynerleri, `--frozen-lockfile`
+kurulum, migration, paket, temizlik. Elle kurulum üç kez sahte/eksik doğrulama üretmişti;
+sonuncusu bu turda ölçüldü — checkout’ta **vitest 2.1.9** dururken lockfile 3.2.6 istiyordu,
+yani paket sessizce yanlış araç zinciriyle koşuyordu. Host’ta node/pnpm gerekmez.
+
+**Belge düzeni.** `CLAUDE.md` **310 KB**’a ulaşmıştı (her oturumda okunan dosya) ve kurallar,
+elli turluk geçmiş anlatısının arasında kayboluyordu; geliştirme komutları paragrafı da birebir
+iki kez yazılmıştı. Tur-tur günlük **birebir** [docs/GECMIS.md](docs/GECMIS.md)’ye taşındı;
+CLAUDE.md’de damıtılmış durum özeti + **20 maddelik "tekrarlayan tuzaklar"** listesi + doğrulama
+ve geliştirme komutları kaldı (**18 KB**). İçerik kaybı yok, yalnız yeri değişti.
+
+### MAK sayıları artık kendini anlatıyor · iade sonrası bayat panel durumu (eklenti 1.1.6 → 1.1.7)
+
+**Bildirilen:** *"Bu siparişte 5 etkinleştirme · anahtar geneli 5/5 — daha açıklayıcı olmalı;
+başka yerde de yeterince belirtilmiyorsa onları da düzelt."* Sayılar DOĞRUYDU; eksik olan
+ANLATIMDI. Okuyan kişi iki şeyi kendi bilmek zorundaydı: aynı MAK anahtarının başka siparişlerde
+de kullanıldığı ve o anahtarda satılabilir hak kalıp kalmadığı. Sipariş satırı artık
+**"Bu siparişe N etkinleştirme"** + **"Anahtarın toplamı: X/Y · N hak kaldı"** (tükenmişse
+"tükendi") diyor; lisans listesinin başında, yalnız MAK ürününde, tek seferlik düz Türkçe
+açıklama var.
+
+Aynı belirsizliğin diğer yerleri: ürün özeti `MAK×5` → **`MAK (varsayılan 5 kullanım)`**
+(kapasite artık anahtar başına verilebildiği için o sayı bağlayıcı tavan değil varsayılandır —
+gerçek bir üründe 5, 3 ve 1001 kapasiteli anahtarlar bir arada bulunabiliyor) · ürün listesi
+STOK kolonu MAK satırında **"hak" birimi** (aynı kolon tek kullanımlıkta ANAHTAR, MAK’ta KULLANIM
+HAKKI sayıyor; çıplak `1002` "1002 anahtar" diye okunuyordu) · kategori kartı ipucu · mağaza
+sipariş ekranı panelle birebir aynı dile hizalandı.
+
+**Testin bulduğu kusur (eklenti 1.1.6):** tam iadeden sonra mağazanın SİPARİŞ LİSTESİNDEKİ panel
+durum kolonu ve filtresi bayat kalıyordu (panel `revoked` derken liste "Teslim edildi"). Aynı
+kavramın iki meta anahtarı var ve `_wpteslimat_panel_status`’ı yalnız geri-kanal webhook’u
+yazıyordu; panel iade için webhook ÜRETMEZ. Ortak bir yazıcı (`set_panel_status()`) push /
+uzlaştırma / iade yollarının üçüne birden bağlandı; önce-sonra aynı ortamda kanıtlandı.
+
+**Ders:** bir sayıyı ekrana koyarken "KİMİN sayısı, hangi BİRİMDE" sorusu metinde yanıtlanmalı;
+aynı kolon iki farklı şeyi sayıyorsa birim yazılmalı. Görünmez `title` ipucu tek başına yetmez.
 ### MAK kapasitesi artık ANAHTAR BAŞINA (migration YOK)
 
 **Bildirilen:** *"MAK stoğu eklerken kullanılabilir kapasiteyi ayarlayamıyorum; ürün düzenleme

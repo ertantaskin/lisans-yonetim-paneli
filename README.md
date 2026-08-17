@@ -7,7 +7,13 @@ ayrık, çoklu site destekli merkezi stok/teslimat paneli.
 
 - **[docs/MIMARI.md](docs/MIMARI.md)** — tam mimari şartname (v2.6, Markdown)
 - **docs/mimari-gorsel.html** — aynı dokümanın görsel/tasarımlı hali (tarayıcıda aç)
-- **CLAUDE.md** — Claude Code'un projeyi tanıması için karar özeti
+- **CLAUDE.md** — karar özeti + değişmez kurallar + **tekrarlayan tuzaklar** (kısa tutulur;
+  her oturumda okunur)
+- **[docs/GECMIS.md](docs/GECMIS.md)** — tur-tur çalışma günlüğü (hangi şikâyet, kök neden,
+  ölçüm, düzeltme, doğrulama). CLAUDE.md'deki tuzak maddelerinin ardındaki vakalar burada.
+- **[docs/GELISTIRME.md](docs/GELISTIRME.md)** — yerel geliştirme + WordPress test ortamı + testler
+- **[CHANGELOG.md](CHANGELOG.md)** · **[docs/DEPLOY-LOG.md](docs/DEPLOY-LOG.md)** — sürüm ve dağıtım geçmişi
+- **[docs/RUNBOOK-RELEASE.md](docs/RUNBOOK-RELEASE.md)** · **[docs/RUNBOOK-DR.md](docs/RUNBOOK-DR.md)** — yayın ve felaket kurtarma
 
 ## Hızlı başlangıç (lokal)
 

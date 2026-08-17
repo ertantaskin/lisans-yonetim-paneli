@@ -28,9 +28,9 @@ dağıtım yapacaksa bu adımları izler. Amaç: her seferinde aynı, güvenli, 
 
 1. **Geliştir** (yerel veya izole dev). Değişikliği test et:
    ```bash
-   pnpm typecheck && pnpm build
-   pnpm --filter @lisans/api test        # birim
-   # davranış değiştiyse VPS izole test DB'sinde entegrasyon+yarış (bkz. RUNBOOK-DR / CLAUDE.md)
+   pnpm typecheck && pnpm build          # tip + BEŞ kapı (use-server/DI/env/workflow/tx-havuz)
+   pnpm test                             # birim (shared + api + admin)
+   pnpm test:iso                         # davranış değiştiyse: entegrasyon + yarış (izole PG/Redis)
    ```
 2. **CHANGELOG.md** → `[Yayınlanmamış]` altına ne değiştiğini yaz.
 3. **Sürüm** (kullanıcı-görünür değişiklik veya birikmiş iş varsa): version'ı SemVer'e göre artır
