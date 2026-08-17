@@ -174,6 +174,27 @@ export interface ImportResult {
    * doğrudur; bu alan yalnız "beklediğinden az girdi" bilgisini görünür kılar.
    */
   qtyMismatch?: { declared: number; imported: number };
+  /**
+   * Mükerrer çakışmaların NEDEN kırılımı — "1 mükerrer atlandı" tek başına operatörü
+   * ÇIKMAZA sokuyordu.
+   *
+   * ÖLÇÜLEN VAKA: operatör yanlış girdiği anahtarı "Sil" ile iptal etti (kayıt SİLİNMEZ,
+   * `voided` olur), sonra doğrusunu girmek isteyince panel yalnız "1 mükerrer atlandı" dedi.
+   * Çakışmanın KENDİ iptal ettiği kayıtla olduğunu hiçbir yerde söylemediği için operatör
+   * ne olduğunu anlayamadı. Sayı doğruydu, ANLAM eksikti.
+   *
+   * GİZLİLİK: anahtar, düz metin ve `payload_hash` ASLA dönmez — yalnız sayaçlar.
+   * `duplicates` alanının anlamı DEĞİŞMEDİ (atlanan SATIR sayısı); buradaki
+   * `existingByStatus` ise çakışılan BENZERSİZ KAYIT sayısını statüye göre kırar.
+   */
+  duplicateDetail?: {
+    /** Aynı gönderimin içinde tekrarlanan satırlar (DB'de karşılığı yok — yapıştırma hatası). */
+    inRequest: number;
+    /** Çakışılan MEVCUT kayıtların statü kırılımı (ör. `{ voided: 1 }`). */
+    existingByStatus: Record<string, number>;
+    /** Çakışan mevcut kayıtlardan kaçı BAŞKA bir ürünün envanterinde. */
+    otherProduct: number;
+  };
 }
 
 export type ImportItem = {
@@ -909,23 +930,46 @@ export class StockService {
     if (dryRun) {
       let duplicates = 0;
       let wouldImport = 0;
+      let detail: ImportResult['duplicateDetail'];
       if (values.length > 0) {
         const hashes = values.map((v) => v.payloadHash);
+        // `status`/`productId` de seçilir: çakışmanın NEDENİNİ söyleyebilmek için (yalnız hash
+        // okuyan eski sorgu "1 mükerrer" diyebiliyor ama "kendi iptal ettiğin kayıt" diyemiyordu).
         const existing = await this.db
-          .select({ hash: licenseItems.payloadHash })
+          .select({
+            hash: licenseItems.payloadHash,
+            status: licenseItems.status,
+            productId: licenseItems.productId,
+          })
           .from(licenseItems)
           .where(inArray(licenseItems.payloadHash, hashes));
-        const existingSet = new Set(existing.map((r) => r.hash));
+        const existingByHash = new Map(existing.map((r) => [r.hash, r]));
         const seen = new Set<string>();
+        const hit = new Set<string>();
+        const byStatus: Record<string, number> = {};
+        let inRequest = 0;
+        let otherProduct = 0;
         for (const v of values) {
-          // Zaten DB'de var VEYA bu partide daha önce görüldü → mükerrer (girilmez).
-          if (existingSet.has(v.payloadHash) || seen.has(v.payloadHash)) {
+          const found = existingByHash.get(v.payloadHash);
+          if (found) {
             duplicates += 1;
+            // Statü kırılımı BENZERSİZ kayıt başına sayılır: aynı anahtar iki kez
+            // yapıştırıldıysa "2 geçersiz kılınmış kayıt var" demek yanlış olurdu.
+            if (!hit.has(v.payloadHash)) {
+              hit.add(v.payloadHash);
+              byStatus[found.status] = (byStatus[found.status] ?? 0) + 1;
+              if (found.productId !== productId) otherProduct += 1;
+            }
+          } else if (seen.has(v.payloadHash)) {
+            // DB'de yok ama bu gönderimde daha önce görüldü → yapıştırma hatası, ayrı sınıf.
+            duplicates += 1;
+            inRequest += 1;
           } else {
             seen.add(v.payloadHash);
             wouldImport += 1;
           }
         }
+        if (duplicates > 0) detail = { inRequest, existingByStatus: byStatus, otherProduct };
       }
       // Yeni parti istendiyse KURU ÇALIŞTIRMA da onu DOĞRULAR (tedarikçi var mı, tarih
       // aralığı, etiket çakışması, ad eşleşmesi) ve sonucu echo eder. Aksi halde kuru koşu
@@ -939,6 +983,7 @@ export class StockService {
         autoCompleted: 0,
         dryRun: true,
         wouldImport,
+        duplicateDetail: detail,
         newBatch: newBatch ? await this.probeNewBatch(productId, newBatch, wouldImport) : undefined,
       };
     }
@@ -976,7 +1021,7 @@ export class StockService {
     // olmak yetmez, okumanın KİLİTLİ olması gerekir (bkz. resolveBatchForImport FOR SHARE).
     // Yeni parti ise henüz commit edilmediği için ancak AYNI tx'ten görülebilir →
     // `resolveBatchForImport` de `exec` alır.
-    const { inserted, duplicates, outcome } = await this.db.transaction(async (tx) => {
+    const { inserted, duplicates, outcome, detail } = await this.db.transaction(async (tx) => {
       /*
        * ÜRÜN SÖZLEŞMESİNİ KİLİT ALTINDA YENİDEN DOĞRULA (eşzamanlılık bulgusu).
        *
@@ -1082,13 +1127,56 @@ export class StockService {
       // duplicates = doğrulamayı geçip DB'de mükerrer (payload_hash) çıkanlar.
       const dup = values.length - rows.length;
 
+      // ÇAKIŞMANIN NEDENİ (yalnız mükerrer varsa sorulur — temiz girişte ek sorgu YOK).
+      // `returning({id})` sayesinde hangi satırın yazıldığı KESİN bilinir (id'ler uygulamada
+      // üretiliyor), dolayısıyla "yazılmayanlar" tam olarak ayrılabilir.
+      let duplicateDetail: ImportResult['duplicateDetail'];
+      if (dup > 0) {
+        const insertedIds = new Set(rows.map((r) => r.id));
+        const insertedHashes = new Set(
+          values.filter((v) => insertedIds.has(v.id!)).map((v) => v.payloadHash),
+        );
+        const notInserted = values.filter((v) => !insertedIds.has(v.id!));
+        // Bu gönderimde YAZILAN bir satırla aynı hash → istek-içi tekrar (yapıştırma hatası).
+        const inRequest = notInserted.filter((v) => insertedHashes.has(v.payloadHash)).length;
+        const conflictHashes = [
+          ...new Set(
+            notInserted.filter((v) => !insertedHashes.has(v.payloadHash)).map((v) => v.payloadHash),
+          ),
+        ];
+        const byStatus: Record<string, number> = {};
+        let otherProduct = 0;
+        // AYNI `tx` üzerinden: transaction gövdesinden `this.db` çağırmak havuz kilidi üretir
+        // (bu kod tabanında k6 ile İKİ KEZ ölçüldü; kapı `pnpm check:tx-pool`).
+        const DETAIL_CHUNK = 2000;
+        for (let i = 0; i < conflictHashes.length; i += DETAIL_CHUNK) {
+          const slice = conflictHashes.slice(i, i + DETAIL_CHUNK);
+          const found = await tx
+            .select({ status: licenseItems.status, productId: licenseItems.productId })
+            .from(licenseItems)
+            .where(inArray(licenseItems.payloadHash, slice));
+          for (const f of found) {
+            byStatus[f.status] = (byStatus[f.status] ?? 0) + 1;
+            if (f.productId !== productId) otherProduct += 1;
+          }
+        }
+        duplicateDetail = { inRequest, existingByStatus: byStatus, otherProduct };
+      }
+
       // Tek bir TAZE kayıt bile girmediyse yeni parti/emir AÇILMAZ → tam rollback (aksi
       // halde 0 adetli hayalet emir + boş parti kalırdı). Legacy/partisiz yol DEĞİŞMEDİ:
       // orada mükerrer giriş bugünkü gibi 200 + duplicates döner.
       if (plan && rows.length === 0) {
+        // Mesaj NEDENİ de söyler: "hepsi kayıtlı" cümlesi tek başına, operatörün KENDİ iptal
+        // ettiği kayıtla çakıştığını gizliyordu (bu özelliğin çıkış noktası).
+        const voided = duplicateDetail?.existingByStatus.voided ?? 0;
         throw new ConflictException(
-          `Girilen ${values.length} anahtarın tamamı sistemde zaten kayıtlı — ` +
-            'yeni parti ve satın alma emri OLUŞTURULMADI.',
+          `Girilen ${values.length} anahtarın tamamı sistemde zaten kayıtlı` +
+            (voided > 0
+              ? ` (${voided} tanesi GEÇERSİZ KILINMIŞ bir kayıtla çakıştı — o kaydı kalıcı ` +
+                'silerseniz aynı anahtarı tekrar girebilirsiniz)'
+              : '') +
+            ' — yeni parti ve satın alma emri OLUŞTURULMADI.',
         );
       }
 
@@ -1122,7 +1210,7 @@ export class StockService {
         },
       });
 
-      return { inserted: rows.length, duplicates: dup, outcome: receipt };
+      return { inserted: rows.length, duplicates: dup, outcome: receipt, detail: duplicateDetail };
     });
 
     // Stok girişinde tamamlama motorunu tetikle (§5 partial-auto FIFO).
@@ -1153,6 +1241,7 @@ export class StockService {
       autoCompleteQueued,
       autoCompleteFailed,
       newBatch: outcome,
+      duplicateDetail: detail,
       // Yapıştırılan satır sayısı ile kaydedilen adet ayrıştıysa görünür kıl (emir GERÇEK
       // adetle açıldı; operatör "100 girdim ama 97 kaydedildi" bilgisini kaybetmesin).
       qtyMismatch:
@@ -2387,6 +2476,183 @@ export class StockService {
       });
 
       return { id, status: 'voided' as const, productId: item.product_id, qty };
+    });
+  }
+
+  /**
+   * Tekil lisans KALICI SİLME (purge). `voidLicenseItem`in AKSİNE satırı GERÇEKTEN siler.
+   *
+   * NEDEN VAR (operatör bildirdi, kodda doğrulandı): mükerrer engeli
+   * `license_items_payload_hash_uniq` TAM (kısmi değil) bir UNIQUE index'tir ve statüye HİÇ
+   * bakmaz. Yanlışlıkla girilen bir anahtar "Sil" ile yalnız `voided` olduğu ve satır tabloda
+   * kaldığı için AYNI anahtar bir daha GİRİLEMİYORDU — import onu sessizce "mükerrer" sayıp
+   * atlıyordu ve operatörün hiçbir çıkış yolu yoktu (üretimde tek bir `DELETE FROM
+   * license_items` yolu bile yoktu). Bu fonksiyon o çıkışı açar.
+   *
+   * İKİ ADIMLI KAPI BİLİNÇLİ: yalnız ZATEN `voided` bir kalem silinebilir. Yani operatör önce
+   * geri dönülebilir bir karar (iptal) verir, sonra geri dönülemez olanı (silme). Tek adımda
+   * silme, yanlış satıra tıklamayı kalıcı hâle getirirdi.
+   *
+   * ALTERNATİF REDDEDİLDİ: UNIQUE index'i `WHERE status <> 'voided'` ile kısmi yapmak. O yol
+   * `recallBatch`in bilinçli "voided TERMİNALDİR" varsayımını (supply-ops.service.ts) sessizce
+   * delerdi: geri çekilmiş (tedarikçiye iade edilmiş) kusurlu bir anahtar, hiçbir insan kararı
+   * ve denetim izi olmadan yeniden import edilip satılabilir hâle gelirdi. Burada aynı sonuç
+   * ancak owner + sebep + denetim satırı ile ve G6 kapısı izin verirse mümkündür.
+   *
+   * @returns silinen kalemin kimliği + ürünü (çağıran revalidate için kullanır)
+   */
+  async purgeLicenseItem(id: string, reason: string, actor: string) {
+    const trimmed = (reason ?? '').trim();
+    if (!trimmed) throw new BadRequestException('Kalıcı silme sebebi zorunludur.');
+
+    return this.db.transaction(async (tx) => {
+      // voidLicenseItem ile AYNI kilit anahtarı → iptal/düzenleme/silme birbirine serileşir.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'license_item:' + id}))`);
+
+      const [item] = await rawRows<{
+        id: string;
+        product_id: string;
+        status: string;
+        batch_id: string | null;
+        unit_cost_cents: number | null;
+        cost_currency: string | null;
+      }>(tx, sql`
+        SELECT id, product_id, status::text AS status, batch_id, unit_cost_cents, cost_currency
+        FROM license_items WHERE id = ${id} LIMIT 1 FOR UPDATE;
+      `);
+      // G0
+      if (!item) throw new NotFoundException('Lisans bulunamadı.');
+
+      // G1 — yalnız ZATEN iptal edilmiş kalem. Her durum için AYRI mesaj: operatör "neden
+      // olmuyor"u ekrandan öğrenmeli, yoksa aynı duvara tekrar çarpar (bu arızanın kökeni buydu).
+      if (item.status !== 'voided') {
+        throw new ConflictException(
+          item.status === 'available'
+            ? 'Bu kalem hâlâ satılabilir stokta. Kalıcı silmeden önce sebep girerek "Sil" (geçersiz kıl) deyin — iki adımlı kapı bilinçlidir.'
+            : item.status === 'quarantined'
+              ? 'Bu kalem karantinada (müşteriden dönmüş ya da kusurlu bildirilmiş). Karantina kaydı tedarikçi bildirimi ve denetim için durur; kalıcı silinemez.'
+              : `Bu kalem müşteriye teslim edilmiş (durum: ${item.status}). Teslim edilmiş bir anahtar kalıcı olarak silinemez.`,
+        );
+      }
+
+      // G2/G3 — HİÇ atama olmamalı. Canlı atama (active/suspended) `assignments` FK'si
+      // (ON DELETE restrict) yüzünden zaten silinemezdi; ama GEÇMİŞ atamalar (revoked/replaced)
+      // da aynı kısıtı tetikler ve daha önemlisi: müşteriye BİR KEZ gitmiş bir anahtar geri
+      // dönmemelidir. FK hatasına (23503) düşmeden ÖNCE açık kontrol → anlaşılır 409.
+      const asg = await rawRows<{ n: number; live: number }>(tx, sql`
+        SELECT count(*)::int AS n,
+               count(*) FILTER (WHERE status IN ('active', 'suspended'))::int AS live
+        FROM assignments WHERE license_item_id = ${id};
+      `);
+      const total = Number(asg[0]?.n ?? 0);
+      if (Number(asg[0]?.live ?? 0) > 0) throw new ConflictException(DELIVERED_MSG);
+      if (total > 0) {
+        throw new ConflictException(
+          `Bu anahtar geçmişte bir siparişe atanmış (${total} kayıt). Müşteriye dokunmuş bir ` +
+            'anahtar kalıcı olarak silinemez — kaydı Kusurlu Stok defterinde kalır.',
+        );
+      }
+
+      // G4 — değişim soyağacı (FK'siz kolonlar; silmek zinciri koparırdı).
+      const hist = await rawRows<{ n: number }>(tx, sql`
+        SELECT count(*)::int AS n FROM assignment_history
+        WHERE old_license_item_id = ${id} OR new_license_item_id = ${id};
+      `);
+      if (Number(hist[0]?.n ?? 0) > 0) {
+        throw new ConflictException(
+          'Bu anahtar bir değişim geçmişinde geçiyor; silinirse değişim zinciri kopar.',
+        );
+      }
+
+      // G5 — tedarikçi değişim fişi (FK'siz kolon). Ayrıca fişin `key_snapshot` alanı anahtarın
+      // DÜZ metnini taşır: kalem silinse bile düz anahtar başka bir tabloda kalırdı, yani
+      // "kayıt gerçekten gitti" vaadi yarım kalırdı.
+      const claim = await rawRows<{ n: number }>(tx, sql`
+        SELECT count(*)::int AS n FROM supplier_claim_items WHERE license_item_id = ${id};
+      `);
+      if (Number(claim[0]?.n ?? 0) > 0) {
+        throw new ConflictException(
+          'Bu anahtar tedarikçiye bildirilmiş (değişim fişi kaydı var); kalıcı silinemez.',
+        );
+      }
+
+      // G6 — PARTİ GERİ ÇEKMESİYLE ölen kalem silinemez.
+      // AYRIM KRİTİK: parti DURUMUNA (`batches.status='recalled'`) bakan bir kapı, bu özelliğin
+      // çözmek için yazıldığı vakayı (operatör elle void'ledi, SONRA partiyi geri çekti)
+      // yanlışlıkla bloklardı. `recallBatch` yalnız `available`/`depleted` kalemleri süpürür →
+      // elle void'lenen kalem recall'dan ÖNCE ölmüştür ve düzeltme defterinde 'void' satırı
+      // taşır, 'recall' satırı TAŞIMAZ. Yani doğru soru "parti geri çekildi mi" değil,
+      // "bu kalemi ne öldürdü"dür.
+      const recalled = await rawRows<{ n: number }>(tx, sql`
+        SELECT count(*)::int AS n FROM stock_adjustments
+        WHERE license_item_id = ${id} AND action = 'recall';
+      `);
+      if (Number(recalled[0]?.n ?? 0) > 0) {
+        throw new ConflictException(
+          'Bu kalem geri çekilmiş bir partinin süpürmesiyle düşürüldü. Kalıcı silmek, geri ' +
+            'çekilmiş (kusurlu) bir anahtarın sisteme yeniden girmesine kapı açardı.',
+        );
+      }
+
+      // Denetim satırları SİLMEDEN ÖNCE yazılır: `stock_adjustments.license_item_id` bilerek
+      // FK'siz (şema notu: "item hard-delete edilse bile düzeltme izi kalır"), ama sırayı
+      // tersine çevirmek ileride biri FK eklediğinde sessizce kırılırdı.
+      //
+      // qty = 0 ŞART: fire ZATEN ilk 'void' satırında kayıtlı. Burada pozitif bir qty yazmak
+      // maliyet raporundaki zayiatı İKİ KEZ saydırırdı.
+      await tx.insert(stockAdjustments).values({
+        productId: item.product_id,
+        licenseItemId: id,
+        action: 'purge',
+        qty: 0,
+        reason: trimmed,
+        actor,
+      });
+      // audit_log.action ENUM'dur; mevcut 'adjust' + meta.op deseni kullanılır (kod tabanında
+      // kurulu) → yeni enum değeri + migration gerekmez.
+      // GİZLİLİK: düz metin/anahtar/payload_hash meta'ya ASLA yazılmaz.
+      // Maliyet anlık görüntüsü meta'ya KOPYALANIR: satır silinince zayi raporunun
+      // `LEFT JOIN license_items` bağı kopar; tutarın nereden geldiği hiç değilse burada kalsın.
+      await tx.insert(auditLog).values({
+        action: 'adjust',
+        actor,
+        targetType: 'license_item',
+        targetId: id,
+        meta: {
+          op: 'purge',
+          priorStatus: 'voided',
+          batchId: item.batch_id ?? null,
+          unitCostCents: item.unit_cost_cents ?? null,
+          costCurrency: item.cost_currency ?? null,
+          reason: trimmed,
+          source: 'license_inventory',
+        },
+      });
+
+      // Koşullu silme (voidLicenseItem'ın `WHERE … AND status='available'` deseni): kilit
+      // altındayız ama koşulu yazmak, ileride kilit yolu değişirse de doğru kalır.
+      let deleted: { id: string }[];
+      try {
+        deleted = await rawRows<{ id: string }>(tx, sql`
+          DELETE FROM license_items WHERE id = ${id} AND status = 'voided' RETURNING id;
+        `);
+      } catch (err) {
+        // FAIL-CLOSED: bugün tek FK `assignments` ve onu G3'te açıkça denetliyoruz. Gelecekte
+        // license_items'a FK ekleyen biri purge'ü OPAK bir 500'e düşürürdü — teşhis edilemez
+        // arıza. Ham 23503 anlaşılır bir 409'a çevrilir (tx zaten geri alınır).
+        if ((err as { code?: string })?.code === '23503') {
+          throw new ConflictException(
+            'Bu lisans kaydı başka bir kayıt tarafından referans ediliyor, kalıcı silinemedi. ' +
+              'Kayıt olduğu gibi duruyor.',
+          );
+        }
+        throw err;
+      }
+      if (deleted.length === 0) {
+        throw new ConflictException('Kalem bu sırada değişti; kalıcı silme uygulanmadı.');
+      }
+
+      return { id, status: 'purged' as const, productId: item.product_id };
     });
   }
 

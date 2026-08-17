@@ -207,6 +207,52 @@ describe('StockService.import (envelope AAD + doğrulama/dedupe/dryRun)', () => 
     expect(await itemCount(product.id)).toBe(1);
   });
 
+  /**
+   * `duplicateDetail` — mükerrerin NEDENİ. Operatör yanlış girdiği anahtarı iptal ettikten
+   * sonra doğrusunu girmeye çalışınca panel yalnız "1 mükerrer atlandı" diyordu; çakışmanın
+   * KENDİ iptal ettiği kayıtla olduğunu hiçbir yerde söylemiyordu. Sayı doğruydu, ANLAM eksikti.
+   *
+   * Üç sınıf AYRI sayılır: mevcut kayıtla çakışma (statüsüyle) · aynı gönderim içinde tekrar
+   * (yapıştırma hatası, DB'de karşılığı yok) · başka ürünün envanterinde olan anahtar.
+   */
+  it('(d2) duplicateDetail çakışmanın NEDENİNİ söyler; kuru çalıştırma ile gerçek yazım AYNI kırılımı verir', async () => {
+    const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
+    const VOIDED = `DET-V-${tag}-${randomUUID().slice(0, 8)}`;
+    const FRESH = `DET-F-${tag}-${randomUUID().slice(0, 8)}`;
+
+    // Bir anahtar girilip İPTAL edilir (operatörün "Sil" dediği durum).
+    await stock.import(product.id, [{ payload: VOIDED }]);
+    const [row] = await db
+      .select({ id: schema.licenseItems.id })
+      .from(schema.licenseItems)
+      .where(eq(schema.licenseItems.payloadHash, crypto.payloadHash(VOIDED)));
+    await stock.voidLicenseItem(row!.id, 'test: yanlış girildi', 'panel:it-import');
+
+    // Gönderim: iptal edilmişle çakışan 1 + taze bir anahtarın İKİ KEZ yapıştırılması.
+    const payloads = [{ payload: VOIDED }, { payload: FRESH }, { payload: FRESH }];
+
+    const dry = await stock.import(product.id, payloads, undefined, true);
+    expect(dry.duplicates).toBe(2);
+    expect(dry.wouldImport).toBe(1);
+    expect(dry.duplicateDetail?.existingByStatus).toEqual({ voided: 1 });
+    expect(dry.duplicateDetail?.inRequest).toBe(1);
+    expect(dry.duplicateDetail?.otherProduct).toBe(0);
+
+    const real = await stock.import(product.id, payloads);
+    expect(real.imported).toBe(1);
+    expect(real.duplicates).toBe(2);
+    // KURU ÇALIŞTIRMA ile GERÇEK YAZIM aynı kırılımı vermeli — ayrışırsa operatör onay
+    // modalinde bir şey görüp sonuçta başkasını görürdü (bu projede yaşanmış bir sınıf).
+    expect(real.duplicateDetail?.existingByStatus).toEqual({ voided: 1 });
+    expect(real.duplicateDetail?.inRequest).toBe(1);
+    expect(real.duplicateDetail?.otherProduct).toBe(0);
+
+    // GİZLİLİK: yanıt anahtarı da hash'i de TAŞIMAZ.
+    const dump = JSON.stringify(real);
+    expect(dump).not.toContain(VOIDED);
+    expect(dump).not.toContain(crypto.payloadHash(VOIDED));
+  });
+
   it('(e) dryRun=true → doğrulama yapılır ama HİÇBİR satır kalıcı olmaz', async () => {
     const product = await createProduct(db, { tag, kind: 'key', usageMode: 'single' });
 

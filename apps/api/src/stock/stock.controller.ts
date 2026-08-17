@@ -165,6 +165,13 @@ type ExportLicenseItemsQuery = z.infer<typeof ExportLicenseItemsQuery>;
 const VoidLicenseItemBody = z.object({ reason: z.string().trim().min(1).max(500) });
 type VoidLicenseItemBody = z.infer<typeof VoidLicenseItemBody>;
 
+/**
+ * Kalıcı silme: sebep ZORUNLU ve iptalden DAHA UZUN (min 3) — bu işlem geri alınamaz ve
+ * denetim kaydında geriye yalnız bu cümle kalır ("x" gibi bir sebep hiçbir şey anlatmaz).
+ */
+const PurgeLicenseItemBody = z.object({ reason: z.string().trim().min(3).max(500) });
+type PurgeLicenseItemBody = z.infer<typeof PurgeLicenseItemBody>;
+
 /** Tekil düzenleme: key ürününde `value`, account ürününde `fields`; sebep her hâlükârda zorunlu. */
 const UpdateLicenseItemBody = z
   .object({
@@ -311,6 +318,28 @@ export class StockController {
     @AdminActor() actor: string,
   ) {
     return this.stock.voidLicenseItem(id, body.reason, actor);
+  }
+
+  /**
+   * Tekil lisans KALICI SİLME. Satır GERÇEKTEN silinir → aynı anahtar tekrar girilebilir.
+   *
+   * AYRI ROTA, `?purge=true` BAYRAĞI DEĞİL: (1) `OwnerGuard` handler bazındadır, bayrakla
+   * ayrılan tek bir uçta yalnız silme dalını owner'a kapatmak imkânsızdır; (2) aynı fiil+yolda
+   * tek bir bayrağın "geri alınabilir" ile "geri alınamaz"ı ayırması, bu özelliğin çözmeye
+   * çalıştığı karışıklığın ta kendisidir. Rota `license-items/:id` ile çakışmaz (segment sayısı
+   * farklı) ama yine de ondan SONRA tanımlıdır (Nest sıraya göre eşler).
+   *
+   * OWNER-ONLY: paneldeki en yıkıcı işlem. `rotate-credentials` / `capacity` gibi geri
+   * alınamaz uçlarla aynı kapıda durur.
+   */
+  @UseGuards(OwnerGuard)
+  @Delete('license-items/:id/purge')
+  purgeLicenseItem(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodBody(PurgeLicenseItemBody)) body: PurgeLicenseItemBody,
+    @AdminActor() actor: string,
+  ) {
+    return this.stock.purgeLicenseItem(id, body.reason, actor);
   }
 
   /** Tekil lisans değiştirme (payload düzeltme). Teslim edilmiş lisans 409 döner. */
