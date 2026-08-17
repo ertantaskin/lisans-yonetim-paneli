@@ -2854,6 +2854,64 @@ docstring iddiaları · admin metinleri · ölü-uç/kapalı-döngü taraması) 
   müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm) · `BACKUP_OFFSITE_CMD` TANIMSIZ → yedekler
   yalnız o sunucuda. (ADMIN_TOKEN rotasyonu bu turda YAPILDI, listeden düştü.)
 
+**MAK KAPASİTESİ ANAHTAR BAŞINA + DEV SIFIRLAMA + TÜM SİPARİŞ TÜRLERİNİN E2E TESTİ (commit
+58ac630→e649b9c, CANLI prod+dev, eklenti v1.1.6, migration YOK):** Kullanıcı: *"MAK lisans anahtarı
+stoğu eklerken kapasiteyi ayarlayamıyorum; ürün düzenle kısmından değil de ANAHTARA GÖRE
+ekleyebilmek daha doğru olur"* + *"dağıtmadan önce tüm siparişleri WordPress ve panel tarafında
+temizle, sonra dağıt ve tüm sipariş türlerini admin@dev.local üzerinden test et"*.
+- **KÖK BULGU: şema ZATEN satır bazındaydı** (`license_items.max_uses`); import onu ürün ayarından
+  KOPYALIYORDU. Yani kısıt ekrandaydı, veritabanında değil. Sonuç: 50'lik lot gelince operatörün
+  iki seçeneği vardı — ürünü geçici değiştirmek (ve o sırada giren her şeyin kapasitesini bozmak)
+  ya da yanlış kapasiteyle girmek; ikincisi **SESSİZ AŞIRI SATIŞ** (panel 500 hak sanar, anahtar
+  50'de biter).
+- **Sözleşme:** `ImportItem.maxUses` (opsiyonel, 1…`MAX_USES_CAP`). Alt sınır MAK'ta **1** — ürün
+  seviyesindeki `>1` kuralından BİLEREK farklı: ürün alanı bir VARSAYILANDIR (1 olması "her anahtar
+  tek satışta tükenir" demek = misconfig), ama TEK BİR ANAHTARIN gerçekten 1 hakkı kalmış olabilir.
+  Tek kullanımlık üründe kapasite gönderilirse **TÜM istek 400** (sessizce yok sayılmaz); geçersiz
+  değer YALNIZ o satırı reddeder (satır no korunur). Kilitli yeniden-doğrulama artık yalnız
+  VARSAYILANA DAYANAN satırları geçersiz kılar (`usedProductDefault`).
+- **`productCapacityChange` DARALTILDI:** veri bozan tek geçiş `multi → single` (allocate tek-kullanım
+  dalına düşer, anahtar başına N−1 hak yanar). Varsayılanı **düşürmek serbest** — satırlar kendi
+  kapasitesini taşır ve atama/stok/rapor yollarının hepsi SATIRDAN okur. Eskiden 409 veriyordu ve
+  tam da 50'lik lota geçen operatörü kilitliyordu. İki birim testi yeni kurala güncellendi.
+- **Arayüz:** "Her anahtarın kullanım hakkı" alanı (ürün varsayılanıyla dolu, "Varsayılan (N)"
+  dönüş düğmesi) + **"Anahtarların kapasiteleri farklı"** seçeneğiyle iki sütunlu yapıştırma
+  (mevcut CSV/ayraç çözümleyicisi; **sessiz çıkarım YOK** — seçenek kapalıyken ikinci sütun asla
+  yorumlanmaz). Sayaç ve onay modali toplamı SATIR kapasitelerinden hesaplar; okunamayan kapasitede
+  tahmini sayı yazmaz, girişten ÖNCE uyarır. Ürün formu etiketi "Anahtar kapasitesi (varsayılan)".
+  Tek kullanımlık üründe HİÇBİR ŞEY değişmez (alanlar render edilmez, gövdeye kapasite girmez).
+- **DEV SIFIRLAMA:** belgelenmiş yordam ([[dev-veri-sifirlama]]) aynen uygulandı — yedek → **API DUR**
+  → WP force-delete → panel TRUNCATE (CASCADE'siz) → **Redis FLUSHALL** → API BAŞLAT → 6 sweep
+  zamanlayıcısı doğrulandı. `dev-clean-3.sql` şemayla hizalandı: `supplier_claims` +
+  `supplier_claim_items` EKLENDİ (0033'te geldi; `supplier_claims.supplier_id` FK'si yüzünden
+  listede olmadan `suppliers` TRUNCATE'i zaten hata verirdi — güvenlik ağının çalıştığının kanıtı),
+  `product_guides`/`product_categories` BİLEREK korundu (ürün YAPILANDIRMASI, işlem verisi değil).
+  Sonuç: panel 0 sipariş / WP 0 sipariş; site+ürün+kategori+rehber+eşleme+katalog+yayın kanalı yerinde.
+  **PROD'A DOKUNULMADI.**
+- **TÜM SİPARİŞ TÜRLERİ — GERÇEK WooCommerce, müşteri `admin@dev.local` (11 sipariş):** tek kullanımlık
+  tam teslimat · MAK tek-anahtar (kapasite 500 → **TEK atama, 3 birim**) · **MAK KARIŞIK kapasite**
+  (aynı üründe 5'lik ve 3'lük anahtar, 7 birim → 5+2 taşma) · süreli hesap (`valid_until` +365 gün) ·
+  kod/hediye çeki · çok kalemli karışık sipariş · kısmi teslimat (1/5) · stok yok (pending) ·
+  **ya-hep-ya-hiç** (stok 2 / talep 5 → **0 teslim**) · eşlenmemiş ürün (`unmapped`, yanlış teslim YOK) ·
+  stoksuz/ön sipariş (pending). Sonra: **tam iade** (anahtar KARANTİNA, satır `canceled`) · **kısmi iade**
+  (MAK 7→5; §2 kapasite havuza DÖNMEDİ) · **"Sorun Bildir"** (destek talebi 201) · **otomatik tamamlama**
+  (stok girişi 3 bekleyen satırı doldurdu, sipariş `fulfilled`).
+- **TESTİN BULDUĞU KUSUR → eklenti v1.1.6:** tam iade sonrası mağaza SİPARİŞ LİSTESİNDEKİ panel-durum
+  kolonu/filtresi BAYAT kalıyordu (panel `revoked`, liste "Teslim edildi"). Aynı kavramın İKİ meta
+  anahtarı var — `_wpteslimat_status` (metabox/müşteri) ve `_wpteslimat_panel_status` (liste kolonu +
+  filtre) — ve ikincisini YALNIZ geri-kanal webhook'u yazıyordu; panel iade için webhook ÜRETMEZ.
+  Ortak `set_panel_status()` (iki meta + bayat teslim sayaçlarının temizliği) push/uzlaştırma/iade
+  yollarının ÜÇÜNE birden bağlandı. **ÖNCE/SONRA aynı ortamda kanıtlandı:** #76 (düzeltme öncesi
+  iade) `panel_status=fulfilled` bayat kaldı, #77 (sonrası) `panel_status=revoked`.
+- **Doğrulama:** typecheck 4/4 + 5 kapı · birim shared 68 + api 184 + admin 159 · admin production
+  build · **VPS izole PG+Redis: entegrasyon 428/428** (5 yeni) · **kontrol denemesi:** satır kapasitesi
+  geri alınınca 3 test KIRMIZI · PHP-lint temiz + eklenti davranış 108/108 · prod `deploy.sh api admin`
+  (rollback'li) → `/v1/health` **200 v1.1.0**, admin `/pending` 200, api 0 ERROR · eklenti **v1.1.6**
+  yayınlandı (201, 138.544 bayt).
+- **DERS:** "ekranda ayarlanamıyor" şikâyetinde önce ŞEMAYA bak — kısıt çoğu zaman veri modelinde
+  değil sunumdadır; ve bir alanı "varsayılan" yapınca onu KORUYAN guard'ı da (409) yeniden değerlendir,
+  yoksa özellik kendi kilidini getirir.
+
 **MAK TESLİMAT GÖRÜNÜRLÜĞÜ + TEK ANAHTAR TERCİHİ + GERÇEK MAİL ÖNİZLEMESİ (commit 9199d32, CANLI
 prod+dev, eklenti v1.1.5, migration YOK):** Kullanıcı ekran görüntüsüyle bildirdi: *"6 adet satın alım
 yapılmış ama 16 adet kullanım hakkı olarak teslim ediliyor; 6'dan fazla MAK anahtar varsa 6 farklı
