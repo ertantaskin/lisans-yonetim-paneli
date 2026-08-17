@@ -18,6 +18,22 @@ export type ProductKind = z.infer<typeof ProductKind>;
 export const UsageMode = z.enum(['single', 'multi']);
 export type UsageMode = z.infer<typeof UsageMode>;
 
+/**
+ * ÇOK KULLANIMLIK (MAK) DAĞITIM POLİTİKASI (§2) — yalnız `usage_mode='multi'` ürünlerde anlamlı.
+ *
+ * `fewest-keys` (VARSAYILAN): talebi TEK BAŞINA karşılayan anahtar önce seçilir → müşteri
+ *   mümkün olduğunca TEK anahtar alır (3 birim = 1 anahtar × 3 hak). Gerekçe: MAK anahtarı
+ *   PAYLAŞIMLIDIR ve panel yalnız defter tutar; müşterinin eline geçen her fazladan anahtar,
+ *   o anahtarın KALAN kapasitesi kadar fazladan aşırı-etkinleştirme yüzeyidir.
+ *
+ * `one-per-key`: her birim AYRI anahtardan verilir (3 birim + 3 uygun anahtar = 3 anahtar × 1
+ *   hak). Ayrı anahtar kalmazsa kalan talep `fewest-keys` gibi doldurularak tamamlanır
+ *   (1 anahtar + 6 birim = tek anahtardan 6 hak). ÖDÜN: müşteriye giden anahtar sayısı arttığı
+ *   için aşırı-etkinleştirme yüzeyi de büyür — bilinçli, ürün bazında açılan bir tercihtir.
+ */
+export const MultiUseDistribution = z.enum(['fewest-keys', 'one-per-key']);
+export type MultiUseDistribution = z.infer<typeof MultiUseDistribution>;
+
 /** Kısmi teslimat politikası (§5). Ürün bazlı, sipariş override edilebilir. */
 export const FulfillmentPolicy = z.enum(['partial-auto', 'partial-approval', 'all-or-nothing']);
 export type FulfillmentPolicy = z.infer<typeof FulfillmentPolicy>;

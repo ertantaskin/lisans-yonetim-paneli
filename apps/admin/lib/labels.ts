@@ -85,6 +85,13 @@ const FULFILLMENT_POLICY: Record<string, string> = {
 };
 export const fulfillmentPolicyLabel = (p: string) => lookup(FULFILLMENT_POLICY, p);
 
+/** MAK dağıtımı (yalnız çok kullanımlık üründe anlamlı). */
+const MULTI_USE_DISTRIBUTION: Record<string, string> = {
+  'fewest-keys': 'En az anahtar',
+  'one-per-key': 'Ayrı anahtar',
+};
+export const multiUseDistributionLabel = (d: string) => lookup(MULTI_USE_DISTRIBUTION, d);
+
 const ON_EXPIRY: Record<string, string> = {
   hide: 'Erişimi gizle',
   keep: 'Erişimi koru',

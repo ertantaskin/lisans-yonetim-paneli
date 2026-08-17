@@ -89,6 +89,8 @@ export async function createProduct(
     lowStockThreshold?: number;
     onExpiry?: 'hide' | 'keep';
     fulfillmentPolicy?: 'partial-auto' | 'partial-approval' | 'all-or-nothing';
+    /** MAK dağıtımı (yalnız usageMode='multi' iken anlamlı). Varsayılan: eski davranış. */
+    multiUseDistribution?: 'fewest-keys' | 'one-per-key';
     payloadSchema?: unknown;
     name?: string;
   },
@@ -107,6 +109,7 @@ export async function createProduct(
       lowStockThreshold: opts.lowStockThreshold ?? null,
       onExpiry: opts.onExpiry ?? 'hide',
       fulfillmentPolicy: opts.fulfillmentPolicy ?? 'partial-auto',
+      multiUseDistribution: opts.multiUseDistribution ?? 'fewest-keys',
       payloadSchema: (opts.payloadSchema ?? null) as never,
     })
     .returning({ id: schema.products.id, sku: schema.products.sku });

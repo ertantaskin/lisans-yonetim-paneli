@@ -252,6 +252,36 @@ export function ProductFormFields({
             />
           </Field>
         )}
+
+        {/*
+          MAK DAĞITIMI — "3 lisans aldı, 3 ayrı anahtar mı yoksa tek anahtardan 3 hak mı?"
+          Bu soru koda gömülüydü ve panelde ayarlanamıyordu. Varsayılan ESKİ davranıştır;
+          yeni politika ödünüyle birlikte açıkça anlatılır (aşırı-etkinleştirme yüzeyi),
+          çünkü bu bilgi bugüne kadar yalnız kod yorumunda vardı.
+        */}
+        {usageMode === 'multi' && (
+          <Field
+            label="Dağıtım"
+            htmlFor="p-multi-distribution"
+            hint="Müşteri kaç anahtar alsın? Yeterli ayrı anahtar yoksa her iki seçenekte de kalan talep tek anahtardan tamamlanır."
+          >
+            <select
+              id="p-multi-distribution"
+              name="multiUseDistribution"
+              defaultValue={defaults?.multiUseDistribution ?? 'fewest-keys'}
+              className={`w-full ${selectClass}`}
+            >
+              <option value="fewest-keys">En az anahtar — 3 birim = 1 anahtar × 3 hak</option>
+              <option value="one-per-key">Ayrı anahtar — 3 birim = 3 anahtar × 1 hak</option>
+            </select>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              MAK anahtarı <strong>paylaşımlıdır</strong>: panel yalnız defter tutar, müşteriyi
+              anahtarın kalan kapasitesini kullanmaktan alıkoyan teknik bir şey yoktur. Bu yüzden
+              “Ayrı anahtar” seçeneği aşırı-etkinleştirme yüzeyini büyütür ve yüksek adetli
+              siparişlerde önerilmez.
+            </p>
+          </Field>
+        )}
       </FormSection>
 
       {/* 2 ── Hesap alanları (yalnız kind=account) ───────────────────────── */}

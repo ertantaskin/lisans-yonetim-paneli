@@ -13,6 +13,11 @@ export const fulfillmentPolicyEnum = pgEnum('fulfillment_policy', [
   'partial-approval',
   'all-or-nothing',
 ]);
+/** MAK dağıtım politikası — gerekçe ve ödünler: `@lisans/shared` MultiUseDistribution. */
+export const multiUseDistributionEnum = pgEnum('multi_use_distribution', [
+  'fewest-keys',
+  'one-per-key',
+]);
 export const onExpiryEnum = pgEnum('on_expiry', ['hide', 'keep']);
 
 export const licenseItemStatusEnum = pgEnum('license_item_status', [

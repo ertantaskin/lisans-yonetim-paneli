@@ -10,7 +10,13 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { fulfillmentPolicyEnum, onExpiryEnum, productKindEnum, usageModeEnum } from './enums';
+import {
+  fulfillmentPolicyEnum,
+  multiUseDistributionEnum,
+  onExpiryEnum,
+  productKindEnum,
+  usageModeEnum,
+} from './enums';
 import { productCategories } from './productCategories';
 import { productGuides } from './productGuides';
 
@@ -57,6 +63,21 @@ export const products = pgTable(
     usageMode: usageModeEnum('usage_mode').notNull().default('single'),
     /** multi (MAK) için tek key'in taşıyabileceği toplam kullanım. */
     maxUses: integer('max_uses'),
+    /**
+     * MAK DAĞITIMI (yalnız usage_mode='multi' iken anlamlı; single üründe okunmaz).
+     *
+     * 'fewest-keys' (varsayılan, ESKİ davranış): talebi tek başına karşılayan anahtar önce →
+     *   müşteri mümkün olduğunca TEK anahtar alır. MAK anahtarı PAYLAŞIMLI olduğu için her
+     *   fazladan anahtar, kalan kapasitesi kadar fazladan aşırı-etkinleştirme yüzeyidir.
+     * 'one-per-key': her birim AYRI anahtardan (3 birim + 3 uygun anahtar = 3×1); ayrı anahtar
+     *   bitince kalan talep doldurma davranışına düşer (1 anahtar + 6 birim = tek anahtarda 6).
+     *   Bilinçli ödün: anahtar sayısı ↑ ⇒ aşırı-etkinleştirme yüzeyi ↑ (bkz. @lisans/shared).
+     *
+     * NOT NULL + DEFAULT: mevcut ürünlerin davranışı DEĞİŞMEZ (yeni politika opt-in).
+     */
+    multiUseDistribution: multiUseDistributionEnum('multi_use_distribution')
+      .notNull()
+      .default('fewest-keys'),
 
     /** Abonelik: süre TESLİMLE başlar (valid_until = delivered_at + validity_days). */
     validityDays: integer('validity_days'),

@@ -20,17 +20,17 @@ describe('unitLabel (mail kalem satırı birim etiketi)', () => {
   it('MAK: units=1 olsa BİLE etkinleştirme hakkını yazar', () => {
     // Eski kural (`units > 1`) burada boş string döndürüyordu — kullanıcının bildirdiği
     // "ikinci anahtar çıplak görünüyor" durumu tam olarak buydu.
-    expect(unitLabel(1, 'multi', 'key')).toBe(' (bu siparişte 1 etkinleştirme hakkı)');
+    expect(unitLabel(1, 'multi', 'key')).toBe(' (bu anahtarda 1 etkinleştirme hakkı)');
   });
 
   it('MAK: çoklu birimde "adet" DEMEZ (anahtar sayısıyla karıştırılıyordu)', () => {
     const out = unitLabel(5, 'multi', 'key');
-    expect(out).toBe(' (bu siparişte 5 etkinleştirme hakkı)');
+    expect(out).toBe(' (bu anahtarda 5 etkinleştirme hakkı)');
     expect(out).not.toContain('adet');
   });
 
   it('MAK + hesap ürünü: "etkinleştirme" yerine "kullanım hakkı" (hesap açılır, etkinleştirilmez)', () => {
-    expect(unitLabel(3, 'multi', 'account')).toBe(' (bu siparişte 3 kullanım hakkı)');
+    expect(unitLabel(3, 'multi', 'account')).toBe(' (bu anahtarda 3 kullanım hakkı)');
   });
 
   it('tek kullanımlık: hiçbir şey yazmaz (units zaten daima 1)', () => {

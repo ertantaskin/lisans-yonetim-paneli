@@ -5,7 +5,12 @@ import { ArrowRight, Clock, Globe, Link2Off, ShieldAlert } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { cn, formatDate, includesTr } from '../lib/utils';
 import type { ProductRow } from '../lib/api';
-import { productKindLabel, productTypeSummary, fulfillmentPolicyLabel } from '../lib/labels';
+import {
+  productKindLabel,
+  productTypeSummary,
+  fulfillmentPolicyLabel,
+  multiUseDistributionLabel,
+} from '../lib/labels';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { ProductEditSheet } from './product-edit-sheet';
@@ -130,7 +135,16 @@ const buildColumns = (
     meta: { title: 'Politika' },
     header: 'Politika',
     cell: ({ row }) => (
-      <span className="text-muted-foreground">{fulfillmentPolicyLabel(row.original.fulfillmentPolicy)}</span>
+      <div className="text-muted-foreground">
+        <span>{fulfillmentPolicyLabel(row.original.fulfillmentPolicy)}</span>
+        {/* MAK dağıtımı yalnız çok kullanımlık üründe anlamlıdır; tek kullanımlıkta
+            gösterilseydi var olmayan bir ayar varmış gibi okunurdu. */}
+        {row.original.usageMode === 'multi' && (
+          <span className="block text-xs">
+            {multiUseDistributionLabel(row.original.multiUseDistribution)}
+          </span>
+        )}
+      </div>
     ),
   },
   {

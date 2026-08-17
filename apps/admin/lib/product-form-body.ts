@@ -46,6 +46,7 @@ export const PRODUCT_FORM_FIELDS = [
   'kind',
   'usageMode',
   'fulfillmentPolicy',
+  'multiUseDistribution',
   'onExpiry',
   'stockless',
   'maxUses',
@@ -77,7 +78,12 @@ export function buildProductBody(formData: FormData, isUpdate = false): Record<s
     // checkbox: işaretliyse 'on', değilse yok → boolean'a normalize et.
     stockless: formData.get('stockless') != null,
   };
-  if (usageMode === 'multi') body.maxUses = num('maxUses');
+  if (usageMode === 'multi') {
+    body.maxUses = num('maxUses');
+    // MAK dağıtımı yalnız multi üründe gönderilir (maxUses ile aynı kural): single üründe
+    // kavramsızdır ve API zaten varsayılana çeker.
+    body.multiUseDistribution = String(formData.get('multiUseDistribution') || 'fewest-keys');
+  }
 
   // Kategori (§17): boş seçenek = "Kategorisiz".
   const categoryId = String(formData.get('categoryId') || '').trim();

@@ -1,0 +1,2 @@
+CREATE TYPE "public"."multi_use_distribution" AS ENUM('fewest-keys', 'one-per-key');--> statement-breakpoint
+ALTER TABLE "products" ADD COLUMN "multi_use_distribution" "multi_use_distribution" DEFAULT 'fewest-keys' NOT NULL;

@@ -19,6 +19,7 @@ export interface ProductRecord {
   onExpiry: string;
   payloadSchema: PayloadFieldDef[] | null;
   fulfillmentPolicy: string;
+  multiUseDistribution: string;
   lowStockThreshold: number | null;
   // Düzenleme sheet'inin ön-dolumu için (detay ucu tam Product satırı döndürür).
   stockless: boolean;

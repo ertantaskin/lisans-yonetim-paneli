@@ -107,6 +107,12 @@ export function withGuides(rendered: string, template: string, guides: string): 
  *
  * `usageMode` bilinmiyorsa (ürün satırı çözülemedi) eski davranışa düşülür — kritik olmayan
  * bir etiket yüzünden teslimat maili biçim değiştirmez.
+ *
+ * "BU SİPARİŞTE" → "BU ANAHTARDA" (MAK dağıtım politikası eklenince zorunlu oldu): etiket
+ * ATAMA SATIRI başına basılır. `one-per-key` politikasında müşteri üç satırda üç kez
+ * "bu siparişte 1 hak" görecekti ve doğal okuma "siparişimde toplam 1 hak var, neden 3
+ * anahtar?" olurdu. Hakkın sahibi sipariş değil ANAHTARDIR — cümle `fewest-keys`te de
+ * böyle daha doğru ("bu anahtarda 5 etkinleştirme hakkınız var").
  */
 export function unitLabel(
   units: number,
@@ -116,7 +122,7 @@ export function unitLabel(
   if (usageMode === 'multi') {
     // Hesap ürününde "etkinleştirme" yanlış çağrışım yapar (oturum açılır, etkinleştirilmez).
     const noun = productKind === 'account' ? 'kullanım hakkı' : 'etkinleştirme hakkı';
-    return ` (bu siparişte ${units} ${noun})`;
+    return ` (bu anahtarda ${units} ${noun})`;
   }
   if (usageMode === 'single') return '';
   return units > 1 ? ` (${units} adet)` : '';

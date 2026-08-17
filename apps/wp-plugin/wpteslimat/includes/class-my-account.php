@@ -906,7 +906,12 @@ class Wpteslimat_My_Account {
             /* translators: %d = bu siparişin bu hesapta kullanabileceği etkinleştirme adedi */
             ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
             /* translators: %d = bu siparişin bu anahtarda kullanabileceği etkinleştirme adedi */
-            : __('Bu siparişte %d etkinleştirme hakkı (anahtar paylaşımlıdır — yalnız bu kadar kez etkinleştirebilirsiniz).', 'wpteslimat');
+            // "BU SİPARİŞTE" → "BU ANAHTARDA": panel artık ürün bazında "her birimi ayrı
+            // anahtardan ver" politikasını destekliyor. O politikada müşteri birden çok satır
+            // görür ve her satırda "bu siparişte 1 hak" yazsaydı "toplam 1 hak mı var?" diye
+            // okunurdu. Hakkın sahibi sipariş değil ANAHTARDIR. (Panelin mail tarafındaki
+            // `unitLabel` ile BİREBİR aynı cümle — iki yüzey aynı kalemi farklı anlatamaz.)
+            : __('Bu anahtarda %d etkinleştirme hakkınız var (anahtar paylaşımlıdır — yalnız bu kadar kez etkinleştirebilirsiniz).', 'wpteslimat');
         return sprintf($msg, $units);
     }
 

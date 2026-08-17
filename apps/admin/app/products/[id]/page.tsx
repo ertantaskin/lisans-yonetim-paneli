@@ -39,6 +39,7 @@ import { formatDate } from '../../../lib/utils';
 import {
   productTypeSummary,
   fulfillmentPolicyLabel,
+  multiUseDistributionLabel,
   stockStateLabel,
   supplyStatusLabel,
   adjustmentActionLabel,
@@ -197,6 +198,15 @@ export default async function ProductDetailPage({
                 <span>{productTypeSummary(product)}</span>
                 <span aria-hidden>·</span>
                 <span>{fulfillmentPolicyLabel(product.fulfillmentPolicy)}</span>
+                {/* MAK dağıtımı yalnız çok kullanımlık üründe anlamlı — ürünün nasıl
+                    teslim edildiği başlıkta görünmeliydi, ayarı görmek için forma girmek
+                    gerekiyordu. */}
+                {product.usageMode === 'multi' && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span>{multiUseDistributionLabel(product.multiUseDistribution)}</span>
+                  </>
+                )}
               </div>
             </div>
           </div>

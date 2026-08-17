@@ -90,6 +90,11 @@ const ProductObject = z.object({
   fulfillmentPolicy: z
     .enum(['partial-auto', 'partial-approval', 'all-or-nothing'])
     .default('partial-auto'),
+  /**
+   * MAK dağıtımı — yalnız usageMode='multi' iken anlamlı (single üründe servis temizler).
+   * 'fewest-keys' varsayılan: ESKİ davranış korunur, yeni politika opt-in.
+   */
+  multiUseDistribution: z.enum(['fewest-keys', 'one-per-key']).default('fewest-keys'),
   warrantyDays: z.number().int().nonnegative().max(MAX_DAYS).optional(),
   /** Anahtar biçimi (regex) — ReDoS kapısı için bkz. `KeyFormatPattern`. */
   keyFormat: KeyFormatPattern.optional(),

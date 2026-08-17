@@ -80,6 +80,8 @@ async function makScenario(opts: {
   keys: number;
   maxUses: number;
   fulfillmentPolicy?: 'partial-auto' | 'partial-approval' | 'all-or-nothing';
+  /** MAK dağıtımı — verilmezse VARSAYILAN ('fewest-keys', eski davranış) kullanılır. */
+  multiUseDistribution?: 'fewest-keys' | 'one-per-key';
 }) {
   const site = await createSite(db, crypto, { tag: TAG });
   const product = await createProduct(db, {
@@ -88,6 +90,7 @@ async function makScenario(opts: {
     usageMode: 'multi',
     maxUses: opts.maxUses,
     fulfillmentPolicy: opts.fulfillmentPolicy ?? 'partial-auto',
+    multiUseDistribution: opts.multiUseDistribution ?? 'fewest-keys',
   });
   await insertLicenseItems(db, crypto, {
     productId: product.id,
@@ -141,7 +144,13 @@ async function assignmentsOf(orderId: string) {
     .where(eq(assignments.orderId, orderId));
 }
 
-describe('MAK/çok kullanımlık satış yolu (entegrasyon)', () => {
+/**
+ * Bu blok VARSAYILAN dağıtım politikasının (`fewest-keys` — "sipariş başına en az anahtar")
+ * sözleşmesidir. Ürün bazlı ikinci politika (`one-per-key`) sonradan eklendi; bu testler
+ * PARAMETRELENMEDİ, çünkü varsayılan davranış DEĞİŞMEDİ — yeni politikanın onu bozmadığının
+ * kanıtı olarak olduğu gibi durmaları gerekiyor. Yeni politikanın testleri dosyanın sonunda.
+ */
+describe('MAK/çok kullanımlık satış yolu — VARSAYILAN politika (fewest-keys)', () => {
   beforeAll(() => {
     if (!process.env.DATABASE_URL) {
       throw new Error(
@@ -424,5 +433,189 @@ describe('MAK/çok kullanımlık satış yolu (entegrasyon)', () => {
     // Kapasite dağılımı da eşitsiz olmalı (kurulum gerçekten amaçlanan şekli üretti mi).
     const keys = await keysOf(productId);
     expect(keys.map((k) => k.useCount)).toEqual([5, 2]);
+  });
+});
+
+/**
+ * MAK DAĞITIMI: `one-per-key` (ürün ayarı) — "her birimi AYRI anahtardan ver".
+ *
+ * NEDEN VAR (işletme kararı): yukarıdaki testler VARSAYILAN politikayı (`fewest-keys`,
+ * "sipariş başına en az anahtar") kilitler. Bazı ürünlerde tersine ihtiyaç var: 3 birim
+ * alındıysa ve stokta 3 uygun anahtar varsa müşteriye 3 AYRI anahtar × 1 hak gitsin; ayrı
+ * anahtar yetmezse kalan talep AYNEN eski doldurma davranışıyla tamamlansın.
+ *
+ * ÖDÜN (bilinçli, ürün bazında opt-in): müşterinin eline geçen her fazladan anahtar, o
+ * anahtarın KALAN kapasitesi kadar fazladan aşırı-etkinleştirme yüzeyidir.
+ */
+describe('MAK dağıtımı: one-per-key (ürün ayarı)', () => {
+  it('(b1) 3 anahtar / qty=3 → 3 AYRI atama, her biri units=1', async () => {
+    const { site, productId, makeDto } = await makScenario({
+      keys: 3,
+      maxUses: 5,
+      multiUseDistribution: 'one-per-key',
+    });
+
+    const { httpStatus, body } = await orders.createOrder(site, makeDto(3));
+
+    expect(httpStatus).toBe(201);
+    expect(body.status).toBe('fulfilled');
+    // VARSAYILAN politikada bu TEK atama (units=3) olurdu — asıl davranış farkı budur.
+    expect(body.assignments).toHaveLength(3);
+    expect(body.assignments.map((a) => a.units)).toEqual([1, 1, 1]);
+
+    const keys = await keysOf(productId);
+    expect(keys.map((k) => k.useCount)).toEqual([1, 1, 1]);
+    // Hepsi hâlâ satılabilir (kapasite 5, yalnız 1 düştü) ve teslim damgası basıldı.
+    expect(keys.every((k) => k.status === 'available')).toBe(true);
+    expect(keys.every((k) => k.assignedAt !== null)).toBe(true);
+  });
+
+  it('(b2) 5 anahtar / qty=5 → 5 AYRI atama', async () => {
+    const { site, productId, makeDto } = await makScenario({
+      keys: 5,
+      maxUses: 5,
+      multiUseDistribution: 'one-per-key',
+    });
+
+    const { body } = await orders.createOrder(site, makeDto(5));
+
+    expect(body.assignments).toHaveLength(5);
+    expect(body.assignments.map((a) => a.units)).toEqual([1, 1, 1, 1, 1]);
+    const keys = await keysOf(productId);
+    expect(keys.map((k) => k.useCount)).toEqual([1, 1, 1, 1, 1]);
+  });
+
+  /** ASIL GERİ DÜŞÜŞ KANITI: ayrı anahtar YOKSA politika tek anahtardan doldurmaya döner. */
+  it('(b3) TEK anahtar / qty=6 → 1 atama, units=6 (doldurma dalına düşer)', async () => {
+    const { site, productId, makeDto } = await makScenario({
+      keys: 1,
+      maxUses: 10,
+      multiUseDistribution: 'one-per-key',
+    });
+
+    const { httpStatus, body } = await orders.createOrder(site, makeDto(6));
+
+    expect(httpStatus).toBe(201);
+    expect(body.assignments).toHaveLength(1);
+    expect(body.assignments[0]!.units).toBe(6);
+
+    const keys = await keysOf(productId);
+    expect(keys[0]!.useCount).toBe(6);
+    expect(keys[0]!.status).toBe('available');
+  });
+
+  it('(b4) 3 anahtar / qty=5 → önce 1er, kalan 2 doldurmayla; toplam ASLA aşılmaz', async () => {
+    const { site, productId, makeDto } = await makScenario({
+      keys: 3,
+      maxUses: 5,
+      multiUseDistribution: 'one-per-key',
+    });
+
+    const { body } = await orders.createOrder(site, makeDto(5));
+
+    expect(body.assignments).toHaveLength(3);
+    const units = body.assignments.map((a) => a.units).sort((x, y) => y - x);
+    expect(units).toEqual([3, 1, 1]); // 1+1+1 (spread) + 2 (doldurma, FEFO/FIFO ilk anahtara)
+    expect(units.reduce((s, u) => s + u, 0)).toBe(5);
+
+    const keys = await keysOf(productId);
+    expect(keys.reduce((s, k) => s + k.useCount, 0)).toBe(5);
+    expect(keys.every((k) => k.useCount <= k.maxUses)).toBe(true);
+  });
+
+  it('(b5) kapasite yetmezse kısmi teslim; kapasite AŞILMAZ', async () => {
+    // 2 anahtar × 2 kapasite = 4 birim; 6 isteniyor.
+    const { site, productId, makeDto } = await makScenario({
+      keys: 2,
+      maxUses: 2,
+      multiUseDistribution: 'one-per-key',
+    });
+
+    const { httpStatus, body } = await orders.createOrder(site, makeDto(6));
+
+    expect(httpStatus).toBe(207);
+    expect(body.lines[0]).toMatchObject({ requestedQty: 6, fulfilledQty: 4 });
+
+    const keys = await keysOf(productId);
+    expect(keys.map((k) => k.useCount)).toEqual([2, 2]);
+    expect(keys.every((k) => k.status === 'depleted')).toBe(true); // spread dalında da çalışır
+    expect(keys.reduce((s, k) => s + k.useCount, 0)).toBe(4);
+  });
+
+  /**
+   * FEFO KORUNUYOR — bu testin varlık sebebi bir TASARIM KARARINI kilitlemektir.
+   * Spread'i `use_count ASC` sıralamasıyla yazmak dışlama listesini gereksiz kılardı ama
+   * FEFO'yu ikinci sıraya düşürürdü: süresi yarın dolacak bir anahtar, hiç kullanılmamış
+   * süresiz bir anahtara YENİLİRDİ. Bu test o tasarımda KIRMIZI olur.
+   */
+  it('(b6) spread turunda FEFO korunur: süresi en yakın anahtar ÖNCE seçilir', async () => {
+    const site = await createSite(db, crypto, { tag: TAG });
+    const product = await createProduct(db, {
+      tag: TAG,
+      kind: 'key',
+      usageMode: 'multi',
+      maxUses: 5,
+      multiUseDistribution: 'one-per-key',
+    });
+    // ÖNCE süresiz anahtar, SONRA süresi yakın olan → FIFO/seq sırası FEFO'nun TERSİ.
+    // Böylece "FEFO gerçekten uygulanıyor mu" sorusu seq sırasından ayrışır.
+    await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 1,
+      tag: TAG,
+      maxUses: 5,
+      payloadPrefix: 'MAK-SURESIZ',
+    });
+    await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 1,
+      tag: TAG,
+      maxUses: 5,
+      payloadPrefix: 'MAK-YAKIN',
+      expiresAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+    });
+    const remoteProductId = `rp-${randomUUID().slice(0, 8)}`;
+    await productsService.createMapping({
+      siteId: site.id,
+      productId: product.id,
+      remoteProductId,
+    });
+
+    const { body } = await orders.createOrder({ id: site.id } as Site, {
+      remoteOrderId: `ord-${randomUUID().slice(0, 8)}`,
+      customerEmail: `${TAG}@example.test`,
+      lines: [{ remoteLineId: 'line-1', remoteProductId, qty: 1 }],
+    });
+
+    const keys = await keysOf(product.id); // seq sırası: [süresiz, yakın]
+    expect(body.assignments).toHaveLength(1);
+    // FEFO: seq'te SONRA gelen (süresi yakın) anahtar seçilmeliydi.
+    expect(keys[0]!.useCount).toBe(0);
+    expect(keys[1]!.useCount).toBe(1);
+  });
+
+  /**
+   * all-or-nothing + one-per-key: karşılanamayan satır K AYRI anahtarın kapasitesini de
+   * TAM geri vermeli. `releaseAllocations` küme tabanlı çalışır; spread K ayrı satır ürettiği
+   * için bu yol varsayılan politikada test edilenden farklı bir şekle girer.
+   */
+  it('(b7) all-or-nothing: karşılanamayan satır TÜM anahtarların kapasitesini geri verir', async () => {
+    const { site, productId, makeDto } = await makScenario({
+      keys: 3,
+      maxUses: 1,
+      multiUseDistribution: 'one-per-key',
+      fulfillmentPolicy: 'all-or-nothing',
+    });
+
+    const { body } = await orders.createOrder(site, makeDto(4)); // 3 kapasite var, 4 isteniyor
+
+    expect(body.lines[0]!.fulfilledQty).toBe(0);
+    expect(body.assignments).toHaveLength(0);
+
+    const keys = await keysOf(productId);
+    expect(keys.map((k) => k.useCount)).toEqual([0, 0, 0]);
+    // depleted → available geri dönüşü ve damga temizliği spread dalında da çalışmalı.
+    expect(keys.every((k) => k.status === 'available')).toBe(true);
+    expect(keys.every((k) => k.assignedAt === null)).toBe(true);
   });
 });

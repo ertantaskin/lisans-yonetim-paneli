@@ -249,14 +249,34 @@ export interface MultiUseTake {
  * o tur atlanır. Kapasitesi ondan küçük her sipariş onu yine ilk sırada seçeceği için parça
  * kapasite satılmaya devam eder (ve `expires_at` MAK'ta pratikte NULL'dır).
  *
+ * ── İKİNCİ POLİTİKA: `mode:'spread'` (ürün ayarı `one-per-key`) ──
+ *
+ * Yukarıdaki kural artık VARSAYILANDIR, tek seçenek değil. İşletme bazı ürünlerde tersini
+ * ister: her birim AYRI anahtardan (3 birim + 3 uygun anahtar = 3 anahtar × 1 hak). O modda
+ * bu fonksiyon TEK bir birim alır (`LEAST(1, kalan)`) ve çağıran, o turda kullandığı
+ * anahtarları `exclude` ile dışlayarak bir sonraki anahtara geçer.
+ *
+ * SIRALAMA SPREAD'DE FEFO/FIFO'YA GERİ DÖNER (boolean ifade YOK). `use_count ASC` ile
+ * sıralamak dışlama listesini gereksiz kılardı ama üç bedeli vardı ve reddedildi:
+ * (1) FEFO'yu ikinci sıraya düşürürdü — 1 kez kullanılmış ve yarın ölecek anahtar, hiç
+ * kullanılmamış süresiz anahtara yenilirdi; (2) siparişler ARASI da dağıtır, parça
+ * kapasiteler geç kapanırdı; (3) `use_count`'u indekslemeyi gerektirirdi ve bu, kapasite
+ * düşümünün HOT-update'ini öldürürdü (license_items sistemin en sıcak yazma tablosu).
+ * Şimdiki hâliyle spread sorgusu `license_items_alloc_idx` ile BİREBİR örtüşür.
+ *
+ * @param opts.mode 'fill' (varsayılan, eski davranış) | 'spread' (tek birim al)
+ * @param opts.exclude Bu turda ZATEN kullanılmış anahtarlar (yalnız spread'de anlamlı)
  * @returns düşülen anahtar + alınan birim; hiç kapasite yoksa null
  */
 export async function consumeMultiUseCapacity(
   db: Executor,
   productId: string,
   want: number,
+  opts?: { mode?: 'fill' | 'spread'; exclude?: readonly string[] },
 ): Promise<MultiUseTake | null> {
   if (want <= 0) return null;
+  const spread = opts?.mode === 'spread';
+  const exclude = spread ? (opts?.exclude ?? []) : [];
   /*
    * `MATERIALIZED` ŞART — tek-kullanımlık yoldaki aşırı teslimat hatasıyla AYNI SINIF.
    * Bu CTE tam bir kez referans ediliyor; planlayıcı onu satır içine alabilir (inline) ve o
@@ -268,6 +288,27 @@ export async function consumeMultiUseCapacity(
    * NOT: bu dosyanın üst tarafındaki açıklama bir dönem "MAK yolu zaten doğru deseni kullanıyor"
    * diyordu; kod `MATERIALIZED` DEMİYORDU. Açıklamanın kendisi denetimi yanlış yönlendirdi.
    */
+  // Politikaya göre DEĞİŞEN üç parça. Şablonun geri kalanı TEK GÖVDEDİR: iki ayrı sorgu
+  // yazmak, `MATERIALIZED` / `SKIP LOCKED` / `depleted` gibi regresyon kalkanlarından birinin
+  // yalnız bir dalda unutulmasına açık kapı bırakırdı.
+  const takenExpr = spread
+    ? // SPREAD: her turda TEK birim. Anahtarın kalanı 0 olamaz (WHERE use_count < max_uses).
+      sql`LEAST(1, max_uses - use_count)`
+    : sql`LEAST(${want}, max_uses - use_count)`;
+  const orderExpr = spread
+    ? // Boolean ifade YOK → sıralama `license_items_alloc_idx` ile BİREBİR örtüşür.
+      sql`expires_at ASC NULLS LAST, created_at, seq`
+    : sql`(max_uses - use_count >= ${want}) DESC, expires_at ASC NULLS LAST, created_at, seq`;
+  // Tur içi dışlama: bu satırda ZATEN kullanılmış anahtarlar bir daha seçilmesin.
+  // `ANY(${dizi}::uuid[])` drizzle şablonunda BOZUK SQL üretir (proje tuzağı) → parametreli IN.
+  const excludeCond =
+    exclude.length > 0
+      ? sql`AND id NOT IN (${sql.join(
+          exclude.map((id) => sql`${id}`),
+          sql`, `,
+        )})`
+      : sql``;
+
   const list = await rawRows<{ id: string; taken: number }>(db, sql`
     WITH picked AS MATERIALIZED (
       -- Alınacak birim TEK anahtarın KALAN kapasitesiyle sınırlıdır: LEAST(istenen, kalan).
@@ -275,17 +316,19 @@ export async function consumeMultiUseCapacity(
       -- BİRİM için ayrı çağrı yapıyordu; artık kalan ne kadarsa o kadar alınır, dolayısıyla
       -- 200 birimlik bir MAK satırı 200 değil ~1 gidiş-dönüşte karşılanır. Dağılım aynı:
       -- FEFO sırasındaki ilk anahtar doldurulur, artan talep sonraki anahtara taşar.
-      SELECT id, LEAST(${want}, max_uses - use_count) AS taken
+      -- SPREAD modunda ise tavan 1'dir (her birim ayrı anahtardan).
+      SELECT id, ${takenExpr} AS taken
       FROM license_items
       WHERE product_id = ${productId}
         AND status = 'available'
         AND use_count < max_uses
         AND ${notExpiredCond()}
-      -- 1) TALEBİ TEK BAŞINA KARŞILAYAN ANAHTAR ÖNCE (kullanıcı kararı — bkz. üstteki blok).
-      --    Boolean sıralamada true > false olduğu için DESC "karşılayanlar önce" demektir.
-      -- 2-3) FEFO + FIFO AYNEN korunur (yalnız birinci anahtar eklendi).
-      ORDER BY (max_uses - use_count >= ${want}) DESC,
-               expires_at ASC NULLS LAST, created_at, seq
+        ${excludeCond}
+      -- FILL: 1) TALEBİ TEK BAŞINA KARŞILAYAN ANAHTAR ÖNCE (kullanıcı kararı — üstteki blok);
+      --    boolean sıralamada true > false olduğu için DESC "karşılayanlar önce" demektir.
+      --    2-3) FEFO + FIFO.
+      -- SPREAD: yalnız FEFO + FIFO (dışlama listesi turu ilerletir).
+      ORDER BY ${orderExpr}
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
@@ -317,10 +360,14 @@ export async function consumeMultiUseCapacity(
    * ikisinden de İYİDİR. Kalkanın değeri ölçüldü: aynı sınıftaki tek-kullanımlık hata aylarca
    * "testler bazen kırmızı" gürültüsü sanılmıştı — sessiz olduğu için.
    */
-  if (list.length > 1 || !Number.isInteger(taken) || taken < 1 || taken > want) {
+  // SPREAD'de tavan `want` DEĞİL 1'dir → kalkan orada DARALIR. Gevşek bıraksaydık
+  // `LEAST(1, …)` ifadesi ileride bozulduğunda sessiz aşırı teslimat üretirdi.
+  const cap = spread ? 1 : want;
+  if (list.length > 1 || !Number.isInteger(taken) || taken < 1 || taken > cap) {
     throw new Error(
-      `MAK kapasite invaryantı ihlali: ${want} birim istendi, ${list.length} satır / ` +
-        `${taken} birim döndü (ürün ${productId}). İşlem geri alındı.`,
+      `MAK kapasite invaryantı ihlali (mod ${spread ? 'spread' : 'fill'}): ${want} birim ` +
+        `istendi, ${list.length} satır / ${taken} birim döndü (tavan ${cap}, ürün ${productId}). ` +
+        'İşlem geri alındı.',
     );
   }
   return { licenseItemId: row.id, taken };

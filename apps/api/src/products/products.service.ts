@@ -442,8 +442,13 @@ export class ProductsService {
       // diriltir). Yalnız operatör bu modu AÇIKÇA gönderdiğinde uygulanır; kapasitesi
       // kaybolacak canlı kalem varsa zaten yukarıdaki 409'a takılmıştır. Kapasite modeliyle
       // TUTARLI: capacityOf(single, *) = 1, yani bu temizlik kapasiteyi değiştirmez.
+      // maxUses ile AYNI gerekçe: tek kullanımlığa çevrilen üründe MAK dağıtım politikası
+      // KAVRAMSIZDIR; bayat değeri bırakmak, mod ileride tekrar 'multi' yapılınca operatörün
+      // hiç seçmediği bir davranışı SESSİZCE diriltirdi.
       const set: Partial<NewProduct> =
-        patch.usageMode === 'single' ? { ...patch, maxUses: null } : { ...patch };
+        patch.usageMode === 'single'
+          ? { ...patch, maxUses: null, multiUseDistribution: 'fewest-keys' }
+          : { ...patch };
 
       // SKU çakışması (create ile AYNI gerekçe): ham 23505 "Internal server error" olarak
       // çıkmasın. Yakalama transaction'ın İÇİNDE: istisna callback'ten dışarı çıktığı için

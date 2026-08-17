@@ -297,6 +297,7 @@ export interface ProductRow {
   onExpiry: string;
   payloadSchema: PayloadFieldDef[] | null;
   fulfillmentPolicy: string;
+  multiUseDistribution: string;
   availableStock: number;
   // Düzenleme formunun ön-dolumu için (API list() tam product satırı döndürür).
   // stockless checkbox'ı ön-dolmazsa düzenlemede sessizce false'a çekiliyordu.
