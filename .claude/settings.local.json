@@ -1,5 +1,8 @@
 {
   "permissions": {
-    "allow": ["Bash(git -C \"C:/Users/USER/Desktop/lisans-yonetim-paneli\" status)"]
+    "allow": [
+      "Bash(git -C \"C:/Users/USER/Desktop/lisans-yonetim-paneli\" status)",
+      "Bash(ssh -o ConnectTimeout=20 -i ~/.ssh/lisans-yonetim-paneli root@167.233.108.12 'cd /opt/lisans-yonetim-paneli && git pull --ff-only origin main')"
+    ]
   }
 }
