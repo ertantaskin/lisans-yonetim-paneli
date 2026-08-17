@@ -12,6 +12,11 @@ export interface DeliveryMailPreview {
   message: string;
   /** Nihai konu (sandbox'ta '[TEST MODU] ' öneki dahil). */
   subject: string | null;
+  /**
+   * Nihai SMTP gönderici başlığı (`MAIL_FROM`) — önizleme ekranındaki "Kimden" satırı.
+   * Gerçek gönderimin kullandığı DEĞERİN ta kendisidir (`DeliveryMailContent.from`).
+   */
+  from: string | null;
   /** Nihai SMTP alıcısı (sandbox'ta yönetici adresi). */
   to: string | null;
   /** Siparişin müşteri adresi. */
@@ -90,6 +95,7 @@ export class MailPreviewService {
           'lisans ataması yok (henüz teslim edilmemiş olabilir; ya da tüm lisanslar iade/iptal ' +
           'edilmiş veya süresi dolup gizlenmiş olabilir).',
         subject: null,
+        from: null,
         to: null,
         customerEmail: null,
         text: null,
@@ -160,6 +166,7 @@ export class MailPreviewService {
       available: true,
       message: notes.join(' '),
       subject: c.subject,
+      from: c.from,
       to: c.to,
       customerEmail: c.customerEmail,
       text: c.text,

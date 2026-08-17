@@ -86,6 +86,42 @@ export function withGuides(rendered: string, template: string, guides: string): 
   return `${rendered.replace(/\s+$/, '')}\n\n${guides}\n`;
 }
 
+/**
+ * Kalem satırındaki BİRİM etiketi — `• Ürün<etiket>: ANAHTAR` biçiminde ürün adının hemen
+ * ardına gelir. Etiket gerekmiyorsa boş string döner.
+ *
+ * NEDEN VAR (ölçülmüş müşteri şikâyeti): eski kural `units > 1 ? " (N adet)" : ""` idi ve
+ * MAK/çok kullanımlık üründe İKİ AYRI YANLIŞ üretiyordu:
+ *
+ *  1) "adet" kelimesi ANAHTAR SAYISI gibi okunuyordu. Gerçek bir siparişte (dev #69) müşteri
+ *     "Windows 11 Pro MAK (5 adet): MAK-AAAA-…" satırını görüyor ve 5 anahtar aldığını
+ *     sanıyordu; oysa TEK anahtarı 5 KEZ etkinleştirme hakkı almıştı.
+ *  2) `units = 1` olan MAK anahtarında HİÇBİR ŞEY yazmıyordu. Aynı siparişin ikinci satırı
+ *     ("… : MAK-FINAL-0001") çıplak bir anahtar gibi görünüyordu — müşteri o anahtarın
+ *     tamamen kendisine ait olduğunu, istediği kadar makinede kullanabileceğini sanıyordu.
+ *     MAK anahtarı PAYLAŞIMLIDIR: panel yalnız defter tutar, anahtarın kalan kapasitesini
+ *     kullanmayı teknik olarak engelleyen bir şey yoktur → "1" bilgisi müşteriye SÖYLENMELİ.
+ *
+ * Bu yüzden karar `units`e değil ÜRÜNÜN KULLANIM MODUNA bağlıdır: `multi` ise sayı HER ZAMAN
+ * yazılır (1 olsa bile), `single` ise hiç yazılmaz (orada units zaten daima 1'dir).
+ *
+ * `usageMode` bilinmiyorsa (ürün satırı çözülemedi) eski davranışa düşülür — kritik olmayan
+ * bir etiket yüzünden teslimat maili biçim değiştirmez.
+ */
+export function unitLabel(
+  units: number,
+  usageMode: string | null | undefined,
+  productKind: string | null | undefined,
+): string {
+  if (usageMode === 'multi') {
+    // Hesap ürününde "etkinleştirme" yanlış çağrışım yapar (oturum açılır, etkinleştirilmez).
+    const noun = productKind === 'account' ? 'kullanım hakkı' : 'etkinleştirme hakkı';
+    return ` (bu siparişte ${units} ${noun})`;
+  }
+  if (usageMode === 'single') return '';
+  return units > 1 ? ` (${units} adet)` : '';
+}
+
 /** Kalemler arasındaki EN YAKIN (en erken) geçerlilik bitişi; hiç yoksa null. */
 export function earliestValidUntil(values: Array<Date | null | undefined>): Date | null {
   let min: Date | null = null;

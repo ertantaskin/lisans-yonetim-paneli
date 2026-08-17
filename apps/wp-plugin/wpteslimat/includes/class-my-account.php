@@ -265,11 +265,18 @@ class Wpteslimat_My_Account {
                      * v1.0.7'de sipariş kutusu düzeltilmişti, MÜŞTERİ kartı atlanmıştı; artık
                      * sipariş kutusuyla BİREBİR aynı dil kullanılıyor. Tek kullanımlık üründe
                      * (tüm units=1) metin AYNEN eski hâlinde kalır — gereksiz gürültü eklenmez.
+                     *
+                     * MAK KAPISI: eski `units_total > rows_count` ölçütü, MAK siparişinin toplamı
+                     * kayıt sayısına EŞİT olduğu durumda (ör. qty=1 → tek anahtardan 1 birim)
+                     * hiçbir şey basmıyordu → müşteri paylaşımlı anahtarı sınırsız sanıyordu.
+                     * Artık kalemlerden biri MAK ise toplam HER ZAMAN yazılır.
                      */
                     $rows_count  = count($group['rows']);
                     $units_total = 0;
+                    $has_multi   = false;
                     foreach ($group['rows'] as $gr) {
                         $units_total += isset($gr[1]['units']) ? max(1, (int) $gr[1]['units']) : 1;
+                        if (self::is_multi_usage($gr[1])) $has_multi = true;
                     }
                     // `_n()` KULLANILMIYOR: Türkçede sayıdan sonra çoğul eki gelmez ("3 lisans"),
                     // iki özdeş biçim yazmak çeviri dosyasına anlamsız bir çoğul kuralı sokardı.
@@ -278,7 +285,7 @@ class Wpteslimat_My_Account {
                         __('%d lisans', 'wpteslimat'),
                         $rows_count
                     );
-                    if ($units_total > $rows_count) {
+                    if ($has_multi || $units_total > $rows_count) {
                         $count_txt .= ' ' . sprintf(
                             /* translators: %d = kayıtların taşıdığı toplam kullanım/aktivasyon hakkı */
                             __('(toplam %d kullanım hakkı)', 'wpteslimat'),
@@ -340,18 +347,11 @@ class Wpteslimat_My_Account {
                         }
                     }
                     // (§11 çok kullanımlı / MAK) Bir anahtar birden çok aktivasyon hakkı taşıyabilir.
-                    // Bu bilgi mailde ("(3 adet)") ve sipariş kutusunda ("3/5 kullanım") vardı, müşteri
-                    // sayfasında HİÇ yoktu → 9 aktivasyon alan müşteri 2 çıplak anahtar görüp eksik
-                    // teslimat aldığını sanıyordu. Panel `units` alanını zaten döndürüyor (API değişmedi);
-                    // tek kullanımlıkta (units yok/1) hiçbir şey basılmaz — gereksiz gürültü olmasın.
-                    $units = isset($d['units']) ? (int) $d['units'] : 0;
-                    if ($units > 1) {
-                        $units_msg = $is_account
-                            /* translators: %d = bu kayıttaki kullanım/aktivasyon hakkı adedi */
-                            ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
-                            /* translators: %d = bu anahtardaki kullanım/aktivasyon hakkı adedi */
-                            : __('Bu anahtar %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat');
-                        echo '<p class="wpt-note">' . esc_html(sprintf($units_msg, $units)) . '</p>';
+                    // Kapı ve metin TEK KAYNAKTA (units_note): MAK'ta units=1 olsa bile basılır,
+                    // çünkü paylaşımlı anahtarda "1" de anlamlı bilgidir (bkz. is_multi_usage notu).
+                    $units_note = self::units_note($d, $is_account);
+                    if ($units_note !== '') {
+                        echo '<p class="wpt-note">' . esc_html($units_note) . '</p>';
                     }
                     if (!empty($d['validUntil'])) {
                         $exp = !empty($d['expired']);
@@ -745,14 +745,11 @@ class Wpteslimat_My_Account {
                         ? $payload
                         : __('(Lisans bilgisi görüntülenemedi — lütfen destek ekibimizle iletişime geçin.)', 'wpteslimat');
                 }
-                $units = isset($d['units']) ? (int) $d['units'] : 0;
-                if ($units > 1) {
-                    $units_msg = $is_account
-                        /* translators: %d = bu kayıttaki kullanım/aktivasyon hakkı adedi */
-                        ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
-                        /* translators: %d = bu anahtardaki kullanım/aktivasyon hakkı adedi */
-                        : __('Bu anahtar %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat');
-                    $lines[] = sprintf($units_msg, $units);
+                // Ekranla AYNI kaynak (units_note): müşterinin SAKLADIĞI dosya, paylaşımlı anahtarın
+                // kaç etkinleştirme taşıdığını ekranla aynı cümleyle söylemelidir — iki yüzey çelişemez.
+                $units_note = self::units_note($d, $is_account);
+                if ($units_note !== '') {
+                    $lines[] = $units_note;
                 }
                 if (!empty($d['validUntil'])) {
                     // Ekranla AYNI ayrım: süresi DOLMUŞ lisans "Geçerlilik:" diye yazılırsa
@@ -860,6 +857,50 @@ class Wpteslimat_My_Account {
             $groups[$key]['rows'][] = [$i, $d];
         }
         return $groups;
+    }
+
+    /**
+     * Bu teslimat kalemi ÇOK KULLANIMLI (MAK) bir üründen mi geliyor?
+     *
+     * NEDEN GEREKLİ: birim bilgisi eskiden YALNIZ `units > 1` iken basılıyordu. MAK'ta tek bir
+     * sipariş satırı birden çok anahtara bölünebilir (ölçülen gerçek sipariş: qty=6 → A
+     * anahtarından 5 birim + B anahtarından 1 birim). B satırı `units=1` olduğu için hiçbir
+     * açıklama almıyordu → müşteri o anahtarın TAMAMEN kendisine ait olduğunu sanıyor, oysa
+     * yalnız 1 etkinleştirme hakkı var (anahtar başka müşterilerle PAYLAŞIMLI). Bu sessiz hata
+     * ancak ürünün kullanım kipi bilinerek kapanır: MAK'ta "1" de anlamlı bilgidir.
+     *
+     * GERİYE DÖNÜK UYUM: `usageMode` panelin EKLEMELİ yeni alanıdır. Eski panel imajı (dağıtım
+     * sapması) onu döndürmez → burada `false` döner ve çağıran taraf ESKİ `units > 1` kapısına
+     * düşer. Yani alan gelmezse davranış bugünküyle birebir aynıdır (sessiz kırılma yok).
+     */
+    private static function is_multi_usage($d) {
+        return isset($d['usageMode']) && $d['usageMode'] === 'multi';
+    }
+
+    /**
+     * Bir teslimat kaleminin birim (kullanım hakkı) notu — boş dize = not basma.
+     *
+     * TEK KAYNAK: aynı cümle hem ekranda hem indirilen .txt'de kullanılır. İki yüzeyde ayrı ayrı
+     * yazılsaydı biri güncellenip diğeri geride kalırdı (bu projede tekrarlayan hata sınıfı).
+     *
+     * Kapı: MAK ise HER ZAMAN (units=1 dahil) · aksi hâlde yalnız `units > 1` (eski davranış;
+     * `usageMode` gelmeyen eski panel sürümünde tek geçerli sinyal budur). Tek kullanımlık üründe
+     * `units` zaten hep 1'dir → hiçbir şey basılmaz, gereksiz gürültü eklenmez.
+     */
+    private static function units_note($d, $is_account) {
+        $units = isset($d['units']) ? max(1, (int) $d['units']) : 1;
+        if (!self::is_multi_usage($d) && $units < 2) {
+            return '';
+        }
+        // Metin KİPE göre değil TÜRE göre seçilir (tek dizge/tür → çeviri sapması olmaz):
+        // `units > 1` yalnız MAK ürününde oluşabildiği için `usageMode` gelmeyen eski panelde de
+        // aynı cümle doğrudur.
+        $msg = $is_account
+            /* translators: %d = bu siparişin bu hesapta kullanabileceği etkinleştirme adedi */
+            ? __('Bu hesap %d kullanım/aktivasyon hakkı içerir.', 'wpteslimat')
+            /* translators: %d = bu siparişin bu anahtarda kullanabileceği etkinleştirme adedi */
+            : __('Bu siparişte %d etkinleştirme hakkı (anahtar paylaşımlıdır — yalnız bu kadar kez etkinleştirebilirsiniz).', 'wpteslimat');
+        return sprintf($msg, $units);
     }
 
     /**

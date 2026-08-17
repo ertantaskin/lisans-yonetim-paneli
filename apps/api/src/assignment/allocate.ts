@@ -18,12 +18,16 @@ export async function allocate(
   if (units <= 0) return [];
 
   if (product.usageMode === 'multi') {
-    // Döngü BİRİM değil ANAHTAR başına döner: her tur FEFO sırasındaki ilk uygun
-    // anahtardan kalanı kadarını (LEAST(kalan talep, anahtarın kalanı)) alır. 500
-    // kapasiteli anahtarlarda 200 birim TEK gidiş-dönüşte karşılanır; eskiden 200
-    // ayrı UPDATE round-trip'iydi (hepsi tek transaction, kilitler tutulurken).
+    // Döngü BİRİM değil ANAHTAR başına döner: her tur uygun anahtardan kalanı kadarını
+    // (LEAST(kalan talep, anahtarın kalanı)) alır. 500 kapasiteli anahtarlarda 200 birim
+    // TEK gidiş-dönüşte karşılanır; eskiden 200 ayrı UPDATE round-trip'iydi (hepsi tek
+    // transaction, kilitler tutulurken).
     //
-    // Dağılım değişmedi: anahtar dolana kadar ondan alınır, artan talep sonrakine taşar.
+    // DAĞILIM (bkz. consumeMultiUseCapacity): önce talebi TEK BAŞINA karşılayan anahtar
+    // aranır → tipik sipariş TEK anahtar + TEK atama alır. Hiçbiri karşılamıyorsa eski
+    // davranış: FEFO/FIFO ilk anahtar doldurulur, artan talep sonrakine taşar. Döngü her
+    // turda KALAN talebe göre yeniden sorduğu için taşma turlarında da "kalanı tek başına
+    // karşılayan" bir anahtar varsa o seçilir (gereksiz üçüncü anahtar açılmaz).
     const byKey = new Map<string, number>();
     let remaining = units;
     while (remaining > 0) {

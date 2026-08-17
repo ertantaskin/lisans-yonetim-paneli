@@ -145,6 +145,9 @@ export class OrdersService {
           productKind: products.kind,
           payloadSchema: products.payloadSchema,
           onExpiry: products.onExpiry,
+          // `units`in anlamı buna bağlıdır (MAK'ta etkinleştirme hakkı) — mağaza yüzeyi
+          // birim bilgisini yalnız `multi` üründe basar. Bkz. DeliveryItem.usageMode.
+          usageMode: products.usageMode,
           /*
            * §7 kurulum rehberi — YALNIZ KİMLİK. Gövde bilerek BU sorguda taşınmaz.
            *
@@ -276,6 +279,7 @@ export class OrdersService {
         validUntil: r.validUntil ? r.validUntil.toISOString() : null,
         expired: r.validUntil ? r.validUntil.getTime() < now : false,
         kind: r.productKind,
+        usageMode: r.usageMode,
         // Rehberin yalnız KİMLİĞİ kaleme yazılır; metni `guides` dizisinde bir kez durur.
         guideId: r.guideId,
       };

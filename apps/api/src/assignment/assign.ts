@@ -225,6 +225,30 @@ export interface MultiUseTake {
  * o süre boyunca tutulduğu için eşzamanlı siparişlerde çekişme katlanıyordu. Artık
  * çağıran ANAHTAR başına döner, birim başına değil.
  *
+ * ── DAĞITIM KURALI: "önce TALEBİ TEK BAŞINA KARŞILAYAN anahtar" (kullanıcı kararı) ──
+ *
+ * Eski sıralama yalnız FEFO/FIFO idi: ilk anahtar kalanı kadar verir, artan talep sonrakine
+ * TAŞAR. Bu, kapasite muhasebesi açısından doğruydu ama müşteriye GEREKSİZ yere birden çok
+ * anahtar gönderiyordu — 6 birimlik bir sipariş, 10 kapasiteli boş bir anahtar dururken
+ * "5 kalanı olan anahtardan 5 + yeni anahtardan 1" biçiminde bölünebiliyordu.
+ *
+ * İKİ SOMUT ZARARI vardı: (a) müşteri iki anahtar görüyor ve HANGİSİNİ kaç kez
+ * etkinleştirebileceğini bilmiyor; (b) MAK'ta anahtarın kendisi paylaşımlıdır — panel
+ * yalnız DEFTER tutar, teknik olarak müşteriyi anahtarın kalan kapasitesini kullanmaktan
+ * alıkoyan bir şey yoktur; dolayısıyla müşterinin eline geçen her FAZLADAN anahtar, fazladan
+ * aşırı-etkinleştirme yüzeyidir. Bu yüzden hedef: sipariş başına EN AZ sayıda anahtar.
+ *
+ * Sıralamanın BİRİNCİ anahtarı artık "kalan kapasitesi tek başına talebi karşılıyor mu";
+ * FEFO (`expires_at`) ve FIFO (`created_at, seq`) AYNEN ikinci/üçüncü anahtar olarak durur.
+ * Sonuçlar:
+ *   • karşılayan anahtar varsa → TEK anahtar, TEK atama ("aynı anahtarı N kez etkinleştir").
+ *   • karşılayan yoksa → ESKİ davranış birebir (FEFO ilk anahtarı doldur, kalanı taşır).
+ *   • küçük talep, yarım kalmış anahtarı da "karşılayan" yapar ve FIFO onu ÖNCE seçer →
+ *     parça kapasiteler çürümez, doldurulur.
+ * FEFO'nun zayıfladığı TEK durum: süresi yakın bir anahtarın KALANI talebi karşılamıyorsa
+ * o tur atlanır. Kapasitesi ondan küçük her sipariş onu yine ilk sırada seçeceği için parça
+ * kapasite satılmaya devam eder (ve `expires_at` MAK'ta pratikte NULL'dır).
+ *
  * @returns düşülen anahtar + alınan birim; hiç kapasite yoksa null
  */
 export async function consumeMultiUseCapacity(
@@ -246,7 +270,11 @@ export async function consumeMultiUseCapacity(
         AND status = 'available'
         AND use_count < max_uses
         AND ${notExpiredCond()}
-      ORDER BY expires_at ASC NULLS LAST, created_at, seq
+      -- 1) TALEBİ TEK BAŞINA KARŞILAYAN ANAHTAR ÖNCE (kullanıcı kararı — bkz. üstteki blok).
+      --    Boolean sıralamada true > false olduğu için DESC "karşılayanlar önce" demektir.
+      -- 2-3) FEFO + FIFO AYNEN korunur (yalnız birinci anahtar eklendi).
+      ORDER BY (max_uses - use_count >= ${want}) DESC,
+               expires_at ASC NULLS LAST, created_at, seq
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )

@@ -26,6 +26,7 @@ import {
   earliestValidUntil,
   formatValidUntil,
   formatValidUntilIso,
+  unitLabel,
   withGuides,
 } from './mail-render';
 
@@ -37,6 +38,12 @@ import {
  * siparişin maili müşteriye gitmiyor" gerçeğini operatörden gizlemez.
  */
 export interface DeliveryMailContent {
+  /**
+   * Nihai SMTP gönderici başlığı (`MAIL_FROM`) — gerçek gönderimde `sendMail({from})` ile
+   * BİREBİR aynı değer. Önizleme ekranı zarf başlığını buradan kurar; ayrı bir yerden
+   * okunsaydı panelde görünen "Kimden" ile müşterinin gördüğü ayrışabilirdi.
+   */
+  from: string;
   /** Nihai SMTP alıcısı (sandbox → MAIL_FROM). */
   to: string;
   /** Siparişin müşteri adresi (sandbox'ta bile gerçek adres). */
@@ -151,6 +158,9 @@ export class DeliveryMailBuilder {
           productId: orderLines.productId,
           productKind: products.kind,
           payloadSchema: products.payloadSchema,
+          // MAK/çok kullanımlık ayrımı: birim etiketinin ANLAMI buna bağlı (aşağıdaki
+          // `unitLabel`). `units` tek başına yeterli DEĞİLDİR — tek kullanımlıkta da 1'dir.
+          usageMode: products.usageMode,
         })
         .from(assignments)
         .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
@@ -184,7 +194,7 @@ export class DeliveryMailBuilder {
           CryptoService.licenseItemAad(r.licenseItemId),
         );
         const label = r.productName ?? 'Ürün';
-        const qty = r.units > 1 ? ` (${r.units} adet)` : '';
+        const qty = unitLabel(r.units, r.usageMode, r.productKind);
         // Geçerlilik bitişi kaleme YAZILIR: çok kalemli siparişte kalemler FARKLI tarihler
         // taşır → tek bir {{valid_until}} değişkeni bunu doğru anlatamaz.
         const until = formatValidUntil(r.validUntil);
@@ -248,6 +258,7 @@ export class DeliveryMailBuilder {
     return {
       ok: true,
       content: {
+        from: mailFrom,
         to: sandbox ? mailFrom : order.customerEmail,
         customerEmail: order.customerEmail,
         subject: sandbox ? `[TEST MODU] ${subject}` : subject,

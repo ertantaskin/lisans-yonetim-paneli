@@ -220,17 +220,42 @@ function LicenseRow({
   owner: boolean;
 }) {
   const vu = fmtValidUntil(a.validUntil);
-  const isMulti = a.maxUses > 1;
+  /*
+   * MAK/çok kullanımlık mı? ÜRÜNÜN MODU yetkilidir; `maxUses > 1` yalnız alan gelmediğinde
+   * (eski API imajı) kullanılan yedek çıkarımdır.
+   */
+  const isMulti = a.usageMode === 'multi' || a.maxUses > 1;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-3 py-2 first:border-t-0">
       <div className="min-w-0 flex-1">
         <AssignmentLicenseCell kind={a.kind} payload={a.payload} fields={a.fields} />
       </div>
       <StatusBadge status={a.status} />
+      {/*
+        MAK'ta İKİ AYRI SAYI vardır ve karıştırılmaları operatörü yanıltır (ölçülmüş şikâyet):
+
+          • BU SİPARİŞİN PAYI  → `assignments.units`  (müşteriye giden etkinleştirme hakkı)
+          • ANAHTAR GENELİ     → `license_items.use_count / max_uses` (TÜM siparişlerin toplamı)
+
+        Eskiden yalnız ikincisi, üstelik ETİKETSİZ basılıyordu. Gerçek bir siparişte (dev #69,
+        qty=6) ekranda "10/10 kullanım" ve "6/10 kullanım" görünüyordu; operatör bunları toplayıp
+        "6 alındı ama 16 kullanım hakkı teslim edilmiş" sonucuna vardı. Oysa o siparişin payı
+        5 + 1 = 6 idi; kalan 10, ÖNCEKİ siparişlere aitti. Panel doğru veriyi yanlış anlatıyordu.
+
+        Artık siparişin payı ÖNCE ve vurgulu, anahtar geneli ise AÇIK ETİKETLE ikincil gösterilir.
+      */}
       {isMulti && (
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {a.useCount}/{a.maxUses} kullanım
-        </span>
+        <>
+          <span className="text-xs tabular-nums text-foreground">
+            bu siparişte <strong>{a.units}</strong> etkinleştirme
+          </span>
+          <span
+            className="text-xs tabular-nums text-muted-foreground"
+            title="Anahtarın TÜM siparişlerdeki toplam kullanımı — bu siparişin payı değildir."
+          >
+            anahtar geneli {a.useCount}/{a.maxUses}
+          </span>
+        </>
       )}
       {vu.text && (
         <span className={`text-xs ${vu.expired ? 'text-warning' : 'text-muted-foreground'}`}>
@@ -394,6 +419,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   // yanlış" sanar (sessiz düşüş bu panelde yasak).
   const totalCanceledUnits = lines.reduce((s, l) => s + canceledUnitsOf(l), 0);
   const activeCount = assignments.filter(isActive).length;
+  /*
+   * Canlı atamaların BİRİM toplamı. MAK'ta bir ANAHTAR birden çok etkinleştirme taşır →
+   * "2 aktif lisans" ile "6 birim teslim edildi" aynı ekranda çelişiyormuş gibi görünüyordu.
+   * Toplam yalnız kalem sayısından BÜYÜKSE yazılır (tek kullanımlık siparişte gürültü yok).
+   */
+  const activeUnits = assignments
+    .filter(isActive)
+    .reduce((s, a) => s + (typeof a.units === 'number' ? a.units : 1), 0);
   const fullyDelivered = totalFulfilled >= totalQty && totalQty > 0;
   // Hedefin TAMAMI iptal edildiyse "0/0 kısmi/bekliyor" demek yanlış: bekleyen bir iş yok.
   // Ton da uyarı DEĞİL nötr (kapanmış kayıt — panelin TON KURALI).
@@ -523,6 +556,11 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <KeyRound className="size-4 text-muted-foreground" />
             <strong className="tabular-nums text-foreground">{activeCount}</strong>
             <span className="text-muted-foreground">aktif lisans</span>
+            {activeUnits > activeCount && (
+              <span className="text-xs text-muted-foreground">
+                · toplam {activeUnits} etkinleştirme hakkı
+              </span>
+            )}
             {terminalAsg.length > 0 && (
               <span className="text-xs text-muted-foreground">· {terminalAsg.length} geçmiş</span>
             )}

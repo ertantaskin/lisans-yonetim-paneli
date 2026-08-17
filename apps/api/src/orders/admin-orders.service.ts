@@ -2111,6 +2111,9 @@ export class AdminOrdersService {
         itemUseCount: licenseItems.useCount,
         productKind: products.kind,
         payloadSchema: products.payloadSchema,
+        // `units`in anlamı (MAK'ta etkinleştirme hakkı) — meta box birim satırını buna göre
+        // basar. `maxUses > 1` ÇIKARIMI YETMEZ: o sayaç ANAHTAR GENELİDİR, ürünün modu değil.
+        usageMode: products.usageMode,
       })
       .from(assignments)
       .innerJoin(licenseItems, eq(assignments.licenseItemId, licenseItems.id))
@@ -2206,6 +2209,7 @@ export class AdminOrdersService {
           maskedFields: masked.maskedFields,
           maxUses: a.itemMaxUses,
           useCount: a.itemUseCount,
+          usageMode: a.usageMode,
         };
       }),
       history: historyRows.map((h) => {

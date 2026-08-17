@@ -186,34 +186,86 @@ describe('MAK/çok kullanımlık satış yolu (entegrasyon)', () => {
     expect(keys[1]!.assignedAt).toBeNull();
   });
 
-  it('(a2) taşma: 3+4 → kalan 2 birim ilk anahtardan, 2 birim İKİNCİ anahtardan (seq sırası)', async () => {
+  it('(a2) tek anahtar tercihi: 3+4 → talebi TEK BAŞINA karşılayan anahtardan TEK atama', async () => {
     const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
 
     const first = await orders.createOrder(site, makeDto(3));
     expect(first.body.lines[0]!.fulfilledQty).toBe(3);
 
-    // Ardından 4 birim: ilk anahtarda 2 kalmıştı → 2 oradan, 2 sonraki anahtardan.
+    // İlk anahtarda 2 kaldı, ikinci anahtar boş (5). 4 birimlik talep:
+    // ESKİ davranış 2+2 diye BÖLÜYORDU → müşteri iki anahtar alıyor ve hangisini kaç kez
+    // etkinleştirebileceğini bilmiyordu. YENİ kural: talebi tek başına karşılayan anahtar
+    // (ikinci) seçilir → TEK anahtar, TEK atama. (assign.ts: "tek anahtar tercihi".)
     const second = await orders.createOrder(site, makeDto(4));
 
     expect(second.httpStatus).toBe(201);
     expect(second.body.status).toBe('fulfilled');
-    // İKİ atama: talep tek anahtarın kalanını aştığı için sonrakine TAŞTI.
-    expect(second.body.assignments).toHaveLength(2);
+    expect(second.body.assignments).toHaveLength(1);
+    expect(second.body.assignments[0]!.units).toBe(4);
     expect(second.body.lines[0]).toMatchObject({ status: 'fulfilled', fulfilledQty: 4 });
 
     const keys = await keysOf(productId);
     const [k1, k2] = keys;
-    // FEFO/seq: ÖNCE girilen anahtar ÖNCE doldurulur ve dolunca 'depleted' olur.
-    expect(k1!.useCount).toBe(5);
-    expect(k1!.status).toBe('depleted');
-    expect(k2!.useCount).toBe(2);
+    // İlk anahtara DOKUNULMADI (parçası duruyor); talep ikinci anahtardan tek parça karşılandı.
+    expect(k1!.useCount).toBe(3);
+    expect(k1!.status).toBe('available');
+    expect(k2!.useCount).toBe(4);
     expect(k2!.status).toBe('available');
 
-    // Atamaların birim dağılımı anahtar bazında doğrulanır (sıra değil, DAĞILIM kilitlenir).
     const rows = await assignmentsOf(second.body.orderId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.licenseItemId).toBe(k2!.id);
+    expect(rows[0]!.units).toBe(4);
+  });
+
+  it('(a2b) hiçbir anahtar tek başına yetmiyorsa TAŞMA korunur (FEFO/seq ile doldur-taşır)', async () => {
+    const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
+
+    // Her iki anahtarı da kısmen tüket: 3 → k1(3/5), sonra 3 → k2(3/5) (tek anahtar tercihi).
+    await orders.createOrder(site, makeDto(3));
+    await orders.createOrder(site, makeDto(3));
+
+    // Artık kalan 2 + 2 = 4; 4 birimlik talebi HİÇBİR anahtar tek başına karşılayamaz →
+    // eski davranış aynen: FEFO/seq ilk anahtar doldurulur, artan sonrakine taşar.
+    const third = await orders.createOrder(site, makeDto(4));
+
+    expect(third.httpStatus).toBe(201);
+    expect(third.body.assignments).toHaveLength(2);
+    expect(third.body.lines[0]).toMatchObject({ status: 'fulfilled', fulfilledQty: 4 });
+
+    const keys = await keysOf(productId);
+    const [k1, k2] = keys;
+    expect(k1!.useCount).toBe(5);
+    expect(k1!.status).toBe('depleted');
+    expect(k2!.useCount).toBe(5);
+    expect(k2!.status).toBe('depleted');
+
+    const rows = await assignmentsOf(third.body.orderId);
     const byItem = new Map(rows.map((r) => [r.licenseItemId, r.units]));
     expect(byItem.get(k1!.id)).toBe(2);
     expect(byItem.get(k2!.id)).toBe(2);
+  });
+
+  it('(a2c) parça kapasite çürümez: küçük talep, yarım kalmış anahtarı FIFO ile ÖNCE seçer', async () => {
+    const { site, productId, makeDto } = await makScenario({ keys: 2, maxUses: 5 });
+
+    // k1 → 4/5 (1 boş kaldı), sonra 4 birim → k2'den (tek anahtar tercihi) 4/5.
+    await orders.createOrder(site, makeDto(4));
+    await orders.createOrder(site, makeDto(4));
+
+    // 1 birimlik talebi İKİ anahtar da tek başına karşılayabilir → eşitliği FIFO çözer:
+    // ÖNCE girilen (k1) seçilir ve parça kapasite kapanır ('depleted').
+    const small = await orders.createOrder(site, makeDto(1));
+    expect(small.body.assignments).toHaveLength(1);
+
+    const keys = await keysOf(productId);
+    const [k1, k2] = keys;
+    expect(k1!.useCount).toBe(5);
+    expect(k1!.status).toBe('depleted');
+    expect(k2!.useCount).toBe(4);
+
+    const rows = await assignmentsOf(small.body.orderId);
+    expect(rows[0]!.licenseItemId).toBe(k1!.id);
   });
 
   it('(a3) kapasiteden fazla talep: 11 istendi / 10 kapasite → 10 teslim, KAPASİTE AŞILMAZ', async () => {

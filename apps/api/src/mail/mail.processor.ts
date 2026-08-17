@@ -125,7 +125,10 @@ export class MailProcessor extends WorkerHost {
       }
 
       const info = await this.mailer().sendMail({
-        from: this.config.getOrThrow<string>('MAIL_FROM'),
+        // `from` ARTIK builder'dan gelir (aynı `MAIL_FROM`, tek okuma noktası): önizleme
+        // ekranı zarf başlığını `content.from` ile kuruyor — burada ayrıca config'ten
+        // okunsaydı iki yüzey ilerideki bir değişiklikte sessizce ayrışabilirdi.
+        from: built.content.from,
         to: built.content.to,
         subject: built.content.subject,
         text: built.content.text,

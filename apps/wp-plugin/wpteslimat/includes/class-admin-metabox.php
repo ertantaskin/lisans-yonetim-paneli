@@ -342,6 +342,25 @@ class Wpteslimat_Admin_Metabox {
     }
 
     /**
+     * Bu atama ÇOK KULLANIMLI (MAK) bir üründen mi geliyor?
+     *
+     * Kaynak panelin YETKİLİ `usageMode` alanıdır (`siteAdminView` EKLEMELİ olarak döndürür) —
+     * eklenti ince istemcidir, bu bilgiyi kendi kapasitesinden TÜRETMEZ.
+     *
+     * @param array $a        atama kaydı
+     * @param bool  $fallback alan gelmezse (eski panel imajı / dağıtım sapması) kullanılacak değer.
+     *                        Çağıranlar bilinçli olarak farklı fallback verir: yetki/aksiyon
+     *                        kapılarında fail-safe çıkarım (`maxUses > 1`), yeni GÖSTERİM
+     *                        kapılarında `false` — böylece eski panelde davranış AYNEN korunur.
+     */
+    private static function is_multi_usage($a, $fallback = false) {
+        if (isset($a['usageMode']) && is_string($a['usageMode']) && $a['usageMode'] !== '') {
+            return $a['usageMode'] === 'multi';
+        }
+        return (bool) $fallback;
+    }
+
+    /**
      * Tek atama satırı (maskeli değer + durum pill + key-bazlı aksiyonlar).
      *
      * Değişimle ölen anahtar "İptal" yerine "Değiştirildi" gösterilir; kaynak PANELİN `replaced`
@@ -380,18 +399,17 @@ class Wpteslimat_Admin_Metabox {
          * envanter) düğmeyi bu sebeple KAPATIYOR; mağaza yüzeyi açık kalmıştı → operatör tıklıyor
          * ve 400 alıyordu. Bu projede "tıklanıp hata veren düğme, hiç sunulmayandan kötüdür".
          *
-         * ÇIKARIMIN SINIRI (bilinçli): panelin red ölçütü ÜRÜNÜN `usage_mode` alanıdır, KALEMİN
-         * kapasitesi değil — ama `siteAdminView` yanıtı `usageMode` DÖNDÜRMEZ (yalnız `maxUses` +
-         * `useCount` gelir). Elde olan en yakın sinyal `maxUses > 1`:
-         *   - Yanlış-negatif YOK: multi ürünlerde kapasite her zaman >1 (ürün oluşturmada
-         *     `multi ⇒ maxUses>1` refine'ı + stok import guard'ı) → MAK atamaları KESİN yakalanır.
-         *   - Yanlış-pozitif teorik olarak mümkün: tek-kullanımlık bir üründe `max_uses>1` taşıyan
-         *     bir kalem bulunursa düğme gereksiz kapanır. Yön BİLEREK güvenli tarafta seçildi
-         *     (çalışabilecek bir düğmeyi gizlemek, garantili 400 veren düğme sunmaktan iyidir).
-         * Panel `siteAdminView`'a `usageMode` eklerse ölçüt DOĞRUDAN o alana taşınmalıdır.
+         * ÖLÇÜT ARTIK DOĞRUDAN `usageMode` (panel `siteAdminView`'a EKLEMELİ olarak ekledi) —
+         * panelin red ölçütüyle BİREBİR aynı alan. Eskiden en yakın sinyal olan `maxUses > 1`
+         * kullanılıyordu ve yanlış-pozitif üretebiliyordu (tek-kullanımlık üründe kapasite>1
+         * taşıyan bir kalem bulunursa düğme gereksiz kapanırdı).
+         *
+         * GERİYE DÖNÜK UYUM: alan gelmezse (eski panel imajı / dağıtım sapması) ESKİ `maxUses > 1`
+         * çıkarımına düşülür — yanlış-negatif YOK, çünkü multi ürünlerde kapasite her zaman >1
+         * (ürün oluşturmada `multi ⇒ maxUses>1` refine'ı + stok import guard'ı).
          */
         $max_uses     = isset($a['maxUses']) ? (int) $a['maxUses'] : 1;
-        $is_multi_key = $max_uses > 1;
+        $is_multi_key = self::is_multi_usage($a, $max_uses > 1);
 
         echo '<li class="wpteslimat-asg-row wpt-key" data-assignment="' . esc_attr($aid) . '">';
 
@@ -430,16 +448,29 @@ class Wpteslimat_Admin_Metabox {
         // Bu ATAMANIN bu siparişe verdiği kullanım hakkı (birim). MAK'ta tek atama birden çok
         // aktivasyon taşır (qty=3 → tek satır, 3 hak) — satırda yazmazsa operatör "1 lisans"
         // görüp eksik teslimat sanıyor ve bedava "+1 Bonus" veriyordu.
+        //
+        // KAPI MAK'ta KOŞULSUZ: eski `units > 1` ölçütü, aynı siparişin bir MAK anahtarından
+        // yalnız 1 birim aldığı satırı (ölçülen gerçek sipariş: 5 birim A + 1 birim B) açıklamasız
+        // bırakıyordu → operatör o anahtarın tamamının bu siparişe ait olduğunu sanıyordu.
+        // Paylaşımlı anahtarda "1" de anlamlı bilgidir.
+        //
+        // Burada `$is_multi_key` DEĞİL, fallback'siz kip (`usageMode==='multi'`) sorulur: eski panel
+        // sürümünde (alan yok) davranış AYNEN eski hâlinde kalmalı, `maxUses` çıkarımıyla yeni çip
+        // basılmamalıdır. Değiştir-düğmesi kapısı ise fail-safe yönde fallback kullanmaya devam eder.
         $units = isset($a['units']) ? max(1, (int) $a['units']) : 1;
-        if ($units > 1) {
+        if (self::is_multi_usage($a, false) || $units > 1) {
             echo '<span class="wpt-meta">'
                 . sprintf(esc_html__('Bu siparişte %d kullanım hakkı', 'wpteslimat'), $units)
                 . '</span>';
         }
-        if ($is_multi_key) {
+        if ($max_uses > 1) {
             // O11: bu sayaç ANAHTARIN GENELİDİR (tüm siparişler/müşteriler toplamı), bu
             // siparişin harcaması DEĞİL. Etiketsiz "12/500 kullanım" çipi "bu müşteri 12
             // kullanım harcadı" diye okunuyordu → anlamı çipin İÇİNE yazıldı.
+            //
+            // Kapı `$is_multi_key` DEĞİL doğrudan kapasitedir: bu çip anahtarın SAYACINI anlatır,
+            // ürünün kipini değil — kapasite 1 ise sayaç zaten anlamsızdır, >1 ise (kip ne olursa
+            // olsun) operatörün görmesi gerekir.
             echo '<span class="wpt-meta" title="'
                 . esc_attr__('Bu sayaç anahtarın tüm siparişlerdeki toplam kullanımıdır; yalnız bu siparişe ait değildir.', 'wpteslimat')
                 . '">'
@@ -547,16 +578,22 @@ class Wpteslimat_Admin_Metabox {
         // sanıp "+1 Bonus" verdiğinde BEDAVA lisans çıkıyordu. Artık birim toplamı da
         // sayılır; tek kullanımlık üründe (tüm units=1) metin AYNEN eski hâlinde kalır
         // (gürültü eklenmez).
+        //
+        // MAK KAPISI: eski `units_total > total` ölçütü, MAK siparişinin birim toplamı kayıt
+        // sayısına EŞİT olduğu durumda (ör. qty=1 → tek anahtardan 1 birim) hiçbir şey basmıyordu →
+        // operatör paylaşımlı anahtarı "tamamı bu siparişin" sanıyordu. Artık atamalardan biri MAK
+        // ise toplam HER ZAMAN yazılır. `usageMode` gelmezse (eski panel) eski ölçüt aynen geçerli.
         $total = count($mine);
-        $active = 0; $suspended = 0; $units_total = 0;
+        $active = 0; $suspended = 0; $units_total = 0; $has_multi = false;
         foreach ($mine as $a) {
             $s = isset($a['status']) ? $a['status'] : '';
             if ($s === 'active') $active++;
             elseif ($s === 'suspended') $suspended++;
             $units_total += isset($a['units']) ? max(1, (int) $a['units']) : 1;
+            if (self::is_multi_usage($a, false)) $has_multi = true;
         }
         $summary = intval($total) . ' ' . esc_html__('lisans', 'wpteslimat');
-        if ($units_total > $total) {
+        if ($has_multi || $units_total > $total) {
             $summary .= ' ' . sprintf(esc_html__('(toplam %d kullanım hakkı)', 'wpteslimat'), $units_total);
         }
         if ($active > 0)    $summary .= ' · ' . $active . ' ' . esc_html__('aktif', 'wpteslimat');

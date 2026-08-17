@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { OrderLineStatus, OrderStatus, ProductKind } from '../domain/enums';
+import { OrderLineStatus, OrderStatus, ProductKind, UsageMode } from '../domain/enums';
 import { truncateUtf16Safe } from '../domain/text';
 
 /**
@@ -129,6 +129,18 @@ export const DeliveryItem = z.object({
   expired: z.boolean(),
   /** Ürün tipi — WP eklentisi/admin buna göre render dallanır. */
   kind: ProductKind,
+  /**
+   * Ürünün kullanım modu — `units` alanının ANLAMINI belirler (§2).
+   *
+   * `single`: bir kalem = bir kullanım; `units` daima 1'dir ve mağaza yüzeyinde YAZILMAZ.
+   * `multi` (MAK): anahtar PAYLAŞIMLIDIR; `units` bu siparişin o anahtar üzerindeki
+   * ETKİNLEŞTİRME HAKKIDIR ve 1 olsa bile müşteriye SÖYLENMELİDİR — aksi hâlde müşteri
+   * elindeki çok kullanımlık anahtarın tamamen kendisine ait olduğunu sanır (ölçülmüş
+   * şikâyet: 6 birimlik sipariş "iki anahtar, 16 kullanım hakkı" gibi okunuyordu).
+   *
+   * OPSİYONEL: eski panel imajında alan gelmez → eklenti eski kuralına (`units > 1`) düşer.
+   */
+  usageMode: UsageMode.nullable().optional(),
   /** key/code/custom için düz payload; account'ta null (fields kullanılır). */
   payload: z.string().nullable(),
   /** account için yapılandırılmış alanlar; diğer tiplerde null. */
