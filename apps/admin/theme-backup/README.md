@@ -1,5 +1,20 @@
 # Tema yedeği — `legacy/` (Inter + klasik shadcn-admin kabuğu)
 
+> ## ⚠ ARTIK GERİ YÜKLENEBİLİR DEĞİL — TARİHÎ ANLIK GÖRÜNTÜ
+>
+> Yedek alındıktan sonra tema dili esaslı biçimde değişti: durum renkleri **beş hue**ya çıktı
+> ve rozet / uyarı / StatTile yüzeyleri artık `--<hue>-vivid`, `--<hue>-fill`, `--<hue>-ring`
+> token'larından besleniyor. **Ölçüldü:** `legacy/app/globals.css` bunların hiçbirini
+> tanımlamıyor (`--success-vivid` → yedekte **0**, güncel dosyada **6** kez). Geri yükleme
+> sessizce renksiz/eksik bir arayüz bırakır; "tek komutta eski temaya dön" sözü bugün tutmuyor.
+>
+> `restore.sh` bu yüzden varsayılan olarak **durur** (bilerek geçmek için
+> `THEME_RESTORE_ONAY=1`). Gerçekten eski bir dosyaya dönmek gerekiyorsa doğru araç git'tir:
+> `git log --oneline -- apps/admin/app/globals.css` → `git checkout <sha> -- <dosya>`.
+>
+> Klasör yine de duruyor çünkü hangi kararın neyin yerine geçtiğini gösteren okunabilir bir
+> kayıt; silinmesi gerekirse git geçmişi zaten koruyor.
+
 Bu klasör, **shadcnspace uyarlamasından ÖNCEKİ** temanın birebir kopyasıdır.
 Kod tabanının geri kalanına dokunulmaz; buradaki dosyalar yalnızca **yedektir**
 (build'e girmez, import edilmez).

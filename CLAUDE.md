@@ -54,9 +54,13 @@ teslimle başlar), kod/hediye çeki, stoksuz/ön sipariş (`stockless`, `release
 > semantik durum dili (`success/info/warning/attention/destructive`) KORUNDU — referansta yok
 > ama panelin durum dili buna bağlı.
 >
-> **ESKİ TEMA YEDEĞİ:** `apps/admin/theme-backup/legacy/` (16 dosya birebir) +
-> `theme-backup/README.md` + `bash apps/admin/theme-backup/restore.sh` ile tek komutta geri
-> yüklenir. Klasör `tsconfig.json` `exclude` ve `check-use-server.js` `SKIP_DIRS` içinde —
+> **ESKİ TEMA YEDEĞİ (artık geri yüklenebilir DEĞİL):** `apps/admin/theme-backup/legacy/` bir
+> TARİHÎ ANLIK GÖRÜNTÜDÜR. Yedek alındıktan sonra durum renkleri beş hue'ya çıktı ve yüzeyler
+> `--<hue>-vivid/-fill/-ring` token'larından besleniyor; yedekteki `globals.css` bunları
+> TANIMLAMIYOR (ölçüldü: `--success-vivid` yedekte 0, güncelde 6) → geri yükleme sessizce
+> renksiz bir arayüz bırakırdı. `restore.sh` bu yüzden varsayılan olarak DURUR
+> (`THEME_RESTORE_ONAY=1` ile geçilir); eski bir dosyaya dönmenin doğru yolu git'tir.
+> Klasör `tsconfig.json` `exclude` ve `check-use-server.js` `SKIP_DIRS` içinde —
 > build'e/taramaya GİRMEZ (girseydi göreli import'lar typecheck'i kırardı).
 
 Referans (palet + token mimarisi): **satnaing/shadcn-admin** (shadcn-admin.netlify.app). Stack: klasik
