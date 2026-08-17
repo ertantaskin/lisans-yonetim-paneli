@@ -31,10 +31,18 @@ yalnızca `assignment_id` referansı kalır.
 - **Admin UI:** Next.js + Tailwind v4 + shadcn/ui + TanStack Table/Query + Recharts
 - **DB:** PostgreSQL 17 + Drizzle ORM (SKIP LOCKED, partial index, JSONB, partition)
 - **Kuyruk/cache:** Redis 7 + BullMQ (mail, webhook, tamamlama, nonce, rate limit)
-- **Mail:** Resend/SES — site başına domain doğrulamalı (SPF/DKIM/DMARC)
+- **Mail:** SMTP (nodemailer) + BullMQ kuyruğu; geliştirmede Mailpit.
+  *(Plan Resend/SES + site başına domain doğrulamasıydı; kurulum SMTP-only ilerledi —
+  `bounced` durumu üretilmez, §2.5.)*
 - **Dağıtım:** Docker Compose + Caddy (otomatik TLS), tek VPS; API stateless çoğaltılır
-- **Yedek:** pgBackRest → offsite S3 + sürekli WAL (PITR); master key AYRI saklanır
-- **Gözlem:** Sentry + pino JSON log + Uptime Kuma; monorepo pnpm + Turborepo
+- **Yedek:** `pg_dump` + `scripts/backup-runner.sh` (cron) + aylık geri-yükleme TATBİKATI;
+  dış kopya bir **kancadır** (`BACKUP_OFFSITE_CMD`) ve kurulu değilse panel `backup_offsite`
+  alarmı üretir. MASTER_KEY yedeğin İÇİNDE DEĞİL — ayrı kasada. *(Plan pgBackRest + S3 + WAL/PITR
+  idi; bugünkü gerçek budur — ayrıntı `docs/RUNBOOK-DR.md`.)*
+- **Gözlem:** pino JSON log (PII maskeli) + `/v1/health` (degrade → 503) + panel içi alarmlar
+  (`notifications`). **Sentry env-gated, varsayılan KAPALI** (`SENTRY_DSN` yoksa hiç başlatılmaz).
+  *(Uptime Kuma kurulmadı — dışarıdan izleme hâlâ operatöre kalan bir iştir.)*
+- Monorepo: pnpm + Turborepo
 - **Neden mikroservis değil:** 1K–10K sipariş/gün modüler monolit için küçük yük;
   modüller (stok/atama/teslimat/site) net sınırlı, gerekirse worker ayrılır.
 
@@ -53,24 +61,50 @@ gizli anahtarıyla tanımlı.
    atama tamamdır, kuyruk tekrar dener).
 4. Müşteri "Siparişlerim → görüntüle": WP **server-side** panelden çeker; panel
    API'si ve sırlar tarayıcıya asla açılmaz, credential cache'lenmez.
-5. Sağlayıcı `delivered/bounced` webhook'u → `email_log` → admin meta box'ta görünür.
+5. Gönderim sonucu `email_log`'a yazılır → panelde ve WP meta box'ta görünür.
+   **Bilinçli daraltma:** mail sağlayıcı `delivered/bounced` webhook'u YOK — kurulum SMTP-only
+   ilerledi, dolayısıyla `bounced` durumu hiç üretilmez. Bu belge bir dönem sağlayıcı webhook'u
+   varmış gibi yazıyordu; gerçek yetenek budur.
 
 ### Atomik stok atama (sistemin kalbi)
+
+> ⚠ **`WHERE id IN (SELECT … LIMIT n FOR UPDATE SKIP LOCKED)` YAZMAYIN.** Bu belge bir dönem tam
+> olarak o yazımı örnek gösteriyordu ve **üretimde aşırı teslimat üretti** (ÖLÇÜLDÜ: `qty=6`
+> istenirken 20 satır — o ürünün TÜM stoğu — atandı). READ COMMITTED'da UPDATE hedef satırı
+> eşzamanlı değiştirilmiş bulursa WHERE'i yeniden değerlendirir (EvalPlanQual) ve kilit yan
+> etkili alt sorgu YENİDEN koşar; her koşuda "ilk n"i baştan seçtiği ve `SKIP LOCKED` farklı
+> satırlar döndürdüğü için **LIMIT fiilen kalkar**. Doğrusu, seçimi bir kez maddeleştiren
+> `MATERIALIZED` CTE'dir (`MATERIALIZED` açıkça yazılmalı: tek referanslı CTE inline edilebilir).
+
 ```sql
-UPDATE license_items SET status='assigned', assigned_at=now()
-WHERE id IN (
+WITH picked AS MATERIALIZED (
   SELECT id FROM license_items
   WHERE product_id = $1 AND status = 'available'
-  ORDER BY created_at LIMIT $2
-  FOR UPDATE SKIP LOCKED)
-RETURNING id;
+    AND (expires_at IS NULL OR expires_at > now())      -- süresi geçmiş kalem atanmaz
+  ORDER BY expires_at ASC NULLS LAST, created_at, seq   -- FEFO → FIFO → giriş sırası
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
+UPDATE license_items li SET status='assigned', assigned_at=now()
+FROM picked p WHERE li.id = p.id
+RETURNING li.id;
 ```
+
 - `FOR UPDATE SKIP LOCKED`: eşzamanlı siparişler farklı satır kilitler, deadlock yok,
   aynı satır iki kez seçilemez.
+- **Fail-closed kalkan:** dönen satır sayısı istenenden çoksa transaction PATLATILIR. Bu sınıf
+  arıza sessizdir (müşteriye bedava lisans + envanterden yanma) ve aylarca "testler bazen
+  kırmızı" gürültüsü sanıldı — rollback, yanlış teslimattan iyidir.
+- **Sıralama tie-break'i zorunludur:** aynı içe aktarmanın tüm satırları tek transaction'da
+  yazıldığı için `created_at` damgaları BİREBİR aynıdır; `seq` olmadan blok içi sıra keyfidir.
 - Idempotency key UNIQUE → tekrar gelen istek yeni atama yapmaz, mevcut cevabı döner.
 - Stok yetersizse: davranış ürün politikasına bağlı (§5). Varsayılan kısmi teslimat.
-- Çok kullanımlıkta (`multi`): satır seçmek yerine kilitli tek satırda
-  `use_count += adet` (koşul: `use_count + adet <= max_uses`) — kapasite aşımı imkânsız.
+- **Çok kullanımlıkta (`multi`)** satır seçilmez, kilitli satırda kapasite düşülür:
+  `LEAST(istenen, max_uses − use_count)` — yani anahtar ne kadar taşıyorsa o kadar alınır, artan
+  talep sonraki anahtara taşar. Sıralamada **birinci anahtar "talebi TEK BAŞINA karşılayan"dır**
+  (müşterinin eline geçen her fazladan anahtar, fazladan aşırı-etkinleştirme yüzeyidir); FEFO/FIFO
+  ikinci-üçüncü anahtar olarak korunur. `max_uses` **anahtar başınadır** (ürün ayarı yalnız
+  VARSAYILAN) — tedarikçiden 50'lik ve 500'lük lotlar birlikte gelebilir.
 
 ### Lisans yaşam döngüsü
 `available → assigned → (suspended ⇄ assigned) | replaced | revoked`
@@ -257,15 +291,25 @@ tanılama sekmesi (Cloudflare/WAF webhook testi dahil), dual-run geçiş modu.
 
 ## 8. Güvenlik
 
-- **Şifreleme:** license_items.payload_enc AES-256-GCM (libsodium), envelope
-  encryption; master key ayrı secret store'da, DB yedeğinden AYRI, çevrimdışı 2 kopya,
-  tatbikatta geri yükleme test edilir.
-- **Patlama yarıçapı (site ele geçirilirse):** site başına **dinamik satış kotası**
-  (30g ort. ×3; aşımda teslimat `held_for_review` + alarm), yüksek adetlide **Woo'ya
-  geri doğrulama** ("bu sipariş gerçekten var/ödendi mi"), **anomali oto-askısı**
-  (imza fırtınası → o kanal durur, diğerleri etkilenmez), her anahtar yalnız kendi sitesi.
-- **Erişim:** admin IP/VPN (Tailscale) + 2FA(TOTP) + RBAC (reveal ayrı rol); DB/Redis
-  dışa kapalı; zod şema doğrulama; parametrik sorgu; CSP.
+- **Şifreleme:** `license_items.payload_enc` **AES-256-GCM** (Node `crypto`; libsodium
+  KULLANILMADI), envelope encryption — payload başına DEK + master key. **AAD kayıt-id'sine
+  bağlıdır** (`license_item:<id>` / `site_secret:<id>` / `connect_token:<id>`) → ciphertext'i
+  başka bir satıra taşımak çözülemez. AAD ad alanı bir dönem `sites` ile connect-token arasında
+  PAYLAŞILIYORDU ve bu, kimlik istemeyen bir ucu **çözme oracle'ına** çeviriyordu — ad alanları
+  ayrıldı ve geri düşüş KALDIRILDI. Master key ayrı kasada, DB yedeğinden AYRI, çevrimdışı 2 kopya.
+- **Patlama yarıçapı (site ele geçirilirse):** site başına **sert satış kotası** (`sales_daily_quota`,
+  advisory-lock altında sayılır → say-sonra-ekle yarışı yok) + **dinamik kota** (30g ort. × çarpan,
+  taban 20; aşımda sipariş REDDEDİLMEZ, `held_for_review` ile insan onayına alınır + `quota_review`
+  güvenlik olayı) · **HMAC IP başarısızlık tavanı** — yalnız auth-FAIL sayılır, meşru mağaza asla
+  kısıtlanmaz · her anahtar yalnız kendi sitesine görünür (çapraz-site erişim 404).
+  **Uygulanmayan iki plan:** yüksek adetlide "Woo'ya geri doğrulama" ve **anomali OTO-ASKISI**
+  yoktur — anomali/velocity yalnız `security_events`'e YAZILIR, kanalı kimse otomatik durdurmaz
+  (§15 "AI/otomasyon önerir, insan onaylar" ilkesiyle bilinçli hizalı).
+- **Erişim:** çoklu-admin **scrypt** (argon2 DEĞİL) + imzalı oturum + her istekte iptal kontrolü
+  (`token_version`) + **owner/admin RBAC** — düz metin lisans YALNIZ owner'a, owner-olmayan admin
+  maskeli görür · **2FA (TOTP, RFC 6238, sıfır bağımlılık)**, kullanıcı başına açılır ·
+  DB/Redis dışa kapalı; zod şema doğrulama; parametrik sorgu; güvenlik başlıkları.
+  **Uygulanmayan plan:** admin IP kısıtı / VPN (Tailscale) — kurulmadı, operatöre kalan bir iştir.
 - **Denetim:** append-only audit_log (reveal, replace, revoke, import, login).
 - **İki kritik kural:** panel API sırları yalnız `wp-config.php` düzeyinde (WP DB'de düz
   metin option değil); müşteri yanıtında revoked/suspended payload SQL seviyesinde
@@ -385,7 +429,12 @@ Payload'lar modele maskeli gider; AI çökerse sistem AI'sız çalışır.
 - Yük testi (k6, p95<300ms), e2e (Playwright + wp-env), migrasyon kuru çalıştırma.
 - Trace ID uçtan uca; dead-letter ekranı + yeniden oynat.
 - Private update endpoint (eklenti sürümü tek yerden dağıtılır).
-- İzleme eşikleri + günlük Telegram özeti. DR: RPO≤5dk / RTO≤2sa, aylık yedek tatbikatı.
+- İzleme eşikleri + günlük Telegram özeti (Telegram env-gated; yoksa no-op).
+- **DR — HEDEF vs BUGÜNKÜ GERÇEK (karıştırmayın):** hedef RPO ≤ 5 dk / RTO ≤ 2 sa. Bugün
+  `pg_dump` + cron + aylık geri-yükleme tatbikatı var; **sürekli WAL arşivleme (PITR) YOK**,
+  dolayısıyla **gerçek RPO = son yedek anı**. Dış kopya kancası kurulmamışsa yedek yalnız aynı
+  sunucudadır (panel `backup_offsite` alarmı üretir). Adım adım kurulum, eşikler ve kurtarma
+  yordamı: **`docs/RUNBOOK-DR.md`** — çelişkide o belge geçerlidir.
 
 ---
 
@@ -452,25 +501,46 @@ aynı); My Account bloğu tema-nötr.
 
 ## 18. Yol haritası
 
-- **Faz 0 (~1 hafta):** VPS + Docker Compose + Caddy + PG + Redis; CI/CD; yedek;
+> **DURUM (2026-08):** Faz 0 · 1 · 2 · 4 **TAMAM ve canlı**. Faz 3 **DÜŞÜRÜLDÜ** (aşağıda).
+> Kodlanabilir mimari eksik kalmadı; açık kalanlar yalnız "Bilinçli kapsam DIŞI" başlığındaki
+> yapısal maddelerdir. Aşağıdaki liste **planın kendisidir** (ne hedeflenmişti) — ne yapıldığının
+> tur-tur kaydı `docs/GECMIS.md`, sürüm bazlı özeti `CHANGELOG.md`.
+
+- **Faz 0 (~1 hafta) ✅:** VPS + Docker Compose + Caddy + PG + Redis; CI/CD; yedek;
   Sentry; NestJS/Next.js monorepo iskeleti; migration altyapısı.
-- **Faz 1 (~3-4 hafta) MVP:** şifreli stok + import, atomik atama + idempotency,
+- **Faz 1 (~3-4 hafta) MVP ✅:** şifreli stok + import, atomik atama + idempotency,
   kısmi teslimat motoru + Bekleyen Teslimatlar, sipariş API + şablon + mail, WP eklentisi
   (push, My Account, meta box: göster/değiştir/tekrar gönder/revoke), geri kanal webhook.
   CI yarış testi ilk günden. Lisans Yönetim Paneli'ta 1-2 pilot ürünle canlı (eski eklenti paralel).
-- **Faz 2 (~2-3 hafta):** hesap ürünleri (JSONB), çok kullanımlık, şablon override, 2. site,
+- **Faz 2 (~2-3 hafta) ✅:** hesap ürünleri (JSONB), çok kullanımlık, şablon override, 2. site,
   domain doğrulama, mutabakat cron, düşük stok + Telegram, misafir link (site bayrağı),
   akıllı stok önizleme, Ctrl+K, toplu değiştirme, self-servis + müşteri 360, tedarik
   zinciri (PO/karne/import profili), sandbox, velocity + blocklist.
-- **Faz 3 (~1-2 hafta):** eski WP eklentisinden migrasyon (eşleme + kuru çalıştırma +
-  doğrulama), ürün bazlı dual-run cutover, WP tabloları temizlenir.
-- **Faz 4 (sürekli):** kâr/maliyet raporları, tedarikçi API, bayi API, kanal adaptörleri,
+- **Faz 3 ❌ DÜŞÜRÜLDÜ:** eski WP eklentisinden migrasyon (eşleme + kuru çalıştırma, dual-run
+  cutover). Gerekçe: kurulum greenfield ilerledi — taşınacak eski bir eklenti veri kümesi
+  oluşmadı. Bir gün gerekirse yeniden planlanır; bekleyen iş DEĞİLDİR.
+- **Faz 4 (sürekli) ✅:** kâr/maliyet raporları, tedarikçi API, bayi API, kanal adaptörleri,
   risk skoru otomasyonu, AI operasyon, private update endpoint.
 
 ---
 
 ## Bilinçli kapsam DIŞI (YAGNI kararları)
+
+> Bunlar "eksik" değil, **YAPILMAYACAK** olarak karara bağlanmış maddelerdir. Panelde bir gün
+> aranıp bulunamazsa sebebi budur; yeniden tartışmadan önce gerekçeyi oku.
+
+- **Fiyat senkronu / kâr-marjı raporu** — satış fiyatı panelde **YOK** ve olmayacak (§2/§6/§10:
+  ödeme ve fiyat mağazanın işidir). Panel yalnız **maliyet** tarafını bilir (`unit_cost_cents`),
+  bu yüzden `/reports/costs` "kâr" değil **harcama + stok değerleme + teslim edilen COGS** verir.
+- **Marketplace dış-API adaptörü** (Trendyol/Hepsiburada vb. çekme) — çekirdek zaten
+  platform-bağımsız (jenerik HMAC `remote*` kontratı); gerekirse **yeni bir adaptör** yazılır,
+  çekirdek değişmez.
+- **Faz-3: eski WP eklentisinden migrasyon** — kurulum greenfield ilerledi, taşınacak veri yok (§18).
 - Yenileme/abonelik entegrasyonu (hatırlatma zinciri, Woo Subscriptions) — hazır ürün modeli
 - Havale/EFT stok rezervasyonu — ödeme Woo'da onaylanır, panel ödenmiş siparişi görür
 - Seçici 3DS + Ethoca/Verifi — ödeme tamamen site/geçit tarafı
 - Paylaşımlı hesap (`max_uses`) ürün olarak var ama paylaşımlı model gerekince genişletilir
+- **MAK/çok kullanımlık kusurlu anahtar için panel-içi değişim** — üç değişim yolu da MAK'ı
+  bilerek reddeder: geri alınan kapasite AYNI paylaşımlı anahtara döner, yeni atama yine o kusurlu
+  anahtarı seçerdi. Arayüz düğmeyi sebebiyle KAPALI sunar (tıklanıp hata veren düğme, hiç
+  sunulmayandan kötüdür) ve doğru reçeteyi yazar.

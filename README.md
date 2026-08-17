@@ -28,26 +28,28 @@ docker compose up -d --build  # PG17 + Redis7 + API + admin + Caddy + Mailpit
 - API sağlık: `https://api.localhost/v1/health`
 - Mailpit (yakalanan teslimat mailleri): override ile `http://localhost:8025`
 
-Geliştirme: `pnpm install` · `pnpm build|typecheck|lint|test` ·
-`pnpm --filter @lisans/api test:race` (yarış testi, gerçek PG ister).
+## Geliştirme & doğrulama
+
+```bash
+pnpm install
+pnpm typecheck      # tip + ALTI kapı (use-server · DI · env · workflow · tx/havuz · şartname↔kod)
+pnpm test           # birim (shared + api + admin)
+pnpm test:iso       # entegrasyon + yarış — izole PostgreSQL/Redis konteynerleriyle (yalnız docker)
+pnpm build
+```
+
+Yerel WordPress test sitesiyle uçtan uca geliştirme: **[docs/GELISTIRME.md](docs/GELISTIRME.md)**
+(`pnpm wp:dev`). Yayın ve dağıtım: **[docs/RUNBOOK-RELEASE.md](docs/RUNBOOK-RELEASE.md)**.
+Yedek / felaket kurtarma: **[docs/RUNBOOK-DR.md](docs/RUNBOOK-DR.md)**.
 
 ## Durum
 
-**Faz 0 + Faz 1 (MVP) + WP eklentisi CANLI, uçtan uca e2e doğrulandı ve VPS'e deploy edildi.**
-Şifreli stok, HMAC imzalı sipariş API'si, atomik atama (çifte satış imkânsız), kısmi teslimat +
-tamamlama motoru, BullMQ mail, geri kanal webhook. **WP eklentisi** (ince istemci) canlı — tam
-zincir: Woo sipariş → HMAC push → panel atomik atama → My Account'ta çözülmüş teslimat → geri
-kanal webhook. Ayrıca Faz 2 güvenlik sertleştirme + hesap ürünleri + süreli hesap motoru tamam.
+**Tasarım + Faz 0/1/2 TAMAM; panel ve WP eklentisi canlı** (VPS + Docker Compose + Caddy TLS).
+Kodlanabilir mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddelerdir (fiyat senkronu /
+marketplace adaptörü / abonelik — gerekçeleri `docs/MIMARI.md` sonundaki "Bilinçli kapsam DIŞI").
 
-- **Admin UI shadcn-admin'e taşındı** (Next.js 15, sunucu-taraflı): Siparişler/Stok/Siteler TanStack
-  **DataTable** (arama, faceted filtre, sıralama, sayfalama, kolon görünürlüğü); sipariş detayı
-  Card/timeline; formlar shadcn primitifleri (Input/Label/Textarea/Button/Alert); loading/error/404
-  state'leri; iki temada WCAG AA doğrulandı.
-- **Çoklu-admin auth (§8)** 4 fazda eklendi — API `admin_users` (scrypt/role/token_version) +
-  `auth/login|validate` + CRUD; Next imzalı oturum (HMAC, TTL 12s) + her-istek revocation kontrolü +
-  owner-only RBAC. **env-gated (`SESSION_SECRET` + `ADMIN_SEED_*`), varsayılan KAPALI** (kapalıyken
-  panel açık kalır ve sarı uyarı bandı gösterir).
-- **VPS deploy** canlı (Ubuntu + Docker Compose + Caddy TLS).
+> **Ayrıntılı durum burada TEKRARLANMAZ** — bir dönem README kendi "Durum" listesini tutuyordu ve
+> aylarca "Faz 1 MVP" demeye devam etti. Güncel özet: **`CLAUDE.md` → Durum**; sürüm bazlı geçmiş:
+> `CHANGELOG.md`; tur-tur günlük: `docs/GECMIS.md`.
 
-Kalan: Faz 2 zenginleştirmeleri (multi görünürlük + account admin UI formu), tedarik zinciri, self-servis.
-Yol haritası: [docs/MIMARI.md §18](docs/MIMARI.md). Karar özeti: `CLAUDE.md`.
+Yol haritası: [docs/MIMARI.md §18](docs/MIMARI.md).
