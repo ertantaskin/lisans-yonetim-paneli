@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { z } from 'zod';
@@ -45,6 +46,31 @@ const ClaimSchema = z.object({
 type ClaimInput = z.infer<typeof ClaimSchema>;
 
 /**
+ * `GET /v1/admin/deployments` sorgu süzgeci.
+ *
+ * `target`: virgülle ayrılmış hedef listesi (`?target=api,admin`). Query string tek
+ * değer taşıdığı için dizi DEĞİL metin gelir → burada ayrıştırılır. Whitelist DIŞI bir
+ * hedef 400 verir (sessizce yok saymak, kullanıcıya "bu hedefin işi yok" yalanı söyler).
+ * `limit`: 1..200. Metin gelir → `coerce`. Verilmezse servis varsayılanı (50) kullanılır.
+ */
+const ListQuerySchema = z.object({
+  target: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v === undefined || v.trim() === ''
+        ? undefined
+        : v
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s !== ''),
+    )
+    .pipe(z.array(z.enum(DEPLOY_TARGETS)).min(1).max(DEPLOY_TARGETS.length).optional()),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+type ListQueryInput = z.infer<typeof ListQuerySchema>;
+
+/**
  * Admin: panelden prod dağıtımı yönetimi (§16). Tüm uçlar X-Admin-Token korumalı.
  * - POST         → yeni dağıtım İSTEĞİ kaydeder (owner-only Next katmanında zorlanır).
  * - GET          → dağıtım geçmişi (salt-okunur görünüm).
@@ -75,9 +101,17 @@ export class DeploymentsController {
     return this.deployments.request(body.target, actor, body.note);
   }
 
+  /**
+   * Dağıtım geçmişi. `?target=` (virgülle çoklu) + `?limit=` (1..200) KABUL EDER.
+   *
+   * NEDEN süzgeç (ölçülen arıza): tek kuyrukta dağıtım + eklenti yayını + gecelik yedek
+   * işleri birlikte durur; süzgeçsiz sabit pencere ~50 günde yedek satırlarıyla dolar ve
+   * `/releases` ekranı gerçek yayınlar dururken "yayın işi yok" derdi (sessiz kırpma).
+   * Parametre YOKSA davranış AYNEN eskisi (tüm hedefler, 50) → eski admin imajı kırılmaz.
+   */
   @Get()
-  async list() {
-    return this.deployments.list();
+  async list(@Query(new ZodBody(ListQuerySchema)) q: ListQueryInput) {
+    return this.deployments.list(q.limit, q.target);
   }
 
   /**

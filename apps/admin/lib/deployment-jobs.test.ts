@@ -1,16 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { DEPLOYMENTS_WINDOW, pickJobsByTarget } from './deployment-jobs';
+import { DEPLOYMENTS_WINDOW, pickJobsByTarget, targetQuery } from './deployment-jobs';
 
 /**
  * `/releases` YAYIN İŞLERİ PENCERESİ — DAVRANIŞ KİLİDİ.
  *
- * Dağıtım, eklenti yayını ve yedek işleri AYNI kuyrukta durur; uç `target` süzgeci almaz
- * ve sabit 50 satır döndürür. Gecelik yedek cron'u her gün satır yazdığı için pencere
- * zamanla tamamen `backup` kayıtlarıyla dolar → ekran, gerçekten yapılmış yayınlar
- * dururken "Henüz yayın işi yok" derdi. Buradaki asıl güvence şu: liste boş dönebilir
- * AMA bunun "hiç yayın yok" mu yoksa "pencere doldu" mu olduğunu bayrak ayırt eder.
+ * Dağıtım, eklenti yayını ve yedek işleri AYNI kuyrukta durur. Süzgeç ARTIK SUNUCUDA
+ * (`?target=plugin`), ama bu istemci yardımcısı savunma-derinliği olarak KALDI: eski bir
+ * API imajına denk gelen admin dağıtımı yanlış hedefi göstermesin. Asıl güvence değişmedi:
+ * liste boş dönebilir AMA bunun "hiç yayın yok" mu yoksa "pencere doldu" mu olduğunu
+ * bayrak ayırt eder — sessiz kırpma yok.
  */
 const row = (target: string, id: string) => ({ id, target });
+
+/**
+ * SORGU ÜRETİMİ — sunucu-taraflı süzgecin GERÇEKTEN istendiğini kilitler. Parametre
+ * düşerse (ör. biri URL'i elle birleştirirken) hata sessizdir: ekran yine dolu görünür,
+ * yalnız eski pencere-dolması arızası geri gelir. Bu yüzden dize düzeyinde doğrulanır.
+ */
+describe('targetQuery', () => {
+  it('tek hedef + limit üretir', () => {
+    expect(targetQuery(['plugin'], 20)).toBe('?target=plugin&limit=20');
+  });
+
+  it('çoklu hedefi virgülle birleştirir', () => {
+    expect(targetQuery(['api', 'admin'])).toBe('?target=api%2Cadmin');
+  });
+
+  it('boşluklu hedefi (api admin) kodlar — ham birleştirme bozuk URL üretirdi', () => {
+    expect(targetQuery(['api admin'])).toBe('?target=api+admin');
+  });
+
+  it('hedef yoksa ve limit yoksa BOŞ dize döner (uç eski davranışına düşer)', () => {
+    expect(targetQuery([])).toBe('');
+  });
+
+  it('yalnız limit verilebilir (hedef süzgeci olmadan pencere büyütme)', () => {
+    expect(targetQuery([], 150)).toBe('?limit=150');
+  });
+});
 
 describe('pickJobsByTarget', () => {
   it('yalnız istenen hedefi döndürür ve `take` kadar kırpar', () => {

@@ -131,4 +131,68 @@ describe('DeploymentsService (integration)', () => {
 
     await db.execute(sql`DELETE FROM deployments WHERE requested_by = ${actor}`);
   });
+
+  /**
+   * HANGİ REGRESYONU YAKALAR — SESSİZ KIRPMA: `list()` bir dönem hedef süzgeci KABUL ETMİYOR
+   * ve sabit 50'lik pencere döndürüyordu. Dağıtım, eklenti yayını ve gecelik yedek işleri AYNI
+   * kuyruktadır; yedek cron'u her gün en az bir satır yazdığı için pencere ~50 günde tamamen
+   * yedek kayıtlarıyla dolar → `/releases` ekranı, geçmişte GERÇEKTEN yapılmış yayınlar
+   * dururken "Henüz yayın işi yok" derdi. Süzgeç artık SUNUCUDA: pencere hedef BAŞINA dolar.
+   *
+   * Senaryo tam olarak o arızayı kurar: 60 `backup` satırının ARDINDAN yazılmış (yani daha
+   * YENİ) hiçbir plugin satırı yok — eski davranışta plugin işi 50'lik pencerenin dışında
+   * kalırdı.
+   *
+   * KONTROL DENEYİ TESTİN İÇİNDE: ilk beklenti, aynı pencerede süzgeçSİZ çağrının plugin
+   * satırını GÖRMEDİĞİNİ ölçer. Yani düzeltme geri alınıp süzgeçli çağrı `list(50)`e
+   * dönseydi ikinci beklenti zorunlu olarak kırmızı olurdu — "bu test regresyonu yakalar"
+   * iddiası varsayım değil, aynı dosyada kanıtlanmış oluyor.
+   */
+  it('list(target) sessiz kırpmayı bitirir: yedek gürültüsü yayın işini pencereden atamaz', async () => {
+    await db.execute(sql`DELETE FROM deployments WHERE requested_by = ${actor}`);
+    // ESKİ (pencere dışına düşecek) yayın işi + üstüne 60 taze yedek satırı.
+    await db.execute(sql`
+      INSERT INTO deployments (target, status, requested_by, created_at)
+      VALUES ('plugin', 'success', ${actor}, now() - interval '90 days')
+    `);
+    await db.execute(sql`
+      INSERT INTO deployments (target, status, requested_by, created_at)
+      SELECT 'backup', 'success', ${actor}, now() - (g * interval '1 hour')
+      FROM generate_series(1, 60) AS g
+    `);
+
+    // Süzgeçsiz: 50'lik pencere yalnız yedeklerle dolar → plugin işi GÖRÜNMEZ (eski arıza).
+    const unfiltered = await svc.list(50);
+    expect(unfiltered.filter((r) => r.requestedBy === actor && r.target === 'plugin')).toHaveLength(
+      0,
+    );
+
+    // Süzgeçli: aynı veri, aynı pencere — yayın işi GÖRÜNÜR.
+    const filtered = await svc.list(50, ['plugin']);
+    expect(filtered.filter((r) => r.requestedBy === actor)).toHaveLength(1);
+    expect(filtered.every((r) => r.target === 'plugin')).toBe(true);
+
+    // Çoklu hedef (panel dağıtım ekranı deseni) + limit kırpması dürüst çalışır.
+    const multi = await svc.list(5, ['plugin', 'backup']);
+    expect(multi).toHaveLength(5);
+
+    await db.execute(sql`DELETE FROM deployments WHERE requested_by = ${actor}`);
+  });
+
+  /**
+   * FAIL-CLOSED: whitelist DIŞI hedef süzülür; hiçbiri geçerli değilse BOŞ liste döner —
+   * sessizce "süzgeç yokmuş gibi hepsi" DÖNMEZ (`claimNext` ile aynı gerekçe: yanlış veriyi
+   * doğru sanmak, hiç veri görmemekten kötüdür). `undefined` ise eski davranış korunur.
+   */
+  it('geçersiz hedef fail-closed: boş liste; süzgeçsiz çağrı eski davranışı korur', async () => {
+    await db.execute(sql`
+      INSERT INTO deployments (target, status, requested_by) VALUES ('api', 'success', ${actor})
+    `);
+
+    expect(await svc.list(50, ['uydurma-hedef'])).toHaveLength(0);
+    expect(await svc.list(50, [])).toHaveLength(0);
+    expect((await svc.list(50)).length).toBeGreaterThan(0);
+
+    await db.execute(sql`DELETE FROM deployments WHERE requested_by = ${actor}`);
+  });
 });

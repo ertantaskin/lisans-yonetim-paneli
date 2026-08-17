@@ -19,7 +19,15 @@
  * amaç eksiksizlik, kopya şema değil):
  *   1. Şemadaki her `pgTable('...')` adı MIMARI.md'de geçmeli.
  *   2. `apps/admin/app` altındaki her sayfa rotası MIMARI.md'de geçmeli.
- *   3. MIMARI.md'de `/v1/...` diye anılan her uç, gerçek bir controller önekine oturmalı.
+ *   3. MIMARI.md'de `/v1/...` diye anılan her uç, GERÇEK bir rotanın (controller öneki +
+ *      metot yolu) segment öneki olmalı.
+ *
+ * (3) BİR KEZ ZAYIF YAZILDI — kendi kapımın kaçağı: ilk sürüm yalnız İLK SEGMENTE bakıyordu
+ * ve kod tabanında çıplak bir `@Controller('admin')` olduğu için `/v1/admin/ne-olursa-olsun`
+ * uydurması SESSİZCE geçiyordu. Panel uçlarının neredeyse hepsi `admin/...` altında olduğundan
+ * denetim fiilen hiçbir şey doğrulamıyordu. Kontrol denemesiyle ölçüldü ve metot yolları da
+ * toplanacak şekilde düzeltildi. Ders (CLAUDE.md tuzak #11): az denetleyen bir denetleyici,
+ * denetleyici yokluğundan BETERDİR — yanlış güven verir.
  *
  * Kapsam BİLEREK dar: belgeyi kopya-şemaya çevirmek onu okunmaz yapar ve her kolon
  * değişikliğinde CI kırardı. Denetlenen şey "bu şeyden hiç bahsedilmemiş" hatasıdır.
@@ -76,23 +84,89 @@ const eksikRota = [...new Set(routes)]
   .sort();
 
 // ── 3. Belgede anılan API uçları gerçek mi ───────────────────────────────────
-const prefixes = new Set();
+/**
+ * GERÇEK ROTALAR = controller öneki + metot yolu.
+ *
+ * ÖNEK TEK BAŞINA YETMEZ: kod tabanında ÇIPLAK bir `@Controller('admin')` var (panel
+ * uçlarının bir kısmını metot yollarıyla taşır). Yalnız öneklere bakan bir denetim
+ * `/v1/admin/ne-olursa-olsun` uydurmasını GEÇİRİRDİ — panel uçlarının neredeyse hepsi
+ * `admin/...` altında olduğu için bu, denetimin asıl işini yapmadığı anlamına gelirdi.
+ * (Kontrol denemesinde bu KAÇAK ÖLÇÜLDÜ: uydurma bir `/v1/admin/...` ucu yeşil geçti.)
+ */
+const routesApi = new Set();
 (function walkApi(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walkApi(p);
     else if (e.name.endsWith('.controller.ts')) {
       const s = fs.readFileSync(p, 'utf8');
-      for (const m of s.matchAll(/@Controller\(\s*'([^']*)'/g)) prefixes.add(m[1]);
+      for (const c of s.matchAll(/@Controller\(\s*'([^']*)'/g)) {
+        const prefix = c[1];
+        routesApi.add(prefix);
+        // Aynı dosyadaki metot yolları bu öneke eklenir. Dosya başına tek controller
+        // varsayımı bu kod tabanında geçerli (ölçüldü); değilse denetim yalnız GEVŞER.
+        for (const m of s.matchAll(/@(?:Get|Post|Patch|Put|Delete)\(\s*'([^']*)'/g)) {
+          const sub = m[1].replace(/^\/+/, '');
+          routesApi.add(sub === '' ? prefix : `${prefix}/${sub}`);
+        }
+      }
     }
   }
 })(API_SRC);
 
+/**
+ * Belgede anılan uçların KÖK YOLU (parametreye kadar olan sabit önek).
+ *
+ * ESKİDEN YALNIZ İLK SEGMENT bakılıyordu (`/v1/admin/uydurma` → 'admin' → geçerdi). Yani
+ * kapı "gerçek bir controller önekine oturmalı" diyordu ama fiilen yalnız 'admin' / 'orders'
+ * gibi kökleri doğruluyordu — panel uçlarının NEREDEYSE HEPSİ `/v1/admin/...` altında
+ * olduğundan uydurma bir panel ucu bu denetimden SESSİZCE geçerdi. Az denetleyen bir
+ * denetleyici, denetleyici yokluğundan beterdir (yanlış güven verir) → artık uç, gerçek bir
+ * controller önekinin TAM segment öneki olmak zorunda.
+ *
+ * `:param` ve `*` içeren segmentlerde dururuz: `/v1/orders/:id/deliveries` ucunun sabit
+ * kısmı `orders`tır ve controller öneki de `orders`. Rota metodlarının yol parçaları
+ * (@Get('backup-summary')) taranmadığı için denetim ÖNEK düzeyinde kalır — bilinçli sınır:
+ * amaç "böyle bir uç ailesi hiç yok" hatasını yakalamak, her metodu şemaya bağlamak değil.
+ */
+function docPathPrefix(raw) {
+  const segs = [];
+  for (const s of raw.split('/')) {
+    if (s === '' || s.startsWith(':') || s.startsWith('*') || s.startsWith('{')) break;
+    segs.push(s);
+  }
+  return segs.join('/');
+}
+
 const anilan = new Set();
-for (const m of doc.matchAll(/`\/v1\/([a-z0-9-]+)/g)) anilan.add(m[1]);
-// İlk segmenti bir controller önekinin ilk segmentiyle eşleşmeyen uç = uydurma.
-const gercekKokler = new Set([...prefixes].map((p) => p.split('/')[0]));
-const hayaletUc = [...anilan].filter((u) => !gercekKokler.has(u)).sort();
+for (const m of doc.matchAll(/`\/v1\/([a-z0-9:*/-]+)/g)) {
+  const p = docPathPrefix(m[1]);
+  if (p) anilan.add(p);
+}
+
+/**
+ * Belgedeki uç, GERÇEK bir rotanın segment öneki mi?
+ *
+ * Yön TEK TARAFLI: belgedeki yol, gerçek rotanın BAŞLANGICI olmalı (`admin/deployments`,
+ * gerçek `admin/deployments/backup-summary`ın önekidir → geçer). Tersi KABUL EDİLMEZ —
+ * `admin/uydurma`, `admin` rotasının "devamı" sayılıp geçmemeli; kaçak tam oradaydı.
+ * Gerçek rotadaki `:param` segmenti her şeye uyar (belgede `:id` yazılışı serbesttir).
+ */
+const gercek = [...routesApi];
+function cozulur(uc) {
+  const a = uc.split('/');
+  return gercek.some((route) => {
+    const b = route.split('/');
+    if (a.length > b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (b[i].startsWith(':')) continue;
+      if (a[i].startsWith(':')) continue;
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  });
+}
+const hayaletUc = [...anilan].filter((u) => !cozulur(u)).sort();
 
 // ── Rapor ────────────────────────────────────────────────────────────────────
 if (eksikTablo.length) {
@@ -113,8 +187,19 @@ if (hayaletUc.length) {
   fail(
     `docs/MIMARI.md var olmayan API ucu anlatıyor:\n    ` +
       hayaletUc.map((u) => '/v1/' + u).join(', ') +
-      '\n  Gerçek controller önekleri: ' +
-      [...gercekKokler].sort().join(', '),
+      // Tüm rota listesini basmak (150+ satır) hatayı OKUNMAZ yapıyordu → yalnız aynı kökteki
+      // gerçek rotalar gösterilir; asıl soru zaten "bunu ne diye yazdım, gerçeği hangisi?".
+      hayaletUc
+        .map((u) => {
+          const kok = u.split('/')[0];
+          const yakin = gercek.filter((r) => r.split('/')[0] === kok).sort();
+          return (
+            `\n  '${kok}' kökündeki GERÇEK rotalar (${yakin.length}): ` +
+            (yakin.slice(0, 12).join(', ') || '(hiç yok)') +
+            (yakin.length > 12 ? ` … +${yakin.length - 12}` : '')
+          );
+        })
+        .join(''),
   );
 }
 

@@ -1,6 +1,6 @@
 import 'server-only';
 import { apiGet } from '../../lib/api';
-import { DEPLOYMENTS_WINDOW, pickJobsByTarget, type TargetJobs } from '../../lib/deployment-jobs';
+import { pickJobsByTarget, targetQuery, type TargetJobs } from '../../lib/deployment-jobs';
 
 /**
  * Yayınlanmış eklenti sürümü (GET /v1/admin/updates/plugin yanıtı). Zip GÖVDESİ dönmez —
@@ -40,16 +40,28 @@ export interface PluginJobRow {
 export const PLUGIN_JOB_TAKE = 5;
 
 /**
+ * Sunucudan istenen yayın işi penceresi. `PLUGIN_JOB_TAKE`ten BÜYÜK olmalı: eşit olsaydı
+ * "tam 5 yayın işi var" durumu her seferinde kırpma uyarısı gösterirdi (kalıcı yanlış-pozitif).
+ * Süzgeç sunucuda olduğu için bu pencereyi yalnız `plugin` işleri doldurur.
+ */
+export const PLUGIN_JOB_WINDOW = 20;
+
+/**
  * Son eklenti yayın işleri (en yeni önce, en çok 5) + PENCERE DÜRÜSTLÜĞÜ.
  *
- * Uç `target` süzgeci almaz ve sabit 50 satır döndürür; süzme burada yapılır. Pencere
- * dolduysa (gecelik `backup` işleri onu tek başına doldurabilir) bu KIRPMA ekranda
- * söylenir — gerekçe ve TODO(api) notu `lib/deployment-jobs.ts`'te.
+ * SÜZGEÇ SUNUCUDA: `?target=plugin` ile YALNIZ yayın işleri istenir. Eskiden uç süzgeç
+ * almadığı için karışık kuyruktan 50 satır çekilip burada ayıklanıyordu; gecelik `backup`
+ * işleri pencereyi ~50 günde tek başına doldurduğu için ekran gerçek yayınlar dururken
+ * "Henüz yayın işi yok" diyordu. `pickJobsByTarget` GENE de uygulanır — eski bir API
+ * imajına (süzgeci yok sayan) denk gelen bir admin dağıtımı yanlış hedefi göstermesin
+ * diye savunma-derinliği; ayrıca kırpma sinyalini (`windowSaturated`) tek yerden verir.
  */
 export async function getPluginJobs(): Promise<TargetJobs<PluginJobRow>> {
-  const data = await apiGet<PluginJobRow[] | { items: PluginJobRow[] }>('/v1/admin/deployments');
+  const data = await apiGet<PluginJobRow[] | { items: PluginJobRow[] }>(
+    `/v1/admin/deployments${targetQuery(['plugin'], PLUGIN_JOB_WINDOW)}`,
+  );
   const rows = Array.isArray(data) ? data : (data?.items ?? []);
-  return pickJobsByTarget(rows, 'plugin', PLUGIN_JOB_TAKE, DEPLOYMENTS_WINDOW);
+  return pickJobsByTarget(rows, 'plugin', PLUGIN_JOB_TAKE, PLUGIN_JOB_WINDOW);
 }
 
 /**

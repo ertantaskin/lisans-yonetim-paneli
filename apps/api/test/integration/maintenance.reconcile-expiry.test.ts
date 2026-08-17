@@ -208,6 +208,69 @@ describe('ReconcileService.reconcile — tutarlılık ihlallerini tespit eder (D
       .where(eq(schema.orderLines.id, badOrder.lineId));
     expect(line?.fulfilledQty).toBe(2);
   });
+
+  /**
+   * HANGİ EKSİĞİ KAPATIR — SICAK PENCERENİN DIŞINDA KALAN DRIFT.
+   *
+   * 15 dakikalık sweep yalnız son `RECONCILE_WINDOW_DAYS` günü (varsayılan 30) tarar; bu
+   * bilinçli bir ölçek kararıdır ama sonucu şuydu: penceresinden çıkmış bir çifte satış
+   * (her iki atama da eskiyse) BİR DAHA HİÇ raporlanmıyordu. Kod "haftalık tam koşu ayrı
+   * bir cron ile tetiklenmeli" diyordu — ve HİÇBİR ŞEY tetiklemiyordu (TODO(ops)). Artık
+   * `reconcile-full` zamanlayıcısı haftalık koşuyor ve `reconcile(true)` pencereyi kaldırıyor.
+   *
+   * Test iki yönlü: eski (90 günlük) ihlal SICAK koşuda GÖRÜNMEZ, TAM koşuda GÖRÜNÜR.
+   * İlk beklenti şart — yalnız ikincisi yazılsaydı test, pencere hiç uygulanmasa da yeşil
+   * kalır ve "tam koşu bir şey değiştiriyor" iddiasını KANITLAMAZDI.
+   */
+  it('TAM koşu (full=true) sıcak pencerenin DIŞINDAKİ eski ihlali de yakalar', async () => {
+    const product = await createProduct(db, { tag });
+    const site = await createSite(db, crypto, { tag });
+    const [oldItemId] = await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 1,
+      tag,
+      status: 'assigned',
+      payloadPrefix: 'OLD-SINGLE',
+    });
+    const order = await createOrderWithLine(db, {
+      siteId: site.id,
+      productId: product.id,
+      qty: 1,
+      tag,
+    });
+
+    // Tek-kullanım kaleme İKİ ayakta atama — ama ikisi de 90 GÜN ÖNCEYE damgalı.
+    await insertAssignment({
+      orderId: order.orderId,
+      lineId: order.lineId,
+      licenseItemId: oldItemId!,
+      status: 'active',
+    });
+    await insertAssignment({
+      orderId: order.orderId,
+      lineId: order.lineId,
+      licenseItemId: oldItemId!,
+      status: 'active',
+    });
+    await db.execute(sql`
+      UPDATE assignments SET created_at = now() - interval '90 days'
+      WHERE license_item_id = ${oldItemId}
+    `);
+
+    const hot = await reconcileSvc.reconcile();
+    expect(
+      hot.violations.some(
+        (v) => v.check === 'single_occupancy' && v.licenseItemId === oldItemId,
+      ),
+    ).toBe(false);
+
+    const full = await reconcileSvc.reconcile(true);
+    const v = full.violations.find(
+      (x) => x.check === 'single_occupancy' && x.licenseItemId === oldItemId,
+    );
+    expect(v).toBeDefined();
+    expect(v).toMatchObject({ check: 'single_occupancy', standingAssignments: 2 });
+  });
 });
 
 describe('ExpiryService.sweepExpired — süre-bitişi motoru (§11)', () => {

@@ -155,6 +155,7 @@ services:
       # Mutabakat taraması penceresi (gün) + tam-tablo koşum anahtarı + sweep alarm dedupe (saat).
       RECONCILE_WINDOW_DAYS: ${RECONCILE_WINDOW_DAYS:-}
       RECONCILE_FULL: ${RECONCILE_FULL:-}
+      RECONCILE_FULL_CRON: ${RECONCILE_FULL_CRON:-}
       SWEEP_ALARM_DEDUPE_HOURS: ${SWEEP_ALARM_DEDUPE_HOURS:-}
     # Açılışta migration'ları uygula, sonra servisi başlat.
     command: ['sh', '-c', 'node dist/db/migrate.js && node dist/main.js']

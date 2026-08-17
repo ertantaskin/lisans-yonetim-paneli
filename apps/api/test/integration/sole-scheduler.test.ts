@@ -3,7 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { upsertSoleJobScheduler } from '../../src/queue/sole-scheduler';
+import { upsertJobSchedulers, upsertSoleJobScheduler } from '../../src/queue/sole-scheduler';
 
 /**
  * ENTEGRASYON — "bu kuyrukta tam olarak BİR zamanlayıcı" sözleşmesi (gerçek Redis).
@@ -91,5 +91,83 @@ describe('upsertSoleJobScheduler — yetim tekrarlı zamanlayıcı temizliği', 
     // Periyot da gerçekten güncellendi (upsert çalıştı, yalnız temizlik değil).
     // `every` sürücü sürümüne göre sayı ya da dize dönebilir → değere göre karşılaştır.
     expect(Number(after[0]!.every)).toBe(120_000);
+  });
+});
+
+/**
+ * ENTEGRASYON — ÇOKLU beklenen zamanlayıcı (gerçek Redis).
+ *
+ * NEDEN VAR: mutabakat kuyruğuna 15 dakikalık SICAK süpürmenin yanına HAFTALIK TAM koşu
+ * eklendi. Tekil yardımcıyla bu SESSİZCE İMKÂNSIZDI — her çağrı diğerinin kaydını "yetim"
+ * sayıp siler, boot sırasına göre biri hep kaybolurdu ve geriye yalnız bir `warn` kalırdı
+ * (yani "haftalık tam mutabakat var" sanılır, hiç koşmazdı). Bu testler sözleşmeyi ÇALIŞMA
+ * ANINDA zorlar: kardeşler birbirini silmez, kümenin dışındakiler yine silinir.
+ */
+describe('upsertJobSchedulers — çoklu beklenen zamanlayıcı', () => {
+  const queueName = `it-multi-${randomUUID().slice(0, 8)}`;
+  let connection: IORedis;
+  let queue: Queue;
+  const logger = new Logger('sole-scheduler.multi.test');
+
+  const specs = [
+    {
+      id: 'reconcile-sweep',
+      repeat: { every: 900_000 },
+      template: { name: 'sweep', data: {}, opts: {} },
+    },
+    {
+      id: 'reconcile-full',
+      repeat: { pattern: '15 4 * * 0' },
+      template: { name: 'full-sweep', data: {}, opts: {} },
+    },
+  ];
+
+  beforeAll(() => {
+    const url = process.env.REDIS_URL;
+    if (!url) throw new Error('REDIS_URL tanımlı değil — bu test gerçek Redis gerektirir.');
+    connection = new IORedis(url, { maxRetriesPerRequest: null });
+    queue = new Queue(queueName, { connection });
+  });
+
+  afterAll(async () => {
+    await queue.obliterate({ force: true }).catch(() => undefined);
+    await queue.close();
+    await connection.quit();
+  });
+
+  it('İKİ kardeş zamanlayıcı yan yana yaşar (biri diğerini silmez)', async () => {
+    await upsertJobSchedulers(queue, specs, logger);
+
+    const after = await queue.getJobSchedulers(0, 99);
+    expect(after.map((s) => s.key).sort()).toEqual(['reconcile-full', 'reconcile-sweep']);
+  });
+
+  it('boot tekrarında ikisi de KALIR (idempotent)', async () => {
+    await upsertJobSchedulers(queue, specs, logger);
+    await upsertJobSchedulers(queue, specs, logger);
+
+    const after = await queue.getJobSchedulers(0, 99);
+    expect(after.map((s) => s.key).sort()).toEqual(['reconcile-full', 'reconcile-sweep']);
+  });
+
+  it('kümenin DIŞINDAKİ yetim yine silinir (temizlik kuralı korunur)', async () => {
+    // Eski hash anahtarlı kayıt (eski queue.add(repeat) deseni) — kümede yok → yetim.
+    await queue.add('sweep', { legacy: true }, { repeat: { every: 61_000 } });
+    expect((await queue.getJobSchedulers(0, 99)).length).toBe(3);
+
+    await upsertJobSchedulers(queue, specs, logger);
+
+    const after = await queue.getJobSchedulers(0, 99);
+    expect(after.map((s) => s.key).sort()).toEqual(['reconcile-full', 'reconcile-sweep']);
+  });
+
+  it('TEK çağrıda verilmezse ikinci çağrı birincinin kaydını siler (sözleşmenin sınırı)', async () => {
+    // Bu, yardımcının BELGELENMİŞ sınırıdır — "hepsi tek çağrıda" kuralının NEDENİ.
+    // Kontrol denemesi niteliğinde: kural yazılı olmasa bu davranış sessiz bir arıza olurdu.
+    await upsertJobSchedulers(queue, [specs[0]!], logger);
+    await upsertJobSchedulers(queue, [specs[1]!], logger);
+
+    const after = await queue.getJobSchedulers(0, 99);
+    expect(after.map((s) => s.key)).toEqual(['reconcile-full']);
   });
 });

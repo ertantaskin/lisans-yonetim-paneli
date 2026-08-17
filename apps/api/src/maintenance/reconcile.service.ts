@@ -8,7 +8,7 @@ import { DB, type Database } from '../db/db.module';
 import { rawRows } from '../db/raw-query';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SweepAlarmService } from './sweep-alarm.service';
-import { upsertSoleJobScheduler } from '../queue/sole-scheduler';
+import { upsertJobSchedulers } from '../queue/sole-scheduler';
 import { STANDING_STATUSES } from '../assignment/assign';
 
 export const RECONCILE_QUEUE = 'reconcile';
@@ -48,21 +48,55 @@ const NOTIFY_DEDUPE_WINDOW_HOURS = 12;
 /** SICAK-yol pencere varsayılanı (gün) — env RECONCILE_WINDOW_DAYS ile geçersiz kılınır. */
 const RECONCILE_WINDOW_DAYS_DEFAULT = 30;
 
+/** Haftalık TAM koşunun BullMQ iş adı — processor bu ada bakarak pencereyi kaldırır. */
+export const FULL_JOB_NAME = 'full-sweep';
+
 /**
- * SICAK-yol pencere yüklemi (§16 ölçek). RECONCILE_FULL=true ise BOŞ döner (TAM tablo taraması);
+ * Haftalık TAM mutabakat koşusunun cron deseni. Varsayılan: Pazar 04:15 (konteyner saati) —
+ * gecelik yedek (ve tatbikat) penceresinin dışında, düşük trafikli saat. Tam koşu pencere
+ * kullanmadığı için `order_lines`/`assignments` üzerinde TAM tarama yapar; yoğun saate
+ * denk gelmemesi bilinçlidir.
+ *
+ * Env `RECONCILE_FULL_CRON` ile değiştirilebilir. GEÇERSİZ desen SESSİZCE yok sayılmaz:
+ * uyarı loglanır ve varsayılana dönülür — BullMQ geçersiz deseni kabul edip işi HİÇ
+ * çalıştırmayabilir ve bu, "kapı var sanılan ama olmayan" sınıfı sessiz arıza olurdu.
+ */
+function fullScanCron(): string {
+  const DEFAULT = '15 4 * * 0';
+  const raw = process.env.RECONCILE_FULL_CRON;
+  if (raw === undefined || raw.trim() === '') return DEFAULT;
+  const v = raw.trim();
+  // 5 alanlı standart cron (BullMQ 6 alanı da kabul eder: saniye önde).
+  if (!/^\S+(\s+\S+){4,5}$/.test(v)) {
+    new Logger('ReconcileService').warn(
+      `RECONCILE_FULL_CRON geçersiz ("${v}") — varsayılana dönüldü ("${DEFAULT}"). ` +
+        'Haftalık TAM mutabakat koşusu bu yüzden özel zamanlamayla ÇALIŞMAYACAK.',
+    );
+    return DEFAULT;
+  }
+  return v;
+}
+
+/**
+ * SICAK-yol pencere yüklemi (§16 ölçek). `full` ise BOŞ döner (TAM tablo taraması);
  * aksi halde `AND <createdAt> > now() - (windowDays * interval '1 day')` → son N günü tarar.
  * Env (`process.env`) ile okunur → ReconcileService ctor imzası DEĞİŞMEZ (mevcut testler korunur).
  *
  * CORRECTNESS NOTU (bilinçli sınır): pencere yalnız SICAK yolu (line_fulfillment/single_occupancy)
  * son N güne daraltır → çok eski kayıtlarda teorik bir drift (ör. 30 günden eski bir çifte-satış,
- * her iki atama da eskiyse) bu koşuda KAÇABİLİR. Karşı-önlemler: (1) YENİ ihlaller her zaman
- * pencerede oluşur (drift satış anında, taze kayıtta yakalanır); (2) haftalık/aylık TAM mutabakat
- * için `RECONCILE_FULL=true` ile pencere kaldırılıp elle (POST /admin/maintenance/reconcile) veya
- * ayrı bir cron ile tetiklenmeli. TODO(ops): haftalık RECONCILE_FULL tam koşu zamanlaması ekle.
+ * her iki atama da eskiyse) SICAK koşuda KAÇAR. Karşı-önlemler: (1) YENİ ihlaller her zaman
+ * pencerede oluşur (drift satış anında, taze kayıtta yakalanır); (2) HAFTALIK TAM KOŞU artık
+ * ZAMANLANMIŞTIR (`reconcile-full` job scheduler, aşağıda) → pencere dışında kalan drift en geç
+ * bir hafta içinde yakalanır. Elle tetikleme: `POST /v1/admin/maintenance/reconcile?full=true`.
+ *
+ * `RECONCILE_FULL=true` env'i KÜRESEL zorlama olarak KALDI (sıcak koşuyu da tam koşuya çevirir) —
+ * geçici bir olay incelemesinde tüm koşuları tam yapmak için. Parametre env'i EZMEZ, GÜÇLENDİRİR:
+ * env true ise her koşu tamdır; false/tanımsız iken yalnız `full` verilen koşu tamdır.
+ *
  * multi_capacity pencereye TABİ DEĞİL (license_items üzerinde ucuz filtreli tarama, GROUP BY yok).
  */
-function recentFilter(createdAt: SQL): SQL {
-  if (process.env.RECONCILE_FULL === 'true') return sql``;
+function recentFilter(createdAt: SQL, full: boolean): SQL {
+  if (full || process.env.RECONCILE_FULL === 'true') return sql``;
   const raw = process.env.RECONCILE_WINDOW_DAYS;
   const parsed = raw && raw.trim() !== '' ? Number.parseInt(raw, 10) : NaN;
   const days = Number.isFinite(parsed) && parsed > 0 ? parsed : RECONCILE_WINDOW_DAYS_DEFAULT;
@@ -146,42 +180,69 @@ export class ReconcileService implements OnModuleInit {
   ) {}
 
   /**
-   * Boot'ta tekrarlı denetimi KARARLI job-scheduler kimliğiyle upsert eder (BullMQ v5).
+   * Boot'ta İKİ tekrarlı denetimi KARARLI job-scheduler kimlikleriyle upsert eder (BullMQ v5).
    * Periyot ileride değişirse eski zamanlama atomik değiştirilir — `queue.add` repeat'in
    * aksine ortada yetim (mükerrer) schedule kalmaz. schedulerId sabit → tekilleştirme garantili.
+   *
+   * `reconcile-sweep` (15 dk) SICAK yolu tarar (son N gün — §16 ölçek).
+   * `reconcile-full` (haftalık) PENCERESİZ tarar → sıcak pencerenin DIŞINDA kalan eski drift
+   * de yakalanır. Eskiden bu koşu yoktu: kod "haftalık tam mutabakat ayrı bir cron ile
+   * tetiklenmeli" diyordu ama HİÇBİR ŞEY tetiklemiyordu → 30 günden eski bir çifte satış
+   * (her iki atama da eskiyse) hiçbir zaman raporlanmazdı.
+   *
+   * TEK ÇAĞRI ŞART: ikisi AYNI kuyrukta olduğu için `upsertJobSchedulers`e BİRLİKTE verilir —
+   * ayrı ayrı çağrılsaydı yetim temizliği diğerini siler, biri sessizce hiç koşmazdı.
    */
   async onModuleInit(): Promise<void> {
-    await upsertSoleJobScheduler(
+    await upsertJobSchedulers(
       this.queue,
-      'reconcile-sweep',
-      { every: SWEEP_EVERY_MS },
-      { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+      [
+        {
+          id: 'reconcile-sweep',
+          repeat: { every: SWEEP_EVERY_MS },
+          template: { name: 'sweep', data: {}, opts: { removeOnComplete: 50, removeOnFail: 50 } },
+        },
+        {
+          id: 'reconcile-full',
+          repeat: { pattern: fullScanCron() },
+          template: {
+            name: FULL_JOB_NAME,
+            data: {},
+            opts: { removeOnComplete: 20, removeOnFail: 20 },
+          },
+        },
+      ],
       this.logger,
     );
   }
 
   /**
    * Üç tutarlılık denetimini çalıştırır; ihlalleri kritik loglar ve özet döndürür.
+   *
+   * @param full true ise SICAK-yol penceresi KALDIRILIR (tüm geçmiş taranır). Haftalık
+   *   zamanlanmış koşu ve `POST /v1/admin/maintenance/reconcile?full=true` bunu kullanır.
+   *   Varsayılan false → 15 dakikalık sweep ucuz kalır.
    * @returns { checked, violations } — düzeltme YAPILMAZ (§16).
    */
-  async reconcile(): Promise<ReconcileReport> {
+  async reconcile(full = false): Promise<ReconcileReport> {
     const violations: ReconcileViolation[] = [];
     let checked = 0;
 
     checked += await this.checkMultiCapacity(violations);
-    checked += await this.checkLineFulfillment(violations);
-    checked += await this.checkSingleOccupancy(violations);
+    checked += await this.checkLineFulfillment(violations, full);
+    checked += await this.checkSingleOccupancy(violations, full);
 
     if (violations.length > 0) {
       this.logger.error(
-        `Mutabakat: ${violations.length} İHLAL bulundu (${checked} kayıt denetlendi) — elle inceleme gerekli`,
+        `Mutabakat${full ? ' (TAM koşu)' : ''}: ${violations.length} İHLAL bulundu ` +
+          `(${checked} kayıt denetlendi) — elle inceleme gerekli`,
       );
       // Kritik alarm yolu (§16): logger.error tek başına gözlemlenebilir değil (kimse tail'lemiyorsa
       // çifte-satış ihlali sessiz kalır). severity 'critical' bildirim NotificationsService üzerinden
       // env-gated Telegram'a düşer. Bildirim best-effort — mutabakat sonucunu KESMEZ.
       await this.notify(checked, violations);
     } else {
-      this.logger.log(`Mutabakat temiz: ${checked} kayıt, ihlal yok`);
+      this.logger.log(`Mutabakat${full ? ' (TAM koşu)' : ''} temiz: ${checked} kayıt, ihlal yok`);
     }
     return { checked, violations };
   }
@@ -297,7 +358,7 @@ export class ReconcileService implements OnModuleInit {
    * Sapma; teslim edilmemiş/çifte sayılmış birim ya da atlanan revoke düşümü demektir.
    * @returns denetlenen sipariş satırı sayısı
    */
-  private async checkLineFulfillment(out: ReconcileViolation[]): Promise<number> {
+  private async checkLineFulfillment(out: ReconcileViolation[], full: boolean): Promise<number> {
     const rows = await rawRows<{
       line_id: string;
       order_id: string;
@@ -311,7 +372,7 @@ export class ReconcileService implements OnModuleInit {
         COALESCE(SUM(a.units) FILTER (WHERE a.status IN ${STANDING_STATUSES}), 0)::int AS standing_units
       FROM order_lines ol
       LEFT JOIN assignments a ON a.line_id = ol.id
-      WHERE true ${recentFilter(sql`ol.created_at`)}
+      WHERE true ${recentFilter(sql`ol.created_at`, full)}
       GROUP BY ol.id, ol.order_id, ol.fulfilled_qty
       HAVING ol.fulfilled_qty
         <> COALESCE(SUM(a.units) FILTER (WHERE a.status IN ${STANDING_STATUSES}), 0);
@@ -334,7 +395,7 @@ export class ReconcileService implements OnModuleInit {
     // `checked` sayacı da SICAK-yol penceresini yansıtır (dürüst rapor: kaç satır GERÇEKTEN tarandı).
     return await this.count(sql`
       SELECT count(*)::int AS c FROM order_lines ol
-      WHERE true ${recentFilter(sql`ol.created_at`)};
+      WHERE true ${recentFilter(sql`ol.created_at`, full)};
     `);
   }
 
@@ -344,7 +405,7 @@ export class ReconcileService implements OnModuleInit {
    * aynı key iki kez satılmış demektir.
    * @returns denetlenen tek-kullanım license_item sayısı
    */
-  private async checkSingleOccupancy(out: ReconcileViolation[]): Promise<number> {
+  private async checkSingleOccupancy(out: ReconcileViolation[], full: boolean): Promise<number> {
     const rows = await rawRows<{
       license_item_id: string;
       standing_assignments: number;
@@ -354,7 +415,7 @@ export class ReconcileService implements OnModuleInit {
       JOIN license_items li ON li.id = a.license_item_id
       WHERE li.max_uses = 1
         AND a.status IN ${STANDING_STATUSES}
-        ${recentFilter(sql`a.created_at`)}
+        ${recentFilter(sql`a.created_at`, full)}
       GROUP BY a.license_item_id
       HAVING COUNT(*) > 1;
     `);
@@ -379,7 +440,7 @@ export class ReconcileService implements OnModuleInit {
       JOIN license_items li ON li.id = a.license_item_id
       WHERE li.max_uses = 1
         AND a.status IN ${STANDING_STATUSES}
-        ${recentFilter(sql`a.created_at`)};
+        ${recentFilter(sql`a.created_at`, full)};
     `);
   }
 
@@ -400,9 +461,15 @@ export class ReconcileProcessor extends WorkerHost {
     super();
   }
 
-  async process(_job: Job): Promise<{ checked: number; violations: number }> {
-    const report = await this.reconcile.reconcile();
-    return { checked: report.checked, violations: report.violations.length };
+  /**
+   * İki iş adı AYNI kuyrukta: `sweep` (15 dk, sıcak pencere) ve `full-sweep` (haftalık,
+   * PENCERESİZ). Ayrım iş ADINDAN yapılır — `job.data` üzerinden yapılsaydı Redis'te
+   * kalan eski (data'sız) tekrarlı iş kayıtları sessizce sıcak koşuya düşerdi.
+   */
+  async process(job: Job): Promise<{ checked: number; violations: number; full: boolean }> {
+    const full = job?.name === FULL_JOB_NAME;
+    const report = await this.reconcile.reconcile(full);
+    return { checked: report.checked, violations: report.violations.length, full };
   }
 
   /**

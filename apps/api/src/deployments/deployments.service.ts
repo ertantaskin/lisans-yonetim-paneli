@@ -249,13 +249,37 @@ export class DeploymentsService {
     return killed.length;
   }
 
-  /** Dağıtım geçmişi (en yeni önce). */
-  async list(limit = 50): Promise<Deployment[]> {
-    return this.db
-      .select()
-      .from(deployments)
+  /**
+   * Dağıtım geçmişi (en yeni önce).
+   *
+   * HEDEF SÜZGECİ ŞART (ölçülen arıza, sessiz kırpma sınıfı): bu TEK kuyrukta panel
+   * dağıtımı (`api`/`admin`), eklenti yayını (`plugin`) ve DR işleri (`backup`,
+   * `backup-drill`) birlikte durur. Gecelik yedek cron'u her gün en az bir `backup`
+   * satırı yazdığı için sabit 50'lik pencere ~50 günde tamamen yedek kayıtlarıyla dolar
+   * → süzgeçsiz çağıran `/releases` ekranı, geçmişte GERÇEKTEN yapılmış yayınlar dururken
+   * "Henüz yayın işi yok" derdi. Süzgeç sunucuda uygulanır ki pencere hedef BAŞINA dolsun.
+   *
+   * @param limit 1..200 arası kırpılır (varsayılan 50).
+   * @param targets Verilirse YALNIZ bu hedefler döner. Whitelist DIŞI değerler süzülür;
+   *   filtre verilip hiçbiri geçerli değilse BOŞ liste döner — `claimNext` ile aynı
+   *   gerekçe: sessizce "hepsi"ne düşmek, istenmeyen veriyi doğru sanmaya yol açar.
+   *   YALNIZ `undefined` = süzgeç yok (eski davranış; eski admin imajı kırılmaz) — boş
+   *   dizi "süzgeç var ama hiçbiri geçerli değil" demektir ve BOŞ liste döndürür.
+   */
+  async list(limit = 50, targets?: readonly string[]): Promise<Deployment[]> {
+    const take = Math.min(Math.max(limit, 1), 200);
+    const base = this.db.select().from(deployments);
+    if (targets === undefined) {
+      return base.orderBy(desc(deployments.createdAt)).limit(take);
+    }
+    const allowed = targets.filter((t): t is DeployTarget =>
+      (DEPLOY_TARGETS as readonly string[]).includes(t),
+    );
+    if (allowed.length === 0) return [];
+    return base
+      .where(inArray(deployments.target, allowed))
       .orderBy(desc(deployments.createdAt))
-      .limit(Math.min(Math.max(limit, 1), 200));
+      .limit(take);
   }
 
   /**

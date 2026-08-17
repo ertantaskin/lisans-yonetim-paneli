@@ -211,6 +211,8 @@ Saklama süpürmesi (`RetentionService`) log tablolarını günlük budar.
 | `/v1/catalog` | GET | Bayi/kanal stok durumu — **fiyat DÖNMEZ** (§10) |
 | `/v1/connect/claim` | POST | **PUBLIC** — tek kullanımlık bağlan kodu → kimlik (§14) |
 | `/v1/updates/plugin/info` · `/download/:v` | GET | **PUBLIC** — eklenti güncelleyici (IP hız sınırlı) |
+| `/v1/admin/deployments` | GET | Dağıtım/yayın/yedek kuyruğu geçmişi — `?target=` (virgülle çoklu) + `?limit=` (1..200) |
+| `/v1/admin/maintenance/reconcile` | POST | Tutarlılık denetimini elle koştur; `?full=true` sıcak pencereyi kaldırır (§16) |
 | `/v1/health` | GET | Sağlık; degrade durumda **503** |
 
 > Uç adları bir dönem şartnamede yanlış yazılıydı: "replacement-requests" (gerçeği
@@ -424,8 +426,19 @@ Payload'lar modele maskeli gider; AI çökerse sistem AI'sız çalışır.
 ## 16. Operasyon: test, sürüm, DR
 
 - **CI'da zorunlu yarış testi:** 100 eşzamanlı sipariş × 50 stok → çifte atama=0.
-- **Tutarlılık denetçisi (gece):** use_count≤max_uses, fulfilled=units toplamı, çift
-  atama yok, raporlanan stok=gerçek → ihlal kritik alarm.
+- **Tutarlılık denetçisi — İKİ KOŞU (planlanan "gece" tek koşu DEĞİL):**
+  denetimler `use_count ≤ max_uses` · `fulfilled_qty = Σ(ayakta atama units)` · tek-kullanım
+  kalem başına ≤1 ayakta atama. İhlal **DÜZELTİLMEZ**, kritik alarma çevrilir (otomatik
+  düzeltme bug'ı gizler).
+  - **Sıcak koşu — her 15 dk** (`reconcile-sweep`): yalnız son `RECONCILE_WINDOW_DAYS` gün
+    (varsayılan 30). Yeni drift satış anında, taze kayıtta yakalanır.
+  - **TAM koşu — haftalık** (`reconcile-full`, varsayılan Pazar 04:15, `RECONCILE_FULL_CRON`):
+    pencere KALDIRILIR. ŞART: sıcak pencereden çıkmış bir ihlal (her iki atama da 30 günden
+    eskiyse) aksi halde BİR DAHA HİÇ raporlanmazdı — kod haftalık tam koşuyu tarif ediyordu
+    ama hiçbir şey tetiklemiyordu. Elle: `POST /v1/admin/maintenance/reconcile?full=true`.
+  - İkisi AYNI BullMQ kuyruğunda yaşar → zamanlayıcılar `upsertJobSchedulers` ile **tek
+    çağrıda** kurulur; ayrı ayrı kurulsaydı yetim temizliği kardeşi siler, biri sessizce
+    hiç koşmazdı.
 - Yük testi (k6, p95<300ms), e2e (Playwright + wp-env), migrasyon kuru çalıştırma.
 - Trace ID uçtan uca; dead-letter ekranı + yeniden oynat.
 - Private update endpoint (eklenti sürümü tek yerden dağıtılır).

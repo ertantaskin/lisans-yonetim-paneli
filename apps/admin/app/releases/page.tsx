@@ -18,11 +18,12 @@ import {
   getPluginJobs,
   getSitePluginVersions,
   PLUGIN_JOB_TAKE,
+  PLUGIN_JOB_WINDOW,
   type ReleaseRow,
   type PluginJobRow,
   type SitePluginRow,
 } from './queries';
-import { DEPLOYMENTS_WINDOW, type TargetJobs } from '../../lib/deployment-jobs';
+import { type TargetJobs } from '../../lib/deployment-jobs';
 import { PublishForm } from './publish-form';
 import { PublishFromSourceForm } from './publish-from-source-form';
 // Sürüm sıralaması TEK KAYNAKTAN (./semver) — API'nin `updates.service.compareVersions`
@@ -132,9 +133,11 @@ export default async function ReleasesPage() {
             {jobs.length === 0 ? (
               /*
                 "Hiç yayın yapılmadı" ile "yayın işi bu pencerede kalmadı" AYRI şeylerdir.
-                Kuyruk tek tablodur ve gecelik yedek işleri 50 satırlık pencereyi tek başına
-                doldurabilir → eski yayın işleri pencerenin dışına düşer. Sessizce "yok"
-                demek, bu kod tabanının tekrar tekrar yakaladığı sessiz-kırpma hatasıdır.
+                Süzgeç ARTIK SUNUCUDA (`?target=plugin`) → pencereyi yalnız yayın işleri
+                doldurur ve boş liste gerçekten "hiç yayın işi yok" demektir. Kırpma uyarısı
+                yine de KALDI: pencere kadar (PLUGIN_JOB_WINDOW) yayın işi varsa daha eskileri
+                gerçekten listede değildir. Sessizce "yok" demek, bu kod tabanının tekrar
+                tekrar yakaladığı sessiz-kırpma hatasıdır.
               */
               <EmptyState
                 icon={ListChecks}
@@ -145,7 +148,7 @@ export default async function ReleasesPage() {
                 }
                 description={
                   jobResult.windowSaturated
-                    ? `Dağıtım kuyruğunun son ${DEPLOYMENTS_WINDOW} kaydı tarandı ve hepsi başka işlere (dağıtım/yedek) ait. Daha eski yayın işleri bu listede GÖRÜNMEZ — yayınlanmış sürümlerin tam listesi aşağıdaki “Sürüm geçmişi” tablosundadır.`
+                    ? `Kuyruktan yalnız son ${PLUGIN_JOB_WINDOW} yayın işi istendi; daha eskileri bu listede GÖRÜNMEZ — yayınlanmış sürümlerin tam listesi aşağıdaki “Sürüm geçmişi” tablosundadır.`
                     : 'Kaynaktan yayınladığınızda işin durumu burada görünür.'
                 }
               />
@@ -188,13 +191,13 @@ export default async function ReleasesPage() {
                 </TableBody>
               </Table>
             )}
-            {/* Liste EKSİK olabilir: en çok 5 satır gösterilir ve kaynak pencere (tek kuyruk,
-                son 50 kayıt) yedek/dağıtım işleriyle dolmuş olabilir. Sınır GÖRÜNÜR olmalı. */}
+            {/* Liste EKSİK olabilir: en çok 5 satır gösterilir ve kaynak pencere
+                (PLUGIN_JOB_WINDOW yayın işi) dolmuş olabilir. Sınır GÖRÜNÜR olmalı. */}
             {jobs.length > 0 && (
               <p className="px-5 pb-4 pt-3 text-xs text-muted-foreground">
                 Son {PLUGIN_JOB_TAKE} yayın işi gösteriliyor
                 {jobResult.windowSaturated
-                  ? `; kaynak liste dağıtım/yedek işleriyle ortak ve yalnız son ${DEPLOYMENTS_WINDOW} kaydı kapsıyor — daha eski yayın işleri burada olmayabilir.`
+                  ? `; kuyruktan yalnız son ${PLUGIN_JOB_WINDOW} yayın işi istendi — daha eskileri burada olmayabilir.`
                   : '.'}{' '}
                 Yayınlanmış sürümlerin tam listesi aşağıdaki “Sürüm geçmişi” tablosundadır.
               </p>

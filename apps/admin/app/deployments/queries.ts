@@ -18,19 +18,39 @@ export interface DeploymentRow {
 
 export interface DeploymentsData {
   rows: DeploymentRow[];
-  /**
-   * Yanıt sunucu penceresini DOLDURDU → daha eski dağıtım/yedek kayıtları bu listede YOK.
-   * Uç `?limit=`/`?target=` kabul etmediği için tek yapılabilecek bunu SÖYLEMEKTİR
-   * (gerekçe + TODO(api): `lib/deployment-jobs.ts`).
-   */
+  /** Yanıt istenen pencereyi DOLDURDU → daha eski kayıtlar bu listede YOK; ekran söyler. */
   truncated: boolean;
 }
 
-/** Dağıtım geçmişi (en yeni önce). Dizi veya {items} şekline dayanıklı. */
+/**
+ * Bu ekranın istediği pencere. Uç artık `?limit=` kabul ediyor (üst sınır 200) → varsayılan
+ * 50 yerine daha geniş bir geçmiş alınır; gecelik yedek işleri pencereyi tek başına
+ * doldurduğu için 50 satır pratikte "son ~50 gün yalnız yedek" demekti.
+ */
+export const DEPLOYMENTS_PAGE_LIMIT = 150;
+
+/**
+ * Dağıtım geçmişi (en yeni önce). Dizi veya {items} şekline dayanıklı.
+ *
+ * HEDEF SÜZGECİ BİLEREK YOK — uç artık `?target=` kabul etse de bu çağrı TÜM kuyruğu ister.
+ * NEDEN: sayfa bu satırlardan `hasActiveDeployment`i (pending/running var mı) türetiyor ve
+ * "aynı anda tek aktif iş" güvencesi HEDEFTEN BAĞIMSIZDIR — çalışan bir `backup` işi de yeni
+ * dağıtımı 409 ile reddeder. Listeyi `api/admin/plugin`e daraltmak geçmişi okunur yapardı ama
+ * çalışan yedeği GÖRÜNMEZ kılar, dağıtım düğmesi açık kalır ve operatör 409 yerdi. (Bir kümeyi
+ * daraltmak, o kümeyi okuyan HER yolu etkiler — bu kod tabanının H1 sınıfı tuzağı.)
+ * Yedek işlerinin ayrıntısı ayrıca `backup-summary` kartında hedef başına pencereyle gösterilir.
+ */
 export async function getDeployments(): Promise<DeploymentsData> {
-  const data = await apiGet<DeploymentRow[] | { items: DeploymentRow[] }>('/v1/admin/deployments');
+  const data = await apiGet<DeploymentRow[] | { items: DeploymentRow[] }>(
+    `/v1/admin/deployments?limit=${DEPLOYMENTS_PAGE_LIMIT}`,
+  );
   const rows = Array.isArray(data) ? data : (data?.items ?? []);
-  return { rows, truncated: rows.length >= DEPLOYMENTS_WINDOW };
+  // Eski API imajı `?limit=`i yok sayıp 50 döndürebilir (dağıtım sapması) → o durumda da
+  // kırpma DÜRÜST bildirilsin diye iki eşik de kontrol edilir.
+  return {
+    rows,
+    truncated: rows.length >= DEPLOYMENTS_PAGE_LIMIT || rows.length === DEPLOYMENTS_WINDOW,
+  };
 }
 
 /** Canlı sistem sağlığı + sürümü (GET /v1/health). Degraded'da 503 döner → apiRaw ile tolere edilir. */
