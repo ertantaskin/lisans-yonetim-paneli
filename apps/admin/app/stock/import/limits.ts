@@ -36,6 +36,18 @@ export const MAX_IMPORT_ITEMS = 10_000;
 export const MAX_TABLE_ROWS = 500;
 
 /**
+ * Anahtar başına kullanım hakkı (`items[].maxUses`) alt/üst sınırı — API sözleşmesinin aynası
+ * (`POST /v1/admin/stock/import` → 1 … `MAX_USES_CAP`).
+ *
+ * NEDEN BURADA: sınır ekranda da (yardım metni, hata mesajı, engel listesi), sunucu action'ının
+ * savunma doğrulamasında da geçiyor. İki yerde ayrı yazılsaydı biri güncellenip öteki
+ * unutulduğunda kullanıcıya söylenen sınır ile uygulanan sınır ayrışırdı — bu dosyanın var
+ * olma sebebi tam olarak budur.
+ */
+export const MAX_USES_MIN = 1;
+export const MAX_USES_CAP = 100_000;
+
+/**
  * Bayt sayısını okunur B/KB/MB metnine çevirir (Türkçe ondalık ayracı).
  *
  * 1 KB altı ham BAYT olarak yazılır: `Math.ceil` boş formda bile ("[]" = 2 bayt)

@@ -48,14 +48,24 @@ import { Separator } from '../../../components/ui/separator';
 import { productKindLabel, supplyStatusLabel, usageModeLabel } from '../../../lib/labels';
 import { cn, formatDate } from '../../../lib/utils';
 import { AccountRowsEditor, emptyAccountRow, type AccountColumn } from './account-rows-editor';
-import { MAX_IMPORT_BYTES, MAX_IMPORT_ITEMS, MAX_IMPORT_LABEL, formatBytes } from './limits';
+import {
+  MAX_IMPORT_BYTES,
+  MAX_IMPORT_ITEMS,
+  MAX_IMPORT_LABEL,
+  MAX_USES_CAP,
+  MAX_USES_MIN,
+  formatBytes,
+} from './limits';
 import {
   autoBatchLabel,
   cleanHiddenChars,
   currencySymbol,
+  delimiterLabel,
   formatMoney,
   hasHiddenChars,
   liraToCents,
+  parseKeyCapacityRows,
+  parseMaxUses,
   splitLines,
   type ImportItemInput,
 } from './parse';
@@ -214,21 +224,34 @@ function tr(n: number): string {
  * MAK/çok kullanımlık üründe **anahtar ≠ lisans**: 3 anahtar × 500 kullanım = 1.500
  * kullanım hakkı. İki sayı ayrı gösterilir, yoksa "3 girdim ama 1.500 talebi kapattı"
  * sürprizi yaşanır.
+ *
+ * KAPASİTE ARTIK SATIR BAZINDA OLABİLİR: toplam `satır × sabit kapasite` DEĞİL, satır
+ * kapasitelerinin TOPLAMIDIR. Karışık kapasitede tek bir çarpan yazmak (ör. "5×") yalan
+ * olurdu — bu durumda çarpan yerine "karışık" yazılır.
  */
 function EntryMeter({
   items,
   blankLines,
   duplicates,
   bytes,
-  perKeyUses,
+  capacityUnits,
+  uniformCapacity,
+  mixedCapacity,
+  invalidCapacityLines,
   unitNoun,
 }: {
   items: number;
   blankLines: number;
   duplicates: number;
   bytes: number;
-  /** Anahtar başına kullanım hakkı (tek kullanımlıkta 1). */
-  perKeyUses: number;
+  /** Bu girişin stoğa ekleyeceği TOPLAM kullanım hakkı; `null` = kapasite okunamıyor. */
+  capacityUnits: number | null;
+  /** Tüm satırlar aynı kapasitedeyse o değer, değilse `null`. */
+  uniformCapacity: number | null;
+  /** Satırlar farklı kapasiteler taşıyor mu. */
+  mixedCapacity: boolean;
+  /** 2. sütundaki kullanım hakkı okunamayan satır sayısı (girişten ÖNCE görünür). */
+  invalidCapacityLines: number;
   /** "kayıt" için ürün tipine göre ad ("anahtar" / "hesap"). */
   unitNoun: string;
 }) {
@@ -249,15 +272,32 @@ function EntryMeter({
         <span className="text-sm font-semibold tabular-nums text-foreground">
           {tr(items)} {unitNoun}
         </span>
-        {perKeyUses > 1 && items > 0 && (
+        {/* Toplam kullanım hakkı yalnız ANLAMLI olduğunda yazılır: tek kullanımlık üründe
+            toplam = kayıt sayısıdır ve aynı sayıyı iki kez göstermek gürültüdür. */}
+        {items > 0 && capacityUnits != null && capacityUnits !== items && (
           <span className="tabular-nums text-foreground">
-            = <strong>{tr(items * perKeyUses)}</strong> kullanım hakkı
-            <span className="text-muted-foreground"> ({perKeyUses}×)</span>
+            = <strong>{tr(capacityUnits)}</strong> kullanım hakkı
+            <span className="text-muted-foreground">
+              {' '}
+              {mixedCapacity
+                ? '(karışık)'
+                : uniformCapacity != null
+                  ? `(${tr(uniformCapacity)}×)`
+                  : ''}
+            </span>
           </span>
+        )}
+        {items > 0 && capacityUnits == null && (
+          <span className="text-warning">kullanım hakkı okunamadı</span>
         )}
         {blankLines > 0 && <span className="text-muted-foreground">{tr(blankLines)} boş satır atlandı</span>}
         {duplicates > 0 && (
           <span className="text-warning">{tr(duplicates)} satır birbirinin aynısı</span>
+        )}
+        {invalidCapacityLines > 0 && (
+          <span className="text-destructive">
+            {tr(invalidCapacityLines)} satırda geçersiz kullanım hakkı
+          </span>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-x-3 tabular-nums text-muted-foreground">
@@ -290,7 +330,9 @@ function ImportConfirmDetails({
   productLabel,
   unitNoun,
   count,
-  perKeyUses,
+  capacityUnits,
+  uniformCapacity,
+  mixedCapacity,
   supplyLine,
   supplyWarning,
   duplicates,
@@ -301,13 +343,18 @@ function ImportConfirmDetails({
   productLabel: string;
   unitNoun: string;
   count: number;
-  perKeyUses: number;
+  /** Toplam kullanım hakkı (satır kapasitelerinin toplamı); `null` = okunamadı. */
+  capacityUnits: number | null;
+  /** Tüm satırlar aynı kapasitedeyse o değer ("her biri N kullanım hakkı"). */
+  uniformCapacity: number | null;
+  /** Karışık kapasite → satır listesinde her kaydın KENDİ kapasitesi gösterilir. */
+  mixedCapacity: boolean;
   supplyLine: string;
   supplyWarning: boolean;
   duplicates: number;
   blankLines: number;
   wouldFill: number;
-  previews: Array<{ line: number; text: string }>;
+  previews: Array<{ line: number; text: string; capacity?: number }>;
 }) {
   const hidden = count - previews.length;
   return (
@@ -321,10 +368,17 @@ function ImportConfirmDetails({
           <dt className="text-muted-foreground">Girilecek</dt>
           <dd className="text-right font-semibold tabular-nums text-foreground">
             {tr(count)} {unitNoun}
-            {perKeyUses > 1 && (
+            {/* MAK'ta asıl büyüklük kullanım hakkıdır: "5 anahtar" onaylayan operatör
+                gerçekte 2.500 aktivasyon dağıtıyor olabilir — sayı burada YAZILI olmalı. */}
+            {capacityUnits != null && capacityUnits !== count && (
               <span className="font-normal text-muted-foreground">
                 {' '}
-                = {tr(count * perKeyUses)} kullanım hakkı
+                = {tr(capacityUnits)} kullanım hakkı
+                {mixedCapacity
+                  ? ' (anahtar başına farklı)'
+                  : uniformCapacity != null
+                    ? ` (her biri ${tr(uniformCapacity)})`
+                    : ''}
               </span>
             )}
           </dd>
@@ -376,6 +430,13 @@ function ImportConfirmDetails({
               <span className="min-w-0 flex-1 truncate font-mono text-foreground" title={p.text}>
                 {p.text}
               </span>
+              {/* Kapasite YALNIZ karışıkken satıra yazılır: hepsi aynıysa üstteki özet satırı
+                  ("her biri N") zaten söylüyor, her satıra tekrarlamak listeyi okunmaz yapar. */}
+              {mixedCapacity && p.capacity != null && (
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {tr(p.capacity)} kullanım
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -494,6 +555,36 @@ export function ImportWorkbench({
   const [fileError, setFileError] = React.useState<string | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
+  // ── Kullanım hakkı (MAK kapasitesi) — YALNIZ çok kullanımlık üründe ─────────
+  // Kullanıcı isteği: "MAK'ın kullanılabilir kapasitesini ürün düzenle kısmından değil,
+  // ANAHTARA GÖRE ekleyebilmek daha doğru olur." Kapasite artık BU GİRİŞE özeldir; ürün
+  // ayarındaki `maxUses` yalnız VARSAYILAN olarak kullanılır (ürünü düzenlemek o ürünün
+  // gelecekteki TÜM girişlerini etkilerdi — parti parti gelen lotlar için yanlış araç).
+  /** Bu girişteki her kaydın varsayılan kullanım hakkı (ham metin — operatör yazarken). */
+  const [maxUsesInput, setMaxUsesInput] = React.useState('');
+  /** Anahtar başına FARKLI kapasite → yapıştırma iki sütunlu okunur. */
+  const [perRowCapacity, setPerRowCapacity] = React.useState(false);
+
+  const isMulti = selected?.usageMode === 'multi';
+  /** Ürün ayarındaki varsayılan (API `multi ⇒ maxUses>1` refine'ı garanti eder; yine de tabanlanır). */
+  const productMaxUses = Math.max(Math.floor(selected?.maxUses ?? 1), 1);
+
+  // Ürün değişince alan o ürünün varsayılanıyla YENİDEN doldurulur ve iki sütunlu mod kapanır.
+  // Aksi halde A ürününün 50'lik lot değeri B ürününe DONMUŞ hâlde taşınır ve operatör
+  // farkında olmadan yanlış kapasiteyle stok girer (kapasite geri alınamaz: `use_count`
+  // asla düşmez, §2). Tek kullanımlık üründe alan hiç render edilmez → boşaltılır.
+  React.useEffect(() => {
+    setMaxUsesInput(isMulti ? String(productMaxUses) : '');
+    setPerRowCapacity(false);
+  }, [productId, isMulti, productMaxUses]);
+
+  /**
+   * Varsayılan kapasite — satırında KENDİ kapasitesi olmayan her kayda uygulanır.
+   * Tek kullanımlık üründe kavramsal olarak 1'dir ve API'ye ASLA gönderilmez.
+   */
+  const defaultMaxUses = isMulti ? parseMaxUses(maxUsesInput) : 1;
+  const defaultMaxUsesInvalid = isMulti && defaultMaxUses == null;
+
   // Kalıcı sonuç paneli (form temizlense de görünür kalır).
   const [result, setResult] = React.useState<ImportState['result'] | null>(null);
   const [previewNonce, setPreviewNonce] = React.useState(0);
@@ -593,71 +684,168 @@ export function ImportWorkbench({
     React.startTransition(() => previewDispatch(fd));
   }, [productId, previewNonce, previewDispatch]);
 
+  /**
+   * İki sütunlu ("anahtar<AYRAÇ>kapasite") okuma AÇIK MI.
+   *
+   * Üç koşul birden: düz anahtar ürünü + çok kullanımlık + operatörün onay kutusu. Kutu
+   * kapalıyken satır ASLA ayraçtan bölünmez — içinde virgül/noktalı virgül geçen bir anahtar
+   * sessizce kırpılıp yarım teslim edilemez (sessiz çıkarım yok).
+   */
+  const capacityMode = !isAccount && isMulti && perRowCapacity;
+
+  /**
+   * İki sütunlu çözümleme TEK KEZ yapılır: kayıt listesi, görünmez karakter sayacı ve
+   * ekrandaki ayraç/başlık geri bildirimi aynı sonucu okur. Üç ayrı çağrı hem her tuş
+   * vuruşunda 10.000 satırı üç kez tarardı hem de üç yer arasında sapma riski taşırdı.
+   */
+  const capacityParse = React.useMemo(
+    () => (capacityMode ? parseKeyCapacityRows(keys) : null),
+    [capacityMode, keys],
+  );
+
   // ── Girdi → kayıt listesi ──────────────────────────────────────────────────
-  const { items, blankLines } = React.useMemo((): {
-    items: ImportItemInput[];
-    blankLines: number;
-  } => {
-    if (!selected) return { items: [], blankLines: 0 };
+  const { items, blankLines, invalidCapacityLines, keylessCapacityLines, extraColumnLines } =
+    React.useMemo((): {
+      items: ImportItemInput[];
+      blankLines: number;
+      /** 2. sütunu okunamayan satır (girişten ÖNCE engel olarak gösterilir). */
+      invalidCapacityLines: number;
+      /** Kapasite yazılmış ama anahtar hücresi boş kalan satır. */
+      keylessCapacityLines: number;
+      /** İkiden fazla sütun gelen satır (fazlalık sessizce atılmaz, uyarılır). */
+      extraColumnLines: number;
+    } => {
+      const empty = {
+        items: [] as ImportItemInput[],
+        blankLines: 0,
+        invalidCapacityLines: 0,
+        keylessCapacityLines: 0,
+        extraColumnLines: 0,
+      };
+      if (!selected) return empty;
 
-    /** Son dolu satırdan ÖNCEKİ boş satırları sayar (sondaki satır sonu gürültü değildir). */
-    const countBlanks = (flags: boolean[]): number => {
-      let last = -1;
-      flags.forEach((filled, i) => {
-        if (filled) last = i;
-      });
-      return flags.slice(0, Math.max(last, 0)).filter((f) => !f).length;
-    };
-
-    if (isAccount && accountSource === 'table') {
-      const out: ImportItemInput[] = [];
-      const flags: boolean[] = [];
-      rows.forEach((row, i) => {
-        const filled = row.some((v) => v.trim() !== '');
-        flags.push(filled);
-        if (!filled) return;
-        const payload: Record<string, string> = {};
-        columns.forEach((c, j) => {
-          payload[c.key] = row[j] ?? '';
+      /** Son dolu satırdan ÖNCEKİ boş satırları sayar (sondaki satır sonu gürültü değildir). */
+      const countBlanks = (flags: boolean[]): number => {
+        let last = -1;
+        flags.forEach((filled, i) => {
+          if (filled) last = i;
         });
-        out.push({ payload, line: i + 1 });
-      });
-      return { items: out, blankLines: countBlanks(flags) };
-    }
+        return flags.slice(0, Math.max(last, 0)).filter((f) => !f).length;
+      };
 
-    if (isAccount) {
-      // JSON (gelişmiş): her satır bir nesne. Bozuk satır HAM METİN olarak gönderilir →
-      // API "Hesap payload geçerli JSON değil" der ve satır no doğru raporlanır.
+      /**
+       * Kendi kapasitesi OLMAYAN kayda eklenecek alan.
+       *
+       * Tek kullanımlık üründe alan HİÇ eklenmez: API tek kullanımlık üründe 1 dışında bir
+       * `maxUses` görürse TÜM isteği 400'ler, dolayısıyla oraya değer sızmamalıdır. Varsayılan
+       * okunamıyorsa da eklenmez — o durumda gönderim zaten engellenir (`blockers`).
+       */
+      const withDefault = (): { maxUses?: number } =>
+        isMulti && defaultMaxUses != null ? { maxUses: defaultMaxUses } : {};
+
+      if (isAccount && accountSource === 'table') {
+        const out: ImportItemInput[] = [];
+        const flags: boolean[] = [];
+        rows.forEach((row, i) => {
+          const filled = row.some((v) => v.trim() !== '');
+          flags.push(filled);
+          if (!filled) return;
+          const payload: Record<string, string> = {};
+          columns.forEach((c, j) => {
+            payload[c.key] = row[j] ?? '';
+          });
+          out.push({ payload, line: i + 1, ...withDefault() });
+        });
+        return { ...empty, items: out, blankLines: countBlanks(flags) };
+      }
+
+      if (isAccount) {
+        // JSON (gelişmiş): her satır bir nesne. Bozuk satır HAM METİN olarak gönderilir →
+        // API "Hesap payload geçerli JSON değil" der ve satır no doğru raporlanır.
+        const out: ImportItemInput[] = [];
+        const flags: boolean[] = [];
+        splitLines(json).forEach((line, i) => {
+          const trimmed = line.trim();
+          flags.push(trimmed !== '');
+          if (!trimmed) return;
+          let payload: string | Record<string, string> = trimmed;
+          try {
+            const parsed: unknown = JSON.parse(trimmed);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              payload = parsed as Record<string, string>;
+            }
+          } catch {
+            /* ham metin kalır — doğrulamayı API yapar */
+          }
+          out.push({ payload, line: i + 1, ...withDefault() });
+        });
+        return { ...empty, items: out, blankLines: countBlanks(flags) };
+      }
+
+      if (capacityMode && capacityParse) {
+        // Çözümleme `parse.ts`e devredilir (ayraç tespiti + tırnak kuralı + başlık atlama);
+        // burada YALNIZ iş kuralı uygulanır.
+        const parsed = capacityParse;
+        const out: ImportItemInput[] = [];
+        const flags: boolean[] = [];
+        let invalid = 0;
+        let keyless = 0;
+        let extra = 0;
+        parsed.rows.forEach((r) => {
+          const key = r.key.trim();
+          const capRaw = r.capacityRaw.trim();
+          const filled = key !== '' || capRaw !== '';
+          flags.push(filled);
+          if (!filled) return;
+          if (r.extraCells > 0) extra += 1;
+          if (!key) {
+            // Kapasite yazılmış ama anahtar yok: satırı sessizce atmak, operatörün girdiğini
+            // yok saymak olurdu → sayılır ve engel listesinde gösterilir.
+            keyless += 1;
+            return;
+          }
+          const cap = capRaw ? parseMaxUses(capRaw) : defaultMaxUses;
+          if (capRaw && cap == null) {
+            // Kayıt yine de listeye girer (satır sayısı/önizleme gerçeği yansıtsın) ama
+            // kapasitesi YOKTUR; gönderim `blockers` ile engellenir → yanlış kapasiteyle
+            // yazılması imkânsız (kapasite geri alınamaz: `use_count` asla düşmez, §2).
+            invalid += 1;
+            out.push({ payload: key, line: r.line });
+            return;
+          }
+          out.push({ payload: key, line: r.line, ...(cap != null ? { maxUses: cap } : {}) });
+        });
+        return {
+          items: out,
+          blankLines: countBlanks(flags),
+          invalidCapacityLines: invalid,
+          keylessCapacityLines: keyless,
+          extraColumnLines: extra,
+        };
+      }
+
       const out: ImportItemInput[] = [];
       const flags: boolean[] = [];
-      splitLines(json).forEach((line, i) => {
+      splitLines(keys).forEach((line, i) => {
         const trimmed = line.trim();
         flags.push(trimmed !== '');
         if (!trimmed) return;
-        let payload: string | Record<string, string> = trimmed;
-        try {
-          const parsed: unknown = JSON.parse(trimmed);
-          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            payload = parsed as Record<string, string>;
-          }
-        } catch {
-          /* ham metin kalır — doğrulamayı API yapar */
-        }
-        out.push({ payload, line: i + 1 });
+        out.push({ payload: trimmed, line: i + 1, ...withDefault() });
       });
-      return { items: out, blankLines: countBlanks(flags) };
-    }
-
-    const out: ImportItemInput[] = [];
-    const flags: boolean[] = [];
-    splitLines(keys).forEach((line, i) => {
-      const trimmed = line.trim();
-      flags.push(trimmed !== '');
-      if (!trimmed) return;
-      out.push({ payload: trimmed, line: i + 1 });
-    });
-    return { items: out, blankLines: countBlanks(flags) };
-  }, [selected, isAccount, accountSource, rows, columns, json, keys]);
+      return { ...empty, items: out, blankLines: countBlanks(flags) };
+    }, [
+      selected,
+      isAccount,
+      isMulti,
+      accountSource,
+      capacityMode,
+      capacityParse,
+      defaultMaxUses,
+      rows,
+      columns,
+      json,
+      keys,
+    ]);
 
   /** Aynı içerikli (mükerrer görünen) satır sayısı — API dedupe'undan ÖNCE uyarır. */
   const duplicateCount = React.useMemo(() => {
@@ -678,13 +866,36 @@ export function ImportWorkbench({
   const payloadBytes = React.useMemo(() => byteLength(itemsJson), [itemsJson]);
 
   /**
-   * Anahtar başına kullanım hakkı. MAK/çok kullanımlıkta bir anahtar `maxUses` birim talebi
-   * karşılar → "kaç anahtar girdim" ile "kaç lisans oldu" AYRI sayılardır.
+   * Kapasite özeti. MAK/çok kullanımlıkta bir anahtar `maxUses` birim talebi karşılar →
+   * "kaç anahtar girdim" ile "kaç kullanım hakkı oldu" AYRI sayılardır.
+   *
+   * Toplam artık `satır × sabit çarpan` DEĞİL, satır kapasitelerinin TOPLAMIDIR (satır bazında
+   * farklı kapasite mümkün). Kapasite okunamıyorsa (varsayılan alanı geçersiz ya da 2. sütunda
+   * bozuk değer var) toplam `null` döner — 0 ya da tahmini bir sayı göstermek operatörü
+   * "bu giriş N bekleyen birimi teslim eder" cümlesinde yanıltırdı.
    */
-  const perKeyUses =
-    selected?.usageMode === 'multi' ? Math.max(Math.floor(selected.maxUses ?? 1), 1) : 1;
-  /** Bu girişin stoğa ekleyeceği TOPLAM birim (tek kullanımlıkta = kayıt sayısı). */
-  const capacityUnits = items.length * perKeyUses;
+  const { capacityUnits, uniformCapacity, mixedCapacity } = React.useMemo(() => {
+    if (items.length === 0) {
+      return { capacityUnits: 0, uniformCapacity: null as number | null, mixedCapacity: false };
+    }
+    if (defaultMaxUsesInvalid || invalidCapacityLines > 0) {
+      return { capacityUnits: null as number | null, uniformCapacity: null, mixedCapacity: false };
+    }
+    let total = 0;
+    const distinct = new Set<number>();
+    for (const it of items) {
+      // Tek kullanımlık üründe kayıtlarda `maxUses` HİÇ yoktur → kapasite 1'dir.
+      const cap = typeof it.maxUses === 'number' ? it.maxUses : 1;
+      total += cap;
+      distinct.add(cap);
+    }
+    const values = [...distinct];
+    return {
+      capacityUnits: total,
+      uniformCapacity: values.length === 1 ? (values[0] ?? null) : null,
+      mixedCapacity: values.length > 1,
+    };
+  }, [items, defaultMaxUsesInvalid, invalidCapacityLines]);
 
   /**
    * Yapıştırılan anahtar satırlarında GÖRÜNMEZ karakter (NBSP, sıfır-genişlik, BOM).
@@ -697,8 +908,14 @@ export function ImportWorkbench({
    */
   const hiddenKeyLines = React.useMemo(() => {
     if (isAccount) return 0;
+    // İki sütunlu modda kontrol YALNIZ anahtar hücresine uygulanır: kapasite hücresindeki
+    // NBSP `parseMaxUses` içinde zaten temizlenir, onun için uyarı basmak yanlış alarmdır.
+    if (capacityParse) {
+      return capacityParse.rows.filter((r) => r.key.trim() !== '' && hasHiddenChars(r.key.trim()))
+        .length;
+    }
     return splitLines(keys).filter((l) => l.trim() !== '' && hasHiddenChars(l.trim())).length;
-  }, [isAccount, keys]);
+  }, [isAccount, capacityParse, keys]);
 
   const cleanKeys = () =>
     setKeys(
@@ -716,7 +933,10 @@ export function ImportWorkbench({
     () =>
       items.slice(0, CONFIRM_PREVIEW_ROWS).map((it, i) => {
         const line = it.line ?? i + 1;
-        if (typeof it.payload === 'string') return { line, text: it.payload };
+        // Kapasite yalnız karışık girişte satıra yazdırılır (bkz. ImportConfirmDetails).
+        const cap: { capacity?: number } =
+          typeof it.maxUses === 'number' ? { capacity: it.maxUses } : {};
+        if (typeof it.payload === 'string') return { line, text: it.payload, ...cap };
         const payload = it.payload;
         const text = columns
           .map((c) => {
@@ -726,7 +946,7 @@ export function ImportWorkbench({
           })
           .filter(Boolean)
           .join(' · ');
-        return { line, text: text || '(boş)' };
+        return { line, text: text || '(boş)', ...cap };
       }),
     [items, columns],
   );
@@ -744,6 +964,25 @@ export function ImportWorkbench({
   const blockers: string[] = [];
   if (!productId) blockers.push('Ürün seçin.');
   if (productId && items.length === 0) blockers.push('En az bir kayıt girin.');
+  // KAPASİTE ENGELLERİ — API'nin satır-bazlı reddine bırakılmaz, girişten ÖNCE durdurulur:
+  // yanlış kapasiteyle yazılmış bir MAK anahtarı geri alınamaz (`use_count` asla düşmez, §2)
+  // ve fazla kapasite sessiz aşırı-satışa dönüşür.
+  if (defaultMaxUsesInvalid) {
+    blockers.push(
+      `Kullanım hakkı ${MAX_USES_MIN}–${tr(MAX_USES_CAP)} arası bir tam sayı olmalı.`,
+    );
+  }
+  if (invalidCapacityLines > 0) {
+    blockers.push(
+      `${tr(invalidCapacityLines)} satırda kullanım hakkı okunamadı — ` +
+        `2. sütuna ${MAX_USES_MIN}–${tr(MAX_USES_CAP)} arası tam sayı yazın ya da boş bırakın.`,
+    );
+  }
+  if (keylessCapacityLines > 0) {
+    blockers.push(
+      `${tr(keylessCapacityLines)} satırda kullanım hakkı var ama anahtar hücresi boş.`,
+    );
+  }
   // Etiket normalde otomatik dolar → bu engel yalnız operatör alanı ELLE boşalttıysa çıkar.
   if (labelMissing) blockers.push('Parti etiketi boş — yazın ya da "Otomatik" düğmesine basın.');
   if (newBatchActive && costInvalid) blockers.push('Birim maliyeti lira olarak girin — ör. 12,50.');
@@ -768,8 +1007,11 @@ export function ImportWorkbench({
   // anahtar `maxUses` birim karşılar. Eskiden anahtar sayısı birimle kıyaslanıyordu →
   // MAK ürününde etki OLDUĞUNDAN AZ görünüyordu (1 anahtar giren "1 birim tamamlanır"
   // okuyor, gerçekte 500 birim kapanıyordu).
-  const wouldFill = Math.min(capacityUnits, autoUnits);
-  const remainingAfter = Math.max(capacityUnits - autoUnits, 0);
+  // Kapasite okunamıyorsa (geçersiz alan/sütun) etki 0 sayılır — tahmini bir sayı yazmak
+  // "N bekleyen birimi teslim eder" cümlesini yalanlar; gönderim zaten engellidir.
+  const effectiveCapacity = capacityUnits ?? 0;
+  const wouldFill = Math.min(effectiveCapacity, autoUnits);
+  const remainingAfter = Math.max(effectiveCapacity - autoUnits, 0);
 
   const selectedBatch = batches.find((b) => b.id === batchId);
 
@@ -890,7 +1132,9 @@ export function ImportWorkbench({
           productLabel={selected ? `${selected.name} · ${selected.sku}` : '—'}
           unitNoun={isAccount ? 'hesap' : 'anahtar'}
           count={items.length}
-          perKeyUses={perKeyUses}
+          capacityUnits={capacityUnits}
+          uniformCapacity={uniformCapacity}
+          mixedCapacity={mixedCapacity}
           supplyLine={batchSummary()}
           supplyWarning={batchMode === 'none'}
           duplicates={duplicateCount}
@@ -963,8 +1207,12 @@ export function ImportWorkbench({
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge variant="accent">{productKindLabel(selected.kind)}</Badge>
                   <Badge variant="outline">{usageModeLabel(selected.usageMode)}</Badge>
+                  {/* "Varsayılan" ŞART: kapasite artık girişe özel ayarlanabiliyor; çıplak
+                      "anahtar başına N" rozeti 3. adımdaki farklı bir değerle çelişirdi. */}
                   {selected.usageMode === 'multi' && selected.maxUses ? (
-                    <Badge variant="outline">Anahtar başına {selected.maxUses} kullanım</Badge>
+                    <Badge variant="outline">
+                      Varsayılan: anahtar başına {tr(selected.maxUses)} kullanım
+                    </Badge>
                   ) : null}
                   <span className="font-mono text-xs text-muted-foreground">{selected.sku}</span>
                 </div>
@@ -993,8 +1241,10 @@ export function ImportWorkbench({
                 </div>
                 {selected.usageMode === 'multi' && (
                   <p className="text-xs text-muted-foreground">
-                    Çok kullanımlık (MAK) ürün: girilen her anahtar {selected.maxUses ?? '?'}{' '}
-                    kullanım kapasitesiyle stoğa eklenir.
+                    Çok kullanımlık (MAK) ürün: ürün ayarındaki varsayılan kapasite{' '}
+                    {tr(productMaxUses)} kullanım. Bu girişe özel kapasiteyi (ve istenirse her
+                    anahtarınkini ayrı ayrı) <strong>3. adımda</strong> belirleyebilirsiniz —
+                    ürün ayarını değiştirmeniz gerekmez.
                   </p>
                 )}
               </div>
@@ -1349,7 +1599,9 @@ export function ImportWorkbench({
                 ? 'Önce ürün seçin — girdi biçimi ürün tipine göre değişir.'
                 : isAccount
                   ? 'Her satır bir hesap. Alanlar ürünün şemasından gelir.'
-                  : 'Her satır bir anahtar. Boş satırlar atlanır, baştaki/sondaki boşluk kırpılır.'}
+                  : capacityMode
+                    ? 'Her satır bir anahtar + o anahtarın kullanım hakkı. Boş satırlar atlanır.'
+                    : 'Her satır bir anahtar. Boş satırlar atlanır, baştaki/sondaki boşluk kırpılır.'}
               {selected
                 ? ` Tek seferde en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} satır (${MAX_IMPORT_LABEL}).`
                 : ''}
@@ -1415,6 +1667,97 @@ export function ImportWorkbench({
               )}
             </div>
 
+            {/* ── Kullanım hakkı — YALNIZ çok kullanımlık (MAK) üründe render edilir ──────
+                Tek kullanımlık üründe kapasite kavramı YOKTUR: alanı göstermek gürültü,
+                değerini göndermek ise API'de 400 olurdu. `isMulti` kapısı hem bu bloğu hem
+                `withDefault()` alanını hem de iki sütunlu modu birlikte kapatır. */}
+            {isMulti && (
+              <div className="space-y-2.5 rounded-lg border border-border bg-muted/30 p-3">
+                <Field
+                  label="Her anahtarın kullanım hakkı"
+                  htmlFor="si-max-uses"
+                  required
+                  error={
+                    defaultMaxUsesInvalid
+                      ? `${MAX_USES_MIN}–${tr(MAX_USES_CAP)} arası bir tam sayı yazın.`
+                      : undefined
+                  }
+                  hint={`Tedarikçiden gelen bu partinin aktivasyon sayısı. Ürün ayarındaki varsayılan: ${tr(productMaxUses)}. Buradaki değer YALNIZ bu girişe uygulanır — ürün ayarı değişmez.`}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/*
+                      `name` YOK: değer forma ayrı bir alan olarak GİTMEZ, her kaydın içine
+                      (`itemsJson` → `items[].maxUses`) gömülür. Tek bir form alanı olsaydı
+                      satır bazında farklı kapasite taşınamazdı.
+                    */}
+                    <Input
+                      id="si-max-uses"
+                      inputMode="numeric"
+                      value={maxUsesInput}
+                      onChange={(e) => setMaxUsesInput(e.target.value)}
+                      placeholder={String(productMaxUses)}
+                      className="min-w-0 max-w-[9rem] tabular-nums"
+                      aria-invalid={defaultMaxUsesInvalid || undefined}
+                    />
+                    {maxUsesInput.trim() !== String(productMaxUses) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setMaxUsesInput(String(productMaxUses))}
+                        title={`Ürün ayarındaki varsayılana dön (${tr(productMaxUses)})`}
+                      >
+                        <RotateCcw />
+                        Varsayılan ({tr(productMaxUses)})
+                      </Button>
+                    )}
+                  </div>
+                </Field>
+
+                {/* Satır bazında kapasite YALNIZ düz anahtar yolunda: hesap tablosunun
+                    sütunları ürünün payloadSchema'sından gelir, oraya kapasite sütunu
+                    eklemek şema alanı gibi görünüp hesap verisine karışırdı. */}
+                {!isAccount && (
+                  <label className="flex w-fit cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={perRowCapacity}
+                      onChange={(e) => setPerRowCapacity(e.target.checked)}
+                      className={checkboxClass}
+                    />
+                    Anahtarların kapasiteleri farklı — her satırda ayrı yazacağım
+                  </label>
+                )}
+
+                {capacityMode && (
+                  <div className="space-y-1 rounded-md border border-border bg-background/60 p-2.5 text-xs">
+                    <div className="flex items-center gap-2 font-semibold text-foreground">
+                      <span className="min-w-0 flex-1 truncate">1. sütun: Anahtar</span>
+                      <span className="w-32 shrink-0 text-right">2. sütun: Kullanım hakkı</span>
+                    </div>
+                    <p className="text-muted-foreground">
+                      Her satır <code className="text-foreground">anahtar</code> +{' '}
+                      <code className="text-foreground">kullanım hakkı</code> biçiminde okunur
+                      (sekme, noktalı virgül ya da virgülle ayırın — Excel&apos;den yapıştırma
+                      doğrudan çalışır). İkinci sütunu BOŞ bırakılan satır yukarıdaki varsayılanı
+                      alır. Başlık satırı yazarsanız atlanır.
+                    </p>
+                    {capacityParse && items.length > 0 && (
+                      <p className="text-muted-foreground">
+                        Okunan ayraç:{' '}
+                        <strong className="text-foreground">
+                          {delimiterLabel(capacityParse.delimiter)}
+                        </strong>
+                        {capacityParse.delimiter == null &&
+                          ' — ikinci sütun bulunamadı, tüm satırlar varsayılan kapasiteyi alır.'}
+                        {capacityParse.headerSkipped && ' · başlık satırı atlandı'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {isAccount && accountSource === 'table' && columns.length === 0 && (
               <Alert variant="warning">
                 <TriangleAlert />
@@ -1462,9 +1805,13 @@ export function ImportWorkbench({
 
             {!isAccount && keySource === 'paste' && (
               <Field
-                label="Anahtarlar"
+                label={capacityMode ? 'Anahtar + kullanım hakkı' : 'Anahtarlar'}
                 htmlFor="si-keys"
-                hint={`Her satıra bir anahtar — en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} satır. Sayaç aşağıda canlı güncellenir.`}
+                hint={
+                  capacityMode
+                    ? `Her satır: anahtar, ayraç, kullanım hakkı — en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} satır. Sayaç aşağıda canlı güncellenir.`
+                    : `Her satıra bir anahtar — en çok ${MAX_IMPORT_ITEMS.toLocaleString('tr-TR')} satır. Sayaç aşağıda canlı güncellenir.`
+                }
               >
                 <Textarea
                   id="si-keys"
@@ -1473,7 +1820,11 @@ export function ImportWorkbench({
                   onChange={(e) => setKeys(e.target.value)}
                   className="font-mono text-xs"
                   spellCheck={false}
-                  placeholder={'XXXXX-XXXXX-XXXXX-XXXXX-11111\nXXXXX-XXXXX-XXXXX-XXXXX-22222'}
+                  placeholder={
+                    capacityMode
+                      ? 'XXXXX-XXXXX-XXXXX-XXXXX-11111;500\nXXXXX-XXXXX-XXXXX-XXXXX-22222;50\nXXXXX-XXXXX-XXXXX-XXXXX-33333'
+                      : 'XXXXX-XXXXX-XXXXX-XXXXX-11111\nXXXXX-XXXXX-XXXXX-XXXXX-22222'
+                  }
                 />
               </Field>
             )}
@@ -1532,9 +1883,21 @@ export function ImportWorkbench({
                 blankLines={blankLines}
                 duplicates={duplicateCount}
                 bytes={payloadBytes}
-                perKeyUses={perKeyUses}
+                capacityUnits={capacityUnits}
+                uniformCapacity={uniformCapacity}
+                mixedCapacity={mixedCapacity}
+                invalidCapacityLines={invalidCapacityLines}
                 unitNoun={isAccount ? 'hesap' : 'anahtar'}
               />
+            )}
+            {/* İki sütunlu modda fazladan sütun: satır ATILMAZ, ilk iki hücre okunur —
+                ama sessiz kalmaz (anahtarında ayraç geçen bir satırın işareti olabilir). */}
+            {capacityMode && extraColumnLines > 0 && (
+              <p className="text-xs text-warning">
+                {tr(extraColumnLines)} satırda ikiden fazla sütun var — yalnız ilk iki sütun
+                (anahtar, kullanım hakkı) okunur. Anahtarınızın içinde ayraç geçiyorsa iki
+                sütunlu modu kapatın.
+              </p>
             )}
 
             {/* Düz anahtar yolunda görünmez karakter uyarısı (hesap tablosundaki ile aynı
@@ -1576,11 +1939,26 @@ export function ImportWorkbench({
                   {tr(items.length)}
                 </dd>
               </div>
-              {perKeyUses > 1 && (
+              {isMulti && (
                 // MAK/çok kullanımlık: anahtar sayısı ile stoğa eklenen birim AYRI şeydir.
+                // Çarpan artık satır bazında değişebilir → sabit "N×" yerine duruma göre yazılır.
                 <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">Kullanım hakkı ({perKeyUses}×)</dt>
-                  <dd className="tabular-nums text-foreground">{tr(capacityUnits)}</dd>
+                  <dt className="text-muted-foreground">
+                    Kullanım hakkı
+                    {mixedCapacity
+                      ? ' (karışık)'
+                      : uniformCapacity != null
+                        ? ` (${tr(uniformCapacity)}×)`
+                        : ''}
+                  </dt>
+                  <dd
+                    className={cn(
+                      'tabular-nums',
+                      capacityUnits == null ? 'text-warning' : 'text-foreground',
+                    )}
+                  >
+                    {capacityUnits == null ? '—' : tr(capacityUnits)}
+                  </dd>
                 </div>
               )}
               <div className="flex items-baseline justify-between gap-3">
@@ -1627,8 +2005,8 @@ export function ImportWorkbench({
                   <p className="text-xs text-muted-foreground">
                     {remainingAfter > 0
                       ? `Kalan ${tr(remainingAfter)} birim stokta kalır. `
-                      : autoUnits > capacityUnits
-                        ? `${tr(autoUnits - capacityUnits)} birim talep açık kalır. `
+                      : autoUnits > effectiveCapacity
+                        ? `${tr(autoUnits - effectiveCapacity)} birim talep açık kalır. `
                         : ''}
                     {manualUnits > 0 && (
                       <>

@@ -404,7 +404,7 @@ export default function GuidePage() {
         </p>
         <Bullets>
           <li><strong>Temel bilgiler:</strong> SKU, ad, <strong>kategori</strong> (listeden seçilir; boş bırakılırsa ürün &quot;Kategorisiz&quot; olur), ürün tipi (lisans anahtarı / hesap / kod / özel), kullanım modu, teslimat politikası.</li>
-          <li><strong>Kullanım modu:</strong> <em>Tek kullanımlık</em> (1 key = 1 müşteri) veya <em>Çok kullanımlık (MAK)</em> (1 key = N teslim, kapasite).</li>
+          <li><strong>Kullanım modu:</strong> <em>Tek kullanımlık</em> (1 key = 1 müşteri) veya <em>Çok kullanımlık (MAK)</em> (1 key = N teslim). MAK&apos;ta buradaki kapasite bir <strong>varsayılandır</strong>: her anahtarın gerçek kapasitesi <R href="/stock/import">Stok Girişi</R> ekranında ayrıca verilebilir (tedarikçiden 50&apos;lik ve 500&apos;lük lotlar birlikte gelebilir).</li>
           <li><strong>Teslimat politikası:</strong> stok siparişe yetmezse ne olacağı — kısmi otomatik, kısmi onaylı, ya da ya hep ya hiç.</li>
           <li><strong>Hesap alanları:</strong> hesap ürünlerinde müşteriye teslim edilecek alanlar (ör. kullanıcı adı, parola). &quot;Gizli&quot; işaretli alanlar panelde maskelenir; &quot;Zorunlu&quot; kaldırılırsa alan opsiyonel olur.</li>
           <li><strong>Süre &amp; garanti:</strong> süreli hesaplar için geçerlilik (gün) + süre bitince davranışı, garanti (Sorun Bildir) penceresi, düşük stok eşiği.</li>
@@ -521,6 +521,14 @@ export default function GuidePage() {
           girilebilir; girdi alanının altındaki sayaç kaç kayıt gideceğini, kaç boş satırın atlandığını
           ve mükerrer görüneni canlı gösterir. Çok kullanımlık (MAK) üründe sayaç ayrıca{' '}
           <strong>kullanım hakkını</strong> hesaplar: 3 anahtar × 500 kullanım = 1.500 birim.
+        </p>
+        <p>
+          <strong>MAK kapasitesi anahtar başınadır.</strong> Girişte &quot;her anahtarın kullanım
+          hakkı&quot; alanı ürünün varsayılanıyla dolu gelir; bu partinin aktivasyon sayısı farklıysa
+          değiştirmeniz yeterlidir. Aynı yapıştırmada <strong>kapasiteler karışıksa</strong>
+          &quot;anahtarların kapasiteleri farklı&quot; seçeneğiyle ikinci bir sütun (anahtar +
+          kapasite) girebilirsiniz. Girilen değer o anahtarın kaydına yazılır — ürün ayarını
+          değiştirmek stokta duran anahtarları <em>etkilemez</em>.
         </p>
         <p>
           Hesap ürünlerinde girdi varsayılan olarak <strong>&quot;Tablo&quot;</strong> biçimindedir

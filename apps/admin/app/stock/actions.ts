@@ -11,7 +11,7 @@ import { getActor } from '../../lib/session';
  * kalıbı vardı; hepsi paylaşılan `isUuid`'e bağlandı (iki ayrı kalıp tutmak sapma üretir).
  * `lib/api` merkezî `assertSafePath` kapısı ikinci savunma hattıdır.
  */
-import { MAX_IMPORT_ITEMS } from './import/limits';
+import { MAX_IMPORT_ITEMS, MAX_USES_CAP, MAX_USES_MIN } from './import/limits';
 import { liraToCents, type ImportItemInput } from './import/parse';
 // Ürün formu → API gövdesi. `'use server'` dosyasında yaşayamaz (export yasağı → test edilemez);
 // gerekçesi ve `guideId`'nin sessizce düşme hikâyesi o dosyanın başında yazılı.
@@ -158,6 +158,11 @@ function buildNewBatchBody(formData: FormData): { body?: Record<string, unknown>
   };
 }
 
+/** Kullanım hakkı okunamadı — API'nin İngilizce/teknik hatası yerine tek Türkçe metin. */
+const MAX_USES_INVALID =
+  `Anahtar başına kullanım hakkı ${MAX_USES_MIN}–${MAX_USES_CAP.toLocaleString('tr-TR')} ` +
+  'arası bir tam sayı olmalı. Sayfayı yenileyip tekrar deneyin.';
+
 export interface FormState {
   ok: boolean;
   error?: string;
@@ -234,6 +239,15 @@ export async function updateProductAction(
  *
  * Parti üç moddan biriyle bağlanır (`batchMode`): partisiz · mevcut parti (`batchId`) ·
  * stok girişiyle AYNI istekte açılan yeni parti (`newBatch`). İkisi karşılıklı dışlayıcıdır.
+ *
+ * KULLANIM HAKKI (`maxUses`): kayıt başına opsiyonel MAK kapasitesi taşınır (partiden partiye
+ * değişir — bkz. `ImportItemInput.maxUses`). Değer İSTEMCİDE üretilir ama BURADA yeniden
+ * doğrulanır: sunucu aksiyonları çalışma anında tip zorlamaz, uç dışarıdan serileştirilmiş
+ * argümanla çağrılabilir. Ürünün çok kullanımlık olup olmadığını bu katman BİLEMEZ (ürünü
+ * çekmez) — o kapıyı API tutar (tek kullanımlık üründe 1 dışında değer ⇒ 400) ve arayüz alanı
+ * yalnız multi üründe render edilir. Bu yüzden buradaki doğrulama ŞEKİL doğrulamasıdır ve
+ * geçersiz değeri SESSİZCE DÜŞÜRMEZ (düşürseydi ürün varsayılanı uygulanır, operatör yanlış
+ * kapasiteyi hiç fark etmezdi) — tüm istek anlaşılır bir hatayla reddedilir.
  */
 export async function importStockAction(
   _prev: ImportState,
@@ -244,7 +258,7 @@ export async function importStockAction(
   const dryRun = String(formData.get('dryRun') || '') === 'true';
   if (!productId) return { ok: false, error: 'Ürün seçin' };
 
-  const items: Array<{ payload: string | Record<string, string> }> = [];
+  const items: Array<{ payload: string | Record<string, string>; maxUses?: number }> = [];
   /** items[i] → kullanıcının ekranda gördüğü satır no (rejections eşlemesi için). */
   const sourceLines: number[] = [];
 
@@ -259,20 +273,42 @@ export async function importStockAction(
     if (!Array.isArray(parsed)) {
       return { ok: false, error: 'Girilen kayıtlar okunamadı (beklenmeyen biçim).' };
     }
+    /** forEach içinden erken dönülemez → hata bayrak olarak taşınır, döngüden sonra döner. */
+    let maxUsesError = false;
     parsed.forEach((raw, i) => {
       const it = raw as ImportItemInput | null;
       const payload = it?.payload;
+      // `maxUses` alanı HİÇ yoksa (tek kullanımlık ürün / varsayılanı kullanan giriş) alan
+      // gövdeye eklenmez → API ürünün varsayılanını uygular (eski davranış birebir).
+      const rawMaxUses = it?.maxUses;
+      let maxUses: number | undefined;
+      if (rawMaxUses !== undefined && rawMaxUses !== null) {
+        if (
+          typeof rawMaxUses !== 'number' ||
+          !Number.isSafeInteger(rawMaxUses) ||
+          rawMaxUses < MAX_USES_MIN ||
+          rawMaxUses > MAX_USES_CAP
+        ) {
+          maxUsesError = true;
+          return;
+        }
+        maxUses = rawMaxUses;
+      }
       if (typeof payload === 'string') {
         if (!payload) return;
-        items.push({ payload });
+        items.push({ payload, ...(maxUses !== undefined ? { maxUses } : {}) });
       } else if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-        items.push({ payload: payload as Record<string, string> });
+        items.push({
+          payload: payload as Record<string, string>,
+          ...(maxUses !== undefined ? { maxUses } : {}),
+        });
       } else {
         return;
       }
       const line = it?.line;
       sourceLines.push(typeof line === 'number' && line > 0 ? line : i + 1);
     });
+    if (maxUsesError) return { ok: false, error: MAX_USES_INVALID };
   } else {
     String(formData.get('keys') || '')
       .split('\n')

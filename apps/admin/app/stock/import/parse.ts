@@ -5,11 +5,27 @@
  * canlı toplam için, sunucuda `unitCostCents` üretmek için aynı fonksiyonla çözülür →
  * ekranda "288,00 ₺" yazıp API'ye başka bir sayı gitmesi imkânsız).
  */
+import { MAX_USES_CAP, MAX_USES_MIN } from './limits';
 
 /** İstemciden sunucu action'ına taşınan tek kayıt. */
 export interface ImportItemInput {
   /** key/code/custom → düz metin; account → alan→değer nesnesi. */
   payload: string | Record<string, string>;
+  /**
+   * Bu KAYDIN kendi kullanım hakkı (MAK aktivasyon sayısı) — `license_items.max_uses`.
+   *
+   * NEDEN SATIR BAZINDA: MAK anahtarları tedarikçiden PARTİ PARTİ gelir ve her partinin
+   * aktivasyon sayısı farklı olabilir (50'lik lot, 500'lük lot, hatta "5 aktivasyonu kalmış"
+   * tek anahtar). Kapasite bugüne kadar YALNIZ ürün ayarındaydı (`products.max_uses`) ve
+   * import onu tüm satırlara kopyalıyordu → farklı lotları girmek için ürünü düzenleyip
+   * geri almak gerekiyordu (o düzenleme ürünün TÜM gelecek girişlerini de etkiler).
+   *
+   * YALNIZ çok kullanımlık (`usageMode='multi'`) üründe anlamlıdır; tek kullanımlık üründe
+   * 1 dışında bir değer gönderilirse API TÜM isteği 400'ler. Bu yüzden alan yalnız multi
+   * üründe DOLDURULUR (arayüz alanı da yalnız orada render eder). Verilmezse ürünün
+   * varsayılanı uygulanır — eski davranış birebir korunur.
+   */
+  maxUses?: number;
   /**
    * Kullanıcının EKRANDA gördüğü kaynak satır numarası (1 tabanlı).
    *
@@ -197,6 +213,85 @@ export function cleanHiddenChars(value: string): string {
     .replace(new RegExp(`[${SPACE_LIKE}]`, 'g'), ' ')
     .replace(new RegExp(`[${ZERO_WIDTH}]`, 'g'), '')
     .trim();
+}
+
+// ── Kullanım hakkı (MAK kapasitesi) ──────────────────────────────────────────
+/**
+ * Kullanım hakkı metnini sayıya çevirir (`items[].maxUses`).
+ *
+ * Kabul edilen biçimler: "500", "1.000", "1 000" (Türkçe binlik ayracı ve boşluk atılır;
+ * yapıştırılan Excel hücresi böyle gelir). Ondalık KABUL EDİLMEZ — aktivasyon adedi tam
+ * sayıdır ve "1,5" gibi bir değeri 1'e ya da 2'ye yuvarlamak sessiz veri uydurmaktır.
+ *
+ * BOŞ GİRDİ de `null` döner: çağıran "boş" ile "geçersiz" ayrımını KENDİSİ yapmalıdır
+ * (boş = varsayılanı uygula, geçersiz = operatöre göster). İkisi burada birleştirilseydi
+ * yanlış yazılmış bir kapasite sessizce varsayılana düşerdi.
+ */
+export function parseMaxUses(raw: string): number | null {
+  // cleanHiddenChars: NBSP/sıfır-genişlik → normal boşluk/atılır + uçlar kırpılır. Yapıştırılan
+  // hücrelerde bunlar olağandır ve tek başına `Number()` bunlara takılıp NaN üretir.
+  const s = cleanHiddenChars(raw).replace(/[.\s]/g, '');
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isSafeInteger(n) || n < MAX_USES_MIN || n > MAX_USES_CAP) return null;
+  return n;
+}
+
+/**
+ * "anahtar<AYRAÇ>kapasite" yapıştırmasında BAŞLIK satırını tanımak için ad listesi.
+ *
+ * `parseGrid` bu diziyi YALNIZ başlık tespiti için kullanır (satırları sütun sayısına göre
+ * bölmez, dolgu yapmaz) → gerçek sütun sayısı ikidir, buradaki fazladan girdiler yalnız
+ * "Anahtar;Kullanım hakkı" / "key,maxUses" gibi farklı yazımların da başlık sayılmasını
+ * sağlar. Aksi halde başlık satırı VERİ sanılıp anahtar olarak içe aktarılırdı.
+ */
+export const KEY_CAPACITY_HEADER_ALIASES: GridColumn[] = [
+  { key: 'key', label: 'Anahtar' },
+  { key: 'lisans', label: 'Lisans' },
+  { key: 'maxUses', label: 'Kullanım hakkı' },
+  { key: 'max_uses', label: 'Kapasite' },
+  { key: 'aktivasyon', label: 'Aktivasyon' },
+];
+
+/** İki sütunlu anahtar yapıştırmasının tek satırı (boş satırlar da döner — sayım çağıranda). */
+export interface KeyCapacityRow {
+  /** Kullanıcının EKRANDA gördüğü satır no; başlık satırı atlansa bile KAYMAZ. */
+  line: number;
+  /** 1. sütun — HAM (kırpılmaz): görünmez karakter tespiti ham değer üzerinde yapılır. */
+  key: string;
+  /** 2. sütun — ham; boş ise varsayılan kapasite uygulanır. */
+  capacityRaw: string;
+  /** İkiden fazla sütun geldiyse fazlalık sayısı (sessizce atılmaz, çağıran uyarır). */
+  extraCells: number;
+}
+
+/**
+ * "anahtar<AYRAÇ>kapasite" bloğunu çözümler — İKİNCİ bir CSV çözümleyici YAZILMAZ:
+ * ayraç tespiti, tırnaklı hücre kuralları ve başlık atlama `parseGrid` üzerinden gelir.
+ *
+ * Bu fonksiyon YALNIZ operatör "anahtarların kapasiteleri farklı" kutusunu işaretlediğinde
+ * çağrılır. Kutu kapalıyken satır ASLA ayraçtan bölünmez — içinde noktalı virgül/virgül
+ * geçen bir anahtar sessizce kırpılıp yarısı teslim edilemez (sessiz çıkarım yok).
+ */
+export function parseKeyCapacityRows(text: string): {
+  rows: KeyCapacityRow[];
+  delimiter: Delimiter | null;
+  headerSkipped: boolean;
+} {
+  const grid = parseGrid(text, KEY_CAPACITY_HEADER_ALIASES);
+  // parseGrid yalnız BAŞTAKİ başlık satırını ve SONDAKİ boş satırları düşürür → kaynak satır
+  // numarası = dizideki sıra + (başlık atlandıysa 1).
+  const offset = grid.headerSkipped ? 1 : 0;
+  const rows = grid.rows.map((cells, i) => {
+    const padded = padRow(cells, 2);
+    return {
+      line: i + 1 + offset,
+      key: padded[0] ?? '',
+      capacityRaw: padded[1] ?? '',
+      extraCells: Math.max(cells.length - 2, 0),
+    };
+  });
+  return { rows, delimiter: grid.delimiter, headerSkipped: grid.headerSkipped };
 }
 
 // ── Para (lira ↔ kuruş) ──────────────────────────────────────────────────────
