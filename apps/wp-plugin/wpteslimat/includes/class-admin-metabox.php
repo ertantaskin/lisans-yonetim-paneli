@@ -460,7 +460,8 @@ class Wpteslimat_Admin_Metabox {
         $units = isset($a['units']) ? max(1, (int) $a['units']) : 1;
         if (self::is_multi_usage($a, false) || $units > 1) {
             echo '<span class="wpt-meta">'
-                . sprintf(esc_html__('Bu siparişte %d kullanım hakkı', 'wpteslimat'), $units)
+                // Panelin sipariş detayıyla AYNI cümle (iki yüzey aynı sayıyı farklı anlatmamalı).
+                . sprintf(esc_html__('Bu siparişe %d etkinleştirme', 'wpteslimat'), $units)
                 . '</span>';
         }
         if ($max_uses > 1) {
@@ -475,10 +476,20 @@ class Wpteslimat_Admin_Metabox {
                 . esc_attr__('Bu sayaç anahtarın tüm siparişlerdeki toplam kullanımıdır; yalnız bu siparişe ait değildir.', 'wpteslimat')
                 . '">'
                 . sprintf(
-                    esc_html__('Anahtar geneli: %1$d/%2$d kullanım', 'wpteslimat'),
+                    esc_html__('Anahtarın toplamı: %1$d/%2$d kullanım', 'wpteslimat'),
                     (int) ($a['useCount'] ?? 0),
                     $max_uses
                 )
+                // KALAN HAK: operatörün asıl sorusu "bu paylaşımlı anahtarda satılabilir hak
+                // kaldı mı". Çıplak "5/5" bunu söylemiyor, okuyan kişi çıkarmak zorunda kalıyordu
+                // (panelin sipariş detayıyla AYNI cümle — iki yüzey aynı sayıyı aynı anlatır).
+                . ' · '
+                . (($max_uses - (int) ($a['useCount'] ?? 0)) <= 0
+                    ? esc_html__('tükendi', 'wpteslimat')
+                    : sprintf(
+                        esc_html__('%d hak kaldı', 'wpteslimat'),
+                        $max_uses - (int) ($a['useCount'] ?? 0)
+                    ))
                 . '</span>';
         }
         if (!empty($a['validUntil'])) {

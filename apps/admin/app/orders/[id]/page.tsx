@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Gift,
   UserRound,
+  Info,
 } from 'lucide-react';
 import { apiGet, ApiError, type OrderDetail, type PayloadFieldDef } from '../../../lib/api';
 import { isOwner } from '../../../lib/session';
@@ -246,14 +247,23 @@ function LicenseRow({
       */}
       {isMulti && (
         <>
-          <span className="text-xs tabular-nums text-foreground">
-            bu siparişte <strong>{a.units}</strong> etkinleştirme
+          <span
+            className="text-xs tabular-nums text-foreground"
+            title="Bu müşterinin bu anahtar üzerindeki hakkı: anahtarı bu kadar kez etkinleştirebilir."
+          >
+            Bu siparişe <strong>{a.units}</strong> etkinleştirme
           </span>
           <span
             className="text-xs tabular-nums text-muted-foreground"
             title="Anahtarın TÜM siparişlerdeki toplam kullanımı — bu siparişin payı değildir."
           >
-            anahtar geneli {a.useCount}/{a.maxUses}
+            Anahtarın toplamı: {a.useCount}/{a.maxUses}
+            {(() => {
+              // Operatörün asıl merak ettiği: bu paylaşımlı anahtarda SATILABİLİR hak kaldı mı?
+              // Çıplak "5/5" bunu söylemiyordu (okuyan kişi çıkarmak zorundaydı).
+              const kalan = Math.max(0, a.maxUses - a.useCount);
+              return kalan === 0 ? ' · tükendi' : ` · ${kalan} hak kaldı`;
+            })()}
           </span>
         </>
       )}
@@ -742,6 +752,25 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
                   {/* Bu ürünün aktif anahtarları */}
                   <div>
+                    {/*
+                      MAK AÇIKLAMASI — satırdaki İKİ SAYININ ne olduğunu bir kez, düz Türkçe söyler.
+                      Kullanıcı geri bildirimi: "bu siparişte 5 etkinleştirme · anahtar geneli 5/5"
+                      yeterince açık değil. Sayıların kendisi doğruydu ama okuyan kişi "aynı anahtar
+                      başka siparişlerde de kullanılıyor" bilgisini bilmek zorundaydı. Yalnız MAK
+                      satırında ve yalnız anahtar VARSA basılır (tek kullanımlıkta gürültü olmaz).
+                    */}
+                    {activeLine.length > 0 &&
+                      activeLine.some((a) => a.usageMode === 'multi' || a.maxUses > 1) && (
+                        <p className="flex items-start gap-1.5 border-b border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+                          <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                          <span>
+                            Çok kullanımlık (MAK) ürün: <strong>aynı anahtar birden çok siparişe</strong>{' '}
+                            verilir. <strong>&quot;Bu siparişe N etkinleştirme&quot;</strong> müşterinin
+                            hakkıdır; <strong>&quot;Anahtarın toplamı&quot;</strong> o anahtarın tüm
+                            siparişlerdeki kullanımı ve kalan kapasitesidir.
+                          </span>
+                        </p>
+                      )}
                     {activeLine.length === 0 ? (
                       <p className="px-4 py-3 text-sm text-muted-foreground">
                         {lineAsg.length > 0
