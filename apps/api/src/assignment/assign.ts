@@ -293,6 +293,14 @@ export async function consumeMultiUseCapacity(
   // yalnız bir dalda unutulmasına açık kapı bırakırdı.
   const takenExpr = spread
     ? // SPREAD: her turda TEK birim. Anahtarın kalanı 0 olamaz (WHERE use_count < max_uses).
+      //
+      // DÜRÜSTLÜK NOTU: bu ifade SAVUNMA-DERİNLİĞİdir, mekanizmanın kendisi DEĞİL — bugün
+      // `allocate` spread turunda zaten `want=1` geçiyor, yani `LEAST(1,…)` ile
+      // `LEAST(${want},…)` çalışma anında AYNI şeyi üretir (kontrol denemesiyle ölçüldü:
+      // ifadeyi bozmak hiçbir testi kırmadı). Politikayı GERÇEKTEN uygulayan şey aşağıdaki
+      // DIŞLAMA listesidir; onu devre dışı bırakmak b1/b2/b4 testlerini kırmızıya düşürür
+      // (ölçüldü). Sabit 1 yine de duruyor: ileride biri spread'i want>1 ile çağırırsa
+      // sessizce toplu alma yapmasın.
       sql`LEAST(1, max_uses - use_count)`
     : sql`LEAST(${want}, max_uses - use_count)`;
   const orderExpr = spread
@@ -302,7 +310,7 @@ export async function consumeMultiUseCapacity(
   // Tur içi dışlama: bu satırda ZATEN kullanılmış anahtarlar bir daha seçilmesin.
   // `ANY(${dizi}::uuid[])` drizzle şablonunda BOZUK SQL üretir (proje tuzağı) → parametreli IN.
   const excludeCond =
-    false && exclude.length > 0
+    exclude.length > 0
       ? sql`AND id NOT IN (${sql.join(
           exclude.map((id) => sql`${id}`),
           sql`, `,
