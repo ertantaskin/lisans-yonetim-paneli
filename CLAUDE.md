@@ -2854,6 +2854,31 @@ docstring iddiaları · admin metinleri · ölü-uç/kapalı-döngü taraması) 
   müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm) · `BACKUP_OFFSITE_CMD` TANIMSIZ → yedekler
   yalnız o sunucuda. (ADMIN_TOKEN rotasyonu bu turda YAPILDI, listeden düştü.)
 
+**MAK SAYILARI KENDİNİ ANLATIYOR + İADE SONRASI BAYAT PANEL-DURUMU (commit e649b9c→ab56a71, CANLI
+prod+dev, eklenti v1.1.7, migration YOK):** Kullanıcı ekran görüntüsüyle: *"bu siparişte 5 etkinleştirme ·
+anahtar geneli 5/5 — daha açıklayıcı olmalı; başka yerde de yeterince belirtilmiyorsa onları da düzelt"*.
+- **Sayılar doğruydu, ANLATIM eksikti.** Okuyan kişi iki şeyi kendi bilmek zorundaydı: aynı MAK anahtarının
+  BAŞKA siparişlerde de kullanıldığı ve o anahtarda satılabilir hak kalıp kalmadığı. Satır artık
+  **"Bu siparişe N etkinleştirme"** + **"Anahtarın toplamı: X/Y · N hak kaldı"** (tükenmişse "tükendi");
+  lisans listesinin başında, YALNIZ MAK satırında, tek seferlik düz Türkçe açıklama.
+- **Aynı belirsizliğin diğer yerleri (kullanıcının isteği):** ürün özeti `MAK×5` → **`MAK (varsayılan 5
+  kullanım)`** — kapasite artık anahtar başına verilebildiği için o sayı bağlayıcı tavan DEĞİL varsayılandır
+  (dev'de aynı üründe 5, 3 ve 1001 kapasiteli anahtarlar bir arada ölçüldü; `×5` "her anahtar 5 taşır" diye
+  okunuyordu) · ürün listesi STOK kolonu MAK satırında **"hak" birimi** (aynı kolon tek kullanımlıkta ANAHTAR,
+  MAK'ta KULLANIM HAKKI sayıyor; çıplak `1002` "1002 anahtar" diye okunuyordu — ipucu metni görünmez, yetmez) ·
+  kategori kartı "N stok" ipucu · mağaza sipariş ekranı (eklenti v1.1.7) panelle BİREBİR aynı dile hizalandı.
+- **[Testin bulduğu kusur, eklenti v1.1.6]** Tam iadeden sonra mağaza SİPARİŞ LİSTESİNDEKİ panel-durum kolonu/
+  filtresi BAYAT kalıyordu (panel `revoked`, liste "Teslim edildi"). Aynı kavramın iki meta anahtarı var ve
+  `_wpteslimat_panel_status`'ı yalnız geri-kanal webhook'u yazıyordu; panel iade için webhook ÜRETMEZ. Ortak
+  `set_panel_status()` push/uzlaştırma/iade yollarının üçüne bağlandı. **Önce/sonra aynı ortamda kanıtlandı**
+  (#76 bayat `fulfilled`, #77 `revoked`).
+- **Doğrulama:** typecheck 4/4 + 5 kapı · admin birim 159 · admin production build · dev **36 rota 200** ·
+  gerçek MAK siparişinde ve ürün listesinde tarayıcı çıktısıyla ölçüldü · prod deploy → `/health` 200 v1.1.0,
+  admin `/pending` 200, 0 hata · eklenti v1.1.7 yayınlandı. API mantığı bu turda DEĞİŞMEDİ (son entegrasyon
+  koşusu 428/428 geçerli).
+- **DERS:** bir sayıyı ekrana koyarken "KİMİN sayısı, hangi BİRİMDE" sorusu metinde yanıtlanmalı; aynı kolon
+  iki farklı şeyi sayıyorsa birim yazılmalı. Görünmez `title` ipucu tek başına yeterli DEĞİLDİR.
+
 **MAK KAPASİTESİ ANAHTAR BAŞINA + DEV SIFIRLAMA + TÜM SİPARİŞ TÜRLERİNİN E2E TESTİ (commit
 58ac630→e649b9c, CANLI prod+dev, eklenti v1.1.6, migration YOK):** Kullanıcı: *"MAK lisans anahtarı
 stoğu eklerken kapasiteyi ayarlayamıyorum; ürün düzenle kısmından değil de ANAHTARA GÖRE
