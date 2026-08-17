@@ -14,6 +14,65 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### MAK dağıtım politikası (ürün ayarı) + yanlış girilen anahtarın kalıcı silinmesi (migration 0046)
+
+İki operatör şikâyeti; ikisi de kodda kök nedeniyle doğrulandı.
+
+**1) "3 lisans aldı, 3 ayrı anahtar gönderebilir miyim?" — hayır, ayarı yoktu.**
+Motor sipariş başına **en az anahtar** verecek şekilde sabitti (`ORDER BY (kalan >= istenen)
+DESC`): 3 birimlik sipariş, stokta 3 ayrı anahtar dururken TEK anahtardan 3 hak alıyordu.
+Bu bilinçli bir karardı (MAK anahtarı paylaşımlıdır; müşterinin eline geçen her fazladan
+anahtar, kalan kapasitesi kadar fazladan aşırı-etkinleştirme yüzeyidir) ama **ürün bazında
+değiştirilemiyordu**.
+
+Artık ürün formunda **Dağıtım** seçimi var (`products.multi_use_distribution`):
+
+| Politika | 3 anahtar / qty 3 | 1 anahtar / qty 6 |
+|---|---|---|
+| **En az anahtar** (`fewest-keys`, VARSAYILAN — davranış değişmedi) | 1 atama × 3 hak | 1 atama × 6 hak |
+| **Ayrı anahtar** (`one-per-key`) | **3 atama × 1 hak** | 1 atama × 6 hak |
+
+`one-per-key` ayrı anahtarlar tükenene kadar 1'er dağıtır, sonra **aynen eski doldurma
+davranışına düşer** — yani "tek anahtar varsa ondan N hak" garanti. Sıralaması FEFO/FIFO'dur
+(`use_count ASC` REDDEDİLDİ: FEFO'yu ikinci sıraya düşürür, siparişler arası dağıtır ve
+`use_count` indekslenince kapasite düşümünün HOT-update'ini öldürürdü) → mevcut
+`license_items_alloc_idx` ile birebir örtüşür, **yeni indeks gerekmedi**. Satır başına üst
+sınır `MAX_SPREAD_KEYS=100`; aşılırsa kalan doldurmayla gider ve **görünür uyarı** loglanır.
+
+Müşteri metni de düzeltildi: *"bu **siparişte** N etkinleştirme hakkı"* → *"bu **anahtarda** N
+etkinleştirme hakkınız var"*. Etiket atama satırı başına basılır; yeni politikada müşteri üç
+satırda üç kez "bu siparişte 1 hak" görüp "toplam 1 hak mı var?" diye okurdu. Hakkın sahibi
+sipariş değil anahtardır. Panel ve WordPress yüzeyi aynı cümleyi kullanır.
+
+**2) Yanlışlıkla girilen anahtar bir daha girilemiyordu.**
+"Sil" düğmesi kaydı SİLMİYOR, izlenebilirlik için `voided` yapıyor (bilinçli) — ama mükerrer
+engeli (`license_items_payload_hash_uniq`) **tablo genelinde ve statüye bakmıyor**. Sonuç:
+operatör yanlış girdiği anahtarı iptal edip doğrusunu girmek istediğinde panel yalnız
+**"1 mükerrer atlandı"** diyordu ve üretimde `license_items` satırını silen **hiçbir yol yoktu**.
+
+Owner-only **`DELETE /v1/admin/license-items/:id/purge`** eklendi (sebep zorunlu, denetim izi
+kalır). **İki adımlı kapı bilinçli:** yalnız ZATEN `voided` bir kalem silinebilir — önce geri
+dönülebilir karar, sonra geri dönülemez olan. Altı kapı: teslim edilmiş / karantinadaki /
+GEÇMİŞ ataması olan (revoked dahil) / değişim soyağacında geçen / tedarikçiye bildirilmiş /
+**parti geri çekmesiyle ölmüş** kalem silinemez. Son kapı parti DURUMUNA değil kalemi NEYİN
+öldürdüğüne bakar — aksi halde tam da çözülmek istenen vaka (elle iptal + sonra parti geri
+çekme) bloklanırdı.
+
+*Reddedilen alternatif:* unique index'i `WHERE status <> 'voided'` ile kısmi yapmak. Geri
+çekilmiş (tedarikçiye iade edilmiş) kusurlu bir anahtarın, hiçbir insan kararı ve denetim izi
+olmadan yeniden satılabilir hâle gelmesine kapı açardı.
+
+**3) Mükerrer mesajı artık NEDENİ söylüyor.** `duplicateDetail` (sayaç + statü kırılımı;
+anahtar/hash ASLA dönmez): *"Mükerrerin 1 tanesi GEÇERSİZ KILINMIŞ bir kayıtla çakıştı — o
+kaydı envanterde bulup "Kalıcı sil" derseniz aynı anahtarı tekrar girebilirsiniz."* Teslim
+edilmiş kayıtta dürüst dil: *"bu anahtarlar tekrar girilemez"*. Kuru çalıştırma ile gerçek
+giriş **aynı** cümleyi üretir (tek yardımcı). "Sil" onayı da kayıp yolu ekranda anlatıyor.
+
+**Doğrulama:** typecheck 4/4 + altı kapı · birim 68+184+170 · **entegrasyon 454/454**
+(447 → +7) + yarış 3/3 · `db:generate` "No schema changes" · **iki kontrol denemesi**:
+form alanını gövdeden çıkarmak ve dışlama listesini devre dışı bırakmak testleri KIRMIZI
+yaptı (ilk denemem hiçbir şeyi ayırt etmemişti — spread'de çağıran zaten `want=1` geçiyor;
+bu, kodda dürüstçe not edildi).
 ### Kalan iki eksik kapatıldı + `check-docs` kapısının kendi kaçağı (migration YOK)
 
 Kod tabanında iki `TODO` duruyordu; ikisi de "yapılmadı" değil, **arıza üretiyordu**.

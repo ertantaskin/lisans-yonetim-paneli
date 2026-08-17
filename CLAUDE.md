@@ -118,9 +118,9 @@ mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddeler (aşağıda)
 | Prod | Ubuntu VPS + Docker Compose + Caddy TLS · API+admin **v1.1.0** · `/v1/health` 200 |
 | Dev/staging | Aynı VPS, ayrı compose projesi (`lisansdev`) + kendi WordPress'i — prod'a DOKUNMAZ |
 | Servisler | PostgreSQL 17 · Redis 7 · API (Nest/Fastify) · Admin (Next 15) · Caddy · Mailpit |
-| Migration | **0000-0045** (`__drizzle_migrations` izleme 46) |
+| Migration | **0000-0046** (`__drizzle_migrations` izleme 47) |
 | WP eklentisi | **v1.1.7** — panelden yayınlanır, müşteri siteleri updater ile alır |
-| Test | birim 68+184+170 · **entegrasyon 436 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
+| Test | birim 68+184+170 · **entegrasyon 454 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
 
 **Zincir kanıtlandı (gerçek WooCommerce):** sipariş → HMAC push → atomik atama (SKIP LOCKED) →
 My Account'ta çözülmüş anahtar → geri-kanal webhook. Tek/çok kullanımlık (MAK), hesap, süreli

@@ -12,6 +12,62 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**MAK DAĞITIM POLİTİKASI + KALICI SİLME (commit b307137, migration 0046):**
+Kullanıcı iki somut operatör sorunu bildirdi; ikisi de kodda kök nedeniyle doğrulandı ve
+plan modunda tasarlanıp onaylandı (kararlar: ürün bazlı ayar + varsayılan bugünkü davranış ·
+kalıcı silme owner-only/tekil/iki adımlı · "geri al" YAPILMAYACAK).
+
+- **[ARIZA 1 — dağıtım tersine sabitti]** *"3 adet MAK aldı, stokta 3 farklı anahtar varsa
+  3 farklı anahtar gönderebilir mi?"* Motor bunun TERSİNİ yapıyordu: `ORDER BY (kalan >=
+  istenen) DESC` ile **sipariş başına EN AZ anahtar**. Bu bilinçli bir karardı (MAK anahtarı
+  PAYLAŞIMLI; her fazladan anahtar = kalan kapasitesi kadar fazladan aşırı-etkinleştirme
+  yüzeyi) ama ürün bazında değiştirilemiyordu ve panelde bu bilgi HİÇ yazmıyordu.
+  → `products.multi_use_distribution` (`fewest-keys` varsayılan | `one-per-key`), ürün
+  formunda ödünüyle birlikte anlatılan bir seçim kutusu.
+- **[TASARIM KARARI — `use_count ASC` REDDEDİLDİ]** Spread'i "en az kullanılmış anahtar önce"
+  diye yazmak dışlama listesini gereksiz kılardı. Üç bedeli vardı: FEFO ikinci sıraya düşerdi
+  (yarın ölecek anahtar, hiç kullanılmamış süresiz anahtara yenilir), siparişler ARASI da
+  dağıtırdı (parça kapasiteler geç kapanır) ve `use_count` indekslenince kapasite düşümünün
+  HOT-update'i ölürdü (`license_items` sistemin en sıcak yazma tablosu). Bunun yerine tur içi
+  DIŞLAMA listesi + FEFO/FIFO → mevcut `license_items_alloc_idx` ile birebir örtüşür, **yeni
+  indeks gerekmedi**. `(b6)` testi bu kararı kilitler: `use_count ASC` tasarımında KIRMIZI olur.
+- **[KONTROL DENEMESİ — İLK DENEMEM HİÇBİR ŞEYİ AYIRT ETMEDİ]** Spread tavanını (`LEAST(1,…)`)
+  bozup testlerin kırmızıya döneceğini varsaydım; 454 test YEŞİL kaldı. Sebep: `allocate`
+  spread turunda zaten `want=1` geçiyor, yani iki ifade çalışma anında AYNI. Yani o satır
+  mekanizma değil savunma-derinliğiydi. Gerçek mekanizma DIŞLAMA listesi: onu devre dışı
+  bırakınca b1/b2/b4 KIRMIZI oldu (ölçüldü). Kod bu ayrımı artık dürüstçe yazıyor — tuzak
+  #11'in ikinci yarısı: kapının kapattığını görmek yetmez, NEYİ kapattığını da bilmek gerekir.
+- **[ARIZA 2 — silinen anahtar tekrar girilemiyor]** Operatör yanlış girdiği anahtarı "Sil"
+  ile iptal etti, partiyi de geri çekti; aynı anahtarı bir daha giremedi. Kök neden zinciri:
+  `license_items_payload_hash_uniq` **TAM (kısmi değil) unique index** ve statüye HİÇ bakmaz ·
+  hash HMAC ile deterministik · import `onConflictDoNothing` ile SESSİZCE atlıyor · `voided`
+  bilinçli olarak TERMİNAL · üretimde **tek bir `DELETE FROM license_items` yolu yok**.
+  Yani operatörün çıkışı YOKTU ve panel ona yalnız "1 mükerrer atlandı" diyordu.
+  → owner-only `DELETE /v1/admin/license-items/:id/purge`, sebep zorunlu, **altı kapı**.
+- **[G6 — kapının inceliği]** "Geri çekilmiş partiden gelen anahtar silinemez" kapısı parti
+  DURUMUNA (`batches.status` = recalled) bakSAYDI, tam da çözülmek istenen vakayı (elle void +
+  SONRA parti geri çekme) bloklardı. Doğru soru "parti geri çekildi mi" değil, "bu kalemi NE
+  öldürdü"dür: `recallBatch` yalnız `available`/`depleted` süpürür → elle void'lenen kalem
+  recall'dan ÖNCE ölmüştür ve defterde `action='void'` taşır, `'recall'` TAŞIMAZ.
+- **[REDDEDİLEN ALTERNATİF]** Unique index'i `WHERE status <> 'voided'` ile kısmi yapmak:
+  geri çekilmiş kusurlu bir anahtarın hiçbir insan kararı ve denetim izi olmadan yeniden
+  satılabilir hâle gelmesine kapı açardı; ayrıca aynı anahtar N `voided` satıra çoğalır ve
+  `updateLicenseItemPayload` dedup'ı da gevşetilmek zorunda kalırdı (tuzak #4).
+- **[ARIZA 3 — mesaj nedeni söylemiyordu]** `duplicateDetail` eklendi (sayaç + statü kırılımı;
+  anahtar/hash ASLA dönmez). Kuru çalıştırma ile gerçek giriş TEK yardımcıdan besleniyor →
+  onay modalinde bir şey, sonuçta başkasını görme sınıfı kapandı. "Sil" onayı da kayıp yolu
+  ("aynı değer tekrar girilemez, kalıcı silin") artık ekranda anlatıyor.
+- **[MÜŞTERİ METNİ]** `unitLabel` "bu **siparişte** N hak" → "bu **anahtarda** N hakkınız var".
+  Etiket ATAMA SATIRI başına basılıyor; yeni politikada müşteri üç satırda üç kez "bu siparişte
+  1 hak" görüp "toplam 1 hak mı var?" diye okurdu. Panel + WP yüzeyi aynı cümle (tuzak #18
+  gereği `unit-label.test` de güncellendi).
+- **[YAKALANAN TUZAK]** Yeni `describe` bloğu, ilk bloğun `afterAll(end)`'i bağlantıyı
+  kapattığı için 7 testte "bağlantı kapalı" hatası verdi. Temizlik dosya KÖKÜNE alındı
+  (`maintenance.reconcile-expiry.test.ts` aynı tuzağı aynı gerekçeyle belgeliyor).
+- **Doğrulama:** typecheck 4/4 + altı kapı · birim 68+184+170 · **entegrasyon 454/454**
+  (447 → +7) **+ yarış 3/3** · `db:generate` "No schema changes" · iki kontrol denemesi.
+
+---
 **KALAN İKİ EKSİK + KENDİ KAPIMIN KAÇAĞI (commit 2651ce4, migration YOK):**
 Kullanıcı *"geri kalan tüm eksikleri tamamla, projeyi daha iyi hale getir, mimariyi/projeyi
 daha düzenli derli toplu hale getir"* dedi. Kod tabanında duran `TODO`lar tarandı: **üç tane**
