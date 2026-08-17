@@ -159,10 +159,10 @@ describe('MAK/çok kullanımlık satış yolu — VARSAYILAN politika (fewest-ke
     }
   });
 
-  afterAll(async () => {
-    await cleanupByTag(db, TAG);
-    await end();
-  });
+  // NOT: temizlik/bağlantı kapatma DOSYA KÖKÜNDEDİR (dosyanın en altı). Buradaki bir
+  // `afterAll(end)` ikinci describe'ın testlerinden ÖNCE koşar ve onları "bağlantı kapalı"
+  // hatasıyla düşürürdü (Vitest'te root afterAll TÜM describe'lardan sonra çalışır).
+  // maintenance.reconcile-expiry.test.ts aynı tuzağı aynı gerekçeyle belgeliyor.
 
   it('(a1) kısmi kapasite: qty=3 → TEK atama (units=3), kalem hâlâ available', async () => {
     // 2 anahtar × 5 kullanım = 10 birim kapasite; 3 birim isteniyor.
@@ -618,4 +618,10 @@ describe('MAK dağıtımı: one-per-key (ürün ayarı)', () => {
     expect(keys.every((k) => k.status === 'available')).toBe(true);
     expect(keys.every((k) => k.assignedAt === null)).toBe(true);
   });
+});
+
+// Dosya kapsamı (root) temizlik — TÜM describe blokları bittikten SONRA koşar.
+afterAll(async () => {
+  await cleanupByTag(db, TAG);
+  await end();
 });

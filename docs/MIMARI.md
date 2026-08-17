@@ -101,10 +101,33 @@ RETURNING li.id;
 - Stok yetersizse: davranış ürün politikasına bağlı (§5). Varsayılan kısmi teslimat.
 - **Çok kullanımlıkta (`multi`)** satır seçilmez, kilitli satırda kapasite düşülür:
   `LEAST(istenen, max_uses − use_count)` — yani anahtar ne kadar taşıyorsa o kadar alınır, artan
-  talep sonraki anahtara taşar. Sıralamada **birinci anahtar "talebi TEK BAŞINA karşılayan"dır**
-  (müşterinin eline geçen her fazladan anahtar, fazladan aşırı-etkinleştirme yüzeyidir); FEFO/FIFO
-  ikinci-üçüncü anahtar olarak korunur. `max_uses` **anahtar başınadır** (ürün ayarı yalnız
-  VARSAYILAN) — tedarikçiden 50'lik ve 500'lük lotlar birlikte gelebilir.
+  talep sonraki anahtara taşar. `max_uses` **anahtar başınadır** (ürün ayarı yalnız VARSAYILAN) —
+  tedarikçiden 50'lik ve 500'lük lotlar birlikte gelebilir.
+
+#### MAK dağıtımı — ÜRÜN BAZLI İKİ POLİTİKA (`products.multi_use_distribution`)
+
+"3 lisans alındı: 3 ayrı anahtar mı, tek anahtardan 3 hak mı?" sorusu bir dönem koda gömülüydü;
+artık ürün ayarıdır. Her ikisinde de **kapasite muhasebesi ve fail-closed kalkan aynıdır**.
+
+| Politika | Davranış | 3 anahtar / qty 3 | 1 anahtar / qty 6 |
+|---|---|---|---|
+| **`fewest-keys`** (VARSAYILAN) | Talebi TEK BAŞINA karşılayan anahtar önce (`ORDER BY (kalan >= istenen) DESC`), sonra FEFO/FIFO | 1 atama × 3 hak | 1 atama × 6 hak |
+| **`one-per-key`** | Her birim AYRI anahtardan (tur içi dışlama + `LEAST(1, kalan)`); ayrı anahtar bitince kalan talep doldurmaya düşer | 3 atama × 1 hak | 1 atama × 6 hak |
+
+- **Neden varsayılan `fewest-keys`:** MAK anahtarı PAYLAŞIMLIDIR — panel yalnız defter tutar,
+  müşteriyi anahtarın kalan kapasitesini kullanmaktan alıkoyan teknik bir şey yoktur. Müşterinin
+  eline geçen her fazladan anahtar, o anahtarın kalanı kadar fazladan aşırı-etkinleştirme
+  yüzeyidir. `one-per-key` bu ödünü BİLEREK kabul eder ve ürün bazında açılır.
+- **`one-per-key` sıralaması FEFO/FIFO'dur** (boolean ifade yok) → `license_items_alloc_idx` ile
+  birebir örtüşür, yeni indeks gerekmez. `use_count ASC` ile yazmak dışlama listesini gereksiz
+  kılardı ama FEFO'yu ikinci sıraya düşürür, siparişler arası dağıtır ve `use_count` indekslenince
+  kapasite düşümünün HOT-update'ini öldürürdü — bilinçli olarak REDDEDİLDİ.
+- **Üst sınır:** ayrı-anahtar fazı satır başına en çok `MAX_SPREAD_KEYS` (100) tur döner; aşılırsa
+  kalan talep doldurmayla tamamlanır ve GÖRÜNÜR uyarı loglanır (birim başına bir UPDATE, tek
+  transaction içinde — korumasız hâli `consumeMultiUseCapacity`'nin çözdüğü perf arızasını geri
+  getirirdi).
+- Müşteri metni bu yüzden **"bu ANAHTARDA N etkinleştirme hakkınız var"** der (eskiden "bu
+  siparişte"): etiket atama satırı başına basılır ve hakkın sahibi sipariş değil anahtardır.
 
 ### Lisans yaşam döngüsü
 `available → assigned → (suspended ⇄ assigned) | replaced | revoked`
@@ -129,7 +152,8 @@ RETURNING li.id;
   aynası), hmac_secret_enc (+`_prev`), webhook_url, sales_daily_quota, dynamic_quota_enabled,
   review_multiplier, sandbox, admin_order_url_template(+`_manual`), plugin_version, last_seen_at
 - **products** — sku, name, `kind(key|account|custom|code)`, payload_schema(JSONB),
-  `usage_mode(single|multi)` + max_uses, `validity_days`+`on_expiry(hide|keep)`,
+  `usage_mode(single|multi)` + max_uses, `multi_use_distribution(fewest-keys|one-per-key)` (§2),
+  `validity_days`+`on_expiry(hide|keep)`,
   `stockless`+`release_at`, `fulfillment_policy(partial-auto|partial-approval|all-or-nothing)`,
   warranty_days, key_format(regex), low_stock_threshold, category_id, guide_id
 - **product_categories** — ad/açıklama/sabitleme sırası; ürün silinmez, `ON DELETE SET NULL`
@@ -211,6 +235,8 @@ Saklama süpürmesi (`RetentionService`) log tablolarını günlük budar.
 | `/v1/catalog` | GET | Bayi/kanal stok durumu — **fiyat DÖNMEZ** (§10) |
 | `/v1/connect/claim` | POST | **PUBLIC** — tek kullanımlık bağlan kodu → kimlik (§14) |
 | `/v1/updates/plugin/info` · `/download/:v` | GET | **PUBLIC** — eklenti güncelleyici (IP hız sınırlı) |
+| `/v1/admin/license-items/:id` | DELETE | Tekil iptal — kayıt SİLİNMEZ, `voided` olur (izlenebilirlik) |
+| `/v1/admin/license-items/:id/purge` | DELETE | **KALICI silme** (owner-only, sebep zorunlu). Yalnız `voided` + hiç ataması olmayan kalem; ardından aynı anahtar tekrar girilebilir (§12) |
 | `/v1/admin/deployments` | GET | Dağıtım/yayın/yedek kuyruğu geçmişi — `?target=` (virgülle çoklu) + `?limit=` (1..200) |
 | `/v1/admin/maintenance/reconcile` | POST | Tutarlılık denetimini elle koştur; `?full=true` sıcak pencereyi kaldırır (§16) |
 | `/v1/health` | GET | Sağlık; degrade durumda **503** |
