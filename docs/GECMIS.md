@@ -12,6 +12,70 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**İNCELEME TURU: İKİ SESSİZ SAYI HATASI + KİLİTLİ `LIMIT` DESENİNİN İKİ KARDEŞİ + BELGE DÜZENİ
+(commit 91f1173→00647b3, CANLI prod+dev, migration YOK):** Kullanıcı *"gerekli dağıtımları yap ve
+incelemelere devam et sorunları gider projeyi derli toplu düzenli bir hale getir"* dedi. Prod ve dev
+zaten en son commit'teydi (dağıtılacak bekleyen yok) → doğrulama temeli ÖLÇÜLDÜ (typecheck 4/4 + beş
+kapı, birim 411, ölü/yetim dosya 0, bildirim/güvenlik/olay sözlükleri TAM) ve temiz çıktı; yani
+aranan şey "zaten bozuk olan" değil **henüz görünmeyendi**.
+
+- **[SESSİZ 10× KAPASİTE]** Stok girişinde anahtar başına kullanım hakkını çözümleyen `parseMaxUses`
+  noktayı **koşulsuz** atıyordu → sayı biçimli bir Excel hücresinden gelen `500.0` sessizce **5000**
+  oluyordu. Bu, özelliğin ÖNLEMEK için yazıldığı aşırı satışın ta kendisidir (panel 5.000 hak sanar,
+  anahtar 500'de biter) ve hiçbir katmanda hata üretmez: 5000 geçerli bir tam sayıdır, API kabul eder,
+  onay modalinde yalnız TOPLAM görünür. Fonksiyonun **hiç testi yoktu**; hata tam da test yazılırken
+  ortaya çıktı (kontrol denemesi: eklenen test önce KIRMIZI). Ayraç artık ancak ardından TAM 3 rakam
+  geliyorsa binlik ayracıdır (`1.000`✓ · `500.0`✗ · `1.5`✗).
+- **[SESSİZ 1000× MALİYET]** Aynı ekranın para alanı (`liraToCents`) yalnız nokta varken değeri
+  koşulsuz ONDALIK sayıyordu → tr-TR yazımıyla `1.234` giren operatör 1234 ₺ sanıp **1,23 ₺**
+  kaydediyordu. Birim maliyet her lisansa snapshot'lanır; maliyet raporu ve tedarikçi karnesi onu okur.
+  Parada üç ondalık basamak olmadığı için kural belirsiz değil: grup boyutu karar verir.
+- **[KİLİTLİ `LIMIT` — atama motorundaki aşırı teslimat hatasının İKİ kardeşi]** (a) MAK kapasite
+  tüketimi (`consumeMultiUseCapacity`) CTE kullanıyordu ama **`MATERIALIZED` DEMİYORDU**; üstelik
+  `assignAvailableSingleUse` docstring'i "MAK yolu zaten doğru deseni kullanıyor" diye YANLIŞ bilgi
+  veriyordu — **açıklamanın kendisi denetimi yanlış yönlendirdi**. Tek referanslı CTE inline
+  edilebilir; sonucu "tüm stok" değil daha sinsi olurdu: `taken` güncellenmiş satırdan yeniden
+  hesaplanıp tüketilen kapasite ile çağırana dönen birim AYRIŞIRDI. + fail-closed kalkan (1..want
+  dışı ⇒ transaction geri alınır). (b) Dağıtım kuyruğunun `claimNext`'i `UPDATE … WHERE id = (SELECT
+  … LIMIT 1 FOR UPDATE SKIP LOCKED)` yazıyordu: tek çağrıda birden çok isteği `running` yapabilir ve
+  `.returning()` yalnız ilkini döndürdüğü için diğerleri SESSİZCE öksüz kalır — "aynı anda tek aktif
+  iş" güvencesi yüzünden panelden yeni dağıtım 409 alır, kilit ancak zombi süpürmesiyle açılır. Seç
+  ve güncelle AYRI ifadeye alındı (tek transaction, kilit korunur; `check-tx-pool` 37→38 gövde).
+  **Yeni testin gücü hakkında dürüstlük notu:** bu bir invaryant kilidi, arızanın yeniden üretimi
+  DEĞİL (kaçak eşzamanlı yazara/EPQ'ya bağlı) — testin docstring'inde açıkça yazılı.
+- **[SEMVER TEK KAYNAĞA]** "Hangi sürüm en yeni" kuralının İKİ kopyası vardı: API `updates.service`
+  (müşteri sitelerinin fiilen İNDİRDİĞİ paket) ve admin `/releases` ("En yeni" rozeti + düşük sürüm
+  yayın kapısı). Davranışları birebir aynıydı; sorun bugünkü sonuç değil YARINKİ SAPMAYDI (biri
+  ön-sürüm desteği kazansa panel bir sürümü "en yeni" derken siteler başkasını indirir, hiçbir yerde
+  hata çıkmazdı) → `@lisans/shared/domain/semver`. Taşırken `export { X } from '…'` tuzağına düştüm
+  (ad YEREL bağlanmaz, tsc yakaladı) — bu kod tabanında daha önce de yaşanmıştı.
+- **[TEMA YEDEĞİ ARTIK TUZAK]** `restore.sh` "tek komutta eski temaya dön" diyordu. ÖLÇÜLDÜ:
+  `legacy/app/globals.css` bugünkü yüzey token'larını tanımlamıyor (`--success-vivid` yedekte **0**,
+  güncelde **6**) → çalıştırılsa sessizce renksiz/eksik bir arayüz bırakırdı. Betik artık fail-closed
+  (`THEME_RESTORE_ONAY=1`), README + CLAUDE.md doğru yöntemi (`git checkout <sha> -- <dosya>`) söylüyor.
+  Klasör SİLİNMEDİ: hangi kararın neyin yerine geçtiğini gösteren okunabilir bir kayıt.
+- **[ARAÇ] `pnpm test:iso`** (`scripts/test-integration.sh`): entegrasyon+yarış paketi için
+  tekrarlanabilir giriş noktası — izole ağ + PG17 + Redis7, `--frozen-lockfile` kurulum, migration,
+  paket, temizlik. Host'ta node/pnpm GEREKMEZ (VPS'te node PATH'te değil). Elle kurulum üç kez
+  sahte/eksik doğrulama üretmişti; **üçüncüsü bu turda ölçüldü**: checkout'ta **vitest 2.1.9**
+  dururken lockfile 3.2.6 istiyordu → ilk koşu (428/428) sessizce YANLIŞ araç zinciriyle geçmişti;
+  betiğe kurulum eklendikten sonra aynı paket v3.2.7 ile koştu (+53 paket kuruldu).
+- **[BELGE DÜZENİ]** `CLAUDE.md` **310 KB**'a ulaşmıştı — her oturumda bağlama yüklenen dosyada elli
+  turluk geçmiş anlatısı kuralları boğuyordu; geliştirme komutları paragrafı da **birebir iki kez**
+  yazılmıştı. Tur-tur günlük BİREBİR bu dosyaya (`docs/GECMIS.md`) taşındı ve kayıpsızlığı
+  **satır-satır kanıtlandı** (eski dosyanın 2958 dolu satırından 2857'si burada, 208'i yeni
+  CLAUDE.md'de; "bulunamayan" 15 satır bilinçli yeniden yazılanlar). CLAUDE.md **18 KB**: damıtılmış
+  durum özeti + **20 maddelik "tekrarlayan tuzaklar"** (her maddesi bu projede en az bir kez üretime
+  çıkmış arızadan damıtıldı) + doğrulama tablosu + geliştirme komutları. README doküman indeksi
+  genişletildi; CHANGELOG'a bu tur **ve yazılmamış önceki tur** (MAK sayılarının anlatımı, eklenti
+  1.1.6/1.1.7) eklendi.
+- **Doğrulama:** typecheck 4/4 + beş kapı (use-server 26/89 · nest-wiring 42/133+13 · env 51 ·
+  workflows 2/4/47 · tx-pool **38**) · birim **68+184+165** · build 3/3 · şema sapması YOK
+  (`db:generate` "No schema changes") · **VPS izole PG17+Redis7: entegrasyon 429/429 + yarış 3/3** ·
+  PHP-lint temiz + eklenti davranış **108/108** · prod `deploy.sh api admin` (sağlık kapısı +
+  rollback) → `/v1/health` **200 v1.1.0**, admin `/pending` 200, api **0 ERROR** · dev yığını güncel.
+
+---
 Tasarım (v2.6) + **Faz 0 + Faz 1 (panel) + WP eklentisi CANLI, uçtan uca e2e doğrulandı ve VPS'e
 deploy edildi.** `docker compose up` ile 6 servis (PG17+Redis7+API+admin+Caddy+Mailpit) ayakta. WP
 test ortamı: `docker-compose.wp.yml` (WordPress+WooCommerce+MySQL). **Tam zincir kanıtlandı:** Woo

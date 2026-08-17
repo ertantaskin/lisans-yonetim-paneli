@@ -116,7 +116,7 @@ mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddeler (aşağıda)
 | Servisler | PostgreSQL 17 · Redis 7 · API (Nest/Fastify) · Admin (Next 15) · Caddy · Mailpit |
 | Migration | **0000-0045** (`__drizzle_migrations` izleme 46) |
 | WP eklentisi | **v1.1.7** — panelden yayınlanır, müşteri siteleri updater ile alır |
-| Test | birim 68+184+159 · **entegrasyon 429 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
+| Test | birim 68+184+165 · **entegrasyon 429 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
 
 **Zincir kanıtlandı (gerçek WooCommerce):** sipariş → HMAC push → atomik atama (SKIP LOCKED) →
 My Account'ta çözülmüş anahtar → geri-kanal webhook. Tek/çok kullanımlık (MAK), hesap, süreli
