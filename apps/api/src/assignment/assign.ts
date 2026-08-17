@@ -293,7 +293,7 @@ export async function consumeMultiUseCapacity(
   // yalnız bir dalda unutulmasına açık kapı bırakırdı.
   const takenExpr = spread
     ? // SPREAD: her turda TEK birim. Anahtarın kalanı 0 olamaz (WHERE use_count < max_uses).
-      sql`LEAST(1, max_uses - use_count)`
+      sql`LEAST(${want}, max_uses - use_count)`
     : sql`LEAST(${want}, max_uses - use_count)`;
   const orderExpr = spread
     ? // Boolean ifade YOK → sıralama `license_items_alloc_idx` ile BİREBİR örtüşür.
