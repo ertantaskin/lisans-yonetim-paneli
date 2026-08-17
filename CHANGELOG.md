@@ -14,6 +14,29 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### MAK kapasitesi artık ANAHTAR BAŞINA (migration YOK)
+
+**Bildirilen:** *"MAK stoğu eklerken kullanılabilir kapasiteyi ayarlayamıyorum; ürün düzenleme
+yerine anahtara göre verebilmek daha doğru olur."* Haklı: MAK anahtarları tedarikçiden parti
+parti gelir ve her partinin aktivasyon sayısı farklı olabilir (50’lik lot, 500’lük lot, hatta
+"5 aktivasyonu kalmış" tek anahtar). Kapasite yalnız ürün ayarında dururken operatörün iki
+seçeneği vardı: her lot için ürünü değiştirmek (ve o sırada giren her şeyin kapasitesini bozmak)
+ya da yanlış kapasiteyle girmek — ikincisi **sessiz aşırı satış** demektir (panel 500 hak sanar,
+anahtar 50’de biter).
+
+Şema zaten satır bazındaydı (`license_items.max_uses`); import onu ürün ayarından kopyalıyordu.
+Artık stok girişinde **"her anahtarın kullanım hakkı"** alanı var (ürün varsayılanıyla dolu
+gelir) ve kapasiteler karışıksa **iki sütunlu yapıştırma** (anahtar + kapasite) yapılabiliyor.
+Sayaç ve onay modali toplamı satır kapasitelerinden hesaplar.
+
+Ürün ayarındaki alan artık açıkça **varsayılan**: adı ve açıklaması bunu söylüyor, ve bu sayıyı
+**düşürmek de serbest** — mevcut anahtarlar kendi kapasitelerini taşıdığı için etkilenmiyorlar.
+(Eskiden 409 veriyordu ve 50’lik lot almaya başlayan operatörü kilitliyordu.) Veri bozan tek
+geçiş olan **çok kullanımlık → tek kullanımlık** dönüşümü aynen engelleniyor.
+
+Tek kullanımlık üründe hiçbir şey değişmedi: alanlar render edilmiyor, gövdeye kapasite
+girmiyor; yine de gönderilirse istek 400 ile reddediliyor (sessizce yok sayılmıyor).
+
 ### MAK teslimatı: "6 aldım ama 16 kullanım hakkı gitmiş" · tek anahtar tercihi · gerçek mail önizlemesi (migration YOK, eklenti 1.1.5)
 
 **Bildirilen sorun:** 6 adetlik bir MAK siparişinde panel iki anahtar gösteriyor ve yanlarında

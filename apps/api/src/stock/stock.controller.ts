@@ -70,7 +70,14 @@ const ImportBody = z
            * gelebilir; reddetmek operatörü yanlış sayı girmeye zorlar (bkz. stock.service).
            * Üst sınır ürün ayarıyla AYNI tek kaynaktan (`MAX_USES_CAP`).
            */
-          maxUses: z.number().int().min(1).max(MAX_USES_CAP).optional(),
+          // Mesajlar TÜRKÇE: bu doğrulama arayüzün kendi kapısını geçen bir değerde ateşler
+          // (savunma derinliği) ve zod'un varsayılan İngilizce metni operatöre ÇIKAR.
+          maxUses: z
+            .number({ invalid_type_error: 'Anahtar başına kullanım hakkı sayı olmalı.' })
+            .int('Anahtar başına kullanım hakkı tam sayı olmalı.')
+            .min(1, 'Anahtar başına kullanım hakkı en az 1 olmalı.')
+            .max(MAX_USES_CAP, `Anahtar başına kullanım hakkı en çok ${MAX_USES_CAP} olabilir.`)
+            .optional(),
         }),
       )
       .min(1)
