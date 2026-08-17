@@ -5,6 +5,7 @@ import { Ban, ExternalLink, Gauge, Pencil, ShieldAlert, Trash2 } from 'lucide-re
 import { toast } from 'sonner';
 import {
   adjustLicenseCapacityAction,
+  purgeLicenseItemAction,
   updateLicenseItemAction,
   voidLicenseItemAction,
   type LicenseInventoryRow,
@@ -29,6 +30,7 @@ import {
   SheetTitle,
 } from '../ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import { useConfirm } from '../ui/confirm';
 import { RecordSummary as SharedRecordSummary } from '../rotate-credentials-control';
 import { itemNoun, licenseItemStatusLabel } from '../../lib/labels';
 import type { PayloadFieldDef } from '../../lib/api';
@@ -175,6 +177,11 @@ export function LicenseItemActions({
         </Tooltip>
       )}
 
+      {/* KALICI SİL — yalnız ZATEN geçersiz kılınmış kalemde. "Sil" ile aynı satırda ASLA
+          birlikte görünmez (biri available'da, diğeri voided'da) → iki yıkıcılık düzeyi
+          karıştırılamaz. */}
+      <PurgeButton row={row} masked={masked} compact={compact} onDone={onDone} />
+
       {/* KAPASİTE — yalnız çok kullanımlı (MAK) kalemde ve HER DALDA sunulur: paylaşımlı bir
           anahtar aynı anda hem müşterilerde olabilir hem de kalan hakkı düzeltilebilir
           (kapasite artışı kimsenin elindeki lisansa dokunmaz). */}
@@ -258,6 +265,135 @@ function DeliveredOrderLink({
 
 /** Kapasite düzeltmesinin YAPILABİLDİĞİ kalem durumları — servisteki guard ile BİREBİR aynı. */
 const CAPACITY_EDITABLE_STATUS = new Set(['available', 'depleted']);
+
+/**
+ * "Kalıcı sil" düğmesi — YALNIZ ZATEN geçersiz kılınmış (`voided`) kalemde.
+ *
+ * NEDEN VAR (operatör bildirdi): "Sil" düğmesi kaydı SİLMİYOR, yalnız `voided` yapıyor
+ * (izlenebilirlik için, bilinçli). Ama mükerrer engeli tablo genelinde ve statüye bakmıyor →
+ * yanlışlıkla girilen bir anahtar sonsuza dek hash'i işgal ediyordu ve doğrusunu girmenin
+ * HİÇBİR yolu yoktu. Bu düğme o çıkışı açar.
+ *
+ * İKİ ADIMLI KAPI BİLİNÇLİ: önce geri dönülebilir karar ("Sil"), sonra geri dönülemez olan.
+ * Bu yüzden düğme `available` satırda GÖRÜNMEZ — iki yıkıcılık düzeyi aynı satırda yan yana
+ * durup karıştırılamaz.
+ *
+ * İKON FARKLI (`Ban`, `Trash2` DEĞİL): aynı ikon iki farklı yıkıcılık düzeyini temsil
+ * edemez — operatör ikona bakarak "her zamanki sil" sanırdı.
+ */
+function PurgeButton({
+  row,
+  masked,
+  compact,
+  onDone,
+}: {
+  row: LicenseInventoryRow;
+  masked?: boolean;
+  compact: boolean;
+  onDone?: () => void;
+}) {
+  // `dialog` RENDER EDİLMELİ (hook yalnız `confirm` döndürmez) — unutulursa onay penceresi
+  // hiç açılmaz ve `confirm()` sonsuza dek beklerdi (sessiz kilit).
+  const { confirm, dialog } = useConfirm();
+  const [busy, setBusy] = React.useState(false);
+  if (row.status !== 'voided') return null;
+
+  // `masked` = API düz metin göstermedi → owner DEĞİLİZ (CapacityButton ile AYNI proxy).
+  const notOwner = masked === true;
+  // Teslim edilmiş/atanmış kalem sunucuda da reddedilir (G3); düğme burada da kapanır —
+  // tıklanıp 409 veren düğme, hiç sunulmayandan kötüdür (proje kuralı).
+  const everAssigned = Boolean(row.delivered);
+  const why = notOwner
+    ? 'Kalıcı silme owner yetkisi gerektirir — kayıt geri dönüşü olmadan silinir.'
+    : 'Bu anahtar bir siparişe atanmış. Müşteriye dokunmuş bir anahtar kalıcı olarak silinemez.';
+
+  if (notOwner || everAssigned) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0} className="inline-flex justify-end rounded-md" title={why}>
+            <Button variant="danger-outline" size="sm" disabled aria-label={`Kalıcı sil — ${why}`}>
+              <Ban aria-hidden />{' '}
+              <span className={compact ? 'sr-only' : undefined}>Kalıcı sil</span>
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-64">{why}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  const run = async () => {
+    const details: string[] = [];
+    if (row.batchCode) details.push(`Parti: ${row.batchCode}`);
+    if (row.unitCostCents != null) {
+      details.push(
+        'Bu kalem maliyetli bir partiye bağlı — silmek geçmiş dönem zayi raporundaki tutarı düşürür.',
+      );
+    }
+    const res = await confirm({
+      title: 'Bu kayıt veritabanından TAMAMEN silinsin mi?',
+      description:
+        'Satır geri dönüşü olmadan silinir ve Kusurlu Stok defterinden düşer; geriye yalnız ' +
+        'ürün detayındaki stok düzeltme kaydı ile denetim izi kalır. Ardından AYNI ANAHTAR ' +
+        'yeniden girilebilir — mükerrer engeli kalkar.',
+      details: details.length > 0 ? details : undefined,
+      tone: 'danger',
+      confirmLabel: 'Kalıcı sil',
+      reason: {
+        label: 'Sebep',
+        placeholder: 'ör. anahtar yanlış yazıldı, doğrusu girilecek',
+        required: true,
+        minLength: 3,
+        inputType: 'textarea',
+        hint: 'Denetim kaydına yazılır (kayıt silindikten sonra geriye kalan tek açıklama budur).',
+      },
+    });
+    if (!res) return;
+
+    setBusy(true);
+    try {
+      const out = await purgeLicenseItemAction({
+        id: row.id,
+        reason: res.reason,
+        productId: row.productId,
+      });
+      if (out.ok) {
+        toast.success('Kayıt kalıcı olarak silindi', {
+          description: 'Aynı anahtarı artık tekrar girebilirsiniz.',
+        });
+        onDone?.();
+      } else {
+        toast.error('Silinemedi', { description: out.error });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="danger-outline"
+            size="sm"
+            disabled={busy}
+            onClick={run}
+            aria-label={`${row.productName} kaydını kalıcı sil`}
+          >
+            <Ban aria-hidden />{' '}
+            <span className={compact ? 'sr-only' : undefined}>Kalıcı sil</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-72">
+          Kaydı veritabanından TAMAMEN siler → aynı anahtar tekrar girilebilir.
+        </TooltipContent>
+      </Tooltip>
+      {dialog}
+    </>
+  );
+}
 
 /**
  * "Kapasite" düğmesi — YALNIZ çok kullanımlı (MAK/multi) kalemde.
@@ -811,6 +947,13 @@ function VoidLicenseSheet({
               Kayıt veritabanından <strong>silinmez</strong>: izlenebilirlik için
               &quot;Geçersiz kılındı&quot; durumuna geçer, satılabilir stoktan düşer ve
               Kusurlu Stok ekranında sebebiyle görünür.
+              {/* KAYIP YOL: kayıt durduğu için aynı anahtar bir daha GİRİLEMEZ. Operatör
+                  bunu ekranda öğrenmezse "neden mükerrer diyor?" duvarına çarpar (bu
+                  özelliğin çıkış noktası tam olarak buydu). */}
+              <br />
+              Anahtar sistemde kayıtlı kaldığı için <strong>aynı değer tekrar girilemez</strong>.
+              Yanlış girilmiş bir anahtarı tamamen kaldırmak (ve doğrusunu girebilmek) için bu
+              adımdan sonra satırdaki <strong>&quot;Kalıcı sil&quot;</strong> düğmesini kullanın.
             </AlertDescription>
           </Alert>
 

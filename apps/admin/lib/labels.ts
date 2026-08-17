@@ -158,6 +158,10 @@ const ADJUSTMENT_ACTION: Record<string, string> = {
   void: 'Geçersiz kıl',
   damage: 'Hasarlı',
   recall: 'Geri çekme',
+  // Kayıt veritabanından TAMAMEN silindi (qty=0 — fire zaten 'void' satırında sayıldı,
+  // burada tekrar saymak zayiatı iki katına çıkarırdı). Etiket olmasaydı ürün detayındaki
+  // düzeltme defterinde ham 'purge' görünürdü.
+  purge: 'Kalıcı silindi',
 };
 export const adjustmentActionLabel = (a: string) => lookup(ADJUSTMENT_ACTION, a);
 

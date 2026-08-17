@@ -292,6 +292,51 @@ export async function voidLicenseItemAction(input: {
 }
 
 /**
+ * Tekil lisansı KALICI SİL. `voidLicenseItemAction`in AKSİNE satır GERÇEKTEN silinir →
+ * aynı anahtar tekrar girilebilir.
+ *
+ * NEDEN VAR: mükerrer engeli tablo genelindedir ve statüye bakmaz; "Sil" yalnız `voided`
+ * yaptığı için yanlışlıkla girilen bir anahtar sonsuza dek hash'i işgal ediyordu ve operatörün
+ * doğrusunu girmesinin HİÇBİR yolu yoktu.
+ *
+ * OWNER kapısı BURADA da var (API'de `OwnerGuard` zaten var — iki katman): paneldeki en
+ * yıkıcı işlem; `rotateAccountCredentialsAction` ile aynı sınırda durur.
+ */
+export async function purgeLicenseItemAction(input: {
+  id: string;
+  reason: string;
+  productId?: string;
+}): Promise<LicenseMutationResult> {
+  if (!(await isOwner())) {
+    return {
+      ok: false,
+      error: 'Kalıcı silme için owner yetkisi gerekir — kayıt geri dönüşü olmadan silinir.',
+    };
+  }
+  const id = String(input?.id ?? '').trim();
+  if (!UUID_RE.test(id)) return { ok: false, error: 'Geçersiz lisans kaydı.' };
+  const reason = String(input?.reason ?? '').trim();
+  if (reason.length < 3) return { ok: false, error: 'Sebep zorunludur (en az 3 karakter).' };
+
+  try {
+    await apiSend(
+      'DELETE',
+      `/v1/admin/license-items/${id}/purge`,
+      { reason: reason.slice(0, 500) },
+      await getActor(),
+    );
+    revalidateInventory(input?.productId);
+    // Kalem Kusurlu Stok listesinden de DÜŞER (o ekran voided kalemleri gösterir) → orayı da
+    // tazele, yoksa operatör sildiği kaydı orada görmeye devam eder.
+    revalidatePath('/quarantine');
+    revalidatePath('/quarantine/records');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'İşlem başarısız.' };
+  }
+}
+
+/**
  * Tekil lisansın payload'ını DEĞİŞTİR (yanlış girilmiş anahtar/hesap düzeltme). Yeni değer
  * API'de yeniden şifrelenir; sebep audit'e yazılır. Teslim edilmiş lisansta 409 (o akış
  * sipariş detayındaki "Değiştir" işlemidir — müşterideki anahtar sessizce bozulmasın).

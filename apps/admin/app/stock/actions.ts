@@ -84,6 +84,16 @@ export interface ImportState {
     newBatch?: ImportNewBatchOutcome;
     /** Yapıştırılan satır sayısı ≠ gerçekten kaydedilen adet (mükerrer/ret) uyarısı. */
     qtyMismatch?: { declared: number; imported: number };
+    /**
+     * Mükerrerin NEDENİ (API aynası). "1 mükerrer atlandı" tek başına operatörü çıkmaza
+     * sokuyordu: kendi iptal ettiği kayıtla çakıştığını hiçbir yerde söylemiyordu.
+     * Anahtar/hash TAŞIMAZ — yalnız sayaç + statü kırılımı.
+     */
+    duplicateDetail?: {
+      inRequest: number;
+      existingByStatus: Record<string, number>;
+      otherProduct: number;
+    };
   };
 }
 

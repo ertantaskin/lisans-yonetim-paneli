@@ -45,7 +45,12 @@ import { Combobox } from '../../../components/ui/combobox';
 import { Field, FieldRow } from '../../../components/ui/field';
 import { Input, Textarea, checkboxClass, selectClass } from '../../../components/ui/input';
 import { Separator } from '../../../components/ui/separator';
-import { productKindLabel, supplyStatusLabel, usageModeLabel } from '../../../lib/labels';
+import {
+  licenseItemStatusLabel,
+  productKindLabel,
+  supplyStatusLabel,
+  usageModeLabel,
+} from '../../../lib/labels';
 import { cn, formatDate } from '../../../lib/utils';
 import { AccountRowsEditor, emptyAccountRow, type AccountColumn } from './account-rows-editor';
 import {
@@ -211,6 +216,53 @@ function BatchModeSegment({
 /** Sayıyı Türkçe binlik ayracıyla yazar (12.500). */
 function tr(n: number): string {
   return n.toLocaleString('tr-TR');
+}
+
+/**
+ * "Mükerrer atlandı"nın NEDENİNİ cümleye çevirir — TEK KAYNAK.
+ *
+ * NEDEN VAR (operatör bildirdi): yanlış girilen bir anahtar "Sil" ile iptal edildiğinde kayıt
+ * SİLİNMEZ (izlenebilirlik için `voided` olur) ama mükerrer engeli tablo genelinde ve statüye
+ * bakmaz → doğrusunu girmek isteyen operatöre panel yalnız "1 mükerrer atlandı" diyordu.
+ * Sayı doğruydu, ANLAM eksikti: çakışmanın KENDİ iptal ettiği kayıtla olduğunu ve çıkış
+ * yolunun ne olduğunu hiçbir yerde söylemiyordu.
+ *
+ * TEK YARDIMCI ŞART: kuru çalıştırma ile gerçek giriş metni AYRIŞIRSA operatör onay
+ * modalinde bir şey görüp sonuçta başkasını görür (bu kod tabanında yaşanmış bir sınıf).
+ */
+function duplicateReason(d?: {
+  inRequest: number;
+  existingByStatus: Record<string, number>;
+  otherProduct: number;
+}): string {
+  if (!d) return '';
+  const parts: string[] = [];
+  const voided = d.existingByStatus.voided ?? 0;
+  if (voided > 0) {
+    parts.push(
+      `${voided} tanesi GEÇERSİZ KILINMIŞ bir kayıtla çakıştı — o kaydı envanterde bulup ` +
+        '“Kalıcı sil” derseniz aynı anahtarı tekrar girebilirsiniz',
+    );
+  }
+  // Teslim edilmiş/karantinadaki kayıtlar için DÜRÜST dil: bu anahtar geri gelemez.
+  const delivered = Object.entries(d.existingByStatus)
+    .filter(([s]) => s !== 'voided')
+    .reduce((sum, [, n]) => sum + n, 0);
+  if (delivered > 0) {
+    parts.push(
+      `${delivered} tanesi sistemde zaten kayıtlı (${Object.entries(d.existingByStatus)
+        .filter(([s]) => s !== 'voided')
+        .map(([s, n]) => `${n} ${licenseItemStatusLabel(s).toLocaleLowerCase('tr-TR')}`)
+        .join(', ')}) — bu anahtarlar tekrar girilemez`,
+    );
+  }
+  if (d.otherProduct > 0) {
+    parts.push(`${d.otherProduct} tanesi BAŞKA bir ürünün envanterinde kayıtlı`);
+  }
+  if (d.inRequest > 0) {
+    parts.push(`${d.inRequest} satır aynı gönderim içinde tekrarlandı`);
+  }
+  return parts.length > 0 ? ` Mükerrerin ${parts.join('; ')}.` : '';
 }
 
 /**
@@ -1021,7 +1073,9 @@ export function ImportWorkbench({
     const r = state.result;
     setResult(r);
     if (r.dryRun) {
-      const dryMsg = `Kuru çalıştırma: ${r.wouldImport ?? 0} kabul edilecek, ${r.duplicates} mükerrer, ${r.rejected} reddedilecek.`;
+      const dryMsg =
+        `Kuru çalıştırma: ${r.wouldImport ?? 0} kabul edilecek, ${r.duplicates} mükerrer, ${r.rejected} reddedilecek.` +
+        duplicateReason(r.duplicateDetail);
       toast.message('Kuru çalıştırma bitti — hiçbir şey kaydedilmedi', { description: dryMsg });
       announce(dryMsg);
       return;
@@ -1061,6 +1115,7 @@ export function ImportWorkbench({
     router.refresh();
     const msg =
       `${r.imported} kayıt girildi, ${r.duplicates} mükerrer atlandı, ${r.rejected} reddedildi.` +
+      duplicateReason(r.duplicateDetail) +
       (r.autoCompleted > 0 ? ` ${r.autoCompleted} bekleyen sipariş tamamlandı.` : '');
     // Toast + kalıcı sonuç paneli BİRLİKTE: form temizlendiği için ekranda "bir şey oldu mu?"
     // sorusu kalmasın (kullanıcı geri bildirimi). imported=0 asla yeşil gösterilmez.
@@ -2123,6 +2178,13 @@ function ResultPanel({
             <dd className="tabular-nums text-muted-foreground">{result.requested}</dd>
           </div>
         </dl>
+
+        {/* MÜKERRERİN NEDENİ — toast kaybolur, bu panel kalır. Salt sayı ("2 mükerrer")
+            operatörü çıkmaza sokuyordu: kendi iptal ettiği kayıtla çakıştığını ve çıkış
+            yolunun ne olduğunu hiçbir yerde söylemiyordu. */}
+        {result.duplicates > 0 && duplicateReason(result.duplicateDetail) !== '' && (
+          <p className="text-muted-foreground">{duplicateReason(result.duplicateDetail).trim()}</p>
+        )}
 
         {!dry && result.autoCompleted > 0 && (
           <p className="flex items-start gap-1.5 text-success">

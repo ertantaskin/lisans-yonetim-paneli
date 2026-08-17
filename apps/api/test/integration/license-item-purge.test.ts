@@ -187,9 +187,19 @@ describe('lisans kalemi KALICI SİLME (purge)', () => {
     expect(row).toBeDefined();
   });
 
+  /**
+   * DÜRÜSTLÜK NOTU: bu guard bugün SAVUNMA-DERİNLİĞİdir, tek başına ulaşılan bir yol değil.
+   * Gerçek değişim akışında eski kalemin atama satırı `replaced` durumunda TABLODA KALIR →
+   * senaryoyu zaten G3 (hiç atama olmamalı) yakalar. `assignment_history.old_license_item_id`
+   * FK'sizdir; kalemi silmek soyağacını sessizce sarkan bir referansa çevirirdi, o yüzden ayrı
+   * kapı duruyor. Test bu yüzden durumu DOĞRUDAN kurar: soyağacı BAŞKA bir kalemin atamasına
+   * bağlıdır, `old_license_item_id` bizim kalemi işaret eder — yani G3 devre dışı, ölçülen
+   * şey YALNIZCA G4.
+   */
   it('DEĞİŞİM soyağacında geçen kalem purge EDİLEMEZ (zincir kopmasın)', async () => {
     const product = await createProduct(db, { tag });
     const id = await importOne(product.id, keyOf('CHAIN'));
+    const otherId = await importOne(product.id, keyOf('CHAIN-YENI'));
     await voidIt(id);
 
     const site = await createSite(db, crypto, { tag });
@@ -199,11 +209,23 @@ describe('lisans kalemi KALICI SİLME (purge)', () => {
       qty: 1,
       tag,
     });
-    // assignment_history FK'sizdir → satır atamasız da yazılabilir; guard'ın konusu tam bu.
-    await db.execute(sql`
-      INSERT INTO assignment_history (order_id, line_id, old_license_item_id, reason, actor)
-      VALUES (${order.orderId}, ${order.lineId}, ${id}, 'test', ${ACTOR});
-    `);
+    const [asg] = await db
+      .insert(schema.assignments)
+      .values({
+        orderId: order.orderId,
+        lineId: order.lineId,
+        licenseItemId: otherId, // TAZE kalem — soyağacının "yeni" ucu
+        units: 1,
+        status: 'active',
+      })
+      .returning({ id: schema.assignments.id });
+    await db.insert(schema.assignmentHistory).values({
+      assignmentId: asg!.id,
+      oldLicenseItemId: id, // silinmek istenen kalem yalnız BURADA geçiyor
+      newLicenseItemId: otherId,
+      reason: 'test: değişim',
+      actor: ACTOR,
+    });
 
     await expect(stock.purgeLicenseItem(id, 'olmamalı', ACTOR)).rejects.toThrow(ConflictException);
   });
