@@ -2854,6 +2854,60 @@ docstring iddiaları · admin metinleri · ölü-uç/kapalı-döngü taraması) 
   müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm) · `BACKUP_OFFSITE_CMD` TANIMSIZ → yedekler
   yalnız o sunucuda. (ADMIN_TOKEN rotasyonu bu turda YAPILDI, listeden düştü.)
 
+**MAK TESLİMAT GÖRÜNÜRLÜĞÜ + TEK ANAHTAR TERCİHİ + GERÇEK MAİL ÖNİZLEMESİ (commit 9199d32, CANLI
+prod+dev, eklenti v1.1.5, migration YOK):** Kullanıcı ekran görüntüsüyle bildirdi: *"6 adet satın alım
+yapılmış ama 16 adet kullanım hakkı olarak teslim ediliyor; 6'dan fazla MAK anahtar varsa 6 farklı
+anahtar gidebilir ama tek anahtar varsa aynı anahtarı 6 kez etkinleştirilebilir şeklinde vermeli"* +
+*"mail önizlemesi birebir mailde gösterildiği gibi görünmeli, tasarımsal olarak gerçek olmalı"*.
+- **ÖLÇÜLDÜ (dev DB) — VERİ DOĞRUYDU, EKRAN YANLIŞ ANLATIYORDU.** Sipariş #69'un payı gerçekte
+  **5 + 1 = 6**; paneldeki `10/10` ve `6/10` çipleri **anahtarın TÜM siparişlerdeki** sayacıydı
+  (kalan 10 → #58→2, #59→3; #59→1, #67→3, #68→1) ve bu hiçbir yerde YAZMIYORDU. Aynı düzeltme WP
+  eklentisinde v1.0.7'de yapılmıştı — **panelin kendi sipariş detayı geride kalmıştı** (bu projede
+  tekrarlayan sınıf: aynı bilgiyi gösteren iki yüzeyden biri güncellenip diğeri unutuluyor).
+  Artık satırda önce **"bu siparişte N etkinleştirme"** (vurgulu), yanında ETİKETLİ **"anahtar geneli
+  X/Y"** (title: "bu siparişin payı değildir"); özet şeridinde "toplam N etkinleştirme hakkı".
+  Kip ürünün `usageMode` alanından gelir; `maxUses > 1` yalnız eski API imajı yedeğidir.
+- **DAĞITIM KURALI DEĞİŞTİ (asıl istek).** `consumeMultiUseCapacity` sıralamasının BİRİNCİ anahtarı
+  artık *"kalan kapasitesi talebi TEK BAŞINA karşılıyor mu"*; FEFO (`expires_at`) ve FIFO
+  (`created_at, seq`) AYNEN ikinci/üçüncü anahtar olarak durur. Sonuç: karşılayan anahtar varsa TEK
+  anahtar + TEK atama; yoksa eski doldur-taşır davranışı birebir; küçük talep yarım kalmış anahtarı
+  "karşılayan" yapar ve FIFO onu ÖNCE seçer → parça kapasite çürümez. **Gerekçe yalnız derli görünüm
+  değil:** MAK anahtarı PAYLAŞIMLIDIR, panel yalnız DEFTER tutar (müşteriyi anahtarın kalan
+  kapasitesini kullanmaktan alıkoyan teknik bir şey yok) → eline geçen her FAZLADAN anahtar fazladan
+  aşırı-etkinleştirme yüzeyidir. FEFO'nun zayıfladığı tek durum: süresi yakın anahtarın KALANI talebi
+  karşılamıyorsa o tur atlanır (ondan küçük her sipariş onu yine ilk sırada seçer; MAK'ta `expires_at`
+  pratikte NULL). **Dev gerçek HMAC siparişiyle kanıtlandı:** ilk anahtarda 3 boş, talep 5 → eski
+  davranış 3+2 (müşteriye İKİ anahtar), yeni davranış tek atama `units=5`, diğer ikisine dokunulmadı.
+- **MÜŞTERİ METNİ — iki ayrı yanlış kapandı.** Mail `"(5 adet)"` diyordu ("5 anahtar" gibi okunuyor)
+  ve **`units=1` olan MAK anahtarında HİÇBİR ŞEY yazmıyordu** (#69'un ikinci satırı: çıplak anahtar →
+  müşteri tamamının kendisine ait olduğunu sanıyor). Karar artık `units`e değil ÜRÜN MODUNA bağlı
+  (`mail-render.unitLabel`): `multi` ise HER ZAMAN yazılır → "(bu siparişte N etkinleştirme hakkı)";
+  hesap ürününde "kullanım hakkı" (hesap açılır, etkinleştirilmez); `single` ise HİÇ yazılmaz.
+  `getDeliveries` + `siteAdminView` EKLEMELİ `usageMode` döndürür → WP eklentisi (v1.1.5) aynı kuralı
+  müşteri sayfası + indirilen .txt + mağaza sipariş ekranında uygular (tek kaynak `units_note`);
+  alan gelmezse eski `units > 1` kuralına düşer (dağıtım sapması toleransı).
+- **MAİL ÖNİZLEMESİ GERÇEĞE BENZETİLDİ.** Ham kaynak Mailpit'ten okundu: **tek parça
+  `text/plain; charset=utf-8`, HTML parça YOK** → "gerçek gibi görünmek" = mail istemcisinin düz
+  metni gösterdiği gibi göstermek. Önizleme artık e-posta TIPKIBASIMI: zarf başlığı
+  (Kimden/Kime/Konu/Tarih), **orantılı** yazı tipi (istemciler düz metni monospace GÖSTERMEZ),
+  `pre-wrap` + `overflow-wrap:anywhere`, **beyaz kâğıt — koyu temada da** (panelin teması "müşteriye
+  ne gidiyor" yargısını değiştirmemeli; renkler token DEĞİL sabit), `dangerouslySetInnerHTML`'siz
+  linkify (React `<a>` düğümleri — şablonu OPERATÖR yazar). Uydurma gönderim tarihi BASILMAZ
+  ("Önizleme anı"): `email_log` gövde/zaman saklamaz. Panelin kendi bantları (maskeleme/test modu/
+  gönderim kaydı/"arşiv değil") kâğıdın DIŞINDA kalır. `mail.processor` artık `from`u builder'dan
+  okur (tek nokta).
+- **Doğrulama:** typecheck 4/4 + 5 kapı (use-server 26/89 · nest-wiring 42/133+13 · env 51 ·
+  workflows 2/4/47 · tx-pool 37) · birim shared 68 + api **184** + admin **159** · admin production
+  build · **VPS izole PG+Redis: entegrasyon 423/423 + yarış 3/3** · **kontrol denemesi: düzeltme geri
+  alınınca yeni 3 MAK dağıtım testi KIRMIZI** · PHP-lint temiz + eklenti davranış 108/108 ·
+  **tarayıcıda ölçüldü** (kâğıt `rgb(255,255,255)` koyu temada, gövde 14px/1.6, kontrast **7.3:1**,
+  375px yatay kayma **0**, `https://www.office.com` gerçek bağlantı) · prod `deploy.sh api admin`
+  (rollback'li) → `/v1/health` **200 v1.1.0**, admin `/pending` 200, api **0 ERROR** · eklenti
+  **v1.1.5 yayınlandı** (201, 137.848 bayt; public info 1.1.5 + download 200 birebir).
+- **DERS:** "yanlış teslim ediliyor" şikâyetinde önce VERİYİ ölç — bu turda kusur teslimatta değil
+  ANLATIMDAYDI; ama aynı ekranda ikinci bir gerçek kusur (gereksiz anahtar bölme) de vardı. Bir sayı
+  gösterirken KİMİN sayısı olduğunu yazmıyorsan, operatör onu kendi bağlamında toplar.
+
 **ATAMA MOTORUNDA AŞIRI TESLİMAT (LIMIT KAÇAĞI) + 33 DENETİM BULGUSU (commit cb85d8e, CANLI
 prod+dev, eklenti v1.1.4, migration YOK):** Kullanıcı "değişikliklerini ve projeyi baştan sona
 incele, sorunları fixle, sonra dev/prod hepsini yayınla" dedi. Turun asıl bulgusu, aylardır
