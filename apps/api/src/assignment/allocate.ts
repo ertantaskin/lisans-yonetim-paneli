@@ -75,7 +75,7 @@ export async function allocate(
     // doğru hamle Faz 2'ye geçmektir — kapasite gerçekten bittiyse Faz 2 de null döner).
     if (product.multiUseDistribution === 'one-per-key') {
       // Dışlama = bu turda kullanılanlar + müşterinin bu satırda ZATEN sahip olduğu anahtarlar.
-      const held = new Set(opts?.excludeItemIds ?? []);
+      const held = new Set<string>(); // KONTROL DENEMESI 4
       while (remaining > 0 && byKey.size < MAX_SPREAD_KEYS) {
         const take = await consumeMultiUseCapacity(tx, product.id, 1, {
           mode: 'spread',
