@@ -405,6 +405,16 @@ export default function GuidePage() {
         <Bullets>
           <li><strong>Temel bilgiler:</strong> SKU, ad, <strong>kategori</strong> (listeden seçilir; boş bırakılırsa ürün &quot;Kategorisiz&quot; olur), ürün tipi (lisans anahtarı / hesap / kod / özel), kullanım modu, teslimat politikası.</li>
           <li><strong>Kullanım modu:</strong> <em>Tek kullanımlık</em> (1 key = 1 müşteri) veya <em>Çok kullanımlık (MAK)</em> (1 key = N teslim). MAK&apos;ta buradaki kapasite bir <strong>varsayılandır</strong>: her anahtarın gerçek kapasitesi <R href="/stock/import">Stok Girişi</R> ekranında ayrıca verilebilir (tedarikçiden 50&apos;lik ve 500&apos;lük lotlar birlikte gelebilir).</li>
+          <li><strong>Dağıtım (yalnız MAK ürünlerde):</strong> müşteri kaç anahtar alsın?
+            <em>En az anahtar</em> (varsayılan) — 3 adetlik sipariş için stokta 3 anahtar olsa bile
+            tek anahtar gönderilir ve o anahtarda 3 etkinleştirme hakkı tanınır.
+            <em>Ayrı anahtar</em> — her adet ayrı bir anahtardan verilir (3 adet = 3 anahtar × 1 hak).
+            Yeterli ayrı anahtar yoksa <strong>her iki seçenekte de</strong> kalan adet tek anahtardan
+            tamamlanır (stokta 1 anahtar varsa 6 adetlik sipariş o anahtardan 6 hak alır).
+            <strong>Dikkat:</strong> MAK anahtarı paylaşımlıdır — panel yalnız defter tutar, müşteriyi
+            anahtarın kalan kapasitesini kullanmaktan alıkoyan teknik bir şey yoktur. Bu yüzden
+            &quot;Ayrı anahtar&quot; seçeneği aşırı-etkinleştirme yüzeyini büyütür ve yüksek adetli
+            siparişlerde önerilmez.</li>
           <li><strong>Teslimat politikası:</strong> stok siparişe yetmezse ne olacağı — kısmi otomatik, kısmi onaylı, ya da ya hep ya hiç.</li>
           <li><strong>Hesap alanları:</strong> hesap ürünlerinde müşteriye teslim edilecek alanlar (ör. kullanıcı adı, parola). &quot;Gizli&quot; işaretli alanlar panelde maskelenir; &quot;Zorunlu&quot; kaldırılırsa alan opsiyonel olur.</li>
           <li><strong>Süre &amp; garanti:</strong> süreli hesaplar için geçerlilik (gün) + süre bitince davranışı, garanti (Sorun Bildir) penceresi, düşük stok eşiği.</li>
@@ -887,6 +897,29 @@ export default function GuidePage() {
           önler). Sonuç kutusu kaç kalemin düşüldüğünü, kaçının atlandığını dürüstçe yazar — yeşil
           onay yalnız istediğiniz her kalem işlendiyse çıkar.
         </Tip>
+
+        <p className="font-medium text-foreground">
+          1c) Yanlış girilmiş bir anahtarı sistemden TAMAMEN kaldırmak:
+        </p>
+        <p>
+          <strong>&quot;Sil&quot; kaydı silmez</strong> — izlenebilirlik için
+          &quot;Geçersiz kılındı&quot; durumuna geçirir ve satır veritabanında kalır. Bunun bir yan
+          etkisi vardır: anahtar sistemde kayıtlı olmaya devam ettiği için{' '}
+          <strong>aynı değeri tekrar giremezsiniz</strong> — stok girişi onu &quot;mükerrer&quot;
+          sayıp atlar (ekran hangi durumdaki kayıtla çakıştığını size söyler).
+        </p>
+        <p>
+          Anahtarı yanlış yazdıysanız ve doğrusunu girmek istiyorsanız: önce her zamanki gibi{' '}
+          <strong>&quot;Sil&quot;</strong> deyin, sonra aynı satırda beliren{' '}
+          <strong>&quot;Kalıcı sil&quot;</strong> düğmesini kullanın. Kayıt veritabanından gerçekten
+          silinir ve aynı anahtarı yeniden girebilirsiniz. İki adımlı olması bilinçlidir: yanlış
+          satıra tıklamak kalıcı bir kayıp olmasın.
+        </p>
+        <Bullets>
+          <li>Yalnız <strong>owner</strong> yapabilir ve <strong>sebep zorunludur</strong> (kayıt silinse de denetim izi ile stok düzeltme defteri kalır).</li>
+          <li><strong>Müşteriye bir kez gitmiş anahtar asla silinemez</strong> — iade edilmiş/değiştirilmiş olsa bile. Karantinadaki, tedarikçiye bildirilmiş ve geri çekilmiş bir partiden düşmüş kalemler de korunur; panel neden olmadığını satır satır söyler.</li>
+          <li>Maliyetli bir partiye bağlı kalemde onay kutusu uyarır: silmek geçmiş dönem zayi raporundaki tutarı düşürür.</li>
+        </Bullets>
 
         <p className="font-medium text-foreground">
           1b) Çok kullanımlı (MAK) bir anahtarın kapasitesini düzeltmek:
