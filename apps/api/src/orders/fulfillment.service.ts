@@ -21,7 +21,7 @@ import { ProductsService } from '../products/products.service';
 import { MailService } from '../mail/mail.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { allocate } from '../assignment/allocate';
-import { notExpiredCond, releaseAllocations } from '../assignment/assign';
+import { STANDING_STATUSES, notExpiredCond, releaseAllocations } from '../assignment/assign';
 import { insertAssignments } from './assignment-insert';
 import { recomputeOrderStatus } from './order-status';
 import { fillTarget, lineStatusFor, remainingUnits } from './fill-target';
@@ -136,7 +136,29 @@ export class FulfillmentService {
 
       // Efektif politika (satır override > ürün). all-or-nothing satırda kısmi teslim YASAK (§5).
       const policy = line.policyOverride ?? product.fulfillmentPolicy;
-      const allocations = await allocate(tx, product, toAssign);
+
+      // "Ayrı anahtar" politikasında bu satırın MÜŞTERİDE DURAN anahtarları dışlanır: kısmi
+      // teslim edilen bir satır sonradan tamamlanırken (stok geldi / "Kalanları Ata" / inceleme
+      // onayı) aksi halde aynı anahtar ikinci kez seçilebilirdi. Sorgu YALNIZ o politikada
+      // koşar — varsayılan yolun maliyeti değişmez.
+      const heldItemIds =
+        product.usageMode === 'multi' && product.multiUseDistribution === 'one-per-key'
+          ? (
+              await tx
+                .select({ licenseItemId: assignments.licenseItemId })
+                .from(assignments)
+                .where(
+                  and(
+                    eq(assignments.lineId, line.id),
+                    sql`${assignments.status} IN ${STANDING_STATUSES}`,
+                  ),
+                )
+            ).map((r) => r.licenseItemId)
+          : undefined;
+
+      const allocations = await allocate(tx, product, toAssign, {
+        excludeItemIds: heldItemIds,
+      });
       let added = allocations.reduce((s, a) => s + a.units, 0);
 
       // all-or-nothing: satır TÜMÜYLE karşılanamıyorsa hiçbir şey teslim etme — kapasiteyi geri

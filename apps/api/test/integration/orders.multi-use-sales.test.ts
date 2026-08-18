@@ -618,6 +618,51 @@ describe('MAK dağıtımı: one-per-key (ürün ayarı)', () => {
     expect(keys.every((k) => k.status === 'available')).toBe(true);
     expect(keys.every((k) => k.assignedAt === null)).toBe(true);
   });
+
+  /**
+   * (b8) KISMİ TESLİMDEN SONRAKİ TAMAMLAMA — politika satır boyunca korunur.
+   *
+   * NEDEN VAR (kendi özelliğimin eksiğiydi, denetimde bulundu): `one-per-key` garantisi TEK bir
+   * `allocate()` çağrısı içindeydi. Bir satır kısmi teslim edilip SONRADAN tamamlandığında
+   * (stok geldi → otomatik doldurma, "Kalanları Ata", inceleme onayı) ikinci çağrı KENDİ boş
+   * defteriyle başlıyor ve FEFO/FIFO ilk anahtarı seçiyordu — bu, müşterinin ilk turda ZATEN
+   * aldığı anahtar olabilirdi. Kapasite muhasebesi doğru kalıyordu, ama verilen söz sessizce
+   * tutulmuyordu. Artık satırın AYAKTA duran anahtarları dışlanıyor.
+   */
+  it('(b8) kısmi teslim sonrası tamamlama AYNI anahtarı tekrar vermez', async () => {
+    // Tek anahtarla başla: qty=2 istenir, yalnız 1 birim karşılanır (kapasite 1).
+    const { site, productId, makeDto } = await makScenario({
+      keys: 1,
+      maxUses: 1,
+      multiUseDistribution: 'one-per-key',
+    });
+
+    const first = await orders.createOrder(site, makeDto(2));
+    expect(first.body.lines[0]!.fulfilledQty).toBe(1);
+    const firstItemId = (await assignmentsOf(first.body.orderId))[0]!.licenseItemId;
+
+    // Stok gelir: İKİNCİ anahtar girilir ve satır tamamlanır.
+    await insertLicenseItems(db, crypto, {
+      productId,
+      count: 1,
+      tag: TAG,
+      maxUses: 1,
+      payloadPrefix: 'MAK-SONRAKI',
+    });
+    const [line] = await db
+      .select({ id: orderLines.id })
+      .from(orderLines)
+      .where(eq(orderLines.orderId, first.body.orderId));
+    await fulfillmentService.completeLine(line!.id);
+
+    const rows = await assignmentsOf(first.body.orderId);
+    expect(rows).toHaveLength(2);
+    // ASIL BEKLENTİ: ikinci birim BAŞKA bir anahtardan geldi.
+    const itemIds = rows.map((r) => r.licenseItemId);
+    expect(new Set(itemIds).size).toBe(2);
+    expect(itemIds).toContain(firstItemId);
+    expect(rows.reduce((s, r) => s + r.units, 0)).toBe(2);
+  });
 });
 
 // Dosya kapsamı (root) temizlik — TÜM describe blokları bittikten SONRA koşar.

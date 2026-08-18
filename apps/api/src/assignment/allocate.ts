@@ -38,6 +38,19 @@ export async function allocate(
   tx: Executor,
   product: Pick<Product, 'id' | 'usageMode' | 'multiUseDistribution'>,
   units: number,
+  opts?: {
+    /**
+     * Bu SATIRIN müşteride ZATEN duran anahtarları — `one-per-key` politikasında dışlanır.
+     *
+     * NEDEN ŞART: politika "her birimi ayrı anahtardan ver" der ama `allocate` satır başına
+     * BİRDEN ÇOK kez çağrılabilir (kısmi teslim → stok gelince tamamlama, "Kalanları Ata",
+     * inceleme onayı, otomatik doldurma). Her çağrı KENDİ boş defteriyle başladığı için ikinci
+     * tur FEFO/FIFO ilk anahtarı seçer — bu, müşterinin ilk turda ZATEN aldığı anahtar olabilir
+     * ve politika SESSİZCE "en az anahtar" gibi davranır. Kapasite muhasebesi doğru kalır,
+     * ama verilen söz tutulmaz; sessiz olduğu için de fark edilmezdi.
+     */
+    excludeItemIds?: readonly string[];
+  },
 ): Promise<Allocation[]> {
   if (units <= 0) return [];
 
@@ -61,10 +74,12 @@ export async function allocate(
     // sayesinde ayrım NET: "tur bitti" ile "hiç kapasite yok" aynı dala düşer ve ikisinde de
     // doğru hamle Faz 2'ye geçmektir — kapasite gerçekten bittiyse Faz 2 de null döner).
     if (product.multiUseDistribution === 'one-per-key') {
+      // Dışlama = bu turda kullanılanlar + müşterinin bu satırda ZATEN sahip olduğu anahtarlar.
+      const held = new Set(opts?.excludeItemIds ?? []);
       while (remaining > 0 && byKey.size < MAX_SPREAD_KEYS) {
         const take = await consumeMultiUseCapacity(tx, product.id, 1, {
           mode: 'spread',
-          exclude: [...byKey.keys()],
+          exclude: [...new Set([...held, ...byKey.keys()])],
         });
         if (!take || take.taken <= 0) break;
         byKey.set(take.licenseItemId, (byKey.get(take.licenseItemId) ?? 0) + take.taken);
