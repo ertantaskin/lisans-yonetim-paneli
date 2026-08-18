@@ -620,48 +620,77 @@ describe('MAK dağıtımı: one-per-key (ürün ayarı)', () => {
   });
 
   /**
-   * (b8) KISMİ TESLİMDEN SONRAKİ TAMAMLAMA — politika satır boyunca korunur.
+   * (b8) KISMİ TESLİMDEN SONRAKİ TAMAMLAMA — politika SATIR boyunca korunur.
    *
-   * NEDEN VAR (kendi özelliğimin eksiğiydi, denetimde bulundu): `one-per-key` garantisi TEK bir
-   * `allocate()` çağrısı içindeydi. Bir satır kısmi teslim edilip SONRADAN tamamlandığında
-   * (stok geldi → otomatik doldurma, "Kalanları Ata", inceleme onayı) ikinci çağrı KENDİ boş
-   * defteriyle başlıyor ve FEFO/FIFO ilk anahtarı seçiyordu — bu, müşterinin ilk turda ZATEN
-   * aldığı anahtar olabilirdi. Kapasite muhasebesi doğru kalıyordu, ama verilen söz sessizce
-   * tutulmuyordu. Artık satırın AYAKTA duran anahtarları dışlanıyor.
+   * NEDEN VAR (kendi özelliğimin eksiğiydi): `one-per-key` garantisi TEK bir `allocate()`
+   * çağrısı içindeydi. Bir satır parça parça doldurulduğunda (admin "N adet ata", stok gelince
+   * otomatik tamamlama, inceleme onayı) her çağrı KENDİ boş defteriyle başlıyor ve FEFO/FIFO
+   * ilk anahtarı seçiyordu — bu, müşterinin ZATEN aldığı anahtar olabilirdi. Kapasite doğru
+   * kalıyordu ama söz sessizce tutulmuyordu.
+   *
+   * SENARYO SEÇİMİ ÖNEMLİ (ilk denemem YANLIŞTI): kapasitesi 1 olan bir anahtarla kurulan
+   * senaryo bu yolu HİÇ sınamıyor — anahtar ilk birimde `depleted` olur ve sorgunun
+   * `use_count < max_uses` süzgeci onu zaten dışlar; dışlama listesi kaldırılsa da test yeşil
+   * kalıyordu (kontrol denemesiyle ölçüldü). Doğru kurulum: müşterinin elindeki anahtarın
+   * KAPASİTESİ SÜRÜYOR ve satır `maxUnits` ile parça parça dolduruluyor.
    */
-  it('(b8) kısmi teslim sonrası tamamlama AYNI anahtarı tekrar vermez', async () => {
-    // Tek anahtarla başla: qty=2 istenir, yalnız 1 birim karşılanır (kapasite 1).
-    const { site, productId, makeDto } = await makScenario({
-      keys: 1,
-      maxUses: 1,
+  it('(b8) parça parça doldurulan satır AYNI anahtarı tekrar vermez (kapasite sürerken)', async () => {
+    const site = await createSite(db, crypto, { tag: TAG });
+    const product = await createProduct(db, {
+      tag: TAG,
+      kind: 'key',
+      usageMode: 'multi',
+      maxUses: 5,
       multiUseDistribution: 'one-per-key',
     });
-
-    const first = await orders.createOrder(site, makeDto(2));
-    expect(first.body.lines[0]!.fulfilledQty).toBe(1);
-    const firstItemId = (await assignmentsOf(first.body.orderId))[0]!.licenseItemId;
-
-    // Stok gelir: İKİNCİ anahtar girilir ve satır tamamlanır.
-    await insertLicenseItems(db, crypto, {
-      productId,
-      count: 1,
-      tag: TAG,
-      maxUses: 1,
-      payloadPrefix: 'MAK-SONRAKI',
+    const remoteProductId = `rp-${randomUUID().slice(0, 8)}`;
+    await productsService.createMapping({
+      siteId: site.id,
+      productId: product.id,
+      remoteProductId,
     });
+
+    // Sipariş STOKSUZ açılır → satır pending kalır (tek çağrıda dolmasın).
+    const created = await orders.createOrder({ id: site.id } as Site, {
+      remoteOrderId: `ord-${randomUUID().slice(0, 8)}`,
+      customerEmail: `${TAG}@example.test`,
+      lines: [{ remoteLineId: 'line-1', remoteProductId, qty: 2 }],
+    });
+    expect(created.body.lines[0]!.fulfilledQty).toBe(0);
+
+    // İKİ anahtar girilir; ikisinin de kapasitesi 5 (yani hiçbiri tükenmez).
+    await insertLicenseItems(db, crypto, {
+      productId: product.id,
+      count: 2,
+      tag: TAG,
+      maxUses: 5,
+      payloadPrefix: 'MAK-PARCA',
+    });
+
     const [line] = await db
       .select({ id: orderLines.id })
       .from(orderLines)
-      .where(eq(orderLines.orderId, first.body.orderId));
+      .where(eq(orderLines.orderId, created.body.orderId));
+
+    // 1. parça: YALNIZ 1 birim ata (admin "N adet ata" yolu).
+    await fulfillmentService.completeLine(line!.id, 1);
+    const afterFirst = await assignmentsOf(created.body.orderId);
+    expect(afterFirst).toHaveLength(1);
+    const firstItemId = afterFirst[0]!.licenseItemId;
+
+    // İlk anahtarın kapasitesi SÜRÜYOR — yani dışlama olmasa ikinci tur onu yeniden seçerdi.
+    const keysMid = await keysOf(product.id);
+    const firstKey = keysMid.find((k) => k.id === firstItemId)!;
+    expect(firstKey.status).toBe('available');
+    expect(firstKey.maxUses - firstKey.useCount).toBeGreaterThan(0);
+
+    // 2. parça: kalan birim.
     await fulfillmentService.completeLine(line!.id);
 
-    const rows = await assignmentsOf(first.body.orderId);
-    expect(rows).toHaveLength(2);
-    // ASIL BEKLENTİ: ikinci birim BAŞKA bir anahtardan geldi.
-    const itemIds = rows.map((r) => r.licenseItemId);
-    expect(new Set(itemIds).size).toBe(2);
-    expect(itemIds).toContain(firstItemId);
+    const rows = await assignmentsOf(created.body.orderId);
     expect(rows.reduce((s, r) => s + r.units, 0)).toBe(2);
+    // ASIL BEKLENTİ: ikinci birim BAŞKA anahtardan geldi.
+    expect(new Set(rows.map((r) => r.licenseItemId)).size).toBe(2);
   });
 });
 
