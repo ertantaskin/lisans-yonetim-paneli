@@ -14,6 +14,20 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### `one-per-key` garantisi SATIR boyunca korunuyor (denetim bulgusu — kendi özelliğimin eksiği)
+
+"Her birimi ayrı anahtardan ver" sözü TEK bir `allocate()` çağrısı içindeydi. Bir satır parça
+parça doldurulduğunda (admin **"N adet ata"**, stok gelince otomatik tamamlama, inceleme onayı)
+ikinci çağrı KENDİ boş defteriyle başlıyor ve FEFO/FIFO ilk anahtarı seçiyordu — bu, müşterinin
+ilk turda ZATEN aldığı anahtar olabilirdi. Kapasite muhasebesi doğru kalıyordu, ama verilen söz
+**sessizce** tutulmuyordu. Tamamlama yolu artık satırın ayakta duran anahtarlarını dışlıyor
+(ek sorgu YALNIZ `one-per-key` ürünlerde koşar — varsayılan yolun maliyeti değişmedi).
+
+**Test dürüstlüğü notu:** ilk yazdığım regresyon testi bu yolu HİÇ sınamıyordu — kapasitesi 1
+olan anahtarla kurulmuştu ve o anahtar ilk birimde `depleted` olduğu için sorgunun
+`use_count < max_uses` süzgeci onu zaten dışlıyordu; düzeltmeyi geri alınca test **yeşil kaldı**.
+Senaryo, müşterinin elindeki anahtarın kapasitesi SÜRERKEN parça parça doldurma olacak şekilde
+yeniden yazıldı; kontrol denemesi bu kez **kırmızı** verdi.
 ### MAK dağıtım politikası (ürün ayarı) + yanlış girilen anahtarın kalıcı silinmesi (migration 0046)
 
 İki operatör şikâyeti; ikisi de kodda kök nedeniyle doğrulandı.

@@ -122,6 +122,11 @@ artık ürün ayarıdır. Her ikisinde de **kapasite muhasebesi ve fail-closed k
   birebir örtüşür, yeni indeks gerekmez. `use_count ASC` ile yazmak dışlama listesini gereksiz
   kılardı ama FEFO'yu ikinci sıraya düşürür, siparişler arası dağıtır ve `use_count` indekslenince
   kapasite düşümünün HOT-update'ini öldürürdü — bilinçli olarak REDDEDİLDİ.
+- **Garanti SATIR boyuncadır, tek çağrı değil:** bir satır parça parça doldurulabilir (admin
+  "N adet ata", stok gelince otomatik tamamlama, inceleme onayı). Her `allocate()` çağrısı kendi
+  defteriyle başladığı için ikinci tur müşterinin ZATEN aldığı anahtarı seçebilirdi; bu yüzden
+  tamamlama yolu satırın AYAKTA duran anahtarlarını dışlama listesi olarak geçirir. Değişim/bonus
+  yolu (tek birim) bu dışlamayı KULLANMAZ — orada "ayrı anahtar" sözü verilmez, bilinçli sınır.
 - **Üst sınır:** ayrı-anahtar fazı satır başına en çok `MAX_SPREAD_KEYS` (100) tur döner; aşılırsa
   kalan talep doldurmayla tamamlanır ve GÖRÜNÜR uyarı loglanır (birim başına bir UPDATE, tek
   transaction içinde — korumasız hâli `consumeMultiUseCapacity`'nin çözdüğü perf arızasını geri
