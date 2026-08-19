@@ -14,9 +14,17 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+## [1.2.0] - 2026-08-19
+
+> **Prod'da canlı** (`a0a944d`, `/v1/health` → `"version":"1.2.0"`, db+redis ok, api/admin 0 hata).
+> Bu sürüm v1.1.0'dan sonra prod'a **parça parça dağıtılmış** işleri (MAK dağıtım politikası +
+> kalıcı silme + `one-per-key` düzeltmesi) ve belge/kapı turunu tek numara altında toplar.
+> **WP eklentisi v1.1.8 aynı turda yayınlandı** (`/v1/updates/plugin/info` → 1.1.8).
+> Dağıtım satırı: [docs/DEPLOY-LOG.md](docs/DEPLOY-LOG.md).
+
 ### Eklenti sürüm sabiti geride kalmıştı (yayını durduran gerçek arıza) + 7. kapı
 
-`v1.2.0` etiketlendikten sonra eklenti yayını denendi ve `publish-plugin.sh` **kendi kapısıyla
+Eklenti yayını denendiğinde `publish-plugin.sh` **kendi kapısıyla
 durdu**: `wpteslimat.php` başlığı `1.1.8`, `readme.txt` `Stable tag: 1.1.8`, ama
 **`WPTESLIMAT_VERSION` sabiti hâlâ `1.1.7`**. v1.1.8 yükseltmesi (4641106) üç yazımdan yalnız
 ikisini güncellemişti.
@@ -34,12 +42,6 @@ Sabit düzeltildi ve bu sınıf artık kapıya bağlandı: **`pnpm check:plugin-
 olmasını, ayrıca `readme.txt` changelog'unda o sürümün başlığı bulunmasını denetler (yoksa müşteri
 güncelleme ekranında "Yenilikler" BOŞ görünür). Altı mutasyonla kontrol denemesi yapıldı; altısı da
 kırmızı verdi.
-
-## [1.2.0] - 2026-08-19
-
-> Bu sürüm, v1.1.0'dan sonra prod'a **parça parça dağıtılmış** işleri (MAK dağıtım politikası +
-> kalıcı silme + `one-per-key` düzeltmesi) ve belge/kapı turunu tek numara altında toplar.
-> Hangi commit ne zaman prod'a gitti: [docs/DEPLOY-LOG.md](docs/DEPLOY-LOG.md).
 
 ### Belgeler canlı sistemle hizalandı · görsel kopya artık ÜRETİLİYOR · lint kapısı gerçekten koşuyor
 

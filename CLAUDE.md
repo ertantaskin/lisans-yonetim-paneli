@@ -115,11 +115,11 @@ mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddeler (aşağıda)
 
 | | |
 |---|---|
-| Prod | Ubuntu VPS + Docker Compose + Caddy TLS · çalışan **v1.1.0** · `/v1/health` 200 (2026-08-19 ölçüldü: db+redis ok) — **kaynak v1.2.0 etiketli, dağıtım bekliyor** (bkz. "Operatöre kalan") |
-| Dev/staging | Aynı VPS, ayrı compose projesi (`lisansdev`) + kendi WordPress'i — prod'a DOKUNMAZ · `/v1/health` 200 v1.1.0 |
+| Prod | Ubuntu VPS + Docker Compose + Caddy TLS · API+admin **v1.2.0** (`a0a944d`, etiket `v1.2.0`) · `/v1/health` 200 — 2026-08-19 ölçüldü: db+redis ok, 0 ERROR |
+| Dev/staging | Aynı VPS, ayrı compose projesi (`lisansdev`) + kendi WordPress'i — prod'a DOKUNMAZ · `/v1/health` 200 (henüz **v1.1.0**; dev yığını ayrıca `dev-stack.sh up` ile tazelenir) |
 | Servisler | PostgreSQL 17 · Redis 7 · API (Nest/Fastify) · Admin (Next 15) · Caddy · Mailpit |
 | Migration | **0000-0046** (`__drizzle_migrations` izleme 47) |
-| WP eklentisi | kaynak **v1.1.8** · müşteri sitelerine YAYINLANAN **v1.1.7** — yayınlama ayrı operatör adımı (`/releases`), bkz. "Operatöre kalan" |
+| WP eklentisi | **v1.1.8** — kaynak = yayınlanan (2026-08-19 ölçüldü: `/v1/updates/plugin/info` → 1.1.8, download 200); sürüm üç yazımı `pnpm check:plugin-version` ile denetleniyor |
 | Test | birim 68+184+170 · **entegrasyon 455 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
 
 **Zincir kanıtlandı (gerçek WooCommerce):** sipariş → HMAC push → atomik atama (SKIP LOCKED) →
@@ -150,13 +150,8 @@ adaptörü · Faz-3 WP migrasyonu · abonelik/EFT/3DS.
 - **Prod `SMTP_HOST` tanımsız** → teslimat mailleri gerçek müşteriye ULAŞMIYOR. Panel bunu her
   boot'ta kritik alarmla söyler (`mail_config`).
 - **`BACKUP_OFFSITE_CMD` tanımsız** → yedekler yalnız o sunucuda (`backup_offsite` alarmı).
-- **Eklenti v1.1.8 kaynakta hazır ama YAYINLANMADI** (2026-08-19 ölçüldü: `/v1/updates/plugin/info`
-  → **1.1.7**). Müşteri siteleri MAK cümlesinin eski hâlini ("bu siparişte") görmeye devam eder;
-  yayınlamak `/releases` → **"Kaynaktan yayınla"** ile yapılır (kod tarafında yapılacak iş YOK).
-- **v1.2.0 DAĞITILMADI** — sürüm etiketi atıldı ve `origin/main` güncel, ama prod hâlâ v1.1.0
-  imajını koşuyor. Dağıtım: `/deployments` → "Prod'a dağıt" ya da VPS'te
-  `./scripts/deploy.sh api admin` (sağlık kapısı + otomatik rollback). Dağıtımdan sonra
-  `docs/DEPLOY-LOG.md`'ye satır **elle** eklenir (betik otomatik yazmaz).
+- **Dev/staging yığını eski sürümde** (v1.1.0) — prod v1.2.0'a geçti. Gerçek bir dev testi
+  gerektiğinde `./scripts/dev-stack.sh up` ile tazelenir; prod'u ETKİLEMEZ.
 
 ## Tekrarlayan tuzaklar — kod yazmadan ÖNCE oku
 
