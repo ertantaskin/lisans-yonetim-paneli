@@ -14,6 +14,54 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+## [1.2.0] - 2026-08-19
+
+> Bu sürüm, v1.1.0'dan sonra prod'a **parça parça dağıtılmış** işleri (MAK dağıtım politikası +
+> kalıcı silme + `one-per-key` düzeltmesi) ve belge/kapı turunu tek numara altında toplar.
+> Hangi commit ne zaman prod'a gitti: [docs/DEPLOY-LOG.md](docs/DEPLOY-LOG.md).
+
+### Belgeler canlı sistemle hizalandı · görsel kopya artık ÜRETİLİYOR · lint kapısı gerçekten koşuyor
+
+Kullanıcı: *"mimari dosyaları, gitteki dosyalar vs tamamen güncel çalışır sistemin mimarisiyle
+eşleşmeli."* Belgeler tek tek koda ve **canlı sisteme** karşı ölçüldü; bulunanların hepsi
+"yazılmamış" değil, **yanlış yazılmış**tı.
+
+- **Hayalet ekran:** §13.1 rota haritası `/inventory` (lisans envanteri) diye bir ekran
+  listeliyordu — o rota HİÇ var olmadı (envanter `/products/[id]` içinde bir SEKME).
+  `check-docs` yalnız **kod → belge** yönünü denetliyordu; tersi sessizce geçiyordu. Artık
+  **iki yönlü**: haritadaki her rotanın gerçek bir `page.tsx`i olmalı.
+- **Bayat sayılar:** CLAUDE.md "duman testi 36 tarar" diyordu, `smoke-routes.sh` **37** tarıyordu
+  (liste doğruydu, İDDİA yanlıştı — okuyan "iki ekran taranmıyor" sanırdı); eklenti sürümü
+  v1.1.7 yazıyordu, kaynak **v1.1.8**'di; entegrasyon 454 yazıyordu, **455**'ti. Rota sayısı
+  iddiaları (MIMARI §13.1 başlığı · CLAUDE.md · smoke listesi) artık `check-docs` ile denetleniyor.
+- **Canlıya karşı ölçüm:** prod ve dev `/v1/health` → `1.1.0` (db+redis ok). **Eklenti v1.1.8
+  kaynakta hazır ama YAYINLANMAMIŞ** — `/v1/updates/plugin/info` canlıda **1.1.7** döndürüyor,
+  yani müşteri siteleri MAK cümlesinin eski hâlini görüyor. Bu bir kod eksiği değil, operatöre
+  kalan bir adım (`/releases`); CLAUDE.md artık bunu "Operatöre kalan" başlığında söylüyor.
+- **`docs/mimari-gorsel.html` artık üretiliyor** (`pnpm docs:gorsel`). Elle sürdürülen ikinci
+  kopyaydı ve v2.6'da donmuştu: düşürülmüş Faz 3'ü planlanan bir aşama, hiç var olmamış 4 tabloyu
+  (`stock_batches`/`customer_tags`/`panel_users`/`blocklist`) gerçek, terk edilmiş kararları
+  (Resend/SES · pgBackRest+S3+PITR · argon2 · indigo palet + Inter) canlı gibi anlatıyordu.
+  Kopya güncellenmedi, **kopya olmaktan çıkarıldı**: MIMARI.md'den render edilir, tazeliğini
+  `check-docs` denetler (bayatsa CI kırılır).
+- **Lint kapısı:** `pnpm lint` HER koşuda kırmızıydı ve CI adımı `continue-on-error` olduğu için
+  kimse bakmıyordu. Sebep kod değil yapılandırmaydı: `scripts/*.js` ve `load/*.js` Node/k6 genel
+  değişkenleriyle tanımlı değildi (**110 `no-undef` + 19 `no-require-imports`**), koddaki
+  `react-hooks/exhaustive-deps` ve `@next/next/no-img-element` bastırmaları ise **kurulu olmayan**
+  eklentilere atıfta bulunuyordu (yazar kuralın koştuğunu varsaymış, kural hiç koşmamıştı).
+  Yapılandırma kapatıldı, iki eklenti kuruldu → **134 hata → 0** (19 uyarı kaldı) ve adım
+  **bloklayıcı** yapıldı.
+- **Temizlik:** repo kökünde kazara commit'lenmiş 0 baytlık `1` dosyası silindi; CHANGELOG'da
+  5 başlık öncesindeki boş satır eksikliği (başlıklar düz metin olarak render oluyordu) giderildi;
+  GECMIS.md'de 3 yanlış dosya yolu düzeltildi; MIMARI'de yeniden adlandırma artığı
+  ("Lisans Yönetim Paneli'ta 1-2 pilot ürün") giderildi.
+
+**Kontrol denemesi (tuzak #11):** yeni denetimlerin her biri ayrı ayrı bozularak KIRMIZI verdiği
+görüldü — hayalet rota geri konuldu · §13.1 başlığındaki sayı bozuldu · başlık yeniden adlandırıldı
+(kapı "denetim KOŞMADI" diyerek düştü) · CLAUDE.md sayıları bayatlatıldı · smoke listesine olmayan
+ekran eklendi / listeden ekran düşürüldü · MIMARI değişip görsel üretilmedi · üretilmiş HTML elle
+kurcalandı. Sekizinin de ardından geri alma yeşile döndü.
+
 ### `one-per-key` garantisi SATIR boyunca korunuyor (denetim bulgusu — kendi özelliğimin eksiği)
 
 "Her birimi ayrı anahtardan ver" sözü TEK bir `allocate()` çağrısı içindeydi. Bir satır parça
@@ -28,6 +76,7 @@ olan anahtarla kurulmuştu ve o anahtar ilk birimde `depleted` olduğu için sor
 `use_count < max_uses` süzgeci onu zaten dışlıyordu; düzeltmeyi geri alınca test **yeşil kaldı**.
 Senaryo, müşterinin elindeki anahtarın kapasitesi SÜRERKEN parça parça doldurma olacak şekilde
 yeniden yazıldı; kontrol denemesi bu kez **kırmızı** verdi.
+
 ### MAK dağıtım politikası (ürün ayarı) + yanlış girilen anahtarın kalıcı silinmesi (migration 0046)
 
 İki operatör şikâyeti; ikisi de kodda kök nedeniyle doğrulandı.
@@ -87,6 +136,7 @@ giriş **aynı** cümleyi üretir (tek yardımcı). "Sil" onayı da kayıp yolu 
 form alanını gövdeden çıkarmak ve dışlama listesini devre dışı bırakmak testleri KIRMIZI
 yaptı (ilk denemem hiçbir şeyi ayırt etmemişti — spread'de çağıran zaten `want=1` geçiyor;
 bu, kodda dürüstçe not edildi).
+
 ### Kalan iki eksik kapatıldı + `check-docs` kapısının kendi kaçağı (migration YOK)
 
 Kod tabanında iki `TODO` duruyordu; ikisi de "yapılmadı" değil, **arıza üretiyordu**.
@@ -135,6 +185,7 @@ doğrulama elle `if` yığınlarına itiliyordu. Çalışma-anı davranışı de
 
 **Doğrulama:** typecheck 4/4 + altı kapı · birim 68+184+**170** · **entegrasyon 436/436**
 (429 → +7) + yarış 3/3 · build 3/3.
+
 ### Şartname gerçeğe hizalandı + `check-docs` kapısı (6. kapı, migration YOK)
 
 **Ölçüldü (tahmin değil):** `docs/MIMARI.md` projenin şartnamesi ve "her önemli kararda önce
@@ -170,6 +221,7 @@ ikincisi 3 hafta geride). `MIMARI.md` **tek yetkili** ilan edildi; HTML'in kendi
 uyarı bandı kondu. CLAUDE.md'ye **belge yetki sırası tablosu** eklendi (kod > şartname >
 CLAUDE.md > runbook > geçmiş > görsel kopya) — bu sıra yazılı olmadığı için README aylarca
 "Faz 1 MVP" demeye devam etmişti; README artık durumu tekrarlamıyor, kaynağa yönlendiriyor.
+
 ### Sessiz sayı hataları · kilitli LIMIT deseni · belge düzeni (migration YOK)
 
 **Sessiz 10× kapasite hatası.** Stok girişinde anahtar başına kullanım hakkını çözümleyen
@@ -233,6 +285,7 @@ uzlaştırma / iade yollarının üçüne birden bağlandı; önce-sonra aynı o
 
 **Ders:** bir sayıyı ekrana koyarken "KİMİN sayısı, hangi BİRİMDE" sorusu metinde yanıtlanmalı;
 aynı kolon iki farklı şeyi sayıyorsa birim yazılmalı. Görünmez `title` ipucu tek başına yetmez.
+
 ### MAK kapasitesi artık ANAHTAR BAŞINA (migration YOK)
 
 **Bildirilen:** *"MAK stoğu eklerken kullanılabilir kapasiteyi ayarlayamıyorum; ürün düzenleme

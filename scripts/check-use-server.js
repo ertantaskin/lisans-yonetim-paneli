@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-console */
 // ─────────────────────────────────────────────────────────────────────────────
 // check-use-server.js — "'use server' dosyası YALNIZ async fonksiyon export eder"
 // kuralını TİP TABANLI doğrular (TypeScript compiler API).

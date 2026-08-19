@@ -6,8 +6,8 @@ ayrık merkezi stok/teslimat paneli.
 **Tam mimari şartname: [`docs/MIMARI.md`](docs/MIMARI.md)** (v2.7, 18 bölüm — HER önemli
 kararda önce bu dokümana bak). Veri modeli, rota haritası ve API tablosu `pnpm check:docs`
 ile **kod tarafından denetlenir**; şartname artık sessizce geride kalamaz.
-`docs/mimari-gorsel.html` aynı belgenin ELLE hazırlanmış görsel kopyasıdır ve **2026-07-27
-tarihli anlık görüntüdür** — çelişki varsa `MIMARI.md` geçerlidir.
+`docs/mimari-gorsel.html` aynı belgenin **üretilmiş** görsel kopyasıdır (`pnpm docs:gorsel`);
+elle düzenlenmez, bayatsa `pnpm check:docs` kırar.
 
 ## Yığın (kesinleşti)
 
@@ -115,12 +115,12 @@ mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddeler (aşağıda)
 
 | | |
 |---|---|
-| Prod | Ubuntu VPS + Docker Compose + Caddy TLS · API+admin **v1.1.0** · `/v1/health` 200 |
-| Dev/staging | Aynı VPS, ayrı compose projesi (`lisansdev`) + kendi WordPress'i — prod'a DOKUNMAZ |
+| Prod | Ubuntu VPS + Docker Compose + Caddy TLS · API+admin **v1.1.0** · `/v1/health` 200 (2026-08-19 ölçüldü: db+redis ok) |
+| Dev/staging | Aynı VPS, ayrı compose projesi (`lisansdev`) + kendi WordPress'i — prod'a DOKUNMAZ · `/v1/health` 200 v1.1.0 |
 | Servisler | PostgreSQL 17 · Redis 7 · API (Nest/Fastify) · Admin (Next 15) · Caddy · Mailpit |
 | Migration | **0000-0046** (`__drizzle_migrations` izleme 47) |
-| WP eklentisi | **v1.1.7** — panelden yayınlanır, müşteri siteleri updater ile alır |
-| Test | birim 68+184+170 · **entegrasyon 454 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
+| WP eklentisi | kaynak **v1.1.8** · müşteri sitelerine YAYINLANAN **v1.1.7** — yayınlama ayrı operatör adımı (`/releases`), bkz. "Operatöre kalan" |
+| Test | birim 68+184+170 · **entegrasyon 455 + yarış 3** (izole PG/Redis) · WP davranış 108 · PHP-lint 13 |
 
 **Zincir kanıtlandı (gerçek WooCommerce):** sipariş → HMAC push → atomik atama (SKIP LOCKED) →
 My Account'ta çözülmüş anahtar → geri-kanal webhook. Tek/çok kullanımlık (MAK), hesap, süreli
@@ -133,7 +133,8 @@ hesap, kod, stoksuz; kısmi teslimat, ya-hep-ya-hiç, iade/kısmi iade, değişi
   `stock/` (import/envanter/düzeltme). Yan alanlar: replacements · supplier-claims · suppliers ·
   purchase-orders · batches · customers · security · notifications · maintenance (retention/
   reconcile/expiry) · deployments · updates · ai (varsayılan KAPALI) · admin-users (2FA).
-- **Admin** (`apps/admin/app`): 38 sayfa rotası (duman testi 36 tarar — `/` ve `/login` hariç). Sözlükler **tek kaynak** `lib/labels.ts`; rozet ton
+- **Admin** (`apps/admin/app`): 38 sayfa rotası (kök `/` sayılmaz; duman testi 37 tarar — yalnız
+  `/login` hariç; sayılar `pnpm check:docs` ile denetlenir). Sözlükler **tek kaynak** `lib/labels.ts`; rozet ton
   kuralı `components/ui/badge.tsx`; tema tek kaynak `app/globals.css`.
 - **Eklenti** (`apps/wp-plugin/wpteslimat`): ince istemci. Lisans verisi WP'de DURMAZ.
 - **Paylaşılan** (`packages/shared/src`): payload kontratı, maskeleme, rehber render, risk skoru
@@ -149,6 +150,9 @@ adaptörü · Faz-3 WP migrasyonu · abonelik/EFT/3DS.
 - **Prod `SMTP_HOST` tanımsız** → teslimat mailleri gerçek müşteriye ULAŞMIYOR. Panel bunu her
   boot'ta kritik alarmla söyler (`mail_config`).
 - **`BACKUP_OFFSITE_CMD` tanımsız** → yedekler yalnız o sunucuda (`backup_offsite` alarmı).
+- **Eklenti v1.1.8 kaynakta hazır ama YAYINLANMADI** (2026-08-19 ölçüldü: `/v1/updates/plugin/info`
+  → **1.1.7**). Müşteri siteleri MAK cümlesinin eski hâlini ("bu siparişte") görmeye devam eder;
+  yayınlamak `/releases` ekranından **operatörün kararı**dır (kod tarafında yapılacak iş YOK).
 
 ## Tekrarlayan tuzaklar — kod yazmadan ÖNCE oku
 
@@ -215,16 +219,27 @@ yakalanmış bir arızadır. Ayrıntılı vaka anlatımları [docs/GECMIS.md](do
     `upsertSoleJobScheduler` ("bu kuyrukta tam olarak bir zamanlayıcı") aynı kuyruğa ikinci
     tekrarlı iş eklemeyi engelliyordu: her çağrı diğerini yetim sayıp siliyor, geriye yalnız
     bir `warn` kalıyordu. Bir invaryantı zorlarken, onu GENİŞLETME yolunu da bırak.
+23. **"Uyarı olarak koşan" bir adım = adım var, DENETİM YOK.** CI'ın `Lint` adımı
+    `continue-on-error: true` idi ve **134 hata** üretiyordu; hataların tamamı yapılandırma
+    boşluğundan (`scripts/*.js` Node genel değişkenleriyle tanımlı değil) geliyordu, yani
+    gerçek bir bulgu bu gürültünün içinde asla görünmezdi. Aynı sınıf: kodda `react-hooks/…`
+    bastırmaları vardı ama eklenti KURULU DEĞİLDİ (yazar kuralın koştuğunu varsaymış).
+    Bir adımı "şimdilik uyarı" bırakacaksan, ne zaman bloklayıcı olacağını da yaz.
+24. **Bir kapı TEK YÖNLÜ denetliyorsa, ters yön sessizce bozulur.** `check-docs` "koddaki her
+    ekran belgede geçiyor mu" diye bakıyordu; belgenin var OLMAYAN bir ekranı (`/inventory`)
+    anlatması hiç görülmedi. Aynı kapının kurulma sebebi zaten "belge 4 uydurma tablo
+    anlatıyordu" idi. Denetim yazarken iki yönü de sor: eksik ne var, FAZLA ne var?
 
 ## Doğrulama
 
 | Komut | Kapsam |
 |---|---|
-| `pnpm typecheck` | 4 paket tipi **+ altı kapı**: use-server · nest-wiring · env · workflows · tx-pool · **docs** (şartname↔kod) |
+| `pnpm typecheck` | 4 paket tipi **+ altı kapı**: use-server · nest-wiring · env · workflows · tx-pool · **docs** (şartname↔kod: tablo · rota · **hayalet ekran** · **rota sayısı iddiaları** · uç · **üretilmiş görsel kopya**) |
+| `pnpm lint` | ESLint — **CI'da bloklayıcı** (2026-08-19'a kadar `continue-on-error` idi ve her koşuda kırmızıydı; yapılandırma boşluğu kapatıldı, 134 hata → 0) |
 | `pnpm test` | Birim (shared + api + admin) |
 | `pnpm test:iso` | **Entegrasyon + yarış, izole PG17/Redis7 konteynerleriyle** (yalnız `docker` ister) |
 | `pnpm build` | Üç paket derlemesi (admin production build dahil) |
-| `bash scripts/smoke-routes.sh <url>` | 36 admin rotası (`/` ve `/login` hariç; liste app/ ağacıyla otomatik karşılaştırılır) — HTTP koduna DEĞİL, gövdedeki `error.tsx` imzasına bakar |
+| `bash scripts/smoke-routes.sh <url>` | 37 admin rotası (`/` ve `/login` hariç; liste app/ ağacıyla otomatik karşılaştırılır) — HTTP koduna DEĞİL, gövdedeki `error.tsx` imzasına bakar |
 
 Şema sapması: `pnpm db:generate` **"No schema changes"** demeli. WP: `php -l` + `php
 apps/wp-plugin/tests/run.php`. CI (`.github/workflows/ci.yml`) hepsini koşar — dosya bir kez
@@ -258,12 +273,12 @@ aylarca "Faz 1 MVP" dedi ve şartname var olmayan tabloları anlattı.
 | # | Belge | Ne söyler | Denetim |
 |---|---|---|---|
 | 1 | **Kod** (`apps/api/src/db/schema/`, controller'lar) | Kolon/parametre düzeyinde GERÇEK | — |
-| 2 | **[docs/MIMARI.md](docs/MIMARI.md)** | Şartname: ne, neden, hangi kural (v2.7) | `pnpm check:docs` (tablo · rota · uç) |
-| 3 | **Bu dosya (CLAUDE.md)** | Güncel durum özeti + değişmez kurallar + tekrarlayan tuzaklar | elle |
+| 2 | **[docs/MIMARI.md](docs/MIMARI.md)** | Şartname: ne, neden, hangi kural (v2.7) | `pnpm check:docs` (tablo · rota · hayalet ekran · uç · görsel kopya) |
+| 3 | **Bu dosya (CLAUDE.md)** | Güncel durum özeti + değişmez kurallar + tekrarlayan tuzaklar | rota sayıları `pnpm check:docs`, gerisi elle |
 | 4 | **Runbook'lar** (`RUNBOOK-RELEASE`, `RUNBOOK-DR`, `GELISTIRME`) | Nasıl yapılır (yayın/DR/yerel) | elle |
 | 5 | `CHANGELOG.md` · `docs/DEPLOY-LOG.md` | Sürüm ve dağıtım geçmişi | elle |
 | 6 | **[docs/GECMIS.md](docs/GECMIS.md)** | Tur-tur çalışma günlüğü — şartname DEĞİL | elle |
-| 7 | `docs/mimari-gorsel.html` | Şartnamenin **2026-07-27 tarihli** görsel anlık görüntüsü | **YOK** (geride kalabilir) |
+| 7 | `docs/mimari-gorsel.html` | Şartnamenin görsel kopyası — **ÜRETİLİR** (`pnpm docs:gorsel`), elle düzenlenmez | `pnpm check:docs` (bayatsa kırar) |
 
 Panel içindeki **`/guide`** ekranı operatöre yöneliktir (bu dosyalar geliştiriciye). "Tekrarlayan
 tuzaklar" listesi GECMIS.md'nin damıtılmış hâlidir; bir maddenin ARDINDAKİ vakayı okumak

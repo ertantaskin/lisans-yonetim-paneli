@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-console */
 // ─────────────────────────────────────────────────────────────────────────────
 // check-tx-pool.js — "transaction içinden KÖK HAVUZ" sınıfını DERLEME ÖNCESİ yakalar.
 //

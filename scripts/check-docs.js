@@ -19,8 +19,11 @@
  * amaç eksiksizlik, kopya şema değil):
  *   1. Şemadaki her `pgTable('...')` adı MIMARI.md'de geçmeli.
  *   2. `apps/admin/app` altındaki her sayfa rotası MIMARI.md'de geçmeli.
+ *   2b. TERSİ DE: §13.1 rota haritasındaki her rota GERÇEKTEN var olmalı (hayalet ekran yok).
+ *   2c. Rota SAYISI iddiaları (MIMARI §13.1 başlığı · CLAUDE.md · smoke-routes.sh) gerçekle eşleşmeli.
  *   3. MIMARI.md'de `/v1/...` diye anılan her uç, GERÇEK bir rotanın (controller öneki +
  *      metot yolu) segment öneki olmalı.
+ *   4. `docs/mimari-gorsel.html` (MIMARI.md'den ÜRETİLİR) taze olmalı — bayatsa CI kırılır.
  *
  * (3) BİR KEZ ZAYIF YAZILDI — kendi kapımın kaçağı: ilk sürüm yalnız İLK SEGMENTE bakıyordu
  * ve kod tabanında çıplak bir `@Controller('admin')` olduğu için `/v1/admin/ne-olursa-olsun`
@@ -34,12 +37,17 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const MIMARI = path.join(ROOT, 'docs/MIMARI.md');
 const SCHEMA_DIR = path.join(ROOT, 'apps/api/src/db/schema');
 const APP_DIR = path.join(ROOT, 'apps/admin/app');
 const API_SRC = path.join(ROOT, 'apps/api/src');
+const CLAUDE_MD = 'CLAUDE.md';
+const SMOKE_SH = 'scripts/smoke-routes.sh';
+const CLAUDE_MD_ABS = path.join(ROOT, CLAUDE_MD);
+const SMOKE_SH_ABS = path.join(ROOT, SMOKE_SH);
 
 /** Rotası olmayan/kapsam dışı bırakılanlar — gerekçesiyle. */
 const ROUTE_SKIP = new Set([
@@ -57,6 +65,10 @@ if (!fs.existsSync(MIMARI)) {
 }
 const doc = fs.readFileSync(MIMARI, 'utf8');
 
+/** Sayı iddialarının yaşadığı diğer iki dosya (yoksa denetim SESSİZ kalmaz, sorun listesine düşer). */
+const claude = fs.existsSync(CLAUDE_MD_ABS) ? fs.readFileSync(CLAUDE_MD_ABS, 'utf8') : null;
+const smoke = fs.existsSync(SMOKE_SH_ABS) ? fs.readFileSync(SMOKE_SH_ABS, 'utf8') : null;
+
 // ── 1. Tablolar ──────────────────────────────────────────────────────────────
 const tables = new Set();
 for (const f of fs.readdirSync(SCHEMA_DIR)) {
@@ -68,6 +80,8 @@ const eksikTablo = [...tables].filter((t) => !doc.includes(t)).sort();
 
 // ── 2. Admin rotaları ────────────────────────────────────────────────────────
 const routes = [];
+/** Gerçek rota kümesi — HEM ham (`/orders/[id]`) HEM ebeveyn (`/orders`); (2b) bunu kullanır. */
+const rotaVar = new Set();
 (function walk(dir, base) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.isDirectory()) {
@@ -76,12 +90,121 @@ const routes = [];
     } else if (e.name === 'page.tsx' && base) {
       // Dinamik segment ([id]) belgede ebeveyniyle anılır → ebeveyni ara.
       routes.push('/' + base.replace(/\/\[[^\]]+\]$/, ''));
+      rotaVar.add('/' + base);
+      rotaVar.add(routes[routes.length - 1]);
     }
   }
 })(APP_DIR, '');
-const eksikRota = [...new Set(routes)]
-  .filter((r) => !ROUTE_SKIP.has(r) && !doc.includes(r))
-  .sort();
+const eksikRota = [...new Set(routes)].filter((r) => !ROUTE_SKIP.has(r) && !doc.includes(r)).sort();
+
+// ── 2b. TERSİ YÖN: belgede anlatılan ekran GERÇEKTEN var mı ──────────────────
+/**
+ * NEDEN VAR (ölçüldü): (2) yalnız KOD → BELGE yönünü denetliyordu; belgenin var olmayan bir
+ * ekranı anlatması SESSİZCE geçiyordu. §13.1 rota haritası bir dönem `/inventory` (lisans
+ * envanteri) diye bir ekran listeliyordu — o rota HİÇ var olmadı; envanter, `/products/[id]`
+ * içindeki bir SEKME. Bu, tabloların bir dönem 4 uydurma tablo anlatmasıyla aynı arıza sınıfı
+ * (CLAUDE.md tuzak #4) ve tam olarak bu kapının önlemesi gereken şeydi.
+ *
+ * Kapsam BİLEREK §13.1 tablosuyla sınırlı: belgenin başka yerlerinde `/reveal`, `/bonus`,
+ * `/catalog` gibi API ALT YOLLARI da backtick içinde geçiyor; tüm belgeyi taramak onları
+ * "hayalet ekran" sanardı (yanlış alarm = kapının kapatılması).
+ */
+const ROTA_HARITASI = (() => {
+  const bas = doc.indexOf('### 13.1');
+  if (bas < 0) return null;
+  const kalan = doc.slice(bas);
+  const son = kalan.indexOf('\n---');
+  return son < 0 ? kalan : kalan.slice(0, son);
+})();
+
+const hayaletRota = [];
+if (ROTA_HARITASI === null) {
+  fail(
+    "docs/MIMARI.md içinde '### 13.1' başlığı bulunamadı — rota haritası denetimi KOŞMADI.\n" +
+      '  Başlık yeniden adlandırıldıysa scripts/check-docs.js içindeki çıpayı da güncelleyin\n' +
+      '  (sessizce koşmayan bir kapı, kapı yokluğundan beterdir — CLAUDE.md tuzak #11).',
+  );
+} else {
+  for (const m of ROTA_HARITASI.matchAll(/`(\/[a-z0-9[\]/-]+)`/g)) {
+    const r = m[1];
+    if (ROUTE_SKIP.has(r)) continue;
+    // Gerçek rota kümesi: hem dinamik hâliyle (`/orders/[id]`) hem ebeveyniyle (`/orders`).
+    if (!rotaVar.has(r)) hayaletRota.push(r);
+  }
+}
+
+// ── 2c. Rota SAYISI iddiaları ────────────────────────────────────────────────
+/**
+ * NEDEN VAR (ölçüldü): sayı üç ayrı yerde ELLE yazılı ve üçü de bayatladı —
+ * CLAUDE.md "38 sayfa rotası (duman testi 36 tarar)" derken duman testi 37 rota tarıyordu.
+ * Liste doğruydu (smoke-routes.sh kendi kapsamını app/ ağacıyla karşılaştırıyor); yalnız
+ * İDDİA yanlıştı. Kapıya bakan biri "iki ekran taranmıyor" sanırdı.
+ */
+const sayiSorunlari = [];
+function sayiDenetle(dosya, metin, kalip, beklenen, ne) {
+  const m = metin.match(kalip);
+  if (!m) {
+    sayiSorunlari.push(
+      `${dosya}: "${ne}" iddiası BULUNAMADI (kalıp: ${kalip}).\n` +
+        '    Cümle yeniden yazıldıysa buradaki kalıbı da güncelleyin; aksi halde denetim sessizce durur.',
+    );
+    return;
+  }
+  if (Number(m[1]) !== beklenen) {
+    sayiSorunlari.push(`${dosya}: "${ne}" ${m[1]} yazıyor, gerçek ${beklenen}.`);
+  }
+}
+
+const rotaSayisi = new Set(routes).size;
+// Duman testi kök `/`yi zaten saymaz (bkz. yukarıdaki walk) ve `/login`i BİLEREK atlar.
+const dumanBeklenen = rotaSayisi - 1;
+
+sayiDenetle(
+  'docs/MIMARI.md §13.1',
+  doc,
+  /### 13\.1 [^\n]*?\((\d+) rota\)/,
+  rotaSayisi,
+  'rota haritası başlığı',
+);
+
+if (claude === null) {
+  sayiSorunlari.push(CLAUDE_MD + ': dosya okunamadı — sayı iddiaları DENETLENMEDİ.');
+} else {
+  for (const [kalip, beklenen, ne] of [
+    [/(\d+) sayfa rotası/, rotaSayisi, 'panel rota sayısı'],
+    [/duman testi (\d+) tarar/, dumanBeklenen, 'duman testi kapsamı'],
+    [/smoke-routes\.sh[^|]*\|\s*(\d+) admin rotası/, dumanBeklenen, 'doğrulama tablosu'],
+  ]) {
+    sayiDenetle(CLAUDE_MD, claude, kalip, beklenen, ne);
+  }
+}
+
+// smoke-routes.sh: listenin KENDİSİ app/ ağacıyla karşılaştırılıyor (betiğin içinde), ama
+// yalnız EKSİK yönünü yakalıyor. Buradaki denetim FAZLAyı da yakalar: silinmiş bir ekran
+// listede kalırsa duman testi her koşuda 404/500 alır ve gürültü "bilinen arıza" sanılır.
+if (smoke !== null) {
+  const m = smoke.match(/ROUTES=\(([\s\S]*?)\n\)/);
+  if (!m) {
+    sayiSorunlari.push(SMOKE_SH + ': ROUTES=( … ) bloğu ayrıştırılamadı — kapsam DENETLENMEDİ.');
+  } else {
+    const liste = m[1].split(/\s+/).filter((x) => x && !x.startsWith('#'));
+    if (liste.length !== dumanBeklenen) {
+      sayiSorunlari.push(
+        `${SMOKE_SH}: ROUTES ${liste.length} rota içeriyor, gerçek ${dumanBeklenen} ` +
+          '(kök `/` ve `/login` hariç).',
+      );
+    }
+    const fazla = liste.filter((r) => !rotaVar.has('/' + r));
+    if (fazla.length) {
+      sayiSorunlari.push(
+        `${SMOKE_SH}: listede var olmayan rota(lar) duruyor: ` +
+          fazla.map((r) => '/' + r).join(', '),
+      );
+    }
+  }
+} else {
+  sayiSorunlari.push(SMOKE_SH + ': dosya okunamadı — duman testi kapsamı DENETLENMEDİ.');
+}
 
 // ── 3. Belgede anılan API uçları gerçek mi ───────────────────────────────────
 /**
@@ -183,6 +306,23 @@ if (eksikRota.length) {
       '\n  Rota haritasına ekleyin (ve scripts/smoke-routes.sh kapsamını kontrol edin).',
   );
 }
+if (hayaletRota.length) {
+  fail(
+    `docs/MIMARI.md §13.1 var olmayan ${hayaletRota.length} ekran anlatıyor:\n    ` +
+      hayaletRota.join(', ') +
+      '\n  Bu rotaların hiçbirinde apps/admin/app/<rota>/page.tsx yok. Şartnameye güvenen biri' +
+      '\n  olmayan bir ekranı arar (ya da onu "kaybolmuş" sanıp yeniden yazar).' +
+      '\n  Ekran gerçekten kaldırıldıysa haritadan da çıkarın; bir SEKME hâline geldiyse' +
+      '\n  ebeveyn rotanın açıklamasında anın (ör. /products/[id] içindeki envanter sekmesi).',
+  );
+}
+if (sayiSorunlari.length) {
+  fail(
+    'rota SAYISI iddiaları gerçekle uyuşmuyor:\n    ' +
+      sayiSorunlari.join('\n    ') +
+      '\n  Liste doğru olsa bile yanlış sayı, okuyanı "iki ekran taranmıyor" sanmaya götürür.',
+  );
+}
 if (hayaletUc.length) {
   fail(
     `docs/MIMARI.md var olmayan API ucu anlatıyor:\n    ` +
@@ -203,9 +343,29 @@ if (hayaletUc.length) {
   );
 }
 
+// ── 4. Görsel kopya taze mi ──────────────────────────────────────────────────
+/**
+ * `docs/mimari-gorsel.html` artık ELLE yazılmıyor: MIMARI.md'den üretiliyor
+ * (scripts/build-mimari-gorsel.js). Üretilmiş dosyanın commit'lenmiş hâli kaynakla
+ * uyuşmuyorsa burada düşer — eskiden bu sapma kimseyi uyarmadan aylarca sürebiliyordu
+ * (şartname v2.7'yken görsel kopya v2.6'da donmuştu ve düşürülmüş bir fazı canlı gibi
+ * anlatıyordu).
+ */
+try {
+  execFileSync(process.execPath, [path.join(__dirname, 'build-mimari-gorsel.js'), '--check'], {
+    stdio: 'pipe',
+  });
+} catch (e) {
+  fail(
+    'docs/mimari-gorsel.html BAYAT (MIMARI.md ile üretilmiş kopya uyuşmuyor).' +
+      '\n  Düzeltmesi: `pnpm docs:gorsel` — çıkan dosyayı commit edin. Dosya ELLE düzenlenmez.' +
+      (e.stderr ? '\n' + String(e.stderr).trim().replace(/^/gm, '  ') : ''),
+  );
+}
+
 if (!process.exitCode) {
   console.log(
-    `✓ check-docs: ${tables.size} tablo, ${new Set(routes).size} admin rotası, ` +
-      `${anilan.size} API ucu — hepsi docs/MIMARI.md ile tutarlı.`,
+    `✓ check-docs: ${tables.size} tablo, ${rotaSayisi} admin rotası (duman testi ${dumanBeklenen}), ` +
+      `${anilan.size} API ucu, görsel kopya taze — hepsi docs/MIMARI.md ile tutarlı.`,
   );
 }

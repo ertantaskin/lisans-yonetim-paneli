@@ -84,9 +84,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # `continue-on-error` KALDIRILDI (2026-08-19). Adım yıllardır HER koşuda kırmızıydı:
+      # `scripts/*.js` ve `load/*.js` Node/k6 genel değişkenleriyle yapılandırılmadığı için
+      # tek başına 110 `no-undef` + 19 `no-require-imports` üretiyordu (ölçüldü) ve gerçek bir
+      # bulgu bu gürültünün içinde görünmezdi — yani adım vardı, denetim yoktu. Yapılandırma
+      # boşluğu kapatıldıktan sonra hata sayısı 134 → 0'a düştü (yalnız uyarı kaldı), bu yüzden
+      # adım artık BLOKLAYICI. Uyarılar bilinçli olarak kırmızıya çevrilmiyor (--max-warnings yok).
       - name: Lint
         run: pnpm lint
-        continue-on-error: true
 
       - name: Birim testleri
         run: pnpm test

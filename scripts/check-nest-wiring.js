@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-console */
 // ─────────────────────────────────────────────────────────────────────────────
 // check-nest-wiring.js — "API hiç boot etmiyor" sınıfını DERLEME ÖNCESİ yakalar.
 //

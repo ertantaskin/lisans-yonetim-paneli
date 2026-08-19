@@ -7,10 +7,11 @@
 >   API tablosu (§4) artık **`pnpm check:docs` ile kod tarafından denetlenir** — şemaya tablo,
 >   panele ekran eklenip burası güncellenmezse CI kırılır. Kapı, belgenin bir dönem 15 tabloyu
 >   hiç anmadığı ve **4 uydurma tablo** anlattığı ölçüldüğü için eklendi.
-> · **`mimari-gorsel.html`** = aynı belgenin ELLE hazırlanmış görsel kopyası, **2026-07-27
->   tarihli anlık görüntü**. Denetim kapsamında DEĞİL ve geride kalabilir; çelişki varsa
->   **bu dosya geçerlidir**. (Aynı içeriğin iki elle sürdürülen kopyası, bu projede
->   tekrarlayan bir arıza sınıfıdır — bkz. CLAUDE.md → Tekrarlayan tuzaklar #4.)
+> · **`mimari-gorsel.html`** = bu dosyanın **ÜRETİLMİŞ** görsel kopyası (`pnpm docs:gorsel`);
+>   elle düzenlenmez, tazeliği `pnpm check:docs` ile denetlenir. Eskiden ELLE sürdürülüyordu
+>   ve v2.6'da donup düşürülmüş bir fazı canlı gibi anlattığı ölçüldüğü için üretime çevrildi
+>   (aynı içeriğin iki elle sürdürülen kopyası, bu projede tekrarlayan bir arıza sınıfıdır —
+>   bkz. CLAUDE.md → Tekrarlayan tuzaklar #4).
 > · **`docs/GECMIS.md`** = ne zaman ne yapıldığı (tur günlüğü); şartname değil.
 >
 > Kolon/parametre düzeyinde tek doğruluk kaynağı her zaman **koddur**
@@ -425,7 +426,7 @@ kimliğiyle mail, raporda "manuel". Kanal bazlı efektif marj raporu.
 | Grup | Rotalar |
 |---|---|
 | **Operasyon** | `/dashboard` (genel bakış + canlı akış) · `/pending` (Bekleyen Teslimatlar) · `/orders` → `/orders/[id]` · `/review` (inceleme kuyruğu) · `/support` (destek/değişim) |
-| **Envanter** | `/stock` (kategori kartları → ürün listesi) · `/stock/import` (stok girişi) · `/products/[id]` (ürün detayı — `/products` → `/stock` yönlendirir) · `/categories` · `/guides` (kurulum rehberleri) · `/inventory` (lisans envanteri) · `/quarantine` (Kusurlu Stok) → `/quarantine/records`, `/quarantine/claims/[id]` |
+| **Envanter** | `/stock` (kategori kartları → ürün listesi) · `/stock/import` (stok girişi) · `/products/[id]` (ürün detayı: **lisans envanteri** · eşlemeler · tedarik · defter sekmeleri; `/products` → `/stock` yönlendirir) · `/categories` · `/guides` (kurulum rehberleri) · `/quarantine` (Kusurlu Stok) → `/quarantine/records`, `/quarantine/claims/[id]` |
 | **Tedarik** | `/suppliers` → `/suppliers/[id]` · `/purchase-orders` · `/batches` → `/batches/[id]` |
 | **Müşteri** | `/customers` (mağaza → müşteri hiyerarşisi) → `/customers/[email]` |
 | **Rapor** | `/reports` · `/reports/costs` · `/reports/sla` · `/reports/reorder` |
@@ -555,7 +556,7 @@ aynı); My Account bloğu tema-nötr.
 - **Faz 1 (~3-4 hafta) MVP ✅:** şifreli stok + import, atomik atama + idempotency,
   kısmi teslimat motoru + Bekleyen Teslimatlar, sipariş API + şablon + mail, WP eklentisi
   (push, My Account, meta box: göster/değiştir/tekrar gönder/revoke), geri kanal webhook.
-  CI yarış testi ilk günden. Lisans Yönetim Paneli'ta 1-2 pilot ürünle canlı (eski eklenti paralel).
+  CI yarış testi ilk günden. Mağazada 1-2 pilot ürünle canlı (eski eklenti paralel).
 - **Faz 2 (~2-3 hafta) ✅:** hesap ürünleri (JSONB), çok kullanımlık, şablon override, 2. site,
   domain doğrulama, mutabakat cron, düşük stok + Telegram, misafir link (site bayrağı),
   akıllı stok önizleme, Ctrl+K, toplu değiştirme, self-servis + müşteri 360, tedarik

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-console */
 // ─────────────────────────────────────────────────────────────────────────────
 // check-env-passthrough.js — "`.env`'e yazdım ama hiçbir şey değişmedi" sınıfını yakalar.
 //
@@ -201,7 +200,7 @@ function serviceBlock(compose, service) {
   if (start === -1) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^  \S/.test(lines[i])) {
+    if (/^ {2}\S/.test(lines[i])) {
       end = i;
       break;
     }

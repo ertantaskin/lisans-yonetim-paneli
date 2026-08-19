@@ -12,6 +12,57 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**BELGE ↔ CANLI SİSTEM HİZALAMASI (2026-08-19, migration YOK):**
+Kullanıcı: *"mimari dosyaları, gitteki dosyalar vs tamamen güncel çalışır sistemin mimarisiyle
+eşleşmeli; her şey güncel, düzenli, derli toplu olmalı."* Belgeler koda **ve canlı sisteme**
+karşı ölçüldü.
+
+- **[HAYALET EKRAN — kapımın kör noktası]** §13.1 rota haritası `/inventory` diye bir ekran
+  anlatıyordu; `apps/admin/app/inventory/` HİÇ var olmadı (envanter `/products/[id]` içinde
+  bir sekme). `check-docs` (2) yalnız **kod → belge** yönünü denetliyordu — belgenin var olmayan
+  bir ekranı anlatması tam da tabloların bir dönem 4 uydurma tablo anlatmasıyla AYNI arıza
+  sınıfıydı ve kapı o yöne hiç bakmıyordu. Artık iki yönlü (2b), kapsam BİLEREK §13.1 tablosuyla
+  sınırlı (belgenin başka yerlerinde `/reveal`, `/bonus`, `/catalog` gibi API alt yolları da
+  backtick içinde geçiyor; tüm belgeyi taramak yanlış alarm üretirdi).
+- **[BAYAT SAYI — liste doğru, İDDİA yanlış]** CLAUDE.md "38 sayfa rotası (duman testi **36**
+  tarar)" diyordu; `smoke-routes.sh` **37** rota tarıyor (38 − `/login`). Liste bayatlayamıyordu
+  (betik kendi kapsamını `app/` ağacıyla karşılaştırıyor) ama SAYIYI kimse denetlemiyordu →
+  okuyan "iki ekran taranmıyor" sanırdı. Üç yerdeki sayı (MIMARI §13.1 başlığı · CLAUDE.md ×2 ·
+  smoke listesi uzunluğu) artık `check-docs` (2c) ile denetleniyor; kalıp bulunamazsa kapı
+  SESSİZ kalmaz, "iddia BULUNAMADI" diye düşer.
+- **[CANLIYA KARŞI ÖLÇÜM]** prod `/v1/health` **200 v1.1.0** (db+redis), dev aynı. **Eklenti
+  kaynakta v1.1.8 ama canlıda YAYINLANMAMIŞ:** `/v1/updates/plugin/info` → **1.1.7**. Yani
+  müşteri siteleri MAK cümlesinin eski hâlini ("bu siparişte") görüyor. Kod eksiği DEĞİL,
+  operatör adımı (`/releases`) — CLAUDE.md durum tablosu artık "kaynak v1.1.8 · yayınlanan
+  v1.1.7" diyor ve madde "Operatöre kalan" başlığına eklendi.
+- **[İKİNCİ KOPYA — güncellenmedi, KOPYA OLMAKTAN ÇIKARILDI]** `docs/mimari-gorsel.html` elle
+  sürdürülen ikinci mimari belgesiydi ve v2.6'da donmuştu: düşürülmüş Faz 3'ü planlanan bir
+  aşama gibi, hiç var olmamış 4 tabloyu gerçek gibi, terk edilmiş kararları (Resend/SES ·
+  pgBackRest+S3+PITR · argon2 · indigo+Inter) canlı gibi anlatıyordu. Kullanıcıya soruldu,
+  cevap *"güncel çalışan hâli önemli bizim için"*. Elle güncellemek aynı tuzağı (tuzak #4)
+  tekrar kurardı → `scripts/build-mimari-gorsel.js` MIMARI.md'yi render ediyor (görsel kimlik
+  eski dosyanın CSS'inden alındı), `pnpm docs:gorsel` üretiyor, `check-docs` (4) tazeliğini
+  denetliyor. Üretilmiş dosya tarayıcıda doğrulandı: 19 h2, 5 tablo, 1 kod bloğu, 9 callout.
+- **[SÜREKLİ KIRMIZI = DENETİM YOK]** `pnpm lint` her koşuda kırmızıydı (134 hata) ve CI adımı
+  `continue-on-error: true` idi — yani adım vardı, denetim yoktu; gerçek bir bulgu bu gürültüde
+  görünmezdi (tuzak #19). Sebep kod değil YAPILANDIRMAydı: `scripts/*.js` + `load/*.js` Node/k6
+  genel değişkenleriyle tanımlı değildi (110 `no-undef` + 19 `no-require-imports`) ve koddaki
+  `react-hooks/exhaustive-deps` / `@next/next/no-img-element` bastırmaları KURULU OLMAYAN
+  eklentilere atıftı (yazar kuralın koştuğunu varsaymış — `backup-drill.sh`teki shellcheck
+  yönergeleriyle aynı sınıf). İki eklenti kuruldu + yapılandırma kapatıldı → **134 → 0 hata**,
+  adım bloklayıcı yapıldı. Kalan 19 uyarının ikisi gerçek: DataTable'da `rows` ifadesi useMemo
+  bağımlılığını her render değiştirebiliyor (perf, kapsam dışı bırakıldı).
+- **[TEMİZLİK]** kökte kazara commit'lenmiş 0 baytlık `1` dosyası (a667aa9'da girmiş, kabuk
+  yönlendirme artığı) silindi · CHANGELOG'da 5 başlık boş satır olmadan yazılmıştı (markdown
+  onları başlık DEĞİL düz metin sayıyordu) · GECMIS'te 3 yanlış dosya yolu · MIMARI'de yeniden
+  adlandırma artığı ("Lisans Yönetim Paneli'ta 1-2 pilot ürünle canlı" — eskiden mağaza adıydı).
+
+**Doğrulama:** typecheck 4/4 + altı kapı · birim 68+184+170 · `pnpm lint` **0 hata** ·
+`prettier --check` (docs hariç) değişen dosyalarda temiz · **kontrol denemesi: 8 mutasyonun
+sekizi de KIRMIZI**, geri alınca yeşil.
+
+---
+
 **MAK DAĞITIM POLİTİKASI + KALICI SİLME (commit b307137, migration 0046):**
 Kullanıcı iki somut operatör sorunu bildirdi; ikisi de kodda kök nedeniyle doğrulandı ve
 plan modunda tasarlanıp onaylandı (kararlar: ürün bazlı ayar + varsayılan bugünkü davranış ·
@@ -372,7 +423,7 @@ CONFIRMED denetim bulgusu düzeltildi (commit 1dee35f). typecheck 4/4, api birim
 - **D12** (§12/§13) Maliyet raporu: `costs.service/controller/module` + `/reports/costs` (recharts) —
   tedarik harcaması (tedarikçi/ürün/ay) + stok değerleme + zayi; para birimi AYRI; maliyeti bağlanamayan
   'kapsanmayan' olarak dürüst. **KÂR DEĞİL** — satış fiyatı Woo'da (panel ödemeye dokunmaz). Migration YOK.
-- **D13** (§8/§9) Risk skoru: `risk-score.*` + `packages/shared/domain/risk` + `risk-badge` — müşteri başına
+- **D13** (§8/§9) Risk skoru: `risk-score.*` + `packages/shared/src/domain/risk.ts` + `risk-badge` — müşteri başına
   okuma-anında advisory skor (0-100, faktör kırılımlı). **OTOMATİK EYLEM YOK** (§15 "insan onaylar"). Migration YOK.
 - **D14** (§16) Günlük Telegram özeti: `daily-digest.*` — BullMQ cron 08:00, metrik özeti + sabit-eşik kritik
   alarm; Telegram env yoksa no-op. Migration YOK.
@@ -2335,7 +2386,7 @@ göre ayarlanabilsin" dedi ve gerçek bir Office 365 talimat metni verdi.
   güncellemek gerekirdi (biri unutulunca müşteriye YANLIŞ talimat gider). Başlık unique index'i
   **Türkçe-duyarlı** (`translate(title,'İIı','iii')` — `product_categories`'te ölçülmüş gerekçenin aynısı;
   ürün formunda seçim yalnız başlıkla yapıldığı için iki özdeş başlık seçilemez hâle getirir).
-- **ÜÇ YÜZEY, TEK RENDER** (`packages/shared/domain/guide.ts`): mağaza sayfası (HTML) · teslimat maili
+- **ÜÇ YÜZEY, TEK RENDER** (`packages/shared/src/domain/guide.ts`): mağaza sayfası (HTML) · teslimat maili
   (düz metin) · müşterinin indirdiği `.txt`. Eklenti PHP'de İKİNCİ AYRIŞTIRICI TAŞIMAZ (iki uygulama er
   geç ayrışır — bu projede tekrarlayan hata sınıfı); paneldeki HTML'i `wp_kses` allow-list'iyle yalnız
   SÜZER (savunma derinliği). Biçimleme markdown'ın küçük+güvenli alt kümesi: ham girdi önce KAÇIRILIR,
@@ -2965,7 +3016,7 @@ docstring iddiaları · admin metinleri · ölü-uç/kapalı-döngü taraması) 
 - **BİLİNÇLİ YAPILMAYAN (raporlandı):** `.env.bak.1785665590` (benim değil, ~2 hafta önce) tüm prod
   sırlarının fazladan kopyası — canlı `.env` ile AYNI MASTER_KEY/SESSION_SECRET/DB parolası taşıyor
   (yani kurtarma artefaktı DEĞİL), izinleri 0600 ve `.dockerignore` kapsamında → SİLİNMEDİ (kullanıcının
-  dosyası, düşük risk). · `apps/audit/constants.ts`'te `login` enum değeri bilerek bırakıldı (sunucu
+  dosyası, düşük risk). · `apps/admin/app/audit/constants.ts`'te `login` enum değeri bilerek bırakıldı (sunucu
   doğrulaması enum'un tamamını kabul etmeli), yalnız açılır listeden elendi.
 - **OPERATÖRE KALAN (kod değil, DEĞİŞMEDİ):** prod `SMTP_HOST` TANIMSIZ → teslimat mailleri gerçek
   müşteriye ULAŞMIYOR (panel her boot'ta kritik alarm) · `BACKUP_OFFSITE_CMD` TANIMSIZ → yedekler
