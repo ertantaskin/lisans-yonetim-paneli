@@ -82,7 +82,7 @@ Yönetim (VPS'te): `./scripts/dev-stack.sh up|wp|down|status|subdomains`.
 
 | Komut | İş | Gereksinim |
 |---|---|---|
-| `pnpm typecheck` | Tip denetimi **+ altı kapı** (use-server · Nest kablolama · env geçirme · iş akışı YAML · tx/havuz · **şartname↔kod**) | — |
+| `pnpm typecheck` | Tip denetimi **+ yedi kapı** (use-server · Nest kablolama · env geçirme · iş akışı YAML · tx/havuz · **eklenti sürümü** · **şartname↔kod**) | — |
 | `pnpm test` | Birim testleri (shared + api + admin) | — |
 | **`pnpm test:iso`** | **Entegrasyon + yarış paketi, izole PostgreSQL/Redis konteynerleriyle** | yalnız `docker` |
 | `pnpm test:integration` | Entegrasyon paketi (var olan bir DB'ye karşı) | `DATABASE_URL` + `REDIS_URL` + `MASTER_KEY` |

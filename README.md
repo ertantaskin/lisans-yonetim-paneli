@@ -32,7 +32,7 @@ docker compose up -d --build  # PG17 + Redis7 + API + admin + Caddy + Mailpit
 
 ```bash
 pnpm install
-pnpm typecheck      # tip + ALTI kapı (use-server · DI · env · workflow · tx/havuz · şartname↔kod)
+pnpm typecheck      # tip + YEDİ kapı (use-server · DI · env · workflow · tx/havuz · eklenti sürümü · şartname↔kod)
 pnpm test           # birim (shared + api + admin)
 pnpm test:iso       # entegrasyon + yarış — izole PostgreSQL/Redis konteynerleriyle (yalnız docker)
 pnpm build

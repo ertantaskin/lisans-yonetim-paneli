@@ -12,6 +12,28 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**EKLENTİ SÜRÜM SABİTİ GERİDE KALMIŞTI — yayını durduran gerçek arıza (2026-08-19):**
+Belge turunun ardından eklenti v1.1.8 yayınlanmak istendi; `publish-plugin.sh` **kendi kapısıyla
+durdu**: başlık `1.1.8`, `Stable tag` `1.1.8`, ama `WPTESLIMAT_VERSION` **`1.1.7`**. v1.1.8
+yükseltmesi (4641106) üç yazımdan ikisini güncellemişti.
+
+- **Neden hiçbir adım görmedi:** `php -l` sözdizimine bakar · 108 davranış testi sürüme bakmaz ·
+  `tsc` PHP görmez. Yani sapma yalnız YAYIN anında görülebiliyordu — ve o an gelene kadar eklenti
+  "yayınlanmayı bekliyor" sanıldı. (Tuzak #21'in kardeşi: "yapılmadı" sanılan şey aslında
+  ÇALIŞAN BİR ARIZAydı.)
+- **Sessiz kalsaydı daha kötüydü:** `class-updater.php:399` yeni sürümü `WPTESLIMAT_VERSION` ile
+  karşılaştırıyor (`version_compare($new, WPTESLIMAT_VERSION, '<=')`). Sabit geride kalırsa site
+  güncellemeyi kurar ama yine eski sürümü raporlar (`class-panel-client.php:139`) → panel siteyi
+  eski sürümde görür ve **aynı güncelleme sonsuza kadar yeniden önerilir**. Ayrıca
+  `wpteslimat_schema` seçeneği eski sürümde kalır (kurulum/şema yükseltme yolu yanlış dallanır).
+- **7. KAPI:** `scripts/check-plugin-version.js` — başlık · sabit · `Stable tag` eşit ve SemVer mi,
+  `readme.txt` changelog'unda o sürümün başlığı var mı (yoksa müşteri güncelleme ekranında
+  "Yenilikler" BOŞ). `typecheck` zincirine ve ayrı bir CI adımına bağlandı.
+- **Kontrol denemesi:** altı mutasyon (sabit geride · başlık geride · Stable tag geride · SemVer
+  değil · changelog satırı yok · kalıp bozuldu) — **altısı da KIRMIZI**, geri alınca yeşil.
+
+---
+
 **BELGE ↔ CANLI SİSTEM HİZALAMASI (2026-08-19, migration YOK):**
 Kullanıcı: *"mimari dosyaları, gitteki dosyalar vs tamamen güncel çalışır sistemin mimarisiyle
 eşleşmeli; her şey güncel, düzenli, derli toplu olmalı."* Belgeler koda **ve canlı sisteme**

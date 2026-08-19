@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 //           eşlemek için. Sır göndermez (yalnız ad/sku/tip); additive.
 // = 0.6.0 = Sipariş satırlarına mağaza ürün adı (remoteName) eklendi — panelde eşlenmemiş
 //           ürünleri isimle görüp tek tıkla eşlemek için (teslimatı etkilemez, additive).
-define('WPTESLIMAT_VERSION', '1.1.7');
+define('WPTESLIMAT_VERSION', '1.1.8');
 define('WPTESLIMAT_DIR', plugin_dir_path(__FILE__));
 define('WPTESLIMAT_FILE', __FILE__);
 

@@ -238,7 +238,7 @@ yakalanmış bir arızadır. Ayrıntılı vaka anlatımları [docs/GECMIS.md](do
 
 | Komut | Kapsam |
 |---|---|
-| `pnpm typecheck` | 4 paket tipi **+ altı kapı**: use-server · nest-wiring · env · workflows · tx-pool · **docs** (şartname↔kod: tablo · rota · **hayalet ekran** · **rota sayısı iddiaları** · uç · **üretilmiş görsel kopya**) |
+| `pnpm typecheck` | 4 paket tipi **+ yedi kapı**: use-server · nest-wiring · env · workflows · tx-pool · **plugin-version** · **docs** (şartname↔kod: tablo · rota · **hayalet ekran** · **rota sayısı iddiaları** · uç · **üretilmiş görsel kopya**) |
 | `pnpm lint` | ESLint — **CI'da bloklayıcı** (2026-08-19'a kadar `continue-on-error` idi ve her koşuda kırmızıydı; yapılandırma boşluğu kapatıldı, 134 hata → 0) |
 | `pnpm test` | Birim (shared + api + admin) |
 | `pnpm test:iso` | **Entegrasyon + yarış, izole PG17/Redis7 konteynerleriyle** (yalnız `docker` ister) |

@@ -78,6 +78,15 @@ jobs:
       - name: Şartname ↔ kod sapma denetimi
         run: pnpm check:docs
 
+      # EKLENTİ SÜRÜM TUTARLILIĞI: sürüm eklentide ÜÇ yerde yazılı (başlık `Version:`,
+      # `WPTESLIMAT_VERSION` sabiti, readme `Stable tag:`). v1.1.8 yükseltmesinde sabit
+      # 1.1.7'de KALDI ve hiçbir adım görmedi (php -l sözdizimine bakar, davranış testleri
+      # sürüme bakmaz, tsc PHP görmez) — sapma ancak YAYIN denenince ortaya çıktı, yani
+      # yayın sebebi bilinmeden durdu. Sessiz kalsaydı daha kötüydü: güncelleyici sabiti
+      # karşılaştırdığı için müşteri sitesi aynı güncellemeyi sonsuza kadar önerirdi.
+      - name: WP eklentisi sürüm tutarlılığı
+        run: pnpm check:plugin-version
+
       - name: Build
         run: pnpm build
 

@@ -14,6 +14,27 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Eklenti sürüm sabiti geride kalmıştı (yayını durduran gerçek arıza) + 7. kapı
+
+`v1.2.0` etiketlendikten sonra eklenti yayını denendi ve `publish-plugin.sh` **kendi kapısıyla
+durdu**: `wpteslimat.php` başlığı `1.1.8`, `readme.txt` `Stable tag: 1.1.8`, ama
+**`WPTESLIMAT_VERSION` sabiti hâlâ `1.1.7`**. v1.1.8 yükseltmesi (4641106) üç yazımdan yalnız
+ikisini güncellemişti.
+
+**Neden sessiz kaldı:** `php -l` sözdizimine bakar · eklenti davranış testleri (108) sürüme
+bakmaz · `tsc` PHP görmez. Sapma ancak **yayın denendiğinde** ortaya çıktı — yani eklenti bir
+gün boyunca "yayınlanmayı bekliyor" sanıldı, oysa yayın kapıda duruyordu.
+
+**Sessiz kalsaydı daha kötüydü:** `class-updater.php` yeni sürümü `WPTESLIMAT_VERSION` ile
+karşılaştırır. Sabit 1.1.7'de kalsaydı müşteri sitesi güncellemeyi kurar, sonra yine 1.1.7
+raporlar → panel siteyi eski sürümde görür ve **aynı güncelleme sonsuza kadar yeniden önerilir**.
+
+Sabit düzeltildi ve bu sınıf artık kapıya bağlandı: **`pnpm check:plugin-version`** (7. kapı;
+`typecheck` zincirinde + ayrı CI adımı) başlık · sabit · `Stable tag` üçlüsünün **eşit ve SemVer**
+olmasını, ayrıca `readme.txt` changelog'unda o sürümün başlığı bulunmasını denetler (yoksa müşteri
+güncelleme ekranında "Yenilikler" BOŞ görünür). Altı mutasyonla kontrol denemesi yapıldı; altısı da
+kırmızı verdi.
+
 ## [1.2.0] - 2026-08-19
 
 > Bu sürüm, v1.1.0'dan sonra prod'a **parça parça dağıtılmış** işleri (MAK dağıtım politikası +
