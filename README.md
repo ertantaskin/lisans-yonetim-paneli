@@ -5,6 +5,9 @@ ayrık, çoklu site destekli merkezi stok/teslimat paneli.
 
 ## Bu repoda ne var
 
+> **Hangi soru hangi belgede:** [`docs/README.md`](docs/README.md) (belge haritası + MIMARI bölüm
+> haritası) · **hangi betik nerede koşar:** [`scripts/README.md`](scripts/README.md).
+
 - **[docs/MIMARI.md](docs/MIMARI.md)** — tam mimari şartname (v2.7). **Tek yetkili tanım**;
   veri modeli + rota haritası + API tablosu `pnpm check:docs` ile kod tarafından denetlenir.
 - **docs/mimari-gorsel.html** — aynı belgenin **üretilmiş** görsel kopyası (tarayıcıda aç).

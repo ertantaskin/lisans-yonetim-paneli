@@ -12,6 +12,42 @@ Sürüm bazlı özet: [../CHANGELOG.md](../CHANGELOG.md) · Dağıtım kaydı: [
 
 ---
 
+**ŞARTNAMENİN İKİ EKSİK/BAYAT BÖLÜMÜ + BELGE HİYERARŞİSİ (2026-08-19, kod değişikliği YOK):**
+Kullanıcı: *"proje genelinde eksik başka bir bölüm var mı? tüm mimariyi kontrol et… daha düzenli
+stabil bir hiyerarşide."* Kapsamlı tarama yapıldı; **taranıp TEMİZ çıkanlar da kayda değer**:
+
+- **Temiz çıktı:** 42 modülün tamamı §-bazında karşılığı olan bir bölümde anlatılıyor (modül
+  ADI geçmese de kavram var: `risk-score`→§8, `saved-views`→§14, `search`→Ctrl+K/§13,
+  `supply-ops`/`procurement`→§12, `ai-*`→§15) · 32 tablo hem eksiksiz hem hayaletsiz ·
+  **38 rotanın tamamı erişilebilir** (menüde olmayan 9'u bağlamsal: `/products/[id]`,
+  `/reports/*`, `/quarantine/*`, `/sites/new`, `/templates/new`, `/login` — hepsinin 3-13
+  dosyadan gelen bağlantısı ölçüldü, yetim ekran YOK) · bildirim türü sözlüğü eksiksiz.
+- **[BOŞLUK 1 — arka plan görünmezdi]** 11 BullMQ kuyruğu ve 9 tekrarlı iş var; *"ne koşuyor,
+  hangi sıklıkta, hangi env değiştirir"* sorusunun HİÇBİR belgede cevabı yoktu. Altı kuyruk
+  (`daily-digest`, `backup-alarm`, `low-stock`, `site-silence`, `stock-autocomplete`, `security`)
+  şartnamede adıyla hiç geçmiyordu. Operasyon panelinde bu birinci sınıf bilgidir — sessizce
+  ölen bir süpürme günlerce fark edilmeyen bir kesintidir (yaşandı; `sweep_failed` alarmı tam
+  bu yüzden var). → **§16.1** (olay-güdümlü 3 + tekrarlı 8, sıklık/env sütunlu) + `check-docs`
+  kuyruk denetimi (koddaki her `*_QUEUE` §16.1'de geçmeli). Kontrol denemesi: tablodan bir
+  kuyruk düşürünce **3/3 KIRMIZI**.
+- **[BOŞLUK 2 — şartname canlı arayüzle ÇELİŞİYORDU]** §17 dört yerde bayattı: "geçici compat
+  köprüsü var" (köprü KALDIRILMIŞTI) · durum dili **üç** hue (gerçek **beş**) · `--ring 0.708`
+  (gerçek **0.48**; üstelik bu a11y kararının kendisi "§17" diye buraya atıf yapıyordu — yani
+  belge, kendi belgelediği kararla çelişiyordu) · menüde olmayan bir "Kanallar" öğesi. Bölüm
+  `globals.css` + `nav.ts` **ölçülerek** yeniden yazıldı. **Ders:** CLAUDE.md §17'yi 76 satır
+  boyunca TEKRARLIYORDU ve güncel olan KOPYAydı — tuzak #4 tam da bu, ama bu kez yön tersine
+  işledi (üst belge bayat, alt belge güncel). Kopya özet + üç kritik tuzağa indirildi.
+- **[HİYERARŞİ]** `docs/README.md` ve `scripts/README.md` eklendi. Belge haritası yalnız
+  CLAUDE.md'deydi; klasöre bakan biri (ya da GitHub'da klasöre tıklayan) onu görmüyordu.
+  `scripts/` özellikle önemliydi: `release-plugin.sh` (dev makinesi) ile `publish-plugin.sh`
+  (VPS) karışması repoyu origin'den ayırıp panel dağıtımını kalıcı kilitleyebilir.
+
+**Doğrulama:** yedi kapı ✅ · lint 0 · üretilen görsel kopya yeniden render edildi (19 h2,
+9 tablo) · `check-docs` sayıları değişmedi (32 tablo · 38 rota · 14 uç) → kod/şema/rota
+dokunulmadı, yalnız belge.
+
+---
+
 **EKLENTİ SÜRÜM SABİTİ GERİDE KALMIŞTI — yayını durduran gerçek arıza (2026-08-19):**
 Belge turunun ardından eklenti v1.1.8 yayınlanmak istendi; `publish-plugin.sh` **kendi kapısıyla
 durdu**: başlık `1.1.8`, `Stable tag` `1.1.8`, ama `WPTESLIMAT_VERSION` **`1.1.7`**. v1.1.8

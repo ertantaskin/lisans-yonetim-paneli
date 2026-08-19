@@ -481,6 +481,43 @@ Payload'lar modele maskeli gider; AI çökerse sistem AI'sız çalışır.
   sunucudadır (panel `backup_offsite` alarmı üretir). Adım adım kurulum, eşikler ve kurtarma
   yordamı: **`docs/RUNBOOK-DR.md`** — çelişkide o belge geçerlidir.
 
+### 16.1 Kuyruklar & zamanlanmış işler (TAMAMI — 11 kuyruk)
+
+> **Bu liste kod tarafından denetlenir** (`pnpm check:docs`): koddaki her `*_QUEUE` sabiti
+> burada geçmelidir. Kapı, panelin "arka planda ne koşuyor, hangi sıklıkta, hangi env değiştirir"
+> sorusunun **hiçbir belgede cevabı olmadığı** ölçüldüğü için eklendi — 8 tekrarlı işin 5'i
+> şartnamede adıyla hiç anılmıyordu. Operasyon panelinde bu bilgi birinci sınıftır: sessizce
+> ölen bir süpürme, günlerce fark edilmeyen bir kesinti demektir (bu projede yaşandı).
+
+**Olay-güdümlü (tetikleyen bir iş vardır):**
+
+| Kuyruk | Ne yapar | Tetikleyici |
+|---|---|---|
+| `mail` | Teslimat/bildirim maili (SMTP) | Atama · yeniden gönder · bildirim (retry'li) |
+| `webhook` | Geri-kanal `outbox_events` teslimi (monoton `seq`) | Panel tarafı durum değişimi |
+| `stock-autocomplete` | Stok girişi sonrası bekleyen satırların tamamlanması | İçe aktarma, `AUTOCOMPLETE_INLINE_CAP` üstü backlog'da (altı satır-içi biter) |
+
+**Tekrarlı (boot'ta kararlı `schedulerId` ile upsert edilir — `queue.add(repeat)` DEĞİL, yoksa
+her yeniden başlatma yeni bir zamanlama bırakır):**
+
+| Kuyruk / iş | Sıklık | Ne yapar | Env |
+|---|---|---|---|
+| `expiry` | 5 dk | Süresi dolan atama/kalem işaretleme (`expired`) | — |
+| `reconcile` → `reconcile-sweep` | 15 dk | Sıcak mutabakat: son `RECONCILE_WINDOW_DAYS` gün (vars. 30) | `RECONCILE_WINDOW_DAYS` |
+| `reconcile` → `reconcile-full` | Haftalık (vars. Pazar 04:15) | **Pencere KALDIRILMIŞ tam tarama** (§16) | `RECONCILE_FULL_CRON` |
+| `low-stock` | 30 dk | Düşük stok alarmı (ürün eşiği) | — |
+| `site-silence` | 30 dk | Mağaza uzun süredir imzalı istek göndermedi → `site_silent` | `SITE_SILENCE_HOURS` |
+| `security` | 15 dk | Velocity / değişim-oranı anomali taraması (dar pencere) | — |
+| `backup-alarm` | 6 sa | Yedek/tatbikat bayatlığı + dış kopya kancası alarmları | `BACKUP_OFFSITE_CMD` |
+| `retention` | 24 sa | Log tablolarının saklama süresine göre budanması (§9) | `RETENTION_*` |
+| `daily-digest` | Günlük 08:00 | Günlük özet + anomali paragrafı (Telegram env-gated) | — |
+
+- **İkisi AYNI kuyrukta yaşayan tek çift `reconcile`'dır** ve zamanlayıcıları **tek çağrıda**
+  (`upsertJobSchedulers`) kurulur; ayrı ayrı kurulsaydı yetim temizliği kardeşini siler, biri
+  sessizce hiç koşmazdı (yaşandı — CLAUDE.md tuzak #22).
+- **Bir süpürme patlarsa sessiz kalmaz:** `SweepAlarmService` `sweep_failed` bildirimi üretir.
+  "İş sessizce öldü" bu panelde belgelenmiş bir arıza sınıfıdır.
+
 ---
 
 ## 17. Arayüz tasarımı & tasarım sistemi
@@ -502,37 +539,80 @@ tema token seviyesinde. Hazır styled kütüphane (Mantine/HeroUI) KULLANILMAZ; 
 token'ları — monokrom; **nötr primary** (açıkta koyu, koyuda açık; renkli marka accent'i YOK),
 katmanlı yüzeyler. Durum anlamı **semantik uzantı** renklerinde (nötr temada renkli tutulur).
 Token'lar `apps/admin/app/globals.css` tek kaynağında (`:root`/`.dark` + `@theme inline`);
-değişince tüm uygulama anında yayılır. Legacy sınıflar (`ink/surface/accent-soft…`) geçici
-**compat @theme köprüsüyle** yeni palete bağlı — sayfalar standart token'lara taşınınca kalkar.
+değişince tüm uygulama anında yayılır. **Legacy compat köprüsü KALDIRILDI** — tüm sayfa ve
+primitifler standart token kullanıyor (kod tabanında sıfır `ink/surface/accent-soft…`).
 
-| Token | Açık (oklch L) | Koyu (oklch L) | Kullanım |
+| Token | Açık (oklch) | Koyu (oklch) | Kullanım |
 |---|---|---|---|
-| background | `1.0` | `0.145` | Sayfa zemini |
+| background | `1 0 0` | `0.145` | Sayfa zemini |
 | foreground | `0.145` | `0.985` | Metin |
-| card / popover | `1.0` | `0.205` | Kart/panel/overlay |
+| card / popover | `1 0 0` | `0.205` | Kart/panel/overlay |
 | primary | `0.205` (koyu) | `0.922` (açık) | Buton, aktif, link (NÖTR — renk yok) |
 | secondary / muted / accent | `0.97` | `0.269` | Dolgu, hover, seçili satır |
 | muted-foreground | `0.556` | `0.708` | İkincil metin |
 | border / input | `0.922` | `1.0 /10%` | Kenarlık / alan çeperi |
-| ring | `0.708` | `0.556` | Odak halkası |
+| **ring** | **`0.48`** | `0.556` | Odak halkası — aşağıdaki a11y notu |
 | sidebar-* | `0.985` zemin | `0.205` zemin | Kenar menü ayrı token seti |
-| success | emerald | emerald | bitti (durum) |
-| warning | amber | amber | aksiyon bekliyor (durum) |
-| destructive | rose | rose | sorun / iptal |
 | chart-1..6 | shadcn kategorik | (koyu varyant) | veri görselleştirme |
+| `--radius` | `0.5rem` (8px) | — | kart `rounded-xl` 12px · düğme/alan `rounded-lg` 8px |
 
-Primary NÖTR (marka renk vurgusu yok, shadcn-admin gibi); **durum anlamı** yalnız
-success/warning/destructive semantik renklerinde; veri grafikleri `chart-1..6` kategorik.
+> **`--ring` referanstan BİLEREK sapar.** shadcn-admin açık temada `oklch(0.708)` kullanır;
+> bizde **0.48 kalır**. Odak göstergesi bu panelde TEK kaynak o outline'dır ve 0.708 kontrastı
+> 6.54:1'den ~2.5:1'e düşürürdü. Belgelenmiş a11y kararıdır — "referansla birebir olsun" diye
+> geri alınmamalıdır.
 
-**Kabuk (shadcn sidebar block):** `ui/sidebar.tsx` — resmi shadcn sidebar deseninin sadık
-uyarlaması: `SidebarProvider` (cookie kalıcılık `sidebar_state`, Ctrl/⌘+B kısayolu, mobil
-sheet), `Sidebar` (masaüstü icon-collapse rayı), `SidebarInset`, `SidebarTrigger`,
-`SidebarMenu*`. `components/shell/app-sidebar` (marka + gruplu nav + `nav-user` footer) +
-`site-header` (SidebarTrigger + breadcrumb + Ctrl+K + tema + CANLI rozeti).
+**Durum dili — BEŞ hue** (kullanıcı kararı; eskiden üçtü ve `/stock`'ta "Stokta" ile "Teslim
+edildi" AYNI yeşildi, bakınca ayırt edilmiyordu):
 
-**Bilgi mimarisi:** sol menü — Bekleyen Teslimatlar (ana), Siparişler, Stok
-(ürün/parti/PO), Tedarikçiler, Destek, Müşteriler, Kanallar, Şablonlar, Raporlar,
-Ayarlar. Rozetler + Ctrl+K + ortam rozeti.
+| Hue | Renk | Anlam | Örnek durumlar |
+|---|---|---|---|
+| `--success` | emerald | sağlıklı kaynak | Stokta · Aktif · Teslim alındı |
+| `--info` | mavi | tamamlanmış iş | Teslim edildi · Gönderildi · Onaylandı |
+| `--warning` | amber | bekliyor | Bekliyor · Kısmi · Rezerve |
+| `--attention` | mor | **insan kararı** | İncelemede · Askıda |
+| `--destructive` | rose | ölü / hatalı | Geri alındı · Geçersiz · Başarısız |
+
+**İki katmanlı renk (ölçülerek kuruldu):** `--<hue>` **metin/ikon** rengidir → küçük metin
+olduğu için AA (≥4.5:1) ZORUNLU, yani koyu kalmak durumunda ve tek başına "canlı" olamaz.
+`--<hue>-vivid` **yüzey** rengidir → yalnız `color-mix` ile seyreltilir (`-fill` %18-20 dolgu,
+`-ring` %42-45 saç teli halkası), hiçbir zaman metin değildir, dolayısıyla kontrast kısıtı yoktur
+ve çok daha doygun seçilebilir. Referansın tek renkli rozeti (`bg-teal-500/10 text-teal-500`)
+ÖLÇÜLDÜ: metin kontrastı 2.21–3.30 — **AA'nın altında**, bu yüzden kopyalanmadı; canlılık
+YÜZEYE taşındı, okunabilirlik metinde korundu. Hesaplanan kontrastlar (oklch→sRGB→WCAG, gerçek
+dolgu zemini üzerinde): açık 4.66–5.33 · koyu 5.35–7.25 — hepsi sRGB içinde.
+
+Rozet ton kuralının tek kaynağı `components/ui/badge.tsx`, sözlüklerin tek kaynağı
+`lib/labels.ts`'tir (aynı durumun iki ekranda farklı yazılması bu projede yaşanmış bir arızadır).
+
+**Kabuk (shadcn sidebar block, `variant="inset"`):** `ui/sidebar.tsx` — resmi shadcn sidebar
+deseninin sadık uyarlaması: `SidebarProvider` (cookie kalıcılık `sidebar_state`, Ctrl/⌘+B
+kısayolu, mobil sheet), `Sidebar` (masaüstü icon-collapse rayı), `SidebarInset`,
+`SidebarTrigger`, `SidebarMenu*`. `components/shell/app-sidebar` (marka + gruplu nav +
+`nav-user` footer) + `site-header` (SidebarTrigger + breadcrumb + Ctrl+K + tema + CANLI rozeti).
+Sayfa zemini `bg-sidebar`, içerik `m-2 ml-0 rounded-xl outline shadow-sm` ile YÜZEN kart;
+başlık `sticky top-2` + `rounded-t-xl`. Sidebar aktif öğe **dolu pill**
+(`bg-primary text-primary-foreground`), hover `bg-primary/5 text-primary` + `translate-x-1`
+(ikon modunda ve `motion-reduce`'ta kapalı). Referansın `main`'i `overflow:hidden` olduğu için
+sticky başlıkları ÇALIŞMIYOR (ölçüldü: 600px kaydırınca başlık −592'ye gitti) → bizde
+`overflow-x-clip` + `sticky top-2` ile başlık gerçekten sabit. Font **Geist / Geist Mono**
+(`next/font/google`, **`latin-ext` şart** — `latin` alt kümesinde ş/ğ/İ/ı/ç yok).
+
+**Bilgi mimarisi — sol menü (tek kaynak `components/shell/nav.ts`, 7 grup):**
+
+| Grup | Öğeler |
+|---|---|
+| **Operasyon** | Genel Bakış · Bekleyen Teslimatlar · İnceleme Kuyruğu · Siparişler |
+| **Envanter** | Stok & Ürünler · Kategoriler · Kurulum Rehberleri · Stok Girişi · Ürün Eşleştirme · Kusurlu Stok · Kanallar / Siteler |
+| **Tedarik Zinciri** | Tedarikçiler · Satın Alma · Partiler |
+| **Müşteri İlişkileri** | Destek · Müşteriler |
+| **Raporlar & İzleme** | Raporlar · AI Operasyon · Bildirimler · Başarısız İşler |
+| **Sistem** | Güvenlik · Denetim İzi · Hesap Güvenliğim · Yöneticiler (owner-only) |
+| **Yapılandırma** | Şablonlar · Sürümler · Dağıtımlar · Ayarlar · Kullanım Rehberi |
+
+Menüde olmayan rotalar **bağlamsaldır**, yetim değildir: `/products/[id]` (ürün detayı —
+`/products` `/stock`'a yönlendirir) · `/reports/costs|sla|reorder` (rapor sayfasından) ·
+`/quarantine/claims|records` (karantina alt gezinmesi) · `/sites/new`, `/templates/new`
+(sihirbaz/oluşturma) · `/login`. Rozetler + Ctrl+K + ortam rozeti kabukta.
 
 **Desenler:** tek durum dili (pill+ikon, WCAG AA), kritik aksiyon=onay+sebep,
 para/stok işleminde optimistic UI YOK, maskeli veride kopyalama=reveal (loglu),

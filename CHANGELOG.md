@@ -14,6 +14,36 @@ değiştiğini burada görürsün. Dağıtım kaydı (ne zaman/hangi git sha ile
 
 ## [Yayınlanmamış]
 
+### Şartnamenin iki eksik/bayat bölümü + belge hiyerarşisi (kod değişikliği YOK)
+
+Proje geneli "başka eksik bölüm var mı?" diye tarandı. İki gerçek boşluk çıktı; ikisi de
+**şartnamenin kendisindeydi**.
+
+- **§16.1 — Kuyruklar & zamanlanmış işler (YENİ, 8. denetim):** panelin arka planında **11 BullMQ
+  kuyruğu ve 9 tekrarlı iş** var, ama *"ne koşuyor, hangi sıklıkta, hangi env değiştirir"*
+  sorusunun **hiçbir belgede cevabı yoktu** — `daily-digest`, `backup-alarm`, `low-stock`,
+  `site-silence`, `stock-autocomplete` ve `security` şartnamede adıyla HİÇ geçmiyordu. Operasyon
+  panelinde bu birinci sınıf bilgidir: sessizce ölen bir süpürme, günlerce fark edilmeyen bir
+  kesinti demektir (bu projede yaşandı). Tam tablo eklendi (olay-güdümlü 3 + tekrarlı 8 kuyruk,
+  sıklık ve env sütunlarıyla) ve `check-docs` artık koddaki her `*_QUEUE` sabitinin §16.1'de
+  geçtiğini denetliyor.
+- **§17 (tasarım sistemi) BAYATTI ve canlı arayüzle çelişiyordu:** "geçici compat köprüsü var"
+  diyordu (köprü kaldırılmıştı), durum dilini **üç** hue anlatıyordu (gerçek **beş**),
+  `--ring` için `0.708` yazıyordu (gerçek **0.48** — belgelenmiş a11y kararı, üstelik kararın
+  kendisi "§17" diye buraya atıf yapıyordu) ve menüde olmayan bir "Kanallar" öğesi sayıyordu.
+  Bölüm `globals.css` ve `nav.ts` **ölçülerek** yeniden yazıldı: token tablosu (radius dahil),
+  beş hue + iki katmanlı renk (`-vivid/-fill/-ring`) ve ölçülen kontrastlar, `variant="inset"`
+  kabuk, 7 gruplu menü hiyerarşisi + menüde olmayan bağlamsal rotaların listesi.
+- **Hiyerarşi:** `docs/README.md` (hangi soru hangi belgede + MIMARI bölüm haritası) ve
+  `scripts/README.md` (hangi betik **nerede** koşar — dev makinesi ↔ VPS ayrımı; kapılar ve
+  yakaladıkları arıza) eklendi. CLAUDE.md'nin 76 satırlık "Görsel kimlik" bloğu §17'yi
+  tekrarlıyordu → özet + üç kritik tuzağa indi, durum anlatıları "Tamamlanan büyük turlar"a
+  taşındı (285 → 258 satır).
+
+**Doğrulama:** yedi kapı ✅ · lint 0 hata · **kontrol denemesi: kuyruk kapısı 3 mutasyonda da
+KIRMIZI** (tablodan bir kuyruk düşürüldüğünde), geri alınca yeşil. Kod/şema/rota değişmedi —
+`check-docs` sayıları aynı (32 tablo · 38 rota · 14 uç).
+
 ## [1.2.0] - 2026-08-19
 
 > **Prod'da canlı** (`a0a944d`, `/v1/health` → `"version":"1.2.0"`, db+redis ok, api/admin 0 hata).

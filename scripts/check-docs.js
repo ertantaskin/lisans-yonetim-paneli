@@ -78,6 +78,30 @@ for (const f of fs.readdirSync(SCHEMA_DIR)) {
 }
 const eksikTablo = [...tables].filter((t) => !doc.includes(t)).sort();
 
+// ── 1b. Kuyruklar ────────────────────────────────────────────────────────────
+/**
+ * NEDEN VAR (ölçüldü): panelin arka planında 11 BullMQ kuyruğu ve 9 tekrarlı iş var, ama
+ * "ne koşuyor, hangi sıklıkta, hangi env değiştirir" sorusunun HİÇBİR belgede cevabı yoktu —
+ * `daily-digest`, `backup-alarm`, `low-stock`, `site-silence`, `stock-autocomplete` ve
+ * `security` şartnamede adıyla HİÇ geçmiyordu. Operasyon panelinde bu bilgi birinci sınıftır:
+ * sessizce ölen bir süpürme, günlerce fark edilmeyen bir kesinti demektir (bu projede yaşandı).
+ * Bir kuyruk eklenip §16.1 güncellenmezse CI kırılır.
+ */
+const queues = new Set();
+(function walkQueue(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkQueue(p);
+    else if (e.name.endsWith('.ts') && !e.name.includes('.test.')) {
+      const s = fs.readFileSync(p, 'utf8');
+      for (const m of s.matchAll(/export const [A-Z0-9_]*QUEUE\s*=\s*'([a-z0-9-]+)'/g)) {
+        queues.add(m[1]);
+      }
+    }
+  }
+})(API_SRC);
+const eksikKuyruk = [...queues].filter((q) => !doc.includes('`' + q + '`')).sort();
+
 // ── 2. Admin rotaları ────────────────────────────────────────────────────────
 const routes = [];
 /** Gerçek rota kümesi — HEM ham (`/orders/[id]`) HEM ebeveyn (`/orders`); (2b) bunu kullanır. */
@@ -299,6 +323,14 @@ if (eksikTablo.length) {
       "\n  Şartnameye güvenen biri bu tabloların varlığından habersiz kalır. §3'e ekleyin.",
   );
 }
+if (eksikKuyruk.length) {
+  fail(
+    `${eksikKuyruk.length} BullMQ kuyruğu docs/MIMARI.md §16.1'de HİÇ geçmiyor:\n    ` +
+      eksikKuyruk.join(', ') +
+      '\n  Arka planda ne koştuğu, hangi sıklıkta koştuğu ve hangi env ile değiştiği' +
+      '\n  §16.1 tablosuna yazılmalı (kuyruk adı backtick içinde geçmeli).',
+  );
+}
 if (eksikRota.length) {
   fail(
     `${eksikRota.length} admin rotası docs/MIMARI.md §13.1'de HİÇ geçmiyor:\n    ` +
@@ -365,7 +397,7 @@ try {
 
 if (!process.exitCode) {
   console.log(
-    `✓ check-docs: ${tables.size} tablo, ${rotaSayisi} admin rotası (duman testi ${dumanBeklenen}), ` +
+    `✓ check-docs: ${tables.size} tablo, ${queues.size} kuyruk, ${rotaSayisi} admin rotası (duman testi ${dumanBeklenen}), ` +
       `${anilan.size} API ucu, görsel kopya taze — hepsi docs/MIMARI.md ile tutarlı.`,
   );
 }

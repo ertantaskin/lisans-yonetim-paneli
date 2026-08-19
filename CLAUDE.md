@@ -31,82 +31,36 @@ elle düzenlenmez, bayatsa `pnpm check:docs` kırar.
 iadede hak otomatik dönmez). Tipler: key, hesap, süreli hesap (`validity_days`,
 teslimle başlar), kod/hediye çeki, stoksuz/ön sipariş (`stockless`, `release_at`).
 
-## Görsel kimlik
+## Görsel kimlik (özet — **tam tanım: [MIMARI.md §17](docs/MIMARI.md)**)
 
-> **GÜNCEL REFERANS (2026-08-14): shadcnspace** — `dashboard.shadcnspace.com` (analytics +
-> ecommerce panoları) tarayıcıda ÖLÇÜLEREK uyarlandı. Aşağıdaki satnaing/shadcn-admin bölümü
-> **paletin ve token mimarisinin** kaynağı olarak GEÇERLİ (ikisi de standart shadcn nötr oklch
-> paletini kullanıyor — ölçüldü, değerler birebir aynı); DEĞİŞEN kısımlar:
-> **font Inter/JetBrains Mono → Geist / Geist Mono** (`next/font/google`, `latin-ext` ŞART —
-> `latin` alt kümesinde ş/ğ/İ/ı/ç yok) · **`--radius` 0.625rem → 0.5rem** (kart `rounded-xl`
-> 12px, düğme/alan `rounded-lg` 8px) · **kabuk `variant="inset"`** (sayfa zemini `bg-sidebar`,
-> içerik `m-2 ml-0 rounded-xl outline shadow-sm` ile YÜZEN kart; başlık `sticky top-2` +
-> `rounded-t-xl`) · **sidebar aktif öğe DOLU pill** (`bg-primary text-primary-foreground`;
-> eskiden soluk `bg-sidebar-accent`), hover `bg-primary/5 text-primary` + `translate-x-1`
-> (ikon modunda ve `motion-reduce`'ta kapalı) · **grup etiketi 12px/600 uppercase muted** ·
-> **tablo başlığı `h-11 text-sm font-semibold` KOYU, büyük harf YOK** (hücre `px-4 py-3` —
-> referansın `py-6`'sı 8-12 kolonlu operasyon tablolarında kullanılamazdı, bilinçli sapma) ·
-> **gölge dili `shadow-sm` → `shadow-xs`** (referansla birebir: `0 1px 2px rgb(0 0 0/.05)`) ·
-> **yalnız-ikon düğme = DAİRE** · kart `px-6`, başlık 16px, açıklama 14px · StatTile etiketi
-> normal cümle düzeninde 14px muted (eskiden 11px BÜYÜK HARF).
->
-> **BİLİNÇLİ SAPMALAR (referansı KOPYALAMADIK):** (1) referansın `main`'i `overflow:hidden`
-> olduğu için **sticky başlıkları çalışmıyor** (ölçüldü: 600px kaydırınca başlık −592'ye gitti)
-> → bizde `overflow-x-clip` + `sticky top-2` ile başlık GERÇEKTEN sabit; (2) `--ring` referansta
-> açık temada oklch(0.708) — bizde 0.48 KALIYOR, çünkü odak göstergesi TEK kaynak bu outline'dır
-> ve 0.708 kontrastı 6.54:1'den ~2.5:1'e düşürürdü (belgelenmiş a11y kararı, §17); (3) 5 hue'lu
-> semantik durum dili (`success/info/warning/attention/destructive`) KORUNDU — referansta yok
-> ama panelin durum dili buna bağlı.
->
-> **ESKİ TEMA YEDEĞİ (artık geri yüklenebilir DEĞİL):** `apps/admin/theme-backup/legacy/` bir
-> TARİHÎ ANLIK GÖRÜNTÜDÜR. Yedek alındıktan sonra durum renkleri beş hue'ya çıktı ve yüzeyler
-> `--<hue>-vivid/-fill/-ring` token'larından besleniyor; yedekteki `globals.css` bunları
-> TANIMLAMIYOR (ölçüldü: `--success-vivid` yedekte 0, güncelde 6) → geri yükleme sessizce
-> renksiz bir arayüz bırakırdı. `restore.sh` bu yüzden varsayılan olarak DURUR
-> (`THEME_RESTORE_ONAY=1` ile geçilir); eski bir dosyaya dönmenin doğru yolu git'tir.
-> Klasör `tsconfig.json` `exclude` ve `check-use-server.js` `SKIP_DIRS` içinde —
-> build'e/taramaya GİRMEZ (girseydi göreli import'lar typecheck'i kırardı).
+Referans: **satnaing/shadcn-admin** paleti + **shadcnspace** (2026-08-14, tarayıcıda ÖLÇÜLEREK
+uyarlandı). Kısaca: standart shadcn **nötr oklch** paleti (monokrom, nötr primary) · **beş hue**
+durum dili (`success/info/warning/attention/destructive`) + `-vivid/-fill/-ring` yüzey katmanı ·
+**Geist / Geist Mono** (`latin-ext` ŞART — `latin` alt kümesinde ş/ğ/İ/ı/ç yok) · `--radius`
+**0.5rem** · kabuk shadcn **sidebar block** `variant="inset"` · Radix (Base UI DEĞİL) + TanStack
+Table + Recharts + lucide + cmdk + sonner + next-themes; hepsi ücretsiz/MIT.
 
-Referans (palet + token mimarisi): **satnaing/shadcn-admin** (shadcn-admin.netlify.app). Stack: klasik
-**shadcn/ui deseni + Radix UI** (Base UI değil) + Tailwind v4 (CSS-first, `tailwind.config.js`
-YOK — token'lar `@theme`/`@theme inline` içinde) + TanStack Table + Recharts + lucide +
-cmdk + sonner + next-themes; hepsi ücretsiz/MIT. Framework: **Next.js 15 (sunucu-taraflı)**
-korunur (şablon Vite olsa da güvenlik gereği). Palet: **standart shadcn nötr oklch** —
-`--background/--foreground/--card/--primary/--secondary/--muted/--accent/--border/--ring`
-+ `--sidebar-*` + `--chart-1..6`; nötr primary (açıkta koyu, koyuda açık), renk YOK
-(monokrom). Semantik uzantı (durum dili, renkli tutulur) — **BEŞ hue** (kullanıcı kararı, eskiden
-üçtü): `--success` (emerald: elimde/sağlıklı), **`--info` (mavi: teslim edildi/tamamlandı)**,
-`--warning` (amber: bekliyor), **`--attention` (mor: insan kararı — İncelemede/Askıda)**,
-`--destructive` (rose: ölü/engelli) — açık temada AA (≥4.5:1) sağlayacak koyulukta, koyu temada
-daha açık. Rozet = soluk tint (%13-16) + saç teli `ring-inset` (%28-30). Tema: `.dark` class (next-themes `attribute=class`). **Tek kaynak:**
-`apps/admin/app/globals.css`. Kabuk: resmi shadcn **sidebar block** deseni
-(`ui/sidebar.tsx` — SidebarProvider/Sidebar/SidebarInset/SidebarTrigger, cookie kalıcılık,
-Ctrl/⌘+B, icon-collapse, mobil sheet) + `app-sidebar` + `site-header` (breadcrumb).
-**Migrasyon TAMAM:** tüm sayfalar/primitifler standart shadcn token kullanıyor; legacy compat
-köprüsü kaldırıldı (kod tabanında sıfır `ink/surface/accent-soft…`). 20 dosya deterministik
-codemod ile taşındı, 5-lensli adversaryel denetimden geçti (kritik + kontrast bulguları
-düzeltildi), production build + iki temada WCAG AA tarayıcıda doğrulandı.
-**KRİTİK NOT:** `@theme inline`'da her renk token'ı base + `-foreground` çift olmalı
-(`--color-muted`+`--color-muted-foreground`, `--color-accent`+`--color-accent-foreground`);
-base atlanırsa Tailwind v4 o `bg-*` utility'sini HİÇ üretmez (sessiz kırılma).
-**UI TAMAMLANDI (canlı):** Siparişler/Stok/Siteler shadcn-admin **DataTable** (TanStack: arama,
-faceted filtre, sıralama, sayfalama, kolon görünürlüğü); sipariş detayı Card/Table/StatTile/timeline;
-formlar shadcn Input/Label/Textarea/Button/Alert; loading/error/404 state'leri. Ekranlar 2. adversaryel
-audit'ten (a11y/kontrast) geçti. **STOK YÖNETİMİ ÜRÜN-MERKEZLİ HUB'A TAŞINDI (commit 3613262, CANLI):**
-kullanıcı "/stock çok karışık, çok üründe yönetilemez" dedi → `/stock` 4 ağır bölümü (liste+import+
-oluştur+global eşleme) üst üste yığmaktan **sadeleşti** (yalnız ürün DataTable + "Yeni Ürün" Sheet;
-7.23→1.93 kB; STOK kolonuna düşük-stok göstergesi). Ürün-özel işler `/products/[id]` DETAY sayfasında
-toplandı (bağlamsal): **Key/Stok İçe Aktar** (ürün SABİT→dropdown yok), **Site Eşlemeleri** (yalnız o
-ürünün eşlemeleri), başlıkta **Düzenle**. Backend: `products/:id/detail` eşlemeleri de döndürür
-(detailMappings, migration YOK); global "tüm eşlemeler" tablosu kaldırıldı (ürün+site bazına). Bileşenler
-parametreleştirildi (import-stock-form `fixedProductId`, mappings-manager `productId`, edit/create Sheet
-ayrıştırıldı); batches "stok gir" derin bağlantısı `/products/{id}?batchId=`. typecheck+build temiz, deploy. **ÇOKLU-ADMIN AUTH (§8, 4 faz, canlı, adversaryel-denetimli):**
-API `admin_users` (scrypt/role/token_version, migration 0007-0008) + `auth/login|validate` + CRUD;
-Next imzalı oturum (HMAC, role+ver, TTL 12s) + middleware her-istek `validate` (revocation) +
-`/admins` owner-only RBAC + open-redirect/rate-limit/atomik-lockout korumaları. **env-gated
-(SESSION_SECRET + ADMIN_SEED_*), varsayılan KAPALI** (auth kapalıyken UI sarı uyarı bandı) —
-aktivasyon + detay: memory `admin-auth`. **Kritik:** login/logout MUTLAKA native form POST → Route
-Handler (Server Action + redirect cookie'yi bindiremiyor). Detay: MIMARI.md §17. Marka: "Lisans Paneli".
+**Tek kaynaklar:** tema `apps/admin/app/globals.css` · rozet tonu `components/ui/badge.tsx` ·
+sözlükler `lib/labels.ts` · menü `components/shell/nav.ts`.
+
+Token tablosu, ölçülen kontrastlar, **bilinçli sapmalar** (`--ring` 0.48'de kalır · gerçekten
+sabit sticky başlık · beş hue) ve menü hiyerarşisi **MIMARI.md §17**'dedir — burada
+TEKRARLANMAZ (aynı içeriğin iki elle sürdürülen kopyası bu projede tekrarlayan arızadır, #4).
+
+### Kod yazmadan önce bilinmesi gerekenler
+
+- **Tailwind v4 `@theme inline`'da her renk token'ı base + `-foreground` ÇİFT olmalı**
+  (`--color-muted` + `--color-muted-foreground`); base atlanırsa Tailwind o `bg-*` utility'sini
+  HİÇ üretmez — **sessiz kırılma**.
+- **`apps/admin/theme-backup/legacy/` geri yüklenebilir DEĞİL** — tarihî anlık görüntüdür.
+  Yedekten sonra durum renkleri beş hue'ya çıktı ve yüzeyler `--<hue>-vivid/-fill/-ring`
+  token'larından besleniyor; yedekteki `globals.css` bunları TANIMLAMIYOR (ölçüldü:
+  `--success-vivid` yedekte 0, güncelde 6) → geri yükleme sessizce renksiz bir arayüz bırakırdı.
+  `restore.sh` bu yüzden varsayılan olarak DURUR (`THEME_RESTORE_ONAY=1` ile geçilir); eski bir
+  dosyaya dönmenin doğru yolu **git**'tir. Klasör `tsconfig.json` `exclude`,
+  `check-use-server.js` `SKIP_DIRS` ve ESLint `ignores` içinde — build'e/taramaya GİRMEZ.
+- **login/logout MUTLAKA native form POST → Route Handler** olmalı; Server Action + redirect
+  cookie'yi bindiremiyor (canlıda iki kez kırıldı).
 
 ## Durum — özet
 
@@ -125,6 +79,25 @@ mimari eksik yok; kalanlar yalnız yapısal kapsam-dışı maddeler (aşağıda)
 **Zincir kanıtlandı (gerçek WooCommerce):** sipariş → HMAC push → atomik atama (SKIP LOCKED) →
 My Account'ta çözülmüş anahtar → geri-kanal webhook. Tek/çok kullanımlık (MAK), hesap, süreli
 hesap, kod, stoksuz; kısmi teslimat, ya-hep-ya-hiç, iade/kısmi iade, değişim, inceleme kuyruğu.
+
+
+### Tamamlanan büyük turlar (ayrıntı: CHANGELOG · docs/GECMIS.md)
+
+- **UI migrasyonu TAMAM:** tüm sayfa/primitifler standart shadcn token kullanıyor, legacy compat
+  köprüsü kaldırıldı (kod tabanında sıfır `ink/surface/accent-soft…`); 20 dosya deterministik
+  codemod ile taşındı, 5 lensli adversaryel denetimden geçti, iki temada WCAG AA tarayıcıda
+  doğrulandı. Siparişler/Stok/Siteler **DataTable** (arama · faceted filtre · sıralama ·
+  sayfalama · kolon görünürlüğü); sipariş detayı Card/Table/StatTile/timeline.
+- **Stok yönetimi ürün-merkezli hub (commit 3613262):** `/stock` yalnız ürün DataTable + "Yeni
+  Ürün" Sheet (7.23→1.93 kB); ürün-özel işler `/products/[id]` detayında toplandı (Key/Stok İçe
+  Aktar — ürün SABİT, Site Eşlemeleri — yalnız o ürünün, başlıkta Düzenle). `products/:id/detail`
+  eşlemeleri de döndürür; global "tüm eşlemeler" tablosu kaldırıldı. Migration YOK.
+- **Çoklu-admin auth (§8, canlı, adversaryel-denetimli):** `admin_users` (scrypt · role ·
+  token_version, migration 0007-0008) + `auth/login|validate` + CRUD; Next imzalı oturum (HMAC,
+  role+ver, TTL 12s) + middleware her istekte `validate` (anlık iptal) + `/admins` owner-only RBAC
+  + open-redirect/rate-limit/atomik-lockout korumaları. **env-gated (`SESSION_SECRET` +
+  `ADMIN_SEED_*`), varsayılan KAPALI** (auth kapalıyken UI sarı uyarı bandı). Aktivasyon: memory
+  `admin-auth`. Marka: "Lisans Paneli".
 
 ### Ne nerede
 
@@ -269,10 +242,14 @@ Lokal Node 22 önerilir (şu an pnpm 9 + Node 20 ile çalışıyor); runtime ima
 Çelişki görürsen **daha yukarıdaki kazanır**. Bu sıra yazılı olmadığı için bir dönem README
 aylarca "Faz 1 MVP" dedi ve şartname var olmayan tabloları anlattı.
 
+Aynı harita klasörlerin İÇİNDE de duruyor (oraya bakan biri buraya bakmayabilir):
+[`docs/README.md`](docs/README.md) — hangi soru hangi belgede + MIMARI bölüm haritası ·
+[`scripts/README.md`](scripts/README.md) — hangi betik NEREDE koşar (dev makinesi ↔ VPS) + kapılar.
+
 | # | Belge | Ne söyler | Denetim |
 |---|---|---|---|
 | 1 | **Kod** (`apps/api/src/db/schema/`, controller'lar) | Kolon/parametre düzeyinde GERÇEK | — |
-| 2 | **[docs/MIMARI.md](docs/MIMARI.md)** | Şartname: ne, neden, hangi kural (v2.7) | `pnpm check:docs` (tablo · rota · hayalet ekran · uç · görsel kopya) |
+| 2 | **[docs/MIMARI.md](docs/MIMARI.md)** | Şartname: ne, neden, hangi kural (v2.7) | `pnpm check:docs` (tablo · **kuyruk** · rota · hayalet ekran · rota sayısı · uç · görsel kopya) |
 | 3 | **Bu dosya (CLAUDE.md)** | Güncel durum özeti + değişmez kurallar + tekrarlayan tuzaklar | rota sayıları `pnpm check:docs`, gerisi elle |
 | 4 | **Runbook'lar** (`RUNBOOK-RELEASE`, `RUNBOOK-DR`, `GELISTIRME`) | Nasıl yapılır (yayın/DR/yerel) | elle |
 | 5 | `CHANGELOG.md` · `docs/DEPLOY-LOG.md` | Sürüm ve dağıtım geçmişi | elle |
